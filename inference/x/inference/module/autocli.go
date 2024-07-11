@@ -17,6 +17,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "params",
 					Short:     "Shows the parameters of the module",
 				},
+				{
+					RpcMethod: "InferenceAll",
+					Use:       "list-inference",
+					Short:     "List all inference",
+				},
+				{
+					RpcMethod:      "Inference",
+					Use:            "show-inference [id]",
+					Short:          "Shows a inference",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

@@ -1,4 +1,5 @@
 syntax = "proto3";
+
 package inference.inference;
 
 import "amino/amino.proto";
@@ -6,25 +7,53 @@ import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
 import "inference/inference/params.proto";
+import "inference/inference/inference.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Query defines the gRPC querier service.
 service Query {
+  
   // Parameters queries the parameters of the module.
-  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+  rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/params";
+  
+  }
+  
+  // Queries a list of Inference items.
+  rpc Inference    (QueryGetInferenceRequest) returns (QueryGetInferenceResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference/{index}";
+  
+  }
+  rpc InferenceAll (QueryAllInferenceRequest) returns (QueryAllInferenceResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference";
+  
   }
 }
-
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
 
 // QueryParamsResponse is response type for the Query/Params RPC method.
 message QueryParamsResponse {
+  
   // params holds all the parameters of this module.
-  Params params = 1 [
-    (gogoproto.nullable) = false,
-    (amino.dont_omitempty) = true
-  ];
+  Params params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
+
+message QueryGetInferenceRequest {
+  string index = 1;
+}
+
+message QueryGetInferenceResponse {
+  Inference inference = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllInferenceRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllInferenceResponse {
+  repeated Inference                              inference  = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
