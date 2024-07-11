@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.inference;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/inference/params.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// GenesisState defines the inference module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
