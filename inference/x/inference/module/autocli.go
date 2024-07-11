@@ -45,6 +45,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a startInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "promptHash"}, {ProtoField: "promptPayload"}, {ProtoField: "receivedBy"}},
 				},
+				{
+					RpcMethod:      "FinishInference",
+					Use:            "finish-inference [inference-id] [response-hash] [response-payload] [prompt-token-count] [completion-token-count] [executed-by]",
+					Short:          "Send a finishInference tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "responseHash"}, {ProtoField: "responsePayload"}, {ProtoField: "promptTokenCount"}, {ProtoField: "completionTokenCount"}, {ProtoField: "executedBy"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

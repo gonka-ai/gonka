@@ -16219,6 +16219,161 @@ paths:
               parameters.
       tags:
         - Msg
+  /inference.inference.Msg/FinishInference:
+    post:
+      operationId: InferenceInferenceMsg_FinishInference
+      responses:
+        '200':
+          description: A successful response.
+          schema:
+            type: object
+            properties:
+              inferenceIndex:
+                type: string
+        default:
+          description: An unexpected error response.
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                format: int32
+              message:
+                type: string
+              details:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    '@type':
+                      type: string
+                  additionalProperties: {}
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              creator:
+                type: string
+              inferenceId:
+                type: string
+              responseHash:
+                type: string
+              responsePayload:
+                type: string
+              promptTokenCount:
+                type: string
+                format: uint64
+              completionTokenCount:
+                type: string
+                format: uint64
+              executedBy:
+                type: string
+      tags:
+        - Msg
+  /inference.inference.Msg/StartInference:
+    post:
+      operationId: InferenceInferenceMsg_StartInference
+      responses:
+        '200':
+          description: A successful response.
+          schema:
+            type: object
+            properties:
+              inferenceIndex:
+                type: string
+        default:
+          description: An unexpected error response.
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                format: int32
+              message:
+                type: string
+              details:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    '@type':
+                      type: string
+                  additionalProperties: {}
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              creator:
+                type: string
+              inferenceId:
+                type: string
+              promptHash:
+                type: string
+              promptPayload:
+                type: string
+              receivedBy:
+                type: string
+      tags:
+        - Msg
+  /inference.inference.Msg/UpdateParams:
+    post:
+      summary: |-
+        UpdateParams defines a (governance) operation for updating the module
+        parameters. The authority defaults to the x/gov module account.
+      operationId: InferenceInferenceMsg_UpdateParams
+      responses:
+        '200':
+          description: A successful response.
+          schema:
+            type: object
+            description: >-
+              MsgUpdateParamsResponse defines the response structure for
+              executing a
+
+              MsgUpdateParams message.
+        default:
+          description: An unexpected error response.
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                format: int32
+              message:
+                type: string
+              details:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    '@type':
+                      type: string
+                  additionalProperties: {}
+      parameters:
+        - name: body
+          description: MsgUpdateParams is the Msg/UpdateParams request type.
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              authority:
+                type: string
+                description: >-
+                  authority is the address that controls the module (defaults to
+                  x/gov unless overwritten).
+              params:
+                description: 'NOTE: All parameters must be supplied.'
+                type: object
+            description: MsgUpdateParams is the Msg/UpdateParams request type.
+      tags:
+        - Msg
   /productscience/inference/inference/inference:
     get:
       operationId: InferenceInferenceQuery_InferenceAll
@@ -16460,107 +16615,6 @@ paths:
                   additionalProperties: {}
       tags:
         - Query
-  /inference.inference.Msg/StartInference:
-    post:
-      operationId: InferenceInferenceMsg_StartInference
-      responses:
-        '200':
-          description: A successful response.
-          schema:
-            type: object
-            properties:
-              inferenceIndex:
-                type: string
-        default:
-          description: An unexpected error response.
-          schema:
-            type: object
-            properties:
-              code:
-                type: integer
-                format: int32
-              message:
-                type: string
-              details:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    '@type':
-                      type: string
-                  additionalProperties: {}
-      parameters:
-        - name: body
-          in: body
-          required: true
-          schema:
-            type: object
-            properties:
-              creator:
-                type: string
-              inferenceId:
-                type: string
-              promptHash:
-                type: string
-              promptPayload:
-                type: string
-              receivedBy:
-                type: string
-      tags:
-        - Msg
-  /inference.inference.Msg/UpdateParams:
-    post:
-      summary: |-
-        UpdateParams defines a (governance) operation for updating the module
-        parameters. The authority defaults to the x/gov module account.
-      operationId: InferenceInferenceMsg_UpdateParams
-      responses:
-        '200':
-          description: A successful response.
-          schema:
-            type: object
-            description: >-
-              MsgUpdateParamsResponse defines the response structure for
-              executing a
-
-              MsgUpdateParams message.
-        default:
-          description: An unexpected error response.
-          schema:
-            type: object
-            properties:
-              code:
-                type: integer
-                format: int32
-              message:
-                type: string
-              details:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    '@type':
-                      type: string
-                  additionalProperties: {}
-      parameters:
-        - name: body
-          description: MsgUpdateParams is the Msg/UpdateParams request type.
-          in: body
-          required: true
-          schema:
-            type: object
-            properties:
-              authority:
-                type: string
-                description: >-
-                  authority is the address that controls the module (defaults to
-                  x/gov unless overwritten).
-              params:
-                description: 'NOTE: All parameters must be supplied.'
-                type: object
-            description: MsgUpdateParams is the Msg/UpdateParams request type.
-      tags:
-        - Msg
 definitions:
   cosmos.auth.v1beta1.MsgUpdateParams:
     type: object
@@ -23213,6 +23267,68 @@ definitions:
     description: |-
       Version defines the versioning scheme used to negotiate the IBC verison in
       the connection handshake.
+  inference.inference.MsgFinishInference:
+    type: object
+    properties:
+      creator:
+        type: string
+      inferenceId:
+        type: string
+      responseHash:
+        type: string
+      responsePayload:
+        type: string
+      promptTokenCount:
+        type: string
+        format: uint64
+      completionTokenCount:
+        type: string
+        format: uint64
+      executedBy:
+        type: string
+  inference.inference.MsgFinishInferenceResponse:
+    type: object
+    properties:
+      inferenceIndex:
+        type: string
+  inference.inference.MsgStartInference:
+    type: object
+    properties:
+      creator:
+        type: string
+      inferenceId:
+        type: string
+      promptHash:
+        type: string
+      promptPayload:
+        type: string
+      receivedBy:
+        type: string
+  inference.inference.MsgStartInferenceResponse:
+    type: object
+    properties:
+      inferenceIndex:
+        type: string
+  inference.inference.MsgUpdateParams:
+    type: object
+    properties:
+      authority:
+        type: string
+        description: >-
+          authority is the address that controls the module (defaults to x/gov
+          unless overwritten).
+      params:
+        description: 'NOTE: All parameters must be supplied.'
+        type: object
+    description: MsgUpdateParams is the Msg/UpdateParams request type.
+  inference.inference.MsgUpdateParamsResponse:
+    type: object
+    description: |-
+      MsgUpdateParamsResponse defines the response structure for executing a
+      MsgUpdateParams message.
+  inference.inference.Params:
+    type: object
+    description: Params defines the parameters for the module.
   cosmos.base.query.v1beta1.PageRequest:
     type: object
     properties:
@@ -23317,9 +23433,6 @@ definitions:
         type: string
       status:
         type: string
-  inference.inference.Params:
-    type: object
-    description: Params defines the parameters for the module.
   inference.inference.QueryAllInferenceResponse:
     type: object
     properties:
@@ -23415,38 +23528,3 @@ definitions:
         description: params holds all the parameters of this module.
         type: object
     description: QueryParamsResponse is response type for the Query/Params RPC method.
-  inference.inference.MsgStartInference:
-    type: object
-    properties:
-      creator:
-        type: string
-      inferenceId:
-        type: string
-      promptHash:
-        type: string
-      promptPayload:
-        type: string
-      receivedBy:
-        type: string
-  inference.inference.MsgStartInferenceResponse:
-    type: object
-    properties:
-      inferenceIndex:
-        type: string
-  inference.inference.MsgUpdateParams:
-    type: object
-    properties:
-      authority:
-        type: string
-        description: >-
-          authority is the address that controls the module (defaults to x/gov
-          unless overwritten).
-      params:
-        description: 'NOTE: All parameters must be supplied.'
-        type: object
-    description: MsgUpdateParams is the Msg/UpdateParams request type.
-  inference.inference.MsgUpdateParamsResponse:
-    type: object
-    description: |-
-      MsgUpdateParamsResponse defines the response structure for executing a
-      MsgUpdateParams message.
