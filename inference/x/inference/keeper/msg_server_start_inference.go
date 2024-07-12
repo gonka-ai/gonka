@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	sdkerrors "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -10,8 +11,21 @@ import (
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Handling the message
-	_ = ctx
+	_, found := k.GetInference(ctx, msg.InferenceId)
+	if found {
+		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
+	}
 
-	return &types.MsgStartInferenceResponse{}, nil
+	k.SetInference(ctx, types.Inference{
+		Index:         msg.InferenceId,
+		InferenceId:   msg.InferenceId,
+		PromptHash:    msg.PromptHash,
+		PromptPayload: msg.PromptPayload,
+		ReceivedBy:    msg.ReceivedBy,
+		Status:        "STARTED",
+	})
+
+	return &types.MsgStartInferenceResponse{
+		InferenceIndex: msg.InferenceId,
+	}, nil
 }

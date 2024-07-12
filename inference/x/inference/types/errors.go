@@ -8,6 +8,7 @@ import (
 
 // x/inference module sentinel errors
 var (
-	ErrInvalidSigner = sdkerrors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
-	ErrSample        = sdkerrors.Register(ModuleName, 1101, "sample error")
+	ErrInvalidSigner     = sdkerrors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
+	ErrInferenceIdExists = sdkerrors.Register(ModuleName, 1101, "inference with id already exists")
+	ErrInferenceNotFound = sdkerrors.Register(ModuleName, 1102, "inference with id not started")
 )
