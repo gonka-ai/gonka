@@ -43,3 +43,6 @@ build:
 
 init:
 	./scripts/init.sh
+
+clean-state:
+	rm -rf $HOME/.inference
