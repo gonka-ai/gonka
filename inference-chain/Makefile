@@ -27,6 +27,9 @@ define DOCKER_BUILD
 	@docker build --platform $(PLATFORM) . -t minid
 endef
 
+all:
+	install
+
 install:
 	@echo "--> ensure dependencies have not been modified"
 	@go mod verify
