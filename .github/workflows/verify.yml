@@ -10,6 +10,9 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./inference-chain # Set your desired directory here
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
