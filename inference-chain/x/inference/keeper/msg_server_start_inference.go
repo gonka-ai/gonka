@@ -23,6 +23,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		PromptPayload: msg.PromptPayload,
 		ReceivedBy:    msg.ReceivedBy,
 		Status:        "STARTED",
+		BlockHeight:   ctx.BlockHeight(),
 	})
 
 	return &types.MsgStartInferenceResponse{

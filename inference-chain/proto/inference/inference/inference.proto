@@ -4,17 +4,17 @@ package inference.inference;
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message Inference {
-  string index = 1; 
-  string inferenceId = 2; 
-  string promptHash = 3; 
-  string promptPayload = 4; 
-  string responseHash = 5; 
-  string responsePayload = 6; 
-  uint64 promptTokenCount = 7; 
-  uint64 completionTokenCount = 8; 
-  string receivedBy = 9; 
-  string executedBy = 10; 
-  string status = 11; 
-  uint64 blockHeight = 12;
+  string index = 1;
+  string inferenceId = 2;
+  string promptHash = 3;
+  string promptPayload = 4;
+  string responseHash = 5;
+  string responsePayload = 6;
+  uint64 promptTokenCount = 7;
+  uint64 completionTokenCount = 8;
+  string receivedBy = 9;
+  string executedBy = 10;
+  string status = 11;
+  int64 blockHeight = 12;
 }
 

@@ -176,8 +176,8 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
-	if x.BlockHeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.BlockHeight)
+	if x.BlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.BlockHeight)
 		if !f(fd_Inference_blockHeight, value) {
 			return
 		}
@@ -220,7 +220,7 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.Inference.status":
 		return x.Status != ""
 	case "inference.inference.Inference.blockHeight":
-		return x.BlockHeight != uint64(0)
+		return x.BlockHeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -260,7 +260,7 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.Inference.status":
 		x.Status = ""
 	case "inference.inference.Inference.blockHeight":
-		x.BlockHeight = uint64(0)
+		x.BlockHeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -312,7 +312,7 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.Inference.blockHeight":
 		value := x.BlockHeight
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -356,7 +356,7 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 	case "inference.inference.Inference.status":
 		x.Status = value.Interface().(string)
 	case "inference.inference.Inference.blockHeight":
-		x.BlockHeight = value.Uint()
+		x.BlockHeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -437,7 +437,7 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 	case "inference.inference.Inference.status":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Inference.blockHeight":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1048,7 +1048,7 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.BlockHeight |= uint64(b&0x7F) << shift
+					x.BlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1117,7 +1117,7 @@ type Inference struct {
 	ReceivedBy           string `protobuf:"bytes,9,opt,name=receivedBy,proto3" json:"receivedBy,omitempty"`
 	ExecutedBy           string `protobuf:"bytes,10,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
 	Status               string `protobuf:"bytes,11,opt,name=status,proto3" json:"status,omitempty"`
-	BlockHeight          uint64 `protobuf:"varint,12,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight          int64  `protobuf:"varint,12,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -1217,7 +1217,7 @@ func (x *Inference) GetStatus() string {
 	return ""
 }
 
-func (x *Inference) GetBlockHeight() uint64 {
+func (x *Inference) GetBlockHeight() int64 {
 	if x != nil {
 		return x.BlockHeight
 	}
@@ -1257,7 +1257,7 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x65, 0x64, 0x42, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x0b,
 	0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x20, 0x0a, 0x0b,
 	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xbc,
+	0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xbc,
 	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f,

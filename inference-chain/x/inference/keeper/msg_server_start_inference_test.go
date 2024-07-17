@@ -26,6 +26,9 @@ func TestMsgServer_StartInference(t *testing.T) {
 		PromptPayload: "promptPayload",
 		ReceivedBy:    "receivedBy",
 		Status:        "STARTED",
+		BlockHeight:   0,
 	}, savedInference)
-	// require that
 }
+
+// TODO: Need a way to test that blockheight is set to newer values, but can't figure out how to change the
+// test value of the blockheight
