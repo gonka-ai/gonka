@@ -10,9 +10,41 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    name: Build and Test chain
     defaults:
       run:
-        working-directory: ./inference-chain # Set your desired directory here
+        working-directory: ./inference-chain
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^1.22.2' # Replace with your Go version
+
+      - name: Cache Go modules
+        uses: actions/cache@v2
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -v
+  build-and-test-api:
+    runs-on: ubuntu-latest
+    name: Build and Test API Wrapper
+    defaults:
+      run:
+        working-directory: ./decentralized-api
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
