@@ -1,0 +1,6 @@
+nodes:
+  - id: node1
+    url: http://localhost:2020/
+    max_concurrent: 1
+    models:
+      - unsloth/llama-3-8b-Instruct
