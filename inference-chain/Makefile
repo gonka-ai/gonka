@@ -48,4 +48,4 @@ init:
 	./scripts/init.sh
 
 clean-state:
-	rm -rf $HOME/.inference
+	rm -rf "$$HOME/.inference"
