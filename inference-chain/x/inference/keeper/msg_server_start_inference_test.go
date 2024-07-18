@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,13 +20,18 @@ func TestMsgServer_StartInference(t *testing.T) {
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")
 	require.True(t, found)
+	ctx2 := sdk.UnwrapSDKContext(ctx)
 	require.Equal(t, types.Inference{
-		Index:         "inferenceId",
-		InferenceId:   "inferenceId",
-		PromptHash:    "promptHash",
-		PromptPayload: "promptPayload",
-		ReceivedBy:    "receivedBy",
-		Status:        "STARTED",
+		Index:               "inferenceId",
+		InferenceId:         "inferenceId",
+		PromptHash:          "promptHash",
+		PromptPayload:       "promptPayload",
+		ReceivedBy:          "receivedBy",
+		Status:              "STARTED",
+		StartBlockHeight:    0,
+		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 	}, savedInference)
-	// require that
 }
+
+// TODO: Need a way to test that blockheight is set to newer values, but can't figure out how to change the
+// test value of the blockheight

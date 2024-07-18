@@ -25,6 +25,10 @@ var (
 	fd_Inference_receivedBy           protoreflect.FieldDescriptor
 	fd_Inference_executedBy           protoreflect.FieldDescriptor
 	fd_Inference_status               protoreflect.FieldDescriptor
+	fd_Inference_startBlockHeight     protoreflect.FieldDescriptor
+	fd_Inference_endBlockHeight       protoreflect.FieldDescriptor
+	fd_Inference_startBlockTimestamp  protoreflect.FieldDescriptor
+	fd_Inference_endBlockTimestamp    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -41,6 +45,10 @@ func init() {
 	fd_Inference_receivedBy = md_Inference.Fields().ByName("receivedBy")
 	fd_Inference_executedBy = md_Inference.Fields().ByName("executedBy")
 	fd_Inference_status = md_Inference.Fields().ByName("status")
+	fd_Inference_startBlockHeight = md_Inference.Fields().ByName("startBlockHeight")
+	fd_Inference_endBlockHeight = md_Inference.Fields().ByName("endBlockHeight")
+	fd_Inference_startBlockTimestamp = md_Inference.Fields().ByName("startBlockTimestamp")
+	fd_Inference_endBlockTimestamp = md_Inference.Fields().ByName("endBlockTimestamp")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -174,6 +182,30 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.StartBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.StartBlockHeight)
+		if !f(fd_Inference_startBlockHeight, value) {
+			return
+		}
+	}
+	if x.EndBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EndBlockHeight)
+		if !f(fd_Inference_endBlockHeight, value) {
+			return
+		}
+	}
+	if x.StartBlockTimestamp != int64(0) {
+		value := protoreflect.ValueOfInt64(x.StartBlockTimestamp)
+		if !f(fd_Inference_startBlockTimestamp, value) {
+			return
+		}
+	}
+	if x.EndBlockTimestamp != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EndBlockTimestamp)
+		if !f(fd_Inference_endBlockTimestamp, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -211,6 +243,14 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.ExecutedBy != ""
 	case "inference.inference.Inference.status":
 		return x.Status != ""
+	case "inference.inference.Inference.startBlockHeight":
+		return x.StartBlockHeight != int64(0)
+	case "inference.inference.Inference.endBlockHeight":
+		return x.EndBlockHeight != int64(0)
+	case "inference.inference.Inference.startBlockTimestamp":
+		return x.StartBlockTimestamp != int64(0)
+	case "inference.inference.Inference.endBlockTimestamp":
+		return x.EndBlockTimestamp != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -249,6 +289,14 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 		x.ExecutedBy = ""
 	case "inference.inference.Inference.status":
 		x.Status = ""
+	case "inference.inference.Inference.startBlockHeight":
+		x.StartBlockHeight = int64(0)
+	case "inference.inference.Inference.endBlockHeight":
+		x.EndBlockHeight = int64(0)
+	case "inference.inference.Inference.startBlockTimestamp":
+		x.StartBlockTimestamp = int64(0)
+	case "inference.inference.Inference.endBlockTimestamp":
+		x.EndBlockTimestamp = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -298,6 +346,18 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.status":
 		value := x.Status
 		return protoreflect.ValueOfString(value)
+	case "inference.inference.Inference.startBlockHeight":
+		value := x.StartBlockHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Inference.endBlockHeight":
+		value := x.EndBlockHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Inference.startBlockTimestamp":
+		value := x.StartBlockTimestamp
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Inference.endBlockTimestamp":
+		value := x.EndBlockTimestamp
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -340,6 +400,14 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 		x.ExecutedBy = value.Interface().(string)
 	case "inference.inference.Inference.status":
 		x.Status = value.Interface().(string)
+	case "inference.inference.Inference.startBlockHeight":
+		x.StartBlockHeight = value.Int()
+	case "inference.inference.Inference.endBlockHeight":
+		x.EndBlockHeight = value.Int()
+	case "inference.inference.Inference.startBlockTimestamp":
+		x.StartBlockTimestamp = value.Int()
+	case "inference.inference.Inference.endBlockTimestamp":
+		x.EndBlockTimestamp = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -382,6 +450,14 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 		panic(fmt.Errorf("field executedBy of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.status":
 		panic(fmt.Errorf("field status of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.startBlockHeight":
+		panic(fmt.Errorf("field startBlockHeight of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.endBlockHeight":
+		panic(fmt.Errorf("field endBlockHeight of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.startBlockTimestamp":
+		panic(fmt.Errorf("field startBlockTimestamp of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.endBlockTimestamp":
+		panic(fmt.Errorf("field endBlockTimestamp of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -417,6 +493,14 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Inference.status":
 		return protoreflect.ValueOfString("")
+	case "inference.inference.Inference.startBlockHeight":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Inference.endBlockHeight":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Inference.startBlockTimestamp":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Inference.endBlockTimestamp":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -528,6 +612,18 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.StartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.StartBlockHeight))
+		}
+		if x.EndBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.EndBlockHeight))
+		}
+		if x.StartBlockTimestamp != 0 {
+			n += 1 + runtime.Sov(uint64(x.StartBlockTimestamp))
+		}
+		if x.EndBlockTimestamp != 0 {
+			n += 1 + runtime.Sov(uint64(x.EndBlockTimestamp))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -556,6 +652,26 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.EndBlockTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EndBlockTimestamp))
+			i--
+			dAtA[i] = 0x78
+		}
+		if x.StartBlockTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartBlockTimestamp))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.EndBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EndBlockHeight))
+			i--
+			dAtA[i] = 0x68
+		}
+		if x.StartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartBlockHeight))
+			i--
+			dAtA[i] = 0x60
 		}
 		if len(x.Status) > 0 {
 			i -= len(x.Status)
@@ -1005,6 +1121,82 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 				}
 				x.Status = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 12:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartBlockHeight", wireType)
+				}
+				x.StartBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.StartBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EndBlockHeight", wireType)
+				}
+				x.EndBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EndBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartBlockTimestamp", wireType)
+				}
+				x.StartBlockTimestamp = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.StartBlockTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 15:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EndBlockTimestamp", wireType)
+				}
+				x.EndBlockTimestamp = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EndBlockTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1069,6 +1261,10 @@ type Inference struct {
 	ReceivedBy           string `protobuf:"bytes,9,opt,name=receivedBy,proto3" json:"receivedBy,omitempty"`
 	ExecutedBy           string `protobuf:"bytes,10,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
 	Status               string `protobuf:"bytes,11,opt,name=status,proto3" json:"status,omitempty"`
+	StartBlockHeight     int64  `protobuf:"varint,12,opt,name=startBlockHeight,proto3" json:"startBlockHeight,omitempty"`
+	EndBlockHeight       int64  `protobuf:"varint,13,opt,name=endBlockHeight,proto3" json:"endBlockHeight,omitempty"`
+	StartBlockTimestamp  int64  `protobuf:"varint,14,opt,name=startBlockTimestamp,proto3" json:"startBlockTimestamp,omitempty"`
+	EndBlockTimestamp    int64  `protobuf:"varint,15,opt,name=endBlockTimestamp,proto3" json:"endBlockTimestamp,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -1168,13 +1364,41 @@ func (x *Inference) GetStatus() string {
 	return ""
 }
 
+func (x *Inference) GetStartBlockHeight() int64 {
+	if x != nil {
+		return x.StartBlockHeight
+	}
+	return 0
+}
+
+func (x *Inference) GetEndBlockHeight() int64 {
+	if x != nil {
+		return x.EndBlockHeight
+	}
+	return 0
+}
+
+func (x *Inference) GetStartBlockTimestamp() int64 {
+	if x != nil {
+		return x.StartBlockTimestamp
+	}
+	return 0
+}
+
+func (x *Inference) GetEndBlockTimestamp() int64 {
+	if x != nil {
+		return x.EndBlockTimestamp
+	}
+	return 0
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x0a, 0x23, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x8f, 0x03, 0x0a, 0x09, 0x49,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xc3, 0x04, 0x0a, 0x09, 0x49,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x20,
 	0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20,
@@ -1199,20 +1423,31 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x65, 0x64, 0x42, 0x79, 0x12, 0x1e, 0x0a, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64,
 	0x42, 0x79, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74,
 	0x65, 0x64, 0x42, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x0b,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x42, 0xbc, 0x01, 0x0a,
-	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
-	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x2a, 0x0a, 0x10,
+	0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x18, 0x0c, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x26, 0x0a, 0x0e, 0x65, 0x6e, 0x64, 0x42,
+	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x0e, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x12, 0x30, 0x0a, 0x13, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x73,
+	0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61,
+	0x6d, 0x70, 0x12, 0x2c, 0x0a, 0x11, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x03, 0x52, 0x11, 0x65,
+	0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70,
+	0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24,
+	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69,
+	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42,
+	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62,
+	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
