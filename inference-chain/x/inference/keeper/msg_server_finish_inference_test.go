@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,14 +19,16 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")
+	ctx2 := sdk.UnwrapSDKContext(ctx)
 	require.True(t, found)
 	require.Equal(t, types.Inference{
-		Index:         "inferenceId",
-		InferenceId:   "inferenceId",
-		PromptHash:    "promptHash",
-		PromptPayload: "promptPayload",
-		ReceivedBy:    "receivedBy",
-		Status:        "STARTED",
+		Index:               "inferenceId",
+		InferenceId:         "inferenceId",
+		PromptHash:          "promptHash",
+		PromptPayload:       "promptPayload",
+		ReceivedBy:          "receivedBy",
+		Status:              "STARTED",
+		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 	}, savedInference)
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -51,6 +54,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		PromptTokenCount:     1,
 		CompletionTokenCount: 1,
 		ExecutedBy:           "executedBy",
+		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
+		EndBlockTimestamp:    ctx2.BlockTime().UnixMilli(),
 	}, savedInference)
 }
 

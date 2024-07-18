@@ -22,6 +22,8 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.PromptTokenCount = msg.PromptTokenCount
 	existingInference.CompletionTokenCount = msg.CompletionTokenCount
 	existingInference.ExecutedBy = msg.ExecutedBy
+	existingInference.EndBlockHeight = ctx.BlockHeight()
+	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	k.SetInference(ctx, existingInference)
 
 	return &types.MsgFinishInferenceResponse{}, nil

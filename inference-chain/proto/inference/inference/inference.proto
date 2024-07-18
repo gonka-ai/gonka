@@ -15,6 +15,9 @@ message Inference {
   string receivedBy = 9;
   string executedBy = 10;
   string status = 11;
-  int64 blockHeight = 12;
+  int64 startBlockHeight = 12;
+  int64 endBlockHeight = 13;
+  int64 startBlockTimestamp = 14;
+  int64 endBlockTimestamp = 15;
 }
 
