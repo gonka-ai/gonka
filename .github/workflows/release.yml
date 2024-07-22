@@ -17,12 +17,15 @@ on: push
 jobs:
   might_release:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./inference-chain
     steps:
       - name: Checkout
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-
+# https://github.com/ignite/cli/blob/281fff026281c3f00c05e2582701df6a7c402fe1/actions/release/vars/action.yml#L2
       - name: Prepare Release Variables
         id: vars
         uses: ignite/cli/actions/release/vars@main
