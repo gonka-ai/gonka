@@ -1,0 +1,16 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message Participant {
+  string index = 1; 
+  string address = 2; 
+  int32 reputation = 3; 
+  int32 weight = 4; 
+  uint64 joinTime = 5; 
+  int32 joinHeight = 6; 
+  uint64 lastInferenceTime = 7; 
+  
+}
+

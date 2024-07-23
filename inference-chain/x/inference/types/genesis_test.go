@@ -30,7 +30,15 @@ func TestGenesisState_Validate(t *testing.T) {
 						Index: "1",
 					},
 				},
-				// this line is used by starport scaffolding # types/genesis/validField
+				ParticipantList: []types.Participant{
+	{
+		Index: "0",
+},
+	{
+		Index: "1",
+},
+},
+// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
 		},
@@ -48,7 +56,21 @@ func TestGenesisState_Validate(t *testing.T) {
 			},
 			valid: false,
 		},
-		// this line is used by starport scaffolding # types/genesis/testcase
+		{
+	desc:     "duplicated participant",
+	genState: &types.GenesisState{
+		ParticipantList: []types.Participant{
+			{
+				Index: "0",
+},
+			{
+				Index: "0",
+},
+		},
+	},
+	valid:    false,
+},
+// this line is used by starport scaffolding # types/genesis/testcase
 	}
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {

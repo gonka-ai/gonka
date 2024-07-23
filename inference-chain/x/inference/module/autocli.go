@@ -28,7 +28,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a inference",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
-				// this line is used by ignite scaffolding # autocli/query
+				{
+			RpcMethod: "ParticipantAll",
+			Use: "list-participant",
+			Short: "List all participant",
+		},
+		{
+			RpcMethod: "Participant",
+			Use: "show-participant [id]",
+			Short: "Shows a participant",
+			PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"},},
+		},
+		// this line is used by ignite scaffolding # autocli/query
 			},
 		},
 		Tx: &autocliv1.ServiceCommandDescriptor{
