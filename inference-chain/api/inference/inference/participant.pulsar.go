@@ -69,6 +69,7 @@ var (
 	fd_Participant_lastInferenceTime protoreflect.FieldDescriptor
 	fd_Participant_inferenceUrl      protoreflect.FieldDescriptor
 	fd_Participant_models            protoreflect.FieldDescriptor
+	fd_Participant_status            protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -83,6 +84,7 @@ func init() {
 	fd_Participant_lastInferenceTime = md_Participant.Fields().ByName("lastInferenceTime")
 	fd_Participant_inferenceUrl = md_Participant.Fields().ByName("inferenceUrl")
 	fd_Participant_models = md_Participant.Fields().ByName("models")
+	fd_Participant_status = md_Participant.Fields().ByName("status")
 }
 
 var _ protoreflect.Message = (*fastReflection_Participant)(nil)
@@ -174,20 +176,20 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.JoinTime != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.JoinTime)
+	if x.JoinTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.JoinTime)
 		if !f(fd_Participant_joinTime, value) {
 			return
 		}
 	}
-	if x.JoinHeight != int32(0) {
-		value := protoreflect.ValueOfInt32(x.JoinHeight)
+	if x.JoinHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.JoinHeight)
 		if !f(fd_Participant_joinHeight, value) {
 			return
 		}
 	}
-	if x.LastInferenceTime != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.LastInferenceTime)
+	if x.LastInferenceTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.LastInferenceTime)
 		if !f(fd_Participant_lastInferenceTime, value) {
 			return
 		}
@@ -201,6 +203,12 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 	if len(x.Models) != 0 {
 		value := protoreflect.ValueOfList(&_Participant_9_list{list: &x.Models})
 		if !f(fd_Participant_models, value) {
+			return
+		}
+	}
+	if x.Status != 0 {
+		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.Status))
+		if !f(fd_Participant_status, value) {
 			return
 		}
 	}
@@ -228,15 +236,17 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.Participant.weight":
 		return x.Weight != int32(0)
 	case "inference.inference.Participant.joinTime":
-		return x.JoinTime != uint64(0)
+		return x.JoinTime != int64(0)
 	case "inference.inference.Participant.joinHeight":
-		return x.JoinHeight != int32(0)
+		return x.JoinHeight != int64(0)
 	case "inference.inference.Participant.lastInferenceTime":
-		return x.LastInferenceTime != uint64(0)
+		return x.LastInferenceTime != int64(0)
 	case "inference.inference.Participant.inferenceUrl":
 		return x.InferenceUrl != ""
 	case "inference.inference.Participant.models":
 		return len(x.Models) != 0
+	case "inference.inference.Participant.status":
+		return x.Status != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -262,15 +272,17 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.Participant.weight":
 		x.Weight = int32(0)
 	case "inference.inference.Participant.joinTime":
-		x.JoinTime = uint64(0)
+		x.JoinTime = int64(0)
 	case "inference.inference.Participant.joinHeight":
-		x.JoinHeight = int32(0)
+		x.JoinHeight = int64(0)
 	case "inference.inference.Participant.lastInferenceTime":
-		x.LastInferenceTime = uint64(0)
+		x.LastInferenceTime = int64(0)
 	case "inference.inference.Participant.inferenceUrl":
 		x.InferenceUrl = ""
 	case "inference.inference.Participant.models":
 		x.Models = nil
+	case "inference.inference.Participant.status":
+		x.Status = 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -301,13 +313,13 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 		return protoreflect.ValueOfInt32(value)
 	case "inference.inference.Participant.joinTime":
 		value := x.JoinTime
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Participant.joinHeight":
 		value := x.JoinHeight
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Participant.lastInferenceTime":
 		value := x.LastInferenceTime
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Participant.inferenceUrl":
 		value := x.InferenceUrl
 		return protoreflect.ValueOfString(value)
@@ -317,6 +329,9 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 		}
 		listValue := &_Participant_9_list{list: &x.Models}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.Participant.status":
+		value := x.Status
+		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -346,17 +361,19 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 	case "inference.inference.Participant.weight":
 		x.Weight = int32(value.Int())
 	case "inference.inference.Participant.joinTime":
-		x.JoinTime = value.Uint()
+		x.JoinTime = value.Int()
 	case "inference.inference.Participant.joinHeight":
-		x.JoinHeight = int32(value.Int())
+		x.JoinHeight = value.Int()
 	case "inference.inference.Participant.lastInferenceTime":
-		x.LastInferenceTime = value.Uint()
+		x.LastInferenceTime = value.Int()
 	case "inference.inference.Participant.inferenceUrl":
 		x.InferenceUrl = value.Interface().(string)
 	case "inference.inference.Participant.models":
 		lv := value.List()
 		clv := lv.(*_Participant_9_list)
 		x.Models = *clv.list
+	case "inference.inference.Participant.status":
+		x.Status = (ParticipantStatus)(value.Enum())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -399,6 +416,8 @@ func (x *fastReflection_Participant) Mutable(fd protoreflect.FieldDescriptor) pr
 		panic(fmt.Errorf("field lastInferenceTime of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.inferenceUrl":
 		panic(fmt.Errorf("field inferenceUrl of message inference.inference.Participant is not mutable"))
+	case "inference.inference.Participant.status":
+		panic(fmt.Errorf("field status of message inference.inference.Participant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -421,16 +440,18 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 	case "inference.inference.Participant.weight":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.Participant.joinTime":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Participant.joinHeight":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Participant.lastInferenceTime":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Participant.inferenceUrl":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Participant.models":
 		list := []string{}
 		return protoreflect.ValueOfList(&_Participant_9_list{list: &list})
+	case "inference.inference.Participant.status":
+		return protoreflect.ValueOfEnum(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -533,6 +554,9 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if x.Status != 0 {
+			n += 1 + runtime.Sov(uint64(x.Status))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -561,6 +585,11 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Status != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Status))
+			i--
+			dAtA[i] = 0x50
 		}
 		if len(x.Models) > 0 {
 			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
@@ -782,7 +811,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.JoinTime |= uint64(b&0x7F) << shift
+					x.JoinTime |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -801,7 +830,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.JoinHeight |= int32(b&0x7F) << shift
+					x.JoinHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -820,7 +849,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.LastInferenceTime |= uint64(b&0x7F) << shift
+					x.LastInferenceTime |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -889,6 +918,25 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 				x.Models = append(x.Models, string(dAtA[iNdEx:postIndex]))
 				iNdEx = postIndex
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
+				}
+				x.Status = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Status |= ParticipantStatus(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -937,20 +985,70 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ParticipantStatus int32
+
+const (
+	ParticipantStatus_UNSPECIFIED ParticipantStatus = 0
+	ParticipantStatus_ACTIVE      ParticipantStatus = 1
+	ParticipantStatus_INACTIVE    ParticipantStatus = 2
+)
+
+// Enum value maps for ParticipantStatus.
+var (
+	ParticipantStatus_name = map[int32]string{
+		0: "UNSPECIFIED",
+		1: "ACTIVE",
+		2: "INACTIVE",
+	}
+	ParticipantStatus_value = map[string]int32{
+		"UNSPECIFIED": 0,
+		"ACTIVE":      1,
+		"INACTIVE":    2,
+	}
+)
+
+func (x ParticipantStatus) Enum() *ParticipantStatus {
+	p := new(ParticipantStatus)
+	*p = x
+	return p
+}
+
+func (x ParticipantStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ParticipantStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_inference_inference_participant_proto_enumTypes[0].Descriptor()
+}
+
+func (ParticipantStatus) Type() protoreflect.EnumType {
+	return &file_inference_inference_participant_proto_enumTypes[0]
+}
+
+func (x ParticipantStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ParticipantStatus.Descriptor instead.
+func (ParticipantStatus) EnumDescriptor() ([]byte, []int) {
+	return file_inference_inference_participant_proto_rawDescGZIP(), []int{0}
+}
+
 type Participant struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index             string   `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Address           string   `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Reputation        int32    `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
-	Weight            int32    `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
-	JoinTime          uint64   `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
-	JoinHeight        int32    `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
-	LastInferenceTime uint64   `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
-	InferenceUrl      string   `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
-	Models            []string `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
+	Index             string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Address           string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Reputation        int32             `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
+	Weight            int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
+	JoinTime          int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
+	JoinHeight        int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
+	LastInferenceTime int64             `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
+	InferenceUrl      string            `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models            []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
+	Status            ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
 }
 
 func (x *Participant) Reset() {
@@ -1001,21 +1099,21 @@ func (x *Participant) GetWeight() int32 {
 	return 0
 }
 
-func (x *Participant) GetJoinTime() uint64 {
+func (x *Participant) GetJoinTime() int64 {
 	if x != nil {
 		return x.JoinTime
 	}
 	return 0
 }
 
-func (x *Participant) GetJoinHeight() int32 {
+func (x *Participant) GetJoinHeight() int64 {
 	if x != nil {
 		return x.JoinHeight
 	}
 	return 0
 }
 
-func (x *Participant) GetLastInferenceTime() uint64 {
+func (x *Participant) GetLastInferenceTime() int64 {
 	if x != nil {
 		return x.LastInferenceTime
 	}
@@ -1036,13 +1134,20 @@ func (x *Participant) GetModels() []string {
 	return nil
 }
 
+func (x *Participant) GetStatus() ParticipantStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ParticipantStatus_UNSPECIFIED
+}
+
 var File_inference_inference_participant_proto protoreflect.FileDescriptor
 
 var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x0a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
 	0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x9b, 0x02, 0x0a,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xdb, 0x02, 0x0a,
 	0x0b, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x14, 0x0a, 0x05,
 	0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64,
 	0x65, 0x78, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
@@ -1051,16 +1156,24 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x16, 0x0a, 0x06,
 	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x05, 0x52, 0x06, 0x77, 0x65,
 	0x69, 0x67, 0x68, 0x74, 0x12, 0x1a, 0x0a, 0x08, 0x6a, 0x6f, 0x69, 0x6e, 0x54, 0x69, 0x6d, 0x65,
-	0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x08, 0x6a, 0x6f, 0x69, 0x6e, 0x54, 0x69, 0x6d, 0x65,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x08, 0x6a, 0x6f, 0x69, 0x6e, 0x54, 0x69, 0x6d, 0x65,
 	0x12, 0x1e, 0x0a, 0x0a, 0x6a, 0x6f, 0x69, 0x6e, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x06,
-	0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x6a, 0x6f, 0x69, 0x6e, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x6a, 0x6f, 0x69, 0x6e, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
 	0x12, 0x2c, 0x0a, 0x11, 0x6c, 0x61, 0x73, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x54, 0x69, 0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x6c, 0x61, 0x73,
+	0x65, 0x54, 0x69, 0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x11, 0x6c, 0x61, 0x73,
 	0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x54, 0x69, 0x6d, 0x65, 0x12, 0x22,
 	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x18, 0x08,
 	0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x55,
 	0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x09, 0x20, 0x03,
-	0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x42, 0xbe, 0x01, 0x0a, 0x17, 0x63,
+	0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x3e, 0x0a, 0x06, 0x73, 0x74,
+	0x61, 0x74, 0x75, 0x73, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74,
+	0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x2a, 0x3e, 0x0a, 0x11, 0x50, 0x61,
+	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
+	0x0f, 0x0a, 0x0b, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00,
+	0x12, 0x0a, 0x0a, 0x06, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08,
+	0x49, 0x4e, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x02, 0x42, 0xbe, 0x01, 0x0a, 0x17, 0x63,
 	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x10, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
 	0x61, 0x6e, 0x74, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
@@ -1088,16 +1201,19 @@ func file_inference_inference_participant_proto_rawDescGZIP() []byte {
 	return file_inference_inference_participant_proto_rawDescData
 }
 
+var file_inference_inference_participant_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_inference_inference_participant_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_inference_inference_participant_proto_goTypes = []interface{}{
-	(*Participant)(nil), // 0: inference.inference.Participant
+	(ParticipantStatus)(0), // 0: inference.inference.ParticipantStatus
+	(*Participant)(nil),    // 1: inference.inference.Participant
 }
 var file_inference_inference_participant_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0, // 0: inference.inference.Participant.status:type_name -> inference.inference.ParticipantStatus
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_participant_proto_init() }
@@ -1124,13 +1240,14 @@ func file_inference_inference_participant_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_participant_proto_rawDesc,
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_inference_inference_participant_proto_goTypes,
 		DependencyIndexes: file_inference_inference_participant_proto_depIdxs,
+		EnumInfos:         file_inference_inference_participant_proto_enumTypes,
 		MessageInfos:      file_inference_inference_participant_proto_msgTypes,
 	}.Build()
 	File_inference_inference_participant_proto = out.File

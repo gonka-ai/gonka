@@ -3,16 +3,21 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-message Participant {
-  string index = 1; 
-  string address = 2; 
-  int32 reputation = 3; 
-  int32 weight = 4; 
-  uint64 joinTime = 5; 
-  int32 joinHeight = 6; 
-  uint64 lastInferenceTime = 7;
-  string inferenceUrl = 8;
-  repeated string models = 9;
-  
+enum ParticipantStatus {
+  UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
 }
 
+message Participant {
+  string index = 1;
+  string address = 2;
+  int32 reputation = 3;
+  int32 weight = 4;
+  int64 joinTime = 5;
+  int64 joinHeight = 6;
+  int64 lastInferenceTime = 7;
+  string inferenceUrl = 8;
+  repeated string models = 9;
+  ParticipantStatus status = 10;
+}

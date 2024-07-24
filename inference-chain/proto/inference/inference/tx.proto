@@ -16,9 +16,10 @@ service Msg {
   
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
-  rpc UpdateParams    (MsgUpdateParams   ) returns (MsgUpdateParamsResponse   );
-  rpc StartInference  (MsgStartInference ) returns (MsgStartInferenceResponse );
-  rpc FinishInference (MsgFinishInference) returns (MsgFinishInferenceResponse);
+  rpc UpdateParams         (MsgUpdateParams        ) returns (MsgUpdateParamsResponse        );
+  rpc StartInference       (MsgStartInference      ) returns (MsgStartInferenceResponse      );
+  rpc FinishInference      (MsgFinishInference     ) returns (MsgFinishInferenceResponse     );
+  rpc SubmitNewParticipant (MsgSubmitNewParticipant) returns (MsgSubmitNewParticipantResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -64,5 +65,17 @@ message MsgFinishInference {
 
 message MsgFinishInferenceResponse {
   string inferenceIndex = 1;
+}
+
+message MsgSubmitNewParticipant {
+  option (cosmos.msg.v1.signer) = "creator";
+           string creator = 1;
+           string url     = 2;
+  repeated string models  = 3;
+}
+
+message MsgSubmitNewParticipantResponse {
+  string participantIndex = 1;
+  string status = 2;
 }
 
