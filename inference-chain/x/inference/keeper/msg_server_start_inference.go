@@ -14,7 +14,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	if found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
 	}
-	ctx.BlockTime()
+
+	_, pFound := k.GetParticipant(ctx, msg.Creator)
+	if !pFound {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator)
+	}
 
 	k.SetInference(ctx, types.Inference{
 		Index:               msg.InferenceId,

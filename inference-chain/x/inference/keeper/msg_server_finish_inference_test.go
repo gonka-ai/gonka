@@ -11,11 +11,18 @@ import (
 
 func TestMsgServer_FinishInference(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
-	_, err := ms.StartInference(ctx, &types.MsgStartInference{
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: "receivedBy",
+		Url:     "url",
+		Models:  []string{"model1", "model2"},
+	})
+	require.NoError(t, err)
+	_, err = ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
 		ReceivedBy:    "receivedBy",
+		Creator:       "receivedBy",
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")
