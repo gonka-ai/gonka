@@ -10,7 +10,9 @@ message Participant {
   int32 weight = 4; 
   uint64 joinTime = 5; 
   int32 joinHeight = 6; 
-  uint64 lastInferenceTime = 7; 
+  uint64 lastInferenceTime = 7;
+  string inferenceUrl = 8;
+  repeated string models = 9;
   
 }
 
