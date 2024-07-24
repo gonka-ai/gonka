@@ -46,6 +46,7 @@ message MsgStartInference {
   string promptHash    = 3;
   string promptPayload = 4;
   string receivedBy    = 5;
+  string model         = 6;
 }
 
 message MsgStartInferenceResponse {

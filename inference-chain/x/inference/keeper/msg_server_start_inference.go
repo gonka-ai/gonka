@@ -27,6 +27,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		PromptPayload:       msg.PromptPayload,
 		ReceivedBy:          msg.ReceivedBy,
 		Status:              "STARTED",
+		Model:               msg.Model,
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 	})
