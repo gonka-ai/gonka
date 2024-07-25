@@ -1,0 +1,11 @@
+version: "3.7"
+
+services:
+  api:
+    container_name: api
+    image: decentralized-api
+  node:
+    container_name: node
+    image: inferenced
+    volumes:
+      - /Users/dima/.inference:/root/.inference
