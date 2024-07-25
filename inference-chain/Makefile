@@ -20,7 +20,7 @@ BUILD_FLAGS := -ldflags '$(ldflags)'
 
 define DOCKER_BUILD
     @echo "--> deleting old ./build/inferenced"
-	@rm ./build/inferenced
+	@rm -f ./build/inferenced
 	@echo "--> building inferenced binary locally, outside of docker"
 	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
