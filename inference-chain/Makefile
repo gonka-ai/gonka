@@ -19,12 +19,12 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
 BUILD_FLAGS := -ldflags '$(ldflags)'
 
 define DOCKER_BUILD
-    @echo "--> deleting old ./build/minid"
-	@rm ./build/minid
-	@echo "--> building minid binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/minid ./cmd/minid/main.go
-	@echo "--> building minid docker image. platform: $(PLATFORM)"
-	@docker build --platform $(PLATFORM) . -t minid
+    @echo "--> deleting old ./build/inferenced"
+	@rm ./build/inferenced
+	@echo "--> building inferenced binary locally, outside of docker"
+	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
+	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
+	@docker build --platform $(PLATFORM) . -t inferenced
 endef
 
 all:
@@ -43,6 +43,14 @@ build:
 	@echo "--> building inferenced"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
+
+build-docker:
+	$(eval PLATFORM=linux/arm64)
+	$(DOCKER_BUILD)
+
+build-docker-amd:
+	$(eval PLATFORM=linux/amd64)
+	$(DOCKER_BUILD)
 
 init:
 	./scripts/init.sh
