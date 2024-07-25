@@ -3,7 +3,7 @@ FROM alpine:edge
 WORKDIR /root
 
 # Copy over binaries from the build-env
-COPY ./build/decentralized-api /usr/bin/decentralized-api
+COPY ./build/dapi /usr/bin/decentralized-api
 # TODO: VERIFY IF NEEDED
 COPY ./config.yaml /root/config.yaml
 

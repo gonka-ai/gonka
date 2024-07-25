@@ -19,10 +19,10 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 BUILD_FLAGS := -ldflags '$(ldflags)'
 
 define DOCKER_BUILD
-    @echo "--> deleting old ./build/decentralized-api"
-	@rm -f ./build/decentralized-api
-	@echo "--> building decentralized-api binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/decentralized-api ./main.go
+    @echo "--> deleting old ./build/dapi"
+	@rm -f ./build/dapi
+	@echo "--> building dapi binary locally, outside of docker"
+	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/dapi
 	@echo "--> building decentralized-api docker image. platform: $(PLATFORM)"
 	@docker build --platform $(PLATFORM) . -t decentralized-api
 endef
@@ -35,14 +35,14 @@ install:
 	@go mod verify
 	@echo "--> installing decentralized-api"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	@go install $(BUILD_FLAGS) -mod=readonly ./main.go
+	@go install $(BUILD_FLAGS) -mod=readonly
 
 build:
 	@echo "--> ensure dependencies have not been modified"
 	@go mod verify
 	@echo "--> building decentralized-api"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	@go build $(BUILD_FLAGS) -o ./build/decentralized-api ./main.go
+	@go build $(BUILD_FLAGS) -o ./build/dapi
 
 build-docker:
 	$(eval PLATFORM=linux/arm64)
