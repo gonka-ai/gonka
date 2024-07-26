@@ -8,6 +8,9 @@ services:
     volumes:
       # TODO: abstract it
       - /Users/dima/.inference:/root/.inference
+    ports:
+      - "26656:26656" #p2p
+      - "26657:26657" #rpc
   api:
     container_name: api
     image: decentralized-api
