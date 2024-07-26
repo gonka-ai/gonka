@@ -15,6 +15,8 @@ services:
       - node
     environment:
       - API_CONFIG_PATH=config-docker.yaml
+    ports:
+      - "8080:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       # TODO: abstract it
