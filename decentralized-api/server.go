@@ -33,11 +33,14 @@ var (
 
 type Config struct {
 	Nodes     []broker.InferenceNode `koanf:"nodes"`
-	ChainNode ChainNode              `koanf:"chain_node"`
+	ChainNode ChainNodeConfig        `koanf:"chain_node"`
 }
 
-type ChainNode struct {
-	Url string `koanf:"url"`
+type ChainNodeConfig struct {
+	Url            string `koanf:"url"`
+	AccountName    string `koanf:"account_name"`
+	KeyringBackend string `koanf:"keyring_backend"`
+	KeyringDir     string `koanf:"keyring_dir"`
 }
 
 func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, config Config) {
