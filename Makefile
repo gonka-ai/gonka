@@ -1,3 +1,7 @@
+all: build-docker
+
+build-docker: api-build-docker node-build-docker
+
 api-build-docker:
 	@make -C decentralized-api build-docker
 

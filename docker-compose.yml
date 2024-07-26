@@ -12,3 +12,5 @@ services:
     image: decentralized-api
     depends_on:
       - node
+    environment:
+      - API_CONFIG_PATH=config-docker.yaml

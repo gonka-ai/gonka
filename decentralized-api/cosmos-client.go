@@ -24,12 +24,13 @@ func NewInferenceCosmosClientWithRetry(
 	accountName string,
 	maxRetries int,
 	delay time.Duration,
+	config Config,
 ) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
 
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewInferenceCosmosClient(ctx, addressPrefix, accountName)
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, accountName, config.ChainNode.Url)
 		if err == nil {
 			return client, nil
 		}
@@ -40,8 +41,12 @@ func NewInferenceCosmosClientWithRetry(
 	return nil, errors.New("failed to connect to cosmos sdk node after multiple retries")
 }
 
-func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, accountName string) (*InferenceCosmosClient, error) {
-	client, err := cosmosclient.New(ctx, cosmosclient.WithAddressPrefix(addressPrefix))
+func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, accountName string, nodeAddr string) (*InferenceCosmosClient, error) {
+	client, err := cosmosclient.New(
+		ctx,
+		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithNodeAddress(nodeAddr),
+	)
 	if err != nil {
 		return nil, err
 	}

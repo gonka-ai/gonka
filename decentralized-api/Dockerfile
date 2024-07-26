@@ -6,6 +6,7 @@ WORKDIR /root
 COPY ./build/dapi /usr/bin/decentralized-api
 # TODO: VERIFY IF NEEDED
 COPY ./config.yaml /root/config.yaml
+COPY ./config-docker.yaml /root/config-docker.yaml
 
 EXPOSE 8080
 

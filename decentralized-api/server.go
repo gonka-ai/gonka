@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"inference/api/inference/inference"
 	"io"
@@ -33,19 +32,15 @@ var (
 )
 
 type Config struct {
-	Nodes []broker.InferenceNode `koanf:"nodes"`
+	Nodes     []broker.InferenceNode `koanf:"nodes"`
+	ChainNode ChainNode              `koanf:"chain_node"`
 }
 
-func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient) {
-	// Load the configuration
-	if err := k.Load(file.Provider("config.yaml"), parser); err != nil {
-		log.Fatalf("error loading config: %v", err)
-	}
-	var config Config
-	err := k.Unmarshal("", &config)
-	if err != nil {
-		log.Fatalf("error unmarshalling config: %v", err)
-	}
+type ChainNode struct {
+	Url string `koanf:"url"`
+}
+
+func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, config Config) {
 	// Initialize logger
 	nodeBroker := broker.NewBroker()
 
