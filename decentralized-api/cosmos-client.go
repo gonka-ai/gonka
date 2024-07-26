@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"inference/api/inference/inference"
+	"log"
+	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 )
@@ -13,6 +16,28 @@ type InferenceCosmosClient struct {
 	account *cosmosaccount.Account
 	address string
 	context context.Context
+}
+
+func NewInferenceCosmosClientWithRetry(
+	ctx context.Context,
+	addressPrefix string,
+	accountName string,
+	maxRetries int,
+	delay time.Duration,
+) (*InferenceCosmosClient, error) {
+	var client *InferenceCosmosClient
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, accountName)
+		if err == nil {
+			return client, nil
+		}
+		log.Printf("Failed to connect to cosmos sdk node, retrying in %s. err = %s", delay, err)
+		time.Sleep(delay)
+	}
+
+	return nil, errors.New("failed to connect to cosmos sdk node after multiple retries")
 }
 
 func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, accountName string) (*InferenceCosmosClient, error) {
