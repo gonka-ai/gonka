@@ -6,6 +6,7 @@ services:
     container_name: node
     image: inferenced
     volumes:
+      # TODO: abstract it
       - /Users/dima/.inference:/root/.inference
   api:
     container_name: api
