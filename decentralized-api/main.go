@@ -31,7 +31,7 @@ func readConfig() Config {
 
 func main() {
 	config := readConfig()
-	recorder, err := NewInferenceCosmosClientWithRetry(context.Background(), "cosmos", "alice", 5, 5*time.Second, config)
+	recorder, err := NewInferenceCosmosClientWithRetry(context.Background(), "cosmos", 5, 5*time.Second, config)
 	if err != nil {
 		panic(err)
 	}

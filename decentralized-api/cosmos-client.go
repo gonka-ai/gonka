@@ -21,7 +21,6 @@ type InferenceCosmosClient struct {
 func NewInferenceCosmosClientWithRetry(
 	ctx context.Context,
 	addressPrefix string,
-	accountName string,
 	maxRetries int,
 	delay time.Duration,
 	config Config,
