@@ -132,6 +132,11 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		return nil, nil, err
 	}
 
+	err = modifyRequest(request)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Forward the request to the inference server
 	resp, err := http.Post(serverUrl+"v1/chat/completions", request.Header.Get("Content-Type"), request.Body)
 	if err != nil {
@@ -175,6 +180,49 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		log.Println(string(transactionJson))
 	}
 	return resp, bodyBytes, nil
+}
+
+func modifyRequest(request *http.Request) error {
+	// Write me a function that converts the request JSON body to a map
+	// Then I want to check if the map contains keys "logprobs" and "top_logprobs"
+
+	// Read the request body into a buffer
+	var buf bytes.Buffer
+	tee := io.TeeReader(request.Body, &buf)
+	requestBytes, err := io.ReadAll(tee)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the JSON request
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
+		return err
+	}
+
+	// Check if the map contains keys "logprobs" and "top_logprobs"
+	if _, ok := requestMap["logprobs"]; ok {
+		log.Println("logprobs found")
+	} else {
+		requestMap["logprobs"] = 1
+	}
+
+	if _, ok := requestMap["top_logprobs"]; ok {
+		log.Println("top_logprobs found")
+	} else {
+		requestMap["top_logprobs"] = 3
+	}
+
+	// Marshal the map back into JSON bytes
+	modifiedRequestBytes, err := json.Marshal(requestMap)
+	if err != nil {
+		return err
+	}
+
+	// Create a new reader for the modified JSON bytes
+	request.Body = io.NopCloser(bytes.NewReader(modifiedRequestBytes))
+
+	return nil
 }
 
 func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClient, transaction InferenceTransaction) {
