@@ -1,6 +1,7 @@
 package main
 
 import (
+	"decentralized-api/completionapi"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,7 +12,7 @@ import (
 
 func TestServer(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		modifiedRequest, err := modifyRequest(r)
+		modifiedRequest, err := completionapi.ModifyRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
