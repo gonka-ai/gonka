@@ -133,7 +133,12 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		return nil, nil, err
 	}
 
-	modifiedRequestBody, err := completionapi.ModifyRequest(request)
+	requestBytes, err := ReadRequestBody(request)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,6 +190,17 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		log.Println(string(transactionJson))
 	}
 	return resp, bodyBytes, nil
+}
+
+func ReadRequestBody(r *http.Request) ([]byte, error) {
+	// Read the request body into a buffer
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r.Body); err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+
+	return buf.Bytes(), nil
 }
 
 func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClient, transaction InferenceTransaction) {

@@ -1,11 +1,8 @@
 package completionapi
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"log"
-	"net/http"
 )
 
 type ModifiedRequest struct {
@@ -14,18 +11,7 @@ type ModifiedRequest struct {
 	TopLogrpobsWereSet bool
 }
 
-func ModifyRequest(request *http.Request) (*ModifiedRequest, error) {
-	// Write me a function that converts the request JSON body to a map
-	// Then I want to check if the map contains keys "logprobs" and "top_logprobs"
-
-	// Read the request body into a buffer
-	var buf bytes.Buffer
-	tee := io.TeeReader(request.Body, &buf)
-	requestBytes, err := io.ReadAll(tee)
-	if err != nil {
-		return nil, err
-	}
-
+func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
 	// Unmarshal the JSON request
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
