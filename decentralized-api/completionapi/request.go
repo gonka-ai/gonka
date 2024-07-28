@@ -6,9 +6,9 @@ import (
 )
 
 type ModifiedRequest struct {
-	NewBody            []byte
-	LogprobsWereSet    bool
-	TopLogrpobsWereSet bool
+	NewBody                  []byte
+	OriginalLogprobsValue    *bool
+	OriginalTopLogprobsValue *int
 }
 
 func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
@@ -18,21 +18,28 @@ func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
 		return nil, err
 	}
 
+	var originalLogprobsValue *bool
 	// Check if the map contains keys "logprobs" and "top_logprobs"
 	if logprobsValue, ok := requestMap["logprobs"]; ok {
-		if _, ok := logprobsValue.(int); !ok {
+		if logprobsValueBool, ok := logprobsValue.(bool); !ok {
 
+		} else {
+			originalLogprobsValue = &logprobsValueBool
 		}
-		log.Println("logprobs found")
+		log.Printf("Original request logprobs = %v", logprobsValue)
 	} else {
+		originalLogprobsValue = nil
 		requestMap["logprobs"] = true
 	}
 
+	var originalTopLogprobsValue *int
 	if topLogprobsValue, ok := requestMap["top_logprobs"]; ok {
-		if _, ok := topLogprobsValue.(int); !ok {
+		if topLogprobsValueInt, ok := topLogprobsValue.(int); !ok {
 
+		} else {
+			originalTopLogprobsValue = &topLogprobsValueInt
 		}
-		log.Println("top_logprobs found")
+		log.Printf("Original request top_logprobs = %v", topLogprobsValue)
 	} else {
 		requestMap["top_logprobs"] = 3
 	}
@@ -44,8 +51,8 @@ func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
 	}
 
 	return &ModifiedRequest{
-		NewBody:            modifiedRequestBytes,
-		LogprobsWereSet:    false,
-		TopLogrpobsWereSet: false,
+		NewBody:                  modifiedRequestBytes,
+		OriginalLogprobsValue:    originalLogprobsValue,
+		OriginalTopLogprobsValue: originalTopLogprobsValue,
 	}, nil
 }
