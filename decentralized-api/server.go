@@ -132,13 +132,17 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		return nil, nil, err
 	}
 
-	err = modifyRequest(request)
+	modifiedRequestBody, err := modifyRequest(request)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Forward the request to the inference server
-	resp, err := http.Post(serverUrl+"v1/chat/completions", request.Header.Get("Content-Type"), request.Body)
+	resp, err := http.Post(
+		serverUrl+"v1/chat/completions",
+		request.Header.Get("Content-Type"),
+		bytes.NewReader(modifiedRequestBody.NewBody),
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -182,7 +186,13 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 	return resp, bodyBytes, nil
 }
 
-func modifyRequest(request *http.Request) error {
+type ModifiedRequest struct {
+	NewBody            []byte
+	LogprobsWereSet    bool
+	TopLogrpobsWereSet bool
+}
+
+func modifyRequest(request *http.Request) (*ModifiedRequest, error) {
 	// Write me a function that converts the request JSON body to a map
 	// Then I want to check if the map contains keys "logprobs" and "top_logprobs"
 
@@ -191,23 +201,29 @@ func modifyRequest(request *http.Request) error {
 	tee := io.TeeReader(request.Body, &buf)
 	requestBytes, err := io.ReadAll(tee)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Unmarshal the JSON request
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check if the map contains keys "logprobs" and "top_logprobs"
-	if _, ok := requestMap["logprobs"]; ok {
+	if logprobsValue, ok := requestMap["logprobs"]; ok {
+		if _, ok := logprobsValue.(int); !ok {
+
+		}
 		log.Println("logprobs found")
 	} else {
-		requestMap["logprobs"] = 1
+		requestMap["logprobs"] = true
 	}
 
-	if _, ok := requestMap["top_logprobs"]; ok {
+	if topLogprobsValue, ok := requestMap["top_logprobs"]; ok {
+		if _, ok := topLogprobsValue.(int); !ok {
+
+		}
 		log.Println("top_logprobs found")
 	} else {
 		requestMap["top_logprobs"] = 3
@@ -216,13 +232,14 @@ func modifyRequest(request *http.Request) error {
 	// Marshal the map back into JSON bytes
 	modifiedRequestBytes, err := json.Marshal(requestMap)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Create a new reader for the modified JSON bytes
-	request.Body = io.NopCloser(bytes.NewReader(modifiedRequestBytes))
-
-	return nil
+	return &ModifiedRequest{
+		NewBody:            modifiedRequestBytes,
+		LogprobsWereSet:    false,
+		TopLogrpobsWereSet: false,
+	}, nil
 }
 
 func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClient, transaction InferenceTransaction) {

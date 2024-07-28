@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -13,15 +11,12 @@ import (
 
 func TestServer(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		err := modifyRequest(r)
+		modifiedRequest, err := modifyRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
-			var buf bytes.Buffer
-			tee := io.TeeReader(r.Body, &buf)
-			requestBytes, _ := io.ReadAll(tee)
 			var requestMap map[string]interface{}
-			if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
+			if err := json.Unmarshal(modifiedRequest.NewBody, &requestMap); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			log.Printf("modifiedRequestBody = %v", requestMap)
