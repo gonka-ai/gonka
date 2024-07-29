@@ -9,13 +9,32 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func TestMsgServer_StartInference(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
+func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
+	_, ms, ctx := setupMsgServer(t)
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
 		ReceivedBy:    "receivedBy",
+		Creator:       "receivedBy",
+	})
+	require.Error(t, err)
+}
+
+func TestMsgServer_StartInference(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: "receivedBy",
+		Url:     "url",
+		Models:  []string{"model1", "model2"},
+	})
+	require.NoError(t, err)
+	_, err = ms.StartInference(ctx, &types.MsgStartInference{
+		InferenceId:   "inferenceId",
+		PromptHash:    "promptHash",
+		PromptPayload: "promptPayload",
+		ReceivedBy:    "receivedBy",
+		Creator:       "receivedBy",
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")

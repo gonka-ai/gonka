@@ -15,6 +15,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceNotFound, msg.InferenceId)
 	}
+	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
+	if !found {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
+	}
 
 	existingInference.Status = "FINISHED"
 	existingInference.ResponseHash = msg.ResponseHash
@@ -25,6 +29,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	k.SetInference(ctx, existingInference)
+
+	executor.LastInferenceTime = existingInference.EndBlockTimestamp
+	executor.PromptTokenCount[existingInference.Model] += existingInference.PromptTokenCount
+	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
+	k.SetParticipant(ctx, executor)
 
 	return &types.MsgFinishInferenceResponse{}, nil
 }

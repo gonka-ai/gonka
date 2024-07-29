@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName    = "/inference.inference.Msg/UpdateParams"
-	Msg_StartInference_FullMethodName  = "/inference.inference.Msg/StartInference"
-	Msg_FinishInference_FullMethodName = "/inference.inference.Msg/FinishInference"
+	Msg_UpdateParams_FullMethodName         = "/inference.inference.Msg/UpdateParams"
+	Msg_StartInference_FullMethodName       = "/inference.inference.Msg/StartInference"
+	Msg_FinishInference_FullMethodName      = "/inference.inference.Msg/FinishInference"
+	Msg_SubmitNewParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewParticipant"
 )
 
 // MsgClient is the client API for Msg service.
@@ -33,6 +34,7 @@ type MsgClient interface {
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
 	StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error)
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
+	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
 }
 
 type msgClient struct {
@@ -70,6 +72,15 @@ func (c *msgClient) FinishInference(ctx context.Context, in *MsgFinishInference,
 	return out, nil
 }
 
+func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error) {
+	out := new(MsgSubmitNewParticipantResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitNewParticipant_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -79,6 +90,7 @@ type MsgServer interface {
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
 	StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error)
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
+	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -94,6 +106,9 @@ func (UnimplementedMsgServer) StartInference(context.Context, *MsgStartInference
 }
 func (UnimplementedMsgServer) FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FinishInference not implemented")
+}
+func (UnimplementedMsgServer) SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewParticipant not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -162,6 +177,24 @@ func _Msg_FinishInference_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitNewParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitNewParticipant)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitNewParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitNewParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitNewParticipant(ctx, req.(*MsgSubmitNewParticipant))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -180,6 +213,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishInference",
 			Handler:    _Msg_FinishInference_Handler,
+		},
+		{
+			MethodName: "SubmitNewParticipant",
+			Handler:    _Msg_SubmitNewParticipant_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

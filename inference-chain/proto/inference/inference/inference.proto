@@ -19,5 +19,6 @@ message Inference {
   int64 endBlockHeight = 13;
   int64 startBlockTimestamp = 14;
   int64 endBlockTimestamp = 15;
+  string model = 16;
 }
 
