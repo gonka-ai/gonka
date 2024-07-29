@@ -35,5 +35,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	StartInferenceServerWrapper(*recorder, config)
+	go func() {
+		StartInferenceServerWrapper(*recorder, config)
+	}()
+	go func() {
+		StartValidationScheduledTask(*recorder)
+	}()
 }
