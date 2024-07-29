@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"decentralized-api/completionapi"
+	"encoding/json"
 	"google.golang.org/grpc"
 	"inference/x/inference/types"
 	"log"
@@ -29,5 +31,20 @@ func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, con
 }
 
 func validate(inference types.Inference) {
-	// TODO: validate here
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
+		log.Printf("Failed to unmarshal PromptPayload. inferenceId = %v. err = %v", inference.InferenceId, err)
+		return
+	}
+
+	var response *completionapi.Response
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), response); err != nil {
+		log.Printf("Failed to unmarshal ResponsePayload. inferenceId = %v. err = %v", inference.InferenceId, err)
+		return
+	}
+
+	//goland:noinspection GoDfaNilDereference
+	requestMap["enforced_str"] = response.Choices[0].Message.Content
+
+	// TODO: Send a request to node to validate the transaction
 }
