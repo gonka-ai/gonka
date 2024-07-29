@@ -11,7 +11,36 @@ import (
 	"testing"
 )
 
-func TestServer(t *testing.T) {
+const (
+	jsonBody = `{
+        "temperature": 0.8,
+        "model": "unsloth/llama-3-8b-Instruct",
+        "messages": [{
+            "role": "system",
+            "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state?"
+        }]
+    }`
+
+	jsonBodyNullLogprobs = `{
+        "temperature": 0.8,
+        "model": "unsloth/llama-3-8b-Instruct",
+        "messages": [{
+            "role": "system",
+            "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state?"
+        }],
+		"logprobs": null
+    }`
+)
+
+func startTestServer() *httptest.Server {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		requestBodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -31,22 +60,14 @@ func TestServer(t *testing.T) {
 		}
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(handler))
+	return httptest.NewServer(http.HandlerFunc(handler))
+}
+
+func TestServer(t *testing.T) {
+	server := startTestServer()
 	defer server.Close()
 
-	jsonBody := `{
-        "temperature": 0.8,
-        "model": "unsloth/llama-3-8b-Instruct",
-        "messages": [{
-            "role": "system",
-            "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state?"
-        }]
-    }`
-	_, err := http.Post(server.URL, "application/json", strings.NewReader(jsonBody))
+	_, err := http.Post(server.URL, "application/json", strings.NewReader(jsonBodyNullLogprobs))
 	if err != nil {
 		t.Fatalf("error making request: %v", err)
 	}
