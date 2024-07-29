@@ -19,8 +19,6 @@ func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, con
 			continue
 		}
 
-		transactionRecorder.client.Context()
-
 		queryClient := types.NewQueryClient(conn)
 		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: "1"})
 		if err != nil {
