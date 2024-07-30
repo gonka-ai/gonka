@@ -6,6 +6,9 @@ import (
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"inference/api/inference/inference"
 	"log"
+	"os/user"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
@@ -40,13 +43,32 @@ func NewInferenceCosmosClientWithRetry(
 	return nil, errors.New("failed to connect to cosmos sdk node after multiple retries")
 }
 
+func expandPath(path string) (string, error) {
+	if strings.HasPrefix(path, "~/") {
+		usr, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(usr.HomeDir, path[2:])
+	}
+	return filepath.Abs(path)
+}
+
 func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig ChainNodeConfig) (*InferenceCosmosClient, error) {
+	// Get absolute path to keyring directory
+	keyringDir, err := expandPath(nodeConfig.KeyringDir)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Initializing cosmos client."+
+		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
 	client, err := cosmosclient.New(
 		ctx,
 		cosmosclient.WithAddressPrefix(addressPrefix),
 		cosmosclient.WithNodeAddress(nodeConfig.Url),
 		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
-		cosmosclient.WithKeyringDir(nodeConfig.KeyringDir),
+		cosmosclient.WithKeyringDir(keyringDir),
 	)
 	if err != nil {
 		return nil, err
