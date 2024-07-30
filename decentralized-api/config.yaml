@@ -4,3 +4,8 @@ nodes:
     max_concurrent: 1
     models:
       - unsloth/llama-3-8b-Instruct
+chain_node:
+  url: http://localhost:26657/
+  account_name: "alice"
+  keyring-backend: "test"
+  keyring-dir: "~/.inference" # FIXME: not sure if ~ works here, I only tests docker config

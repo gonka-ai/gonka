@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"inference/api/inference/inference"
+	"log"
+	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 )
@@ -15,13 +18,41 @@ type InferenceCosmosClient struct {
 	context context.Context
 }
 
-func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, accountName string) (*InferenceCosmosClient, error) {
-	client, err := cosmosclient.New(ctx, cosmosclient.WithAddressPrefix(addressPrefix))
+func NewInferenceCosmosClientWithRetry(
+	ctx context.Context,
+	addressPrefix string,
+	maxRetries int,
+	delay time.Duration,
+	config Config,
+) (*InferenceCosmosClient, error) {
+	var client *InferenceCosmosClient
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
+		if err == nil {
+			return client, nil
+		}
+		log.Printf("Failed to connect to cosmos sdk node, retrying in %s. err = %s", delay, err)
+		time.Sleep(delay)
+	}
+
+	return nil, errors.New("failed to connect to cosmos sdk node after multiple retries")
+}
+
+func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig ChainNodeConfig) (*InferenceCosmosClient, error) {
+	client, err := cosmosclient.New(
+		ctx,
+		cosmosclient.WithAddressPrefix(addressPrefix),
+		cosmosclient.WithNodeAddress(nodeConfig.Url),
+		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
+		cosmosclient.WithKeyringDir(nodeConfig.KeyringDir),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	account, err := client.Account(accountName)
+	account, err := client.AccountRegistry.GetByName(nodeConfig.AccountName)
 	if err != nil {
 		return nil, err
 	}
