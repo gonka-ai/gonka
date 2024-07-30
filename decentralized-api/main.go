@@ -38,7 +38,7 @@ func main() {
 	go func() {
 		StartInferenceServerWrapper(*recorder, config)
 	}()
-	go func() {
-		StartValidationScheduledTask(*recorder, config)
-	}()
+	//go func() {
+	//	StartValidationScheduledTask(*recorder, config)
+	//}()
 }
