@@ -8,6 +8,7 @@ import "google/api/annotations.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
 import "inference/inference/params.proto";
 import "inference/inference/inference.proto";
+import "inference/inference/participant.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -27,6 +28,16 @@ service Query {
   }
   rpc InferenceAll (QueryAllInferenceRequest) returns (QueryAllInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference";
+  
+  }
+  
+  // Queries a list of Participant items.
+  rpc Participant    (QueryGetParticipantRequest) returns (QueryGetParticipantResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participant/{index}";
+  
+  }
+  rpc ParticipantAll (QueryAllParticipantRequest) returns (QueryAllParticipantResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participant";
   
   }
 }
@@ -55,5 +66,22 @@ message QueryAllInferenceRequest {
 message QueryAllInferenceResponse {
   repeated Inference                              inference  = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryGetParticipantRequest {
+  string index = 1;
+}
+
+message QueryGetParticipantResponse {
+  Participant participant = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllParticipantRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllParticipantResponse {
+  repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination  = 2;
 }
 

@@ -14,7 +14,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	if found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
 	}
-	ctx.BlockTime()
+
+	_, pFound := k.GetParticipant(ctx, msg.Creator)
+	if !pFound {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator)
+	}
 
 	k.SetInference(ctx, types.Inference{
 		Index:               msg.InferenceId,
@@ -23,6 +27,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		PromptPayload:       msg.PromptPayload,
 		ReceivedBy:          msg.ReceivedBy,
 		Status:              "STARTED",
+		Model:               msg.Model,
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 	})

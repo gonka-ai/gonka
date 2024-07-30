@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName       = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName    = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName = "/inference.inference.Query/InferenceAll"
+	Query_Params_FullMethodName         = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName      = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName   = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName    = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName = "/inference.inference.Query/ParticipantAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -33,6 +35,9 @@ type QueryClient interface {
 	// Queries a list of Inference items.
 	Inference(ctx context.Context, in *QueryGetInferenceRequest, opts ...grpc.CallOption) (*QueryGetInferenceResponse, error)
 	InferenceAll(ctx context.Context, in *QueryAllInferenceRequest, opts ...grpc.CallOption) (*QueryAllInferenceResponse, error)
+	// Queries a list of Participant items.
+	Participant(ctx context.Context, in *QueryGetParticipantRequest, opts ...grpc.CallOption) (*QueryGetParticipantResponse, error)
+	ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error)
 }
 
 type queryClient struct {
@@ -70,6 +75,24 @@ func (c *queryClient) InferenceAll(ctx context.Context, in *QueryAllInferenceReq
 	return out, nil
 }
 
+func (c *queryClient) Participant(ctx context.Context, in *QueryGetParticipantRequest, opts ...grpc.CallOption) (*QueryGetParticipantResponse, error) {
+	out := new(QueryGetParticipantResponse)
+	err := c.cc.Invoke(ctx, Query_Participant_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error) {
+	out := new(QueryAllParticipantResponse)
+	err := c.cc.Invoke(ctx, Query_ParticipantAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -79,6 +102,9 @@ type QueryServer interface {
 	// Queries a list of Inference items.
 	Inference(context.Context, *QueryGetInferenceRequest) (*QueryGetInferenceResponse, error)
 	InferenceAll(context.Context, *QueryAllInferenceRequest) (*QueryAllInferenceResponse, error)
+	// Queries a list of Participant items.
+	Participant(context.Context, *QueryGetParticipantRequest) (*QueryGetParticipantResponse, error)
+	ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -94,6 +120,12 @@ func (UnimplementedQueryServer) Inference(context.Context, *QueryGetInferenceReq
 }
 func (UnimplementedQueryServer) InferenceAll(context.Context, *QueryAllInferenceRequest) (*QueryAllInferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceAll not implemented")
+}
+func (UnimplementedQueryServer) Participant(context.Context, *QueryGetParticipantRequest) (*QueryGetParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Participant not implemented")
+}
+func (UnimplementedQueryServer) ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -162,6 +194,42 @@ func _Query_InferenceAll_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_Participant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).Participant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_Participant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).Participant(ctx, req.(*QueryGetParticipantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ParticipantAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ParticipantAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ParticipantAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ParticipantAll(ctx, req.(*QueryAllParticipantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -180,6 +248,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InferenceAll",
 			Handler:    _Query_InferenceAll_Handler,
+		},
+		{
+			MethodName: "Participant",
+			Handler:    _Query_Participant_Handler,
+		},
+		{
+			MethodName: "ParticipantAll",
+			Handler:    _Query_ParticipantAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

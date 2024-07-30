@@ -28,6 +28,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a inference",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
+				{
+					RpcMethod: "ParticipantAll",
+					Use:       "list-participant",
+					Short:     "List all participant",
+				},
+				{
+					RpcMethod:      "Participant",
+					Use:            "show-participant [id]",
+					Short:          "Shows a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -50,6 +61,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "finish-inference [inference-id] [response-hash] [response-payload] [prompt-token-count] [completion-token-count] [executed-by]",
 					Short:          "Send a finishInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "responseHash"}, {ProtoField: "responsePayload"}, {ProtoField: "promptTokenCount"}, {ProtoField: "completionTokenCount"}, {ProtoField: "executedBy"}},
+				},
+				{
+					RpcMethod:      "SubmitNewParticipant",
+					Use:            "submit-new-participant [url] [models]",
+					Short:          "Send a submitNewParticipant tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "url"}, {ProtoField: "models"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

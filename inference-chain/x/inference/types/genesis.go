@@ -11,7 +11,8 @@ const DefaultIndex uint64 = 1
 func DefaultGenesis() *GenesisState {
 	return &GenesisState{
 		InferenceList: []Inference{},
-		// this line is used by starport scaffolding # genesis/types/default
+		ParticipantList: []Participant{},
+// this line is used by starport scaffolding # genesis/types/default
 		Params: DefaultParams(),
 	}
 }
@@ -29,7 +30,17 @@ func (gs GenesisState) Validate() error {
 		}
 		inferenceIndexMap[index] = struct{}{}
 	}
-	// this line is used by starport scaffolding # genesis/types/validate
+	// Check for duplicated index in participant
+participantIndexMap := make(map[string]struct{})
+
+for _, elem := range gs.ParticipantList {
+	index := string(ParticipantKey(elem.Index))
+	if _, ok := participantIndexMap[index]; ok {
+		return fmt.Errorf("duplicated index for participant")
+	}
+	participantIndexMap[index] = struct{}{}
+}
+// this line is used by starport scaffolding # genesis/types/validate
 
 	return gs.Params.Validate()
 }
