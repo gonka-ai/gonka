@@ -6,10 +6,12 @@ import (
 	"decentralized-api/broker"
 	"encoding/json"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"inference/x/inference/types"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -35,14 +37,32 @@ func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, con
 }
 
 func ValidateByInferenceId(id string, node *broker.InferenceNode, config Config) error {
-	conn, err := grpc.NewClient(config.ChainNode.Url)
+	nodeUrl, err := url.Parse(config.ChainNode.Url)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Trying to open a connection to %s", nodeUrl.Host)
+	conn, err := grpc.NewClient(
+		nodeUrl.Host,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
 		log.Printf("Error creating grpc client: %v", err)
 		return err
 	}
 
-	queryClient := types.NewQueryClient(conn)
-	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
+	// Construct the request message
+	req := &types.QueryGetInferenceRequest{
+		Index: id,
+	}
+
+	// Prepare the response message
+	var r types.QueryGetInferenceResponse
+	err = conn.Invoke(context.Background(), "Inference", req, &r)
+
+	//queryClient := types.NewQueryClient(conn)
+	//r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
 		log.Printf("Failed get inference by id query. id = %s. err = %v", id, err)
 	}

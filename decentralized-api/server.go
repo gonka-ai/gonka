@@ -57,7 +57,7 @@ func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, conf
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
-	http.HandleFunc("/v1/chat/validation", wrapValidation(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder, config))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(":8080", nil))

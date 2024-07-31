@@ -5,7 +5,7 @@ nodes:
     models:
       - unsloth/llama-3-8b-Instruct
 chain_node:
-  url: tcp://node:26657/
+  url: http://node:26657
   account_name: "alice"
   keyring_backend: "test"
   keyring_dir: "/root/.inference"
