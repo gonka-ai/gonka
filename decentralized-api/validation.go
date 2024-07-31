@@ -53,16 +53,16 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, config Config)
 	}
 
 	// Construct the request message
-	req := &types.QueryGetInferenceRequest{
-		Index: id,
-	}
+	//req := &types.QueryGetInferenceRequest{
+	//	Index: id,
+	//}
 
 	// Prepare the response message
-	var r types.QueryGetInferenceResponse
-	err = conn.Invoke(context.Background(), "Inference", req, &r)
+	//var r types.QueryGetInferenceResponse
+	//err = conn.Invoke(context.Background(), "/inference.inference.Query/Inference", req, &r)
 
-	//queryClient := types.NewQueryClient(conn)
-	//r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
+	queryClient := types.NewQueryClient(conn)
+	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
 		log.Printf("Failed get inference by id query. id = %s. err = %v", id, err)
 	}
