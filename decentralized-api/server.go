@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
@@ -56,6 +57,7 @@ func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, conf
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/chat/validation", wrapValidation(nodeBroker, transactionRecorder, config))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -117,6 +119,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 }
 
 func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
+	// PRTODO: compute promptHash differently? Because request is being modified
 	promptHash, promptPayload, err := getPromptHash(request)
 	transactionUUID := uuid.New().String()
 	if err != nil {
@@ -254,4 +257,71 @@ func getPromptHash(request *http.Request) (string, string, error) {
 	// Create a new reader from the buffer for forwarding the request
 	request.Body = io.NopCloser(&buf)
 	return promptHash, canonicalJSON, nil
+}
+
+func lockNode[T any](
+	nodeBroker *broker.Broker,
+	model string,
+	action func(node *broker.InferenceNode) (T, error),
+) (T, error) {
+	var zero T
+	nodeChan := make(chan *broker.InferenceNode, 2)
+	err := nodeBroker.QueueMessage(broker.LockAvailableNode{
+		Model:    model,
+		Response: nodeChan,
+	})
+	if err != nil {
+		return zero, err
+	}
+	node := <-nodeChan
+	if node == nil {
+		return zero, errors.New("No nodes available")
+	}
+
+	defer func() {
+		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
+			NodeId: node.Id,
+			Outcome: broker.InferenceSuccess{
+				Response: nil,
+			},
+			Response: make(chan bool, 2),
+		})
+
+		if queueError != nil {
+			log.Printf("Error releasing node = %v", queueError)
+		}
+	}()
+
+	return action(node)
+}
+
+// Debug-only request
+type ValidationRequest struct {
+	Id string `json:"id"`
+}
+
+func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (interface{}, error) {
+			// Unmarshal the request to ValidationRequest
+			var validationRequest ValidationRequest
+			if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
+				return nil, err
+			}
+
+			err := ValidateByInferenceId(validationRequest.Id, config)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		// Copy the response back to the client
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(bodyBytes)
+	}
 }
