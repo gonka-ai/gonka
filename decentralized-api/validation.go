@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/broker"
-	"decentralized-api/completionapi"
 	"encoding/json"
 	"google.golang.org/grpc"
 	"inference/x/inference/types"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -57,8 +57,8 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		return err
 	}
 
-	var response *completionapi.Response
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), response); err != nil {
+	var response broker.Response
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &response); err != nil {
 		log.Printf("Failed to unmarshal ResponsePayload. inferenceId = %v. err = %v", inference.InferenceId, err)
 		return err
 	}
@@ -72,7 +72,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		return err
 	}
 
-	responseValidation, err := http.Post(
+	resp, err := http.Post(
 		inferenceNode.Url+"v1/chat/completions",
 		"application/json",
 		bytes.NewReader(requestBody),
@@ -81,7 +81,16 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		return err
 	}
 
-	log.Printf("responseValidation = %v", responseValidation)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("responseValidation = %v", string(bodyBytes))
+	var responseValidation broker.Response
+	if err := json.Unmarshal(bodyBytes, &responseValidation); err != nil {
+		return err
+	}
 
 	// TODO: Send a request to inferenceNode to validate the transaction
 	return nil

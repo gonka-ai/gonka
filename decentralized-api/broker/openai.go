@@ -12,15 +12,29 @@ type Response struct {
 }
 
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	Logprobs     *int    `json:"logprobs"` // Assuming logprobs is nullable
-	FinishReason string  `json:"finish_reason"`
+	Index    int     `json:"index"`
+	Message  Message `json:"message"`
+	Logprobs struct {
+		Content []Logprob `json:"content"`
+	} `json:"logprobs"`
+	FinishReason string `json:"finish_reason"`
+	StopReason   string `json:"stop_reason"`
 }
 
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type Logprob struct {
+	Token       string  `json:"token"`
+	Logprob     float64 `json:"logprob"`
+	Bytes       []int   `json:"bytes"`
+	TopLogprobs []struct {
+		Token   string  `json:"token"`
+		Logprob float64 `json:"logprob"`
+		Bytes   []int   `json:"bytes"`
+	} `json:"top_logprobs"`
 }
 
 type Usage struct {
