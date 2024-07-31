@@ -120,7 +120,17 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 
 func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
 	// PRTODO: compute promptHash differently? Because request is being modified
-	promptHash, promptPayload, err := getPromptHash(request)
+	requestBytes, err := ReadRequestBody(request)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	promptHash, promptPayload, err := getPromptHash(modifiedRequestBody.NewBody)
 	transactionUUID := uuid.New().String()
 	if err != nil {
 		return nil, nil, err
@@ -132,16 +142,6 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		PromptPayload: promptPayload,
 		ReceivedBy:    accountName,
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	requestBytes, err := ReadRequestBody(request)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -237,15 +237,7 @@ func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
 	return hash, &response, nil
 }
 
-func getPromptHash(request *http.Request) (string, string, error) {
-	// Read the request body into a buffer
-	var buf bytes.Buffer
-	tee := io.TeeReader(request.Body, &buf)
-	requestBytes, err := io.ReadAll(tee)
-	if err != nil {
-		return "", "", err
-	}
-
+func getPromptHash(requestBytes []byte) (string, string, error) {
 	// Canonicalize the request body
 	canonicalJSON, err := CanonicalizeJSON(requestBytes)
 	if err != nil {
@@ -254,8 +246,7 @@ func getPromptHash(request *http.Request) (string, string, error) {
 
 	// Generate the hash of the canonical JSON
 	promptHash := generateSHA256Hash(canonicalJSON)
-	// Create a new reader from the buffer for forwarding the request
-	request.Body = io.NopCloser(&buf)
+
 	return promptHash, canonicalJSON, nil
 }
 
@@ -309,19 +300,21 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 				return nil, err
 			}
 
-			err := ValidateByInferenceId(validationRequest.Id, config)
+			err := ValidateByInferenceId(validationRequest.Id, node, config)
 			if err != nil {
 				return nil, err
 			}
-		}
+			return nil, err
+		})
+		log.Printf("Validation result = %v, err = %v", result, err)
 
-		// Copy the response back to the client
-		for key, values := range resp.Header {
-			for _, value := range values {
-				w.Header().Add(key, value)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		w.Write(bodyBytes)
+		/*		// Copy the response back to the client
+				for key, values := range resp.Header {
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				w.WriteHeader(resp.StatusCode)
+				w.Write(bodyBytes)*/
 	}
 }

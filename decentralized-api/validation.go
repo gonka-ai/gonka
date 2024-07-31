@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
 	"google.golang.org/grpc"
 	"inference/x/inference/types"
 	"log"
+	"net/http"
 	"time"
 )
 
@@ -26,11 +29,12 @@ func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, con
 		if err != nil {
 			log.Printf("Failed to query a transaction for validation	: %v", err)
 		}
-		validate(r.Inference)
+		log.Printf("Inference to validate: %v", r.Inference)
+		//validate(r.Inference)
 	}
 }
 
-func ValidateByInferenceId(id string, config Config) error {
+func ValidateByInferenceId(id string, node *broker.InferenceNode, config Config) error {
 	conn, err := grpc.NewClient(config.ChainNode.Url)
 	if err != nil {
 		log.Printf("Error creating grpc client: %v", err)
@@ -43,10 +47,10 @@ func ValidateByInferenceId(id string, config Config) error {
 		log.Printf("Failed get inference by id query. id = %s. err = %v", id, err)
 	}
 
-	return validate(r.Inference)
+	return validate(r.Inference, node)
 }
 
-func validate(inference types.Inference) error {
+func validate(inference types.Inference, inferenceNode *broker.InferenceNode) error {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
 		log.Printf("Failed to unmarshal PromptPayload. inferenceId = %v. err = %v", inference.InferenceId, err)
@@ -62,6 +66,23 @@ func validate(inference types.Inference) error {
 	//goland:noinspection GoDfaNilDereference
 	requestMap["enforced_str"] = response.Choices[0].Message.Content
 
-	// TODO: Send a request to node to validate the transaction
+	// Serialize requestMap to JSON
+	requestBody, err := json.Marshal(requestMap)
+	if err != nil {
+		return err
+	}
+
+	responseValidation, err := http.Post(
+		inferenceNode.Url+"v1/chat/completions",
+		"application/json",
+		bytes.NewReader(requestBody),
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("responseValidation = %v", responseValidation)
+
+	// TODO: Send a request to inferenceNode to validate the transaction
 	return nil
 }
