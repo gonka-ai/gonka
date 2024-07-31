@@ -51,14 +51,14 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		return err
 	}
 
-	var response broker.Response
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &response); err != nil {
+	var originalResponse broker.Response
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
 		log.Printf("Failed to unmarshal ResponsePayload. inferenceId = %v. err = %v", inference.InferenceId, err)
 		return err
 	}
 
 	//goland:noinspection GoDfaNilDereference
-	requestMap["enforced_str"] = response.Choices[0].Message.Content
+	requestMap["enforced_str"] = originalResponse.Choices[0].Message.Content
 
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
@@ -86,6 +86,23 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		return err
 	}
 
-	// TODO: Send a request to inferenceNode to validate the transaction
+	originalLogits := extractLogits(originalResponse)
+	validationLogits := extractLogits(responseValidation)
+
+	compareLogits(originalLogits, validationLogits)
+
 	return nil
+}
+
+func extractLogits(response broker.Response) []broker.Logprob {
+	var logits []broker.Logprob
+	// Concatenate all logrpobs
+	for _, c := range response.Choices {
+		logits = append(logits, c.Logprobs.Content...)
+	}
+	return logits
+}
+
+func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Logprob) bool {
+	return true
 }
