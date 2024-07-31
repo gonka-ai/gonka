@@ -300,7 +300,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 				return nil, err
 			}
 
-			err := ValidateByInferenceId(validationRequest.Id, node, config)
+			err := ValidateByInferenceId(validationRequest.Id, node, recorder)
 			if err != nil {
 				return nil, err
 			}
