@@ -94,8 +94,12 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 
 	originalLogits := extractLogits(originalResponse)
 	validationLogits := extractLogits(responseValidation)
+	baseResult := BaseValidationResult{
+		InferenceId: inference.InferenceId,
+		Response:    responseValidation,
+	}
 
-	return compareLogits(originalLogits, validationLogits), nil
+	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
 func extractLogits(response broker.Response) []broker.Logprob {
@@ -108,10 +112,28 @@ func extractLogits(response broker.Response) []broker.Logprob {
 }
 
 type ValidationResult interface {
+	GetInferenceId() string
+
+	GetValidationResponse() broker.Response
+
 	IsSuccessful() bool
 }
 
+type BaseValidationResult struct {
+	InferenceId string
+	Response    broker.Response
+}
+
+func (r BaseValidationResult) GetInferenceId() string {
+	return r.InferenceId
+}
+
+func (r BaseValidationResult) GetValidationResponse() broker.Response {
+	return r.Response
+}
+
 type DifferentLengthValidationResult struct {
+	BaseValidationResult
 }
 
 func (DifferentLengthValidationResult) IsSuccessful() bool {
@@ -119,6 +141,7 @@ func (DifferentLengthValidationResult) IsSuccessful() bool {
 }
 
 type DifferentTokensValidationResult struct {
+	BaseValidationResult
 }
 
 func (DifferentTokensValidationResult) IsSuccessful() bool {
@@ -126,6 +149,7 @@ func (DifferentTokensValidationResult) IsSuccessful() bool {
 }
 
 type CosineSimilarityValidationResult struct {
+	BaseValidationResult
 	Value float64
 }
 
@@ -133,9 +157,13 @@ func (r CosineSimilarityValidationResult) IsSuccessful() bool {
 	return r.Value > 0.99
 }
 
-func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Logprob) ValidationResult {
+func compareLogits(
+	originalLogits []broker.Logprob,
+	validationLogits []broker.Logprob,
+	baseComparisonResult BaseValidationResult,
+) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {
-		return DifferentLengthValidationResult{}
+		return DifferentLengthValidationResult{baseComparisonResult}
 	}
 
 	var originalLogprobs, validationLogprobs []float64
@@ -143,7 +171,7 @@ func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Lo
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
-			return DifferentTokensValidationResult{}
+			return DifferentTokensValidationResult{baseComparisonResult}
 		}
 
 		originalLogprobs = append(originalLogprobs, o.Logprob)
@@ -152,7 +180,7 @@ func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Lo
 
 	cosSimValue := cosineSimilarity(originalLogprobs, validationLogprobs)
 
-	return &CosineSimilarityValidationResult{Value: cosSimValue}
+	return &CosineSimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: cosSimValue}
 }
 
 func cosineSimilarity(a, b []float64) float64 {

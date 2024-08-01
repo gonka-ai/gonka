@@ -5,10 +5,11 @@ package types
 
 import (
 	fmt "fmt"
-	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
 	math "math"
 	math_bits "math/bits"
+
+	proto "github.com/cosmos/gogoproto/proto"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -494,7 +495,7 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field InferenceId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field GetInferenceId", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {

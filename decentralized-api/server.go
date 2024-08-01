@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 )
 
 type InferenceTransaction struct {
@@ -119,7 +120,6 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 }
 
 func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
-	// PRTODO: compute promptHash differently? Because request is being modified
 	requestBytes, err := ReadRequestBody(request)
 	if err != nil {
 		return nil, nil, err
@@ -293,13 +293,13 @@ type ValidationRequest struct {
 
 func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
-			// Unmarshal the request to ValidationRequest
-			var validationRequest ValidationRequest
-			if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
-				return nil, err
-			}
+		var validationRequest ValidationRequest
+		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
+		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
 			return ValidateByInferenceId(validationRequest.Id, node, recorder)
 		})
 		log.Printf("Validation result = %v, err = %v", result, err)
@@ -310,22 +310,33 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 		}
 
 		// Match type of result from implementations of ValidationResult
+		var cosineSimVal float64
 		switch result.(type) {
 		case DifferentLengthValidationResult:
-			return
+			cosineSimVal = -1
 		case DifferentTokensValidationResult:
-			return
+			cosineSimVal = -1
 		case CosineSimilarityValidationResult:
+			cosineSimVal = result.(CosineSimilarityValidationResult).Value
+		default:
+			http.Error(w, "Unknown validation result type", http.StatusInternalServerError)
 			return
 		}
 
-		/*		// Copy the response back to the client
-				for key, values := range resp.Header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
-				}
-				w.WriteHeader(resp.StatusCode)
-				w.Write(bodyBytes)*/
+		msgVal := &inference.MsgValidation{
+			Id:              "UUID",
+			InferenceId:     validationRequest.Id,
+			ResponsePayload: "",
+			ResponseHash:    "",
+			Value:           strconv.FormatFloat(cosineSimVal, 'f', -1, 64), // PRTODO: change type here
+		}
+
+		if err = recorder.Validation(msgVal); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(msgVal.String()))
 	}
 }
