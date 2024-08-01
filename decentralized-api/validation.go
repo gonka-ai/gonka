@@ -81,22 +81,22 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("responseValidation = %v", string(bodyBytes))
+	log.Printf("responseValidation = %v", string(respBodyBytes))
 	var responseValidation broker.Response
-	if err = json.Unmarshal(bodyBytes, &responseValidation); err != nil {
+	if err = json.Unmarshal(respBodyBytes, &responseValidation); err != nil {
 		return nil, err
 	}
 
 	originalLogits := extractLogits(originalResponse)
 	validationLogits := extractLogits(responseValidation)
 	baseResult := BaseValidationResult{
-		InferenceId: inference.InferenceId,
-		Response:    responseValidation,
+		InferenceId:   inference.InferenceId,
+		ResponseBytes: respBodyBytes,
 	}
 
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
@@ -114,22 +114,22 @@ func extractLogits(response broker.Response) []broker.Logprob {
 type ValidationResult interface {
 	GetInferenceId() string
 
-	GetValidationResponse() broker.Response
+	GetValidationResponseBytes() []byte
 
 	IsSuccessful() bool
 }
 
 type BaseValidationResult struct {
-	InferenceId string
-	Response    broker.Response
+	InferenceId   string
+	ResponseBytes []byte
 }
 
 func (r BaseValidationResult) GetInferenceId() string {
 	return r.InferenceId
 }
 
-func (r BaseValidationResult) GetValidationResponse() broker.Response {
-	return r.Response
+func (r BaseValidationResult) GetValidationResponseBytes() []byte {
+	return r.ResponseBytes
 }
 
 type DifferentLengthValidationResult struct {

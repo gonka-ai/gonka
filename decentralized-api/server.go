@@ -323,11 +323,17 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			return
 		}
 
+		responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		msgVal := &inference.MsgValidation{
-			Id:              "UUID",
+			Id:              uuid.New().String(),
 			InferenceId:     validationRequest.Id,
-			ResponsePayload: "",
-			ResponseHash:    "",
+			ResponsePayload: string(result.GetValidationResponseBytes()),
+			ResponseHash:    responseHash,
 			Value:           strconv.FormatFloat(cosineSimVal, 'f', -1, 64), // PRTODO: change type here
 		}
 
