@@ -105,7 +105,7 @@ func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFini
 	return icc.sendTransaction(transaction)
 }
 
-func (icc *InferenceCosmosClient) Validation(transaction *inference.MsgValidation) error {
+func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.address
 	return icc.sendTransaction(transaction)
 }

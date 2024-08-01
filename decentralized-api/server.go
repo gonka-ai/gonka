@@ -339,7 +339,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			Value:           cosineSimVal,
 		}
 
-		if err = recorder.Validation(msgVal); err != nil {
+		if err = recorder.ReportValidation(msgVal); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
