@@ -88,7 +88,7 @@ message MsgValidation {
   string inferenceId     = 3;
   string responsePayload = 4;
   string responseHash    = 5;
-  string value           = 6;
+  double value           = 6;
 }
 
 message MsgValidationResponse {}

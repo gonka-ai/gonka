@@ -4,6 +4,7 @@ package inference
 import (
 	_ "cosmossdk.io/api/amino"
 	_ "cosmossdk.io/api/cosmos/msg/v1"
+	binary "encoding/binary"
 	fmt "fmt"
 	_ "github.com/cosmos/cosmos-proto"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
@@ -12,6 +13,7 @@ import (
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
+	math "math"
 	reflect "reflect"
 	sync "sync"
 )
@@ -4431,8 +4433,8 @@ func (x *fastReflection_MsgValidation) Range(f func(protoreflect.FieldDescriptor
 			return
 		}
 	}
-	if x.Value != "" {
-		value := protoreflect.ValueOfString(x.Value)
+	if x.Value != float64(0) || math.Signbit(x.Value) {
+		value := protoreflect.ValueOfFloat64(x.Value)
 		if !f(fd_MsgValidation_value, value) {
 			return
 		}
@@ -4463,7 +4465,7 @@ func (x *fastReflection_MsgValidation) Has(fd protoreflect.FieldDescriptor) bool
 	case "inference.inference.MsgValidation.responseHash":
 		return x.ResponseHash != ""
 	case "inference.inference.MsgValidation.value":
-		return x.Value != ""
+		return x.Value != float64(0) || math.Signbit(x.Value)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgValidation"))
@@ -4491,7 +4493,7 @@ func (x *fastReflection_MsgValidation) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.MsgValidation.responseHash":
 		x.ResponseHash = ""
 	case "inference.inference.MsgValidation.value":
-		x.Value = ""
+		x.Value = float64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgValidation"))
@@ -4525,7 +4527,7 @@ func (x *fastReflection_MsgValidation) Get(descriptor protoreflect.FieldDescript
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgValidation.value":
 		value := x.Value
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfFloat64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgValidation"))
@@ -4557,7 +4559,7 @@ func (x *fastReflection_MsgValidation) Set(fd protoreflect.FieldDescriptor, valu
 	case "inference.inference.MsgValidation.responseHash":
 		x.ResponseHash = value.Interface().(string)
 	case "inference.inference.MsgValidation.value":
-		x.Value = value.Interface().(string)
+		x.Value = value.Float()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgValidation"))
@@ -4614,7 +4616,7 @@ func (x *fastReflection_MsgValidation) NewField(fd protoreflect.FieldDescriptor)
 	case "inference.inference.MsgValidation.responseHash":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgValidation.value":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfFloat64(float64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgValidation"))
@@ -4704,9 +4706,8 @@ func (x *fastReflection_MsgValidation) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.Value)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.Value != 0 || math.Signbit(x.Value) {
+			n += 9
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -4737,12 +4738,11 @@ func (x *fastReflection_MsgValidation) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.Value) > 0 {
-			i -= len(x.Value)
-			copy(dAtA[i:], x.Value)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Value)))
+		if x.Value != 0 || math.Signbit(x.Value) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.Value))))
 			i--
-			dAtA[i] = 0x32
+			dAtA[i] = 0x31
 		}
 		if len(x.ResponseHash) > 0 {
 			i -= len(x.ResponseHash)
@@ -4989,37 +4989,16 @@ func (x *fastReflection_MsgValidation) ProtoMethods() *protoiface.Methods {
 				x.ResponseHash = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 6:
-				if wireType != 2 {
+				if wireType != 1 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
 				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
+				var v uint64
+				if (iNdEx + 8) > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.Value = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.Value = float64(math.Float64frombits(v))
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -5825,12 +5804,12 @@ type MsgValidation struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Creator         string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	Id              string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
-	InferenceId     string `protobuf:"bytes,3,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	ResponsePayload string `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	ResponseHash    string `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
-	Value           string `protobuf:"bytes,6,opt,name=value,proto3" json:"value,omitempty"`
+	Creator         string  `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Id              string  `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	InferenceId     string  `protobuf:"bytes,3,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	ResponsePayload string  `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
+	ResponseHash    string  `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
+	Value           float64 `protobuf:"fixed64,6,opt,name=value,proto3" json:"value,omitempty"`
 }
 
 func (x *MsgValidation) Reset() {
@@ -5888,11 +5867,11 @@ func (x *MsgValidation) GetResponseHash() string {
 	return ""
 }
 
-func (x *MsgValidation) GetValue() string {
+func (x *MsgValidation) GetValue() float64 {
 	if x != nil {
 		return x.Value
 	}
-	return ""
+	return 0
 }
 
 type MsgValidationResponse struct {
@@ -6015,7 +5994,7 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
 	0x65, 0x48, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x73,
 	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c,
-	0x75, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a,
+	0x75, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x01, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a,
 	0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a,
 	0x15, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65,
 	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0xa1, 0x04, 0x0a, 0x03, 0x4d, 0x73, 0x67, 0x12, 0x62,

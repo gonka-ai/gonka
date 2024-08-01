@@ -13,7 +13,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 )
 
 type InferenceTransaction struct {
@@ -337,7 +336,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			InferenceId:     validationRequest.Id,
 			ResponsePayload: string(result.GetValidationResponseBytes()),
 			ResponseHash:    responseHash,
-			Value:           strconv.FormatFloat(cosineSimVal, 'f', -1, 64), // PRTODO: change type here
+			Value:           cosineSimVal,
 		}
 
 		if err = recorder.Validation(msgVal); err != nil {
