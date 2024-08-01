@@ -8,7 +8,7 @@ import (
 
 var _ sdk.Msg = &MsgValidation{}
 
-func NewMsgValidation(creator string, id string, inferenceId string, responsePayload string, responseHash string, value string) *MsgValidation {
+func NewMsgValidation(creator string, id string, inferenceId string, responsePayload string, responseHash string, value float64) *MsgValidation {
 	return &MsgValidation{
 		Creator:         creator,
 		Id:              id,
