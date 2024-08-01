@@ -96,39 +96,18 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.address
 	transaction.ReceivedBy = icc.address
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
-	if err != nil {
-		return err
-	}
-	// TODO: maybe check response for success?
-	_ = response
-	println(response.Data)
-	return nil
+	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.address
 	transaction.ExecutedBy = icc.address
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
-	if err != nil {
-		return err
-	}
-	// TODO: maybe check response for success?
-	_ = response
-	println(response.Data)
-	return nil
+	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) Validation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.address
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
-	if err != nil {
-		return err
-	}
-	// TODO: maybe check response for success?
-	_ = response
-	println(response.Data)
-	return nil
+	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
