@@ -9,6 +9,7 @@ import (
 	"inference/x/inference/types"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"time"
 )
@@ -103,6 +104,60 @@ func extractLogits(response broker.Response) []broker.Logprob {
 	return logits
 }
 
-func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Logprob) bool {
-	return true
+type ValidationResult interface {
+	IsSuccessful() bool
+}
+
+type DifferentLengthValidationResult struct {
+}
+
+func (DifferentLengthValidationResult) IsSuccessful() bool {
+	return false
+}
+
+type DifferentTokensValidationResult struct {
+}
+
+func (DifferentTokensValidationResult) IsSuccessful() bool {
+	return false
+}
+
+type CosineSimilarityValidationResult struct {
+	Value float64
+}
+
+func (r CosineSimilarityValidationResult) IsSuccessful() bool {
+	return r.Value > 0.99
+}
+
+func compareLogits(originalLogits []broker.Logprob, validationLogits []broker.Logprob) ValidationResult {
+	if len(originalLogits) != len(validationLogits) {
+		return DifferentLengthValidationResult{}
+	}
+
+	var originalLogprobs, validationLogprobs []float64
+	for i := range originalLogits {
+		o := originalLogits[i]
+		v := validationLogits[i]
+		if o.Token != v.Token {
+			return DifferentTokensValidationResult{}
+		}
+
+		originalLogprobs = append(originalLogprobs, o.Logprob)
+		validationLogprobs = append(validationLogprobs, v.Logprob)
+	}
+
+	cosSimValue := cosineSimilarity(originalLogprobs, validationLogprobs)
+
+	return &CosineSimilarityValidationResult{Value: cosSimValue}
+}
+
+func cosineSimilarity(a, b []float64) float64 {
+	var dotProduct, magnitudeA, magnitudeB float64
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		magnitudeA += a[i] * a[i]
+		magnitudeB += b[i] * b[i]
+	}
+	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
 }
