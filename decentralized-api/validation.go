@@ -36,7 +36,7 @@ func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, con
 	}
 }
 
-func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder InferenceCosmosClient) error {
+func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder InferenceCosmosClient) (ValidationResult, error) {
 	queryClient := types.NewQueryClient(transactionRecorder.client.Context())
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
@@ -46,21 +46,21 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRec
 	return validate(r.Inference, node)
 }
 
-func validate(inference types.Inference, inferenceNode *broker.InferenceNode) error {
+func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {
 	if inference.Status != "FINISHED" {
-		return errors.New("Inference is not finished. id = " + inference.InferenceId)
+		return nil, errors.New("Inference is not finished. id = " + inference.InferenceId)
 	}
 
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
 		log.Printf("Failed to unmarshal inference.PromptPayload. id = %v. err = %v", inference.InferenceId, err)
-		return err
+		return nil, err
 	}
 
 	var originalResponse broker.Response
 	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
-		return err
+		return nil, err
 	}
 
 	//goland:noinspection GoDfaNilDereference
@@ -69,7 +69,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := http.Post(
@@ -78,26 +78,24 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) er
 		bytes.NewReader(requestBody),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Printf("responseValidation = %v", string(bodyBytes))
 	var responseValidation broker.Response
-	if err := json.Unmarshal(bodyBytes, &responseValidation); err != nil {
-		return err
+	if err = json.Unmarshal(bodyBytes, &responseValidation); err != nil {
+		return nil, err
 	}
 
 	originalLogits := extractLogits(originalResponse)
 	validationLogits := extractLogits(responseValidation)
 
-	compareLogits(originalLogits, validationLogits)
-
-	return nil
+	return compareLogits(originalLogits, validationLogits), nil
 }
 
 func extractLogits(response broker.Response) []broker.Logprob {

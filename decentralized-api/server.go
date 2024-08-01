@@ -293,20 +293,23 @@ type ValidationRequest struct {
 
 func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (interface{}, error) {
+		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
 			// Unmarshal the request to ValidationRequest
 			var validationRequest ValidationRequest
 			if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
 				return nil, err
 			}
 
-			err := ValidateByInferenceId(validationRequest.Id, node, recorder)
-			if err != nil {
-				return nil, err
-			}
-			return nil, err
+			return ValidateByInferenceId(validationRequest.Id, node, recorder)
 		})
 		log.Printf("Validation result = %v, err = %v", result, err)
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// TODO: launch a validation transaction
 
 		/*		// Copy the response back to the client
 				for key, values := range resp.Header {
