@@ -184,6 +184,7 @@ func compareLogits(
 }
 
 func cosineSimilarity(a, b []float64) float64 {
+	// TODO: handle division by zero case
 	var dotProduct, magnitudeA, magnitudeB float64
 	for i := range a {
 		dotProduct += a[i] * b[i]
