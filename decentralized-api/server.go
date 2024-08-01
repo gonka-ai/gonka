@@ -309,7 +309,15 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			return
 		}
 
-		// TODO: launch a validation transaction
+		// Match type of result from implementations of ValidationResult
+		switch result.(type) {
+		case DifferentLengthValidationResult:
+			return
+		case DifferentTokensValidationResult:
+			return
+		case CosineSimilarityValidationResult:
+			return
+		}
 
 		/*		// Copy the response back to the client
 				for key, values := range resp.Header {
