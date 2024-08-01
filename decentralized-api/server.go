@@ -302,9 +302,9 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
 			return ValidateByInferenceId(validationRequest.Id, node, recorder)
 		})
-		log.Printf("Validation result = %v, err = %v", result, err)
 
 		if err != nil {
+			log.Printf("Failed to validate inference. id = %s. err = %v", validationRequest.Id, err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -312,12 +312,15 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 		// Match type of result from implementations of ValidationResult
 		var cosineSimVal float64
 		switch result.(type) {
-		case DifferentLengthValidationResult:
+		case *DifferentLengthValidationResult:
+			log.Printf("Different length validation result")
 			cosineSimVal = -1
-		case DifferentTokensValidationResult:
+		case *DifferentTokensValidationResult:
+			log.Printf("Different tokens validation result")
 			cosineSimVal = -1
-		case CosineSimilarityValidationResult:
-			cosineSimVal = result.(CosineSimilarityValidationResult).Value
+		case *CosineSimilarityValidationResult:
+			log.Printf("Cosine similarity validation result")
+			cosineSimVal = result.(*CosineSimilarityValidationResult).Value
 		default:
 			http.Error(w, "Unknown validation result type", http.StatusInternalServerError)
 			return

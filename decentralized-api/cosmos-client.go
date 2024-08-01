@@ -121,7 +121,14 @@ func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFini
 
 func (icc *InferenceCosmosClient) Validation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.address
-	return icc.sendTransaction(transaction)
+	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
+	if err != nil {
+		return err
+	}
+	// TODO: maybe check response for success?
+	_ = response
+	println(response.Data)
+	return nil
 }
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
