@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/broker"
 	"encoding/json"
+	"errors"
 	"google.golang.org/grpc"
 	"inference/x/inference/types"
 	"io"
@@ -46,15 +47,19 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRec
 }
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) error {
+	if inference.Status != "FINISHED" {
+		return errors.New("Inference is not finished. id = " + inference.InferenceId)
+	}
+
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
-		log.Printf("Failed to unmarshal PromptPayload. inferenceId = %v. err = %v", inference.InferenceId, err)
+		log.Printf("Failed to unmarshal inference.PromptPayload. id = %v. err = %v", inference.InferenceId, err)
 		return err
 	}
 
 	var originalResponse broker.Response
 	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
-		log.Printf("Failed to unmarshal ResponsePayload. inferenceId = %v. err = %v", inference.InferenceId, err)
+		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
 		return err
 	}
 
