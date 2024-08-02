@@ -224,19 +224,22 @@ func (x *_Participant_12_map) IsValid() bool {
 }
 
 var (
-	md_Participant                      protoreflect.MessageDescriptor
-	fd_Participant_index                protoreflect.FieldDescriptor
-	fd_Participant_address              protoreflect.FieldDescriptor
-	fd_Participant_reputation           protoreflect.FieldDescriptor
-	fd_Participant_weight               protoreflect.FieldDescriptor
-	fd_Participant_joinTime             protoreflect.FieldDescriptor
-	fd_Participant_joinHeight           protoreflect.FieldDescriptor
-	fd_Participant_lastInferenceTime    protoreflect.FieldDescriptor
-	fd_Participant_inferenceUrl         protoreflect.FieldDescriptor
-	fd_Participant_models               protoreflect.FieldDescriptor
-	fd_Participant_status               protoreflect.FieldDescriptor
-	fd_Participant_promptTokenCount     protoreflect.FieldDescriptor
-	fd_Participant_completionTokenCount protoreflect.FieldDescriptor
+	md_Participant                       protoreflect.MessageDescriptor
+	fd_Participant_index                 protoreflect.FieldDescriptor
+	fd_Participant_address               protoreflect.FieldDescriptor
+	fd_Participant_reputation            protoreflect.FieldDescriptor
+	fd_Participant_weight                protoreflect.FieldDescriptor
+	fd_Participant_joinTime              protoreflect.FieldDescriptor
+	fd_Participant_joinHeight            protoreflect.FieldDescriptor
+	fd_Participant_lastInferenceTime     protoreflect.FieldDescriptor
+	fd_Participant_inferenceUrl          protoreflect.FieldDescriptor
+	fd_Participant_models                protoreflect.FieldDescriptor
+	fd_Participant_status                protoreflect.FieldDescriptor
+	fd_Participant_promptTokenCount      protoreflect.FieldDescriptor
+	fd_Participant_completionTokenCount  protoreflect.FieldDescriptor
+	fd_Participant_inferenceCount        protoreflect.FieldDescriptor
+	fd_Participant_validatedInferences   protoreflect.FieldDescriptor
+	fd_Participant_invalidatedInferences protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -254,6 +257,9 @@ func init() {
 	fd_Participant_status = md_Participant.Fields().ByName("status")
 	fd_Participant_promptTokenCount = md_Participant.Fields().ByName("promptTokenCount")
 	fd_Participant_completionTokenCount = md_Participant.Fields().ByName("completionTokenCount")
+	fd_Participant_inferenceCount = md_Participant.Fields().ByName("inferenceCount")
+	fd_Participant_validatedInferences = md_Participant.Fields().ByName("validatedInferences")
+	fd_Participant_invalidatedInferences = md_Participant.Fields().ByName("invalidatedInferences")
 }
 
 var _ protoreflect.Message = (*fastReflection_Participant)(nil)
@@ -393,6 +399,24 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
+	if x.InferenceCount != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.InferenceCount)
+		if !f(fd_Participant_inferenceCount, value) {
+			return
+		}
+	}
+	if x.ValidatedInferences != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.ValidatedInferences)
+		if !f(fd_Participant_validatedInferences, value) {
+			return
+		}
+	}
+	if x.InvalidatedInferences != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.InvalidatedInferences)
+		if !f(fd_Participant_invalidatedInferences, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -432,6 +456,12 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 		return len(x.PromptTokenCount) != 0
 	case "inference.inference.Participant.completionTokenCount":
 		return len(x.CompletionTokenCount) != 0
+	case "inference.inference.Participant.inferenceCount":
+		return x.InferenceCount != uint64(0)
+	case "inference.inference.Participant.validatedInferences":
+		return x.ValidatedInferences != uint64(0)
+	case "inference.inference.Participant.invalidatedInferences":
+		return x.InvalidatedInferences != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -472,6 +502,12 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 		x.PromptTokenCount = nil
 	case "inference.inference.Participant.completionTokenCount":
 		x.CompletionTokenCount = nil
+	case "inference.inference.Participant.inferenceCount":
+		x.InferenceCount = uint64(0)
+	case "inference.inference.Participant.validatedInferences":
+		x.ValidatedInferences = uint64(0)
+	case "inference.inference.Participant.invalidatedInferences":
+		x.InvalidatedInferences = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -533,6 +569,15 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 		}
 		mapValue := &_Participant_12_map{m: &x.CompletionTokenCount}
 		return protoreflect.ValueOfMap(mapValue)
+	case "inference.inference.Participant.inferenceCount":
+		value := x.InferenceCount
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Participant.validatedInferences":
+		value := x.ValidatedInferences
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Participant.invalidatedInferences":
+		value := x.InvalidatedInferences
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -583,6 +628,12 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 		mv := value.Map()
 		cmv := mv.(*_Participant_12_map)
 		x.CompletionTokenCount = *cmv.m
+	case "inference.inference.Participant.inferenceCount":
+		x.InferenceCount = value.Uint()
+	case "inference.inference.Participant.validatedInferences":
+		x.ValidatedInferences = value.Uint()
+	case "inference.inference.Participant.invalidatedInferences":
+		x.InvalidatedInferences = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -639,6 +690,12 @@ func (x *fastReflection_Participant) Mutable(fd protoreflect.FieldDescriptor) pr
 		panic(fmt.Errorf("field inferenceUrl of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.status":
 		panic(fmt.Errorf("field status of message inference.inference.Participant is not mutable"))
+	case "inference.inference.Participant.inferenceCount":
+		panic(fmt.Errorf("field inferenceCount of message inference.inference.Participant is not mutable"))
+	case "inference.inference.Participant.validatedInferences":
+		panic(fmt.Errorf("field validatedInferences of message inference.inference.Participant is not mutable"))
+	case "inference.inference.Participant.invalidatedInferences":
+		panic(fmt.Errorf("field invalidatedInferences of message inference.inference.Participant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -679,6 +736,12 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 	case "inference.inference.Participant.completionTokenCount":
 		m := make(map[string]uint64)
 		return protoreflect.ValueOfMap(&_Participant_12_map{m: &m})
+	case "inference.inference.Participant.inferenceCount":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Participant.validatedInferences":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Participant.invalidatedInferences":
+		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -826,6 +889,15 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 			}
 		}
+		if x.InferenceCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.InferenceCount))
+		}
+		if x.ValidatedInferences != 0 {
+			n += 1 + runtime.Sov(uint64(x.ValidatedInferences))
+		}
+		if x.InvalidatedInferences != 0 {
+			n += 1 + runtime.Sov(uint64(x.InvalidatedInferences))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -854,6 +926,21 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.InvalidatedInferences != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.InvalidatedInferences))
+			i--
+			dAtA[i] = 0x78
+		}
+		if x.ValidatedInferences != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidatedInferences))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.InferenceCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.InferenceCount))
+			i--
+			dAtA[i] = 0x68
 		}
 		if len(x.CompletionTokenCount) > 0 {
 			MaRsHaLmAp := func(k string, v uint64) (protoiface.MarshalOutput, error) {
@@ -1514,6 +1601,63 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 				x.CompletionTokenCount[mapkey] = mapvalue
 				iNdEx = postIndex
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceCount", wireType)
+				}
+				x.InferenceCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.InferenceCount |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatedInferences", wireType)
+				}
+				x.ValidatedInferences = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidatedInferences |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 15:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InvalidatedInferences", wireType)
+				}
+				x.InvalidatedInferences = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.InvalidatedInferences |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1568,6 +1712,8 @@ const (
 	ParticipantStatus_UNSPECIFIED ParticipantStatus = 0
 	ParticipantStatus_ACTIVE      ParticipantStatus = 1
 	ParticipantStatus_INACTIVE    ParticipantStatus = 2
+	ParticipantStatus_INVALID     ParticipantStatus = 3
+	ParticipantStatus_RAMPING     ParticipantStatus = 4
 )
 
 // Enum value maps for ParticipantStatus.
@@ -1576,11 +1722,15 @@ var (
 		0: "UNSPECIFIED",
 		1: "ACTIVE",
 		2: "INACTIVE",
+		3: "INVALID",
+		4: "RAMPING",
 	}
 	ParticipantStatus_value = map[string]int32{
 		"UNSPECIFIED": 0,
 		"ACTIVE":      1,
 		"INACTIVE":    2,
+		"INVALID":     3,
+		"RAMPING":     4,
 	}
 )
 
@@ -1616,18 +1766,21 @@ type Participant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index                string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Address              string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Reputation           int32             `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
-	Weight               int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
-	JoinTime             int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
-	JoinHeight           int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
-	LastInferenceTime    int64             `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
-	InferenceUrl         string            `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
-	Models               []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
-	Status               ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
-	PromptTokenCount     map[string]uint64 `protobuf:"bytes,11,rep,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
-	CompletionTokenCount map[string]uint64 `protobuf:"bytes,12,rep,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
+	Index                 string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Address               string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Reputation            int32             `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
+	Weight                int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
+	JoinTime              int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
+	JoinHeight            int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
+	LastInferenceTime     int64             `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
+	InferenceUrl          string            `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models                []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
+	Status                ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
+	PromptTokenCount      map[string]uint64 `protobuf:"bytes,11,rep,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
+	CompletionTokenCount  map[string]uint64 `protobuf:"bytes,12,rep,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
+	InferenceCount        uint64            `protobuf:"varint,13,opt,name=inferenceCount,proto3" json:"inferenceCount,omitempty"`
+	ValidatedInferences   uint64            `protobuf:"varint,14,opt,name=validatedInferences,proto3" json:"validatedInferences,omitempty"`
+	InvalidatedInferences uint64            `protobuf:"varint,15,opt,name=invalidatedInferences,proto3" json:"invalidatedInferences,omitempty"`
 }
 
 func (x *Participant) Reset() {
@@ -1734,13 +1887,34 @@ func (x *Participant) GetCompletionTokenCount() map[string]uint64 {
 	return nil
 }
 
+func (x *Participant) GetInferenceCount() uint64 {
+	if x != nil {
+		return x.InferenceCount
+	}
+	return 0
+}
+
+func (x *Participant) GetValidatedInferences() uint64 {
+	if x != nil {
+		return x.ValidatedInferences
+	}
+	return 0
+}
+
+func (x *Participant) GetInvalidatedInferences() uint64 {
+	if x != nil {
+		return x.InvalidatedInferences
+	}
+	return 0
+}
+
 var File_inference_inference_participant_proto protoreflect.FileDescriptor
 
 var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x0a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
 	0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xbd, 0x05, 0x0a,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xcd, 0x06, 0x0a,
 	0x0b, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x14, 0x0a, 0x05,
 	0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64,
 	0x65, 0x78, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
@@ -1775,7 +1949,16 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x2e, 0x43,
 	0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f,
 	0x75, 0x6e, 0x74, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65,
-	0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x1a, 0x43,
+	0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x26,
+	0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x43, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x0d, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x30, 0x0a, 0x13, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0e, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x13, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x34, 0x0a, 0x15, 0x69, 0x6e, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x73, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x1a, 0x43,
 	0x0a, 0x15, 0x50, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75,
 	0x6e, 0x74, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01,
 	0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x6b, 0x65, 0x79, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c,
@@ -1784,24 +1967,25 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x45, 0x6e, 0x74, 0x72, 0x79,
 	0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x6b,
 	0x65, 0x79, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a, 0x02, 0x38, 0x01, 0x2a, 0x3e, 0x0a, 0x11,
+	0x04, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a, 0x02, 0x38, 0x01, 0x2a, 0x58, 0x0a, 0x11,
 	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75,
 	0x73, 0x12, 0x0f, 0x0a, 0x0b, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44,
 	0x10, 0x00, 0x12, 0x0a, 0x0a, 0x06, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x01, 0x12, 0x0c,
-	0x0a, 0x08, 0x49, 0x4e, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x02, 0x42, 0xbe, 0x01, 0x0a,
-	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x10, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
-	0x69, 0x70, 0x61, 0x6e, 0x74, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02,
-	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65,
-	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x0a, 0x08, 0x49, 0x4e, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x02, 0x12, 0x0b, 0x0a, 0x07,
+	0x49, 0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x10, 0x03, 0x12, 0x0b, 0x0a, 0x07, 0x52, 0x41, 0x4d,
+	0x50, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x42, 0xbe, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x42, 0x10, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
+	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
+	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
+	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
+	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

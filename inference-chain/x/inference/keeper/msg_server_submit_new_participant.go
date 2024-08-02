@@ -20,7 +20,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		LastInferenceTime:    0,
 		InferenceUrl:         msg.Url,
 		Models:               msg.Models,
-		Status:               types.ParticipantStatus_ACTIVE,
+		Status:               types.ParticipantStatus_RAMPING,
 		PromptTokenCount:     make(map[string]uint64),
 		CompletionTokenCount: make(map[string]uint64),
 	}

@@ -81,7 +81,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
-		Status:            types.ParticipantStatus_ACTIVE,
+		Status:            types.ParticipantStatus_RAMPING,
 		PromptTokenCount: map[string]uint64{
 			"model1": 10,
 			"model2": 0,
