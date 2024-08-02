@@ -5,7 +5,7 @@ nodes:
     models:
       - unsloth/llama-3-8b-Instruct
 chain_node:
-  url: http://localhost:26657/
+  url: http://localhost:26657
   account_name: "alice"
   keyring_backend: "test"
   keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root

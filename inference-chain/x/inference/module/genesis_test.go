@@ -23,14 +23,14 @@ func TestGenesis(t *testing.T) {
 			},
 		},
 		ParticipantList: []types.Participant{
-		{
-			Index: "0",
-},
-		{
-			Index: "1",
-},
-	},
-	// this line is used by starport scaffolding # genesis/test/state
+			{
+				Index: "0",
+			},
+			{
+				Index: "1",
+			},
+		},
+		// this line is used by starport scaffolding # genesis/test/state
 	}
 
 	k, ctx := keepertest.InferenceKeeper(t)
@@ -43,5 +43,5 @@ func TestGenesis(t *testing.T) {
 
 	require.ElementsMatch(t, genesisState.InferenceList, got.InferenceList)
 	require.ElementsMatch(t, genesisState.ParticipantList, got.ParticipantList)
-// this line is used by starport scaffolding # genesis/test/assert
+	// this line is used by starport scaffolding # genesis/test/assert
 }

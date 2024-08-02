@@ -20,6 +20,7 @@ service Msg {
   rpc StartInference       (MsgStartInference      ) returns (MsgStartInferenceResponse      );
   rpc FinishInference      (MsgFinishInference     ) returns (MsgFinishInferenceResponse     );
   rpc SubmitNewParticipant (MsgSubmitNewParticipant) returns (MsgSubmitNewParticipantResponse);
+  rpc Validation           (MsgValidation          ) returns (MsgValidationResponse          );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -77,6 +78,18 @@ message MsgSubmitNewParticipant {
 
 message MsgSubmitNewParticipantResponse {
   string participantIndex = 1;
-  string status = 2;
+  string status           = 2;
 }
+
+message MsgValidation {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator         = 1;
+  string id              = 2;
+  string inferenceId     = 3;
+  string responsePayload = 4;
+  string responseHash    = 5;
+  double value           = 6;
+}
+
+message MsgValidationResponse {}
 

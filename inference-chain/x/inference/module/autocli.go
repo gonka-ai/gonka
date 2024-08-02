@@ -68,6 +68,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submitNewParticipant tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "url"}, {ProtoField: "models"}},
 				},
+				{
+					RpcMethod:      "Validation",
+					Use:            "validation [id] [inference-id] [response-payload] [response-hash] [value]",
+					Short:          "Send a validation tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inferenceId"}, {ProtoField: "responsePayload"}, {ProtoField: "responseHash"}, {ProtoField: "value"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

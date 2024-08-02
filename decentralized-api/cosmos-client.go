@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"inference/api/inference/inference"
 	"log"
@@ -95,20 +96,22 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.address
 	transaction.ReceivedBy = icc.address
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
-	if err != nil {
-		return err
-	}
-	// TODO: maybe check response for success?
-	_ = response
-	println(response.Data)
-	return nil
+	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.address
 	transaction.ExecutedBy = icc.address
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, transaction)
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
+	transaction.Creator = icc.address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
+	response, err := icc.client.BroadcastTx(icc.context, *icc.account, msg)
 	if err != nil {
 		return err
 	}

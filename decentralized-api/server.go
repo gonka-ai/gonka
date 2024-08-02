@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
@@ -56,6 +57,7 @@ func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, conf
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder, config))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -117,7 +119,17 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 }
 
 func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
-	promptHash, promptPayload, err := getPromptHash(request)
+	requestBytes, err := ReadRequestBody(request)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	promptHash, promptPayload, err := getPromptHash(modifiedRequestBody.NewBody)
 	transactionUUID := uuid.New().String()
 	if err != nil {
 		return nil, nil, err
@@ -129,16 +141,6 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		PromptPayload: promptPayload,
 		ReceivedBy:    accountName,
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	requestBytes, err := ReadRequestBody(request)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -234,15 +236,7 @@ func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
 	return hash, &response, nil
 }
 
-func getPromptHash(request *http.Request) (string, string, error) {
-	// Read the request body into a buffer
-	var buf bytes.Buffer
-	tee := io.TeeReader(request.Body, &buf)
-	requestBytes, err := io.ReadAll(tee)
-	if err != nil {
-		return "", "", err
-	}
-
+func getPromptHash(requestBytes []byte) (string, string, error) {
 	// Canonicalize the request body
 	canonicalJSON, err := CanonicalizeJSON(requestBytes)
 	if err != nil {
@@ -251,7 +245,106 @@ func getPromptHash(request *http.Request) (string, string, error) {
 
 	// Generate the hash of the canonical JSON
 	promptHash := generateSHA256Hash(canonicalJSON)
-	// Create a new reader from the buffer for forwarding the request
-	request.Body = io.NopCloser(&buf)
+
 	return promptHash, canonicalJSON, nil
+}
+
+func lockNode[T any](
+	nodeBroker *broker.Broker,
+	model string,
+	action func(node *broker.InferenceNode) (T, error),
+) (T, error) {
+	var zero T
+	nodeChan := make(chan *broker.InferenceNode, 2)
+	err := nodeBroker.QueueMessage(broker.LockAvailableNode{
+		Model:    model,
+		Response: nodeChan,
+	})
+	if err != nil {
+		return zero, err
+	}
+	node := <-nodeChan
+	if node == nil {
+		return zero, errors.New("No nodes available")
+	}
+
+	defer func() {
+		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
+			NodeId: node.Id,
+			Outcome: broker.InferenceSuccess{
+				Response: nil,
+			},
+			Response: make(chan bool, 2),
+		})
+
+		if queueError != nil {
+			log.Printf("Error releasing node = %v", queueError)
+		}
+	}()
+
+	return action(node)
+}
+
+// Debug-only request
+type ValidationRequest struct {
+	Id string `json:"id"`
+}
+
+func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		var validationRequest ValidationRequest
+		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+			return ValidateByInferenceId(validationRequest.Id, node, recorder)
+		})
+
+		if err != nil {
+			log.Printf("Failed to validate inference. id = %s. err = %v", validationRequest.Id, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Match type of result from implementations of ValidationResult
+		var cosineSimVal float64
+		switch result.(type) {
+		case *DifferentLengthValidationResult:
+			log.Printf("Different length validation result")
+			cosineSimVal = -1
+		case *DifferentTokensValidationResult:
+			log.Printf("Different tokens validation result")
+			cosineSimVal = -1
+		case *CosineSimilarityValidationResult:
+			log.Printf("Cosine similarity validation result")
+			cosineSimVal = result.(*CosineSimilarityValidationResult).Value
+		default:
+			http.Error(w, "Unknown validation result type", http.StatusInternalServerError)
+			return
+		}
+
+		responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		msgVal := &inference.MsgValidation{
+			Id:              uuid.New().String(),
+			InferenceId:     validationRequest.Id,
+			ResponsePayload: string(result.GetValidationResponseBytes()),
+			ResponseHash:    responseHash,
+			Value:           cosineSimVal,
+		}
+
+		if err = recorder.ReportValidation(msgVal); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(msgVal.String()))
+	}
 }

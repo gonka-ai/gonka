@@ -14,10 +14,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetInference(ctx, elem)
 	}
 	// Set all the participant
-for _, elem := range genState.ParticipantList {
-	k.SetParticipant(ctx, elem)
-}
-// this line is used by starport scaffolding # genesis/module/init
+	for _, elem := range genState.ParticipantList {
+		k.SetParticipant(ctx, elem)
+	}
+	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
 	}
@@ -30,7 +30,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 
 	genesis.InferenceList = k.GetAllInference(ctx)
 	genesis.ParticipantList = k.GetAllParticipant(ctx)
-// this line is used by starport scaffolding # genesis/module/export
+	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis
 }
