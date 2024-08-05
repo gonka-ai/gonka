@@ -25,8 +25,9 @@ func TestZScoreCalculator(t *testing.T) {
 }
 
 func TestMeasurementsNeeded(t *testing.T) {
-	require.Equal(t, uint64(53), keeper.MeasurementsNeeded(0.05))
-	require.Equal(t, uint64(27), keeper.MeasurementsNeeded(0.10))
-	require.Equal(t, uint64(262), keeper.MeasurementsNeeded(0.01))
-
+	require.Equal(t, uint64(53), keeper.MeasurementsNeeded(0.05, 100))
+	require.Equal(t, uint64(27), keeper.MeasurementsNeeded(0.10, 100))
+	require.Equal(t, uint64(262), keeper.MeasurementsNeeded(0.01, 300))
+	require.Equal(t, uint64(100), keeper.MeasurementsNeeded(0.01, 100))
+	require.Equal(t, uint64(100), keeper.MeasurementsNeeded(0.00000001, 1000000000))
 }

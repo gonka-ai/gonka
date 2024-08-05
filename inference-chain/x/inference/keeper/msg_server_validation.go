@@ -38,7 +38,7 @@ func calculateStatus(falsePositiveRate float64, participant types.Participant) (
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
-	measurementsNeeded := MeasurementsNeeded(falsePositiveRate)
+	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, 100)
 	if participant.InferenceCount < measurementsNeeded {
 		return types.ParticipantStatus_RAMPING
 	}
@@ -67,7 +67,7 @@ func CalculateZScoreFromFPR(expectedFailureRate float64, valid uint64, invalid u
 
 // MeasurementsNeeded calculates the number of measurements required
 // for a single failure to be within one standard deviation of the expected distribution
-func MeasurementsNeeded(p float64) uint64 {
+func MeasurementsNeeded(p float64, max uint64) uint64 {
 	if p <= 0 || p >= 1 {
 		panic("Probability p must be between 0 and 1, exclusive")
 	}
@@ -81,5 +81,9 @@ func MeasurementsNeeded(p float64) uint64 {
 	n := requiredValue / p
 
 	// Round up to the nearest whole number since we need an integer count of measurements
-	return uint64(math.Ceil(n))
+	needed := uint64(math.Ceil(n))
+	if needed > max {
+		return max
+	}
+	return needed
 }
