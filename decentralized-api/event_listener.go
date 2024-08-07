@@ -77,7 +77,7 @@ func StartEventListener(transactionRecorder InferenceCosmosClient, config Config
 		}
 
 		go func() {
-			SampleInferenceToValidate(txEvent.Result.Events["inference_finished.inference_id"])
+			SampleInferenceToValidate(txEvent.Result.Events["inference_finished.inference_id"], transactionRecorder)
 		}()
 	}
 }

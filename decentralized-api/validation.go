@@ -14,9 +14,33 @@ import (
 	"time"
 )
 
-func SampleInferenceToValidate(ids []string) {
+func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient) {
 	log.Printf("Sampling inference transactions to validate")
-	// TODO: implement the actual sampling
+
+	// Get number of participants
+	// FIXME: implement a separate query to get a separate number of participants
+	queryClient := transactionRecorder.NewInferenceQueryClient()
+	r, err := queryClient.ParticipantAll(transactionRecorder.context, &types.QueryAllParticipantRequest{})
+	if err != nil {
+		// FIXME: what should we do with validating the transaction?
+		log.Printf("Failed to query number participants")
+		return
+	}
+
+	numParticipant := len(r.Participant)
+	log.Printf("Number of participants: %v", numParticipant)
+
+	// Get all inferences by ids
+	r2, err := queryClient.InferenceAll(transactionRecorder.context, &types.QueryAllInferenceRequest{})
+	if err != nil {
+		// FIXME: what should we do with validating the transaction?
+		log.Printf("Failed to query inferences")
+		return
+	}
+	log.Printf("Inferences: %v", r2.Inference)
+
+	// TODO: should we move the overall logic to node? Single validation query
+	// E.g. give inference ids > receive inferences, participants, and total number of participants
 }
 
 func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
