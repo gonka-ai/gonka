@@ -151,11 +151,7 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
-func (am AppModule) EndBlock(ctx context.Context) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	isCheckTx := sdkCtx.IsCheckTx()
-	isReCheckTx := sdkCtx.IsReCheckTx()
-	println("isCheckTx: ", isCheckTx, " isReCheckTx: ", isReCheckTx)
+func (am AppModule) EndBlock(_ context.Context) error {
 	return nil
 }
 
