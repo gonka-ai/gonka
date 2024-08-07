@@ -110,6 +110,11 @@ func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgVal
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
+	transaction.Creator = icc.address
+	return icc.sendTransaction(transaction)
+}
+
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	response, err := icc.client.BroadcastTx(icc.context, *icc.account, msg)
 	if err != nil {

@@ -57,7 +57,8 @@ func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, conf
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
-	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
+	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -290,7 +291,7 @@ type ValidationRequest struct {
 	Id string `json:"id"`
 }
 
-func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		var validationRequest ValidationRequest
 		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
@@ -346,5 +347,40 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(msgVal.String()))
+	}
+}
+
+func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == "POST" {
+			submitNewParticipant(recorder, w, request)
+		} else {
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+}
+
+type SubmitNewParticipantDto struct {
+	Url    string   `json:"url"`
+	Models []string `json:"models"`
+}
+
+func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	// Parse the request body into a SubmitNewParticipantDto
+	var body SubmitNewParticipantDto
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	msg := &inference.MsgSubmitNewParticipant{
+		Url:    body.Url,
+		Models: body.Models,
+	}
+
+	if err := recorder.SubmitNewParticipant(msg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 }
