@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+func SampleInferenceToValidate(ids []string) {
+	log.Printf("Sampling inference transactions to validate")
+	// TODO: implement the actual sampling
+}
+
 func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
 	// Sleep but every X seconds wake up and do the task
 	for {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"github.com/gorilla/websocket"
 	"log"
 	"net/url"
@@ -65,9 +66,19 @@ func StartEventListener(transactionRecorder InferenceCosmosClient, config Config
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
-			log.Fatal("read:", err)
+			log.Printf("read:", err)
 		}
+
 		log.Printf("Received: %s", message)
+
+		var txEvent JSONRPCResponse
+		if err = json.Unmarshal(message, &txEvent); err != nil {
+			log.Printf("Error unmarshalling message to JSONRPCResponse: %s", err)
+		}
+
+		go func() {
+			SampleInferenceToValidate(txEvent.Result.Events["inference_finished.inference_id"])
+		}()
 	}
 }
 
