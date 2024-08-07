@@ -366,6 +366,12 @@ type SubmitNewParticipantDto struct {
 	Models []string `json:"models"`
 }
 
+type ParticipantDto struct {
+	Id     string   `json:"id"`
+	Url    string   `json:"url"`
+	Models []string `json:"models"`
+}
+
 func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
 	// Parse the request body into a SubmitNewParticipantDto
 	var body SubmitNewParticipantDto
@@ -383,4 +389,19 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	responseBody := ParticipantDto{
+		Id:     msg.Creator,
+		Url:    msg.Url,
+		Models: msg.Models,
+	}
+
+	responseJson, err := json.Marshal(responseBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJson)
 }
