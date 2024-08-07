@@ -47,7 +47,7 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRec
 }
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {
-	if inference.Status != "FINISHED" {
+	if inference.Status != types.InferenceStatus_FINISHED {
 		return nil, errors.New("Inference is not finished. id = " + inference.InferenceId)
 	}
 
