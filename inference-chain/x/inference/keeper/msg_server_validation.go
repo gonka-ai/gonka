@@ -8,9 +8,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const FalsePositiveRate = 0.05
-const MinRampUpMeasurements = 10
-const PassValue = 0.99
+const (
+	FalsePositiveRate     = 0.05
+	MinRampUpMeasurements = 10
+	PassValue             = 0.99
+)
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
