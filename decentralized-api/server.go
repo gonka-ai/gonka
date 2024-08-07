@@ -10,6 +10,7 @@ import (
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
 	"inference/api/inference/inference"
+	"inference/x/inference/types"
 	"io"
 	"log"
 	"net/http"
@@ -354,6 +355,8 @@ func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.Respon
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == "POST" {
 			submitNewParticipant(recorder, w, request)
+		} else if request.Method == "GET" {
+			getParticipants(recorder, w, request)
 		} else {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 			return
@@ -364,6 +367,10 @@ func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.Respon
 type SubmitNewParticipantDto struct {
 	Url    string   `json:"url"`
 	Models []string `json:"models"`
+}
+
+type ParticipantsDto struct {
+	Participants []ParticipantDto `json:"participants"`
 }
 
 type ParticipantDto struct {
@@ -394,6 +401,37 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 		Id:     msg.Creator,
 		Url:    msg.Url,
 		Models: msg.Models,
+	}
+
+	responseJson, err := json.Marshal(responseBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJson)
+}
+
+func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	queryClient := recorder.NewInferenceQueryClient()
+	r, err := queryClient.ParticipantAll(recorder.context, &types.QueryAllParticipantRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	participants := make([]ParticipantDto, len(r.Participant))
+	for i, p := range r.Participant {
+		participants[i] = ParticipantDto{
+			Id:     p.Address,
+			Url:    p.InferenceUrl,
+			Models: p.Models,
+		}
+	}
+
+	responseBody := ParticipantsDto{
+		Participants: participants,
 	}
 
 	responseJson, err := json.Marshal(responseBody)
