@@ -8,27 +8,46 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const FalsePositiveRate = 0.05
+const MinRampUpMeasurements = 10
+const PassValue = 0.99
+
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	creator, found := k.GetParticipant(ctx, msg.Creator)
+	inference, found := k.GetInference(ctx, msg.InferenceId)
+	if !found {
+		return nil, types.ErrInferenceNotFound
+	}
+
+	if inference.Status != types.InferenceStatus_FINISHED {
+		return nil, types.ErrInferenceNotFinished
+	}
+
+	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if !found {
 		return nil, types.ErrParticipantNotFound
 	}
 
-	passed := msg.Value > 0.99
+	if executor.Address == msg.Creator {
+		return nil, types.ErrParticipantCannotValidateOwnInference
+	}
 
-	creator.InferenceCount++
+	passed := msg.Value > PassValue
+
+	executor.InferenceCount++
 	if passed {
-		creator.ValidatedInferences++
+		inference.Status = types.InferenceStatus_VALIDATED
+		executor.ValidatedInferences++
 	} else {
-		creator.InvalidatedInferences++
+		inference.Status = types.InferenceStatus_INVALIDATED
+		executor.InvalidatedInferences++
 	}
 	// Where will we get this number? How much does it vary by model?
-	falsePositiveRate := 0.05
 
-	creator.Status = calculateStatus(falsePositiveRate, creator)
-	k.SetParticipant(ctx, creator)
+	executor.Status = calculateStatus(FalsePositiveRate, executor)
+	k.SetParticipant(ctx, executor)
+	k.SetInference(ctx, inference)
 
 	return &types.MsgValidationResponse{}, nil
 }
@@ -38,7 +57,7 @@ func calculateStatus(falsePositiveRate float64, participant types.Participant) (
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
-	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, 100)
+	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, MinRampUpMeasurements)
 	if participant.InferenceCount < measurementsNeeded {
 		return types.ParticipantStatus_RAMPING
 	}

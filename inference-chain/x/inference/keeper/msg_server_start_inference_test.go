@@ -47,7 +47,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
 		ReceivedBy:          "receivedBy",
-		Status:              "STARTED",
+		Status:              types.InferenceStatus_STARTED,
 		StartBlockHeight:    0,
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 	}, savedInference)
