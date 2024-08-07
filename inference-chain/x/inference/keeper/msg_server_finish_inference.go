@@ -36,5 +36,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
 	k.SetParticipant(ctx, executor)
 
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"inference_finished",
+			sdk.NewAttribute("inference_id", msg.InferenceId),
+		),
+	)
+
 	return &types.MsgFinishInferenceResponse{}, nil
 }
