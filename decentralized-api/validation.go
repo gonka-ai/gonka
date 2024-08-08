@@ -28,12 +28,23 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	log.Printf("Inferences to validate: %v", r.InferenceWithExecutor)
 
-	//for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-	// inferenceWithExecutor.Inference
-	// inferenceWithExecutor.Executor
-	//switch executor.Status {
-	//}
-	//}
+	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
+		// inference := inferenceWithExecutor.Inference
+		executor := inferenceWithExecutor.Executor
+
+		p := getFloat(executor.Status)
+
+		log.Printf("p = %v", p)
+	}
+}
+
+func getFloat(status types.ParticipantStatus) float64 {
+	switch status {
+	case types.ParticipantStatus_ACTIVE:
+		return 0.95
+	default:
+		return 0.1
+	}
 }
 
 func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
