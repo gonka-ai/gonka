@@ -68,3 +68,22 @@ func (k Keeper) GetAllInference(ctx context.Context) (list []types.Inference) {
 
 	return
 }
+
+func (k Keeper) GetInferences(ctx context.Context, ids []string) ([]types.Inference, bool) {
+	var result = make([]types.Inference, len(ids))
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
+	for i, id := range ids {
+		var val types.Inference
+		b := store.Get(types.InferenceKey(id))
+
+		if b == nil {
+			return nil, false
+		}
+
+		k.cdc.MustUnmarshal(b, &val)
+		result[i] = val
+	}
+
+	return result, true
+}

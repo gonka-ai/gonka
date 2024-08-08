@@ -14,31 +14,37 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Query defines the gRPC querier service.
 service Query {
-  
+
   // Parameters queries the parameters of the module.
   rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/params";
-  
+
   }
-  
+
   // Queries a list of Inference items.
   rpc Inference    (QueryGetInferenceRequest) returns (QueryGetInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference/{index}";
-  
+
   }
   rpc InferenceAll (QueryAllInferenceRequest) returns (QueryAllInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference";
-  
+
   }
-  
+
   // Queries a list of Participant items.
   rpc Participant    (QueryGetParticipantRequest) returns (QueryGetParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant/{index}";
-  
+
   }
   rpc ParticipantAll (QueryAllParticipantRequest) returns (QueryAllParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant";
-  
+
+  }
+
+  // Queries a list of GetInferencesWithExecutors items.
+  rpc GetInferencesWithExecutors (QueryGetInferencesWithExecutorsRequest) returns (QueryGetInferencesWithExecutorsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_inferences_with_executors/{ids}";
+
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -46,7 +52,7 @@ message QueryParamsRequest {}
 
 // QueryParamsResponse is response type for the Query/Params RPC method.
 message QueryParamsResponse {
-  
+
   // params holds all the parameters of this module.
   Params params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
@@ -64,8 +70,8 @@ message QueryAllInferenceRequest {
 }
 
 message QueryAllInferenceResponse {
-  repeated Inference                              inference  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  repeated Inference                              inference = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetParticipantRequest {
@@ -82,6 +88,20 @@ message QueryAllParticipantRequest {
 
 message QueryAllParticipantResponse {
   repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination  = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryGetInferencesWithExecutorsRequest {
+  repeated string ids = 1;
+}
+
+message QueryGetInferencesWithExecutorsResponse {
+  repeated InferenceWithExecutor inferenceWithExecutor = 1 [(gogoproto.nullable) = false];
+  uint32 NumValidators = 2;
+}
+
+message InferenceWithExecutor {
+  Inference inference = 1 [(gogoproto.nullable) = false];
+  Participant    executor = 2 [(gogoproto.nullable) = false];
 }
 

@@ -39,6 +39,26 @@ func (k Keeper) GetParticipant(
 	return val, true
 }
 
+func (k Keeper) GetParticipants(ctx context.Context, ids []string) ([]types.Participant, bool) {
+	var participants = make([]types.Participant, len(ids))
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
+
+	for i, id := range ids {
+		var p types.Participant
+		b := store.Get(types.ParticipantKey(id))
+
+		if b == nil {
+			return nil, false
+		}
+
+		k.cdc.MustUnmarshal(b, &p)
+		participants[i] = p
+	}
+
+	return participants, true
+}
+
 // RemoveParticipant removes a participant from the store
 func (k Keeper) RemoveParticipant(
 	ctx context.Context,
