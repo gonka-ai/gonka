@@ -17,30 +17,23 @@ import (
 func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient) {
 	log.Printf("Sampling inference transactions to validate")
 
-	// Get number of participants
-	// FIXME: implement a separate query to get a separate number of participants
 	queryClient := transactionRecorder.NewInferenceQueryClient()
-	r, err := queryClient.ParticipantAll(transactionRecorder.context, &types.QueryAllParticipantRequest{})
+
+	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
-		log.Printf("Failed to query number participants")
+		log.Printf("Failed to query GetInferencesWithExecutors")
 		return
 	}
 
-	numParticipant := len(r.Participant)
-	log.Printf("Number of participants: %v", numParticipant)
+	log.Printf("Inferences to validate: %v", r.InferenceWithExecutor)
 
-	// Get all inferences by ids
-	r2, err := queryClient.InferenceAll(transactionRecorder.context, &types.QueryAllInferenceRequest{})
-	if err != nil {
-		// FIXME: what should we do with validating the transaction?
-		log.Printf("Failed to query inferences")
-		return
-	}
-	log.Printf("Inferences: %v", r2.Inference)
-
-	// TODO: should we move the overall logic to node? Single validation query
-	// E.g. give inference ids > receive inferences, participants, and total number of participants
+	//for _, inferenceWithExecutor := range r.InferenceWithExecutor {
+	// inferenceWithExecutor.Inference
+	// inferenceWithExecutor.Executor
+	//switch executor.Status {
+	//}
+	//}
 }
 
 func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
