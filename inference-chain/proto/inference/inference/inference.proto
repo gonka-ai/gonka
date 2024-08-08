@@ -3,6 +3,13 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+enum InferenceStatus {
+  STARTED = 0;
+  FINISHED = 1;
+  VALIDATED = 2;
+  INVALIDATED = 3;
+}
+
 message Inference {
   string index = 1;
   string inferenceId = 2;
@@ -14,7 +21,7 @@ message Inference {
   uint64 completionTokenCount = 8;
   string receivedBy = 9;
   string executedBy = 10;
-  string status = 11;
+  InferenceStatus status = 11;
   int64 startBlockHeight = 12;
   int64 endBlockHeight = 13;
   int64 startBlockTimestamp = 14;

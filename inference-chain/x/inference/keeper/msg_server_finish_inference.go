@@ -21,7 +21,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
 	}
 
-	existingInference.Status = "FINISHED"
+	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
 	existingInference.ResponsePayload = msg.ResponsePayload
 	existingInference.PromptTokenCount = msg.PromptTokenCount

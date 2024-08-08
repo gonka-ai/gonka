@@ -7,6 +7,8 @@ enum ParticipantStatus {
   UNSPECIFIED = 0;
   ACTIVE = 1;
   INACTIVE = 2;
+  INVALID = 3;
+  RAMPING = 4;
 }
 
 message Participant {
@@ -22,4 +24,7 @@ message Participant {
   ParticipantStatus status = 10;
   map<string, uint64> promptTokenCount = 11;
   map<string, uint64> completionTokenCount = 12;
+  uint64 inferenceCount = 13;
+  uint64 validatedInferences = 14;
+  uint64 invalidatedInferences = 15;
 }

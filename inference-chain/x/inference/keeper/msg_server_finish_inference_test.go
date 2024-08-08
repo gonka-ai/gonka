@@ -36,7 +36,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
 		ReceivedBy:          "receivedBy",
-		Status:              "STARTED",
+		Status:              types.InferenceStatus_STARTED,
 		Model:               "model1",
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 	}, savedInference)
@@ -58,7 +58,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		PromptHash:           "promptHash",
 		PromptPayload:        "promptPayload",
 		ReceivedBy:           "receivedBy",
-		Status:               "FINISHED",
+		Status:               types.InferenceStatus_FINISHED,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
@@ -81,7 +81,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
-		Status:            types.ParticipantStatus_ACTIVE,
+		Status:            types.ParticipantStatus_RAMPING,
 		PromptTokenCount: map[string]uint64{
 			"model1": 10,
 			"model2": 0,
