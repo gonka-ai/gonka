@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -28,17 +29,33 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	log.Printf("Inferences to validate: %v", r.InferenceWithExecutor)
 
+	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
 		// inference := inferenceWithExecutor.Inference
 		executor := inferenceWithExecutor.Executor
 
-		p := getFloat(executor.Status)
+		reputationP := getReputationP(executor.Status)
+		samplingP := 1 - math.Pow(1-reputationP, 1/float64(r.NumValidators))
 
-		log.Printf("p = %v", p)
+		log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
+
+		if rand.Float64() < samplingP {
+			toValidate = append(toValidate, inferenceWithExecutor.Inference)
+		}
+	}
+
+	for _, inference := range toValidate {
+		go func() {
+			// PRTODO: write a function that doesn't require a node
+			_, err = validate(inference, nil)
+			if err != nil {
+				log.Printf("Failed to validate inference. id = %v. err = %v", inference.InferenceId, err)
+			}
+		}()
 	}
 }
 
-func getFloat(status types.ParticipantStatus) float64 {
+func getReputationP(status types.ParticipantStatus) float64 {
 	switch status {
 	case types.ParticipantStatus_ACTIVE:
 		return 0.95
