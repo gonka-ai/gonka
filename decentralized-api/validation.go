@@ -31,8 +31,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-		// inference := inferenceWithExecutor.Inference
 		executor := inferenceWithExecutor.Executor
+
+		// Don't validate your own transactions
+		if executor.Index == transactionRecorder.address {
+			continue
+		}
 
 		reputationP := getReputationP(executor.Status)
 		samplingP := 1 - math.Pow(1-reputationP, 1/float64(r.NumValidators))
