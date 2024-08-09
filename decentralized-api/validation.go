@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient) {
+func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
 	log.Printf("Sampling inference transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
@@ -46,11 +46,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	for _, inference := range toValidate {
 		go func() {
-			// PRTODO: write a function that doesn't require a node
-			_, err = validate(inference, nil)
-			if err != nil {
-				log.Printf("Failed to validate inference. id = %v. err = %v", inference.InferenceId, err)
-			}
+			lockNodeAndValidate(inference, nodeBroker)
 		}()
 	}
 }
@@ -87,6 +83,16 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRec
 	}
 
 	return validate(r.Inference, node)
+}
+
+func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
+	return broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		res, err := validate(inference, node)
+		if err != nil {
+			log.Printf("Failed to validate inference. id = %v. err = %v", inference.InferenceId, err)
+		}
+		return res, err
+	})
 }
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {

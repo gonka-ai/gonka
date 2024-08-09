@@ -2,6 +2,7 @@ package broker
 
 import (
 	"errors"
+	"log"
 	"reflect"
 )
 
@@ -123,4 +124,40 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	}
 
 	command.Response <- true
+}
+
+func LockNode[T any](
+	b *Broker,
+	model string,
+	action func(node *InferenceNode) (T, error),
+) (T, error) {
+	var zero T
+	nodeChan := make(chan *InferenceNode, 2)
+	err := b.QueueMessage(LockAvailableNode{
+		Model:    model,
+		Response: nodeChan,
+	})
+	if err != nil {
+		return zero, err
+	}
+	node := <-nodeChan
+	if node == nil {
+		return zero, errors.New("No nodes available")
+	}
+
+	defer func() {
+		queueError := b.QueueMessage(ReleaseNode{
+			NodeId: node.Id,
+			Outcome: InferenceSuccess{
+				Response: nil,
+			},
+			Response: make(chan bool, 2),
+		})
+
+		if queueError != nil {
+			log.Printf("Error releasing node = %v", queueError)
+		}
+	}()
+
+	return action(node)
 }

@@ -5,7 +5,6 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
-	"errors"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
@@ -46,10 +45,7 @@ type ChainNodeConfig struct {
 	KeyringDir     string `koanf:"keyring_dir"`
 }
 
-func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, config Config) {
-	// Initialize logger
-	nodeBroker := broker.NewBroker()
-
+func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config Config) {
 	nodes := config.Nodes
 
 	for _, node := range nodes {
@@ -251,42 +247,6 @@ func getPromptHash(requestBytes []byte) (string, string, error) {
 	return promptHash, canonicalJSON, nil
 }
 
-func lockNode[T any](
-	nodeBroker *broker.Broker,
-	model string,
-	action func(node *broker.InferenceNode) (T, error),
-) (T, error) {
-	var zero T
-	nodeChan := make(chan *broker.InferenceNode, 2)
-	err := nodeBroker.QueueMessage(broker.LockAvailableNode{
-		Model:    model,
-		Response: nodeChan,
-	})
-	if err != nil {
-		return zero, err
-	}
-	node := <-nodeChan
-	if node == nil {
-		return zero, errors.New("No nodes available")
-	}
-
-	defer func() {
-		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
-			NodeId: node.Id,
-			Outcome: broker.InferenceSuccess{
-				Response: nil,
-			},
-			Response: make(chan bool, 2),
-		})
-
-		if queueError != nil {
-			log.Printf("Error releasing node = %v", queueError)
-		}
-	}()
-
-	return action(node)
-}
-
 // Debug-only request
 type ValidationRequest struct {
 	Id string `json:"id"`
@@ -300,7 +260,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) f
 			return
 		}
 
-		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
 			return ValidateByInferenceId(validationRequest.Id, node, recorder)
 		})
 

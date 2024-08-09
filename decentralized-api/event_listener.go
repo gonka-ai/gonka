@@ -1,6 +1,7 @@
 package main
 
 import (
+	"decentralized-api/broker"
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"log"
@@ -47,7 +48,7 @@ type JSONRPCResponse struct {
 	Result  Result `json:"result"`
 }
 
-func StartEventListener(transactionRecorder InferenceCosmosClient, config Config) {
+func StartEventListener(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config Config) {
 	websocketUrl := getWebsocketUrl(config)
 	log.Printf("Connecting to websocket at %s", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -77,7 +78,7 @@ func StartEventListener(transactionRecorder InferenceCosmosClient, config Config
 		}
 
 		go func() {
-			SampleInferenceToValidate(txEvent.Result.Events["inference_finished.inference_id"], transactionRecorder)
+			SampleInferenceToValidate(txEvent.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
 		}()
 	}
 }
