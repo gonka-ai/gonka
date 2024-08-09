@@ -270,35 +270,10 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) f
 			return
 		}
 
-		// Match type of result from implementations of ValidationResult
-		var cosineSimVal float64
-		switch result.(type) {
-		case *DifferentLengthValidationResult:
-			log.Printf("Different length validation result")
-			cosineSimVal = -1
-		case *DifferentTokensValidationResult:
-			log.Printf("Different tokens validation result")
-			cosineSimVal = -1
-		case *CosineSimilarityValidationResult:
-			log.Printf("Cosine similarity validation result")
-			cosineSimVal = result.(*CosineSimilarityValidationResult).Value
-		default:
-			http.Error(w, "Unknown validation result type", http.StatusInternalServerError)
-			return
-		}
-
-		responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+		msgVal, err := ToMsgValidation(result)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-
-		msgVal := &inference.MsgValidation{
-			Id:              uuid.New().String(),
-			InferenceId:     validationRequest.Id,
-			ResponsePayload: string(result.GetValidationResponseBytes()),
-			ResponseHash:    responseHash,
-			Value:           cosineSimVal,
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {

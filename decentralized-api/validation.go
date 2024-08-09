@@ -6,6 +6,8 @@ import (
 	"decentralized-api/broker"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
+	"inference/api/inference/inference"
 	"inference/x/inference/types"
 	"io"
 	"log"
@@ -16,7 +18,7 @@ import (
 )
 
 func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
-	log.Printf("Sampling inference transactions to validate")
+	log.Printf("Sampling inf transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
@@ -36,14 +38,27 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 		}
 	}
 
-	for _, inference := range toValidate {
+	for _, inf := range toValidate {
 		go func() {
-			lockNodeAndValidate(inference, nodeBroker)
+			valResult, err := lockNodeAndValidate(inf, nodeBroker)
+			if err != nil {
+				log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
+				return
+			}
+			msgValidation, err := ToMsgValidation(valResult)
+			if err != nil {
+				log.Printf("Failed to convert to MsgValidation. id = %v. err = %v", inf.InferenceId, err)
+				return
+			}
+			if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
+				log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
+			}
 		}()
 	}
 }
 
 func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
+	return true
 	// Don't validate your own transactions
 	if executor.Index == currentAccountAddress {
 		return false
@@ -93,11 +108,7 @@ func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRec
 
 func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
 	return broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
-		res, err := validate(inference, node)
-		if err != nil {
-			log.Printf("Failed to validate inference. id = %v. err = %v", inference.InferenceId, err)
-		}
-		return res, err
+		return validate(inference, node)
 	})
 }
 
@@ -247,4 +258,35 @@ func cosineSimilarity(a, b []float64) float64 {
 		magnitudeB += b[i] * b[i]
 	}
 	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
+}
+
+func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
+	// Match type of result from implementations of ValidationResult
+	var cosineSimVal float64
+	switch result.(type) {
+	case *DifferentLengthValidationResult:
+		log.Printf("Different length validation result")
+		cosineSimVal = -1
+	case *DifferentTokensValidationResult:
+		log.Printf("Different tokens validation result")
+		cosineSimVal = -1
+	case *CosineSimilarityValidationResult:
+		log.Printf("Cosine similarity validation result")
+		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
+	default:
+		return nil, errors.New("unknown validation result type")
+	}
+
+	responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return &inference.MsgValidation{
+		Id:              uuid.New().String(),
+		InferenceId:     result.GetInferenceId(),
+		ResponsePayload: string(result.GetValidationResponseBytes()),
+		ResponseHash:    responseHash,
+		Value:           cosineSimVal,
+	}, nil
 }
