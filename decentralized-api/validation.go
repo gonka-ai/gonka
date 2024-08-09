@@ -14,7 +14,6 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"time"
 )
 
 func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
@@ -78,21 +77,6 @@ func getReputationP(status types.ParticipantStatus) float64 {
 		return 0.95
 	default:
 		return 0.1
-	}
-}
-
-func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
-	// Sleep but every X seconds wake up and do the task
-	for {
-		time.Sleep(5 * time.Second)
-		// TODO: query transaction
-		queryClient := transactionRecorder.NewInferenceQueryClient()
-		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: "1"})
-		if err != nil {
-			log.Printf("Failed to query a transaction for validation	: %v", err)
-		}
-		log.Printf("Inference to validate: %v", r.Inference)
-		//validate(r.Inference)
 	}
 }
 
