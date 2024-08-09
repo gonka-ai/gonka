@@ -45,7 +45,6 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 }
 
 func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
-	return true
 	// Don't validate your own transactions
 	if executor.Index == currentAccountAddress {
 		return false
