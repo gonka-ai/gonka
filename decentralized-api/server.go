@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
@@ -34,8 +35,13 @@ var (
 )
 
 type Config struct {
+	Api       ApiConfig              `koanf:"api"`
 	Nodes     []broker.InferenceNode `koanf:"nodes"`
 	ChainNode ChainNodeConfig        `koanf:"chain_node"`
+}
+
+type ApiConfig struct {
+	Port int `koanf:"port"`
 }
 
 type ChainNodeConfig struct {
@@ -57,8 +63,11 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 
+	addr := fmt.Sprintf(":%d", config.Api.Port)
+	log.Printf("Starting the server on %s", addr)
+
 	// Start the server
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
