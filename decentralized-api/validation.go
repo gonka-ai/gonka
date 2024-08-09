@@ -39,19 +39,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	for _, inf := range toValidate {
 		go func() {
-			valResult, err := lockNodeAndValidate(inf, nodeBroker)
-			if err != nil {
-				log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
-				return
-			}
-			msgValidation, err := ToMsgValidation(valResult)
-			if err != nil {
-				log.Printf("Failed to convert to MsgValidation. id = %v. err = %v", inf.InferenceId, err)
-				return
-			}
-			if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
-				log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
-			}
+			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder)
 		}()
 	}
 }
@@ -77,6 +65,24 @@ func getReputationP(status types.ParticipantStatus) float64 {
 		return 0.95
 	default:
 		return 0.1
+	}
+}
+
+func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient) {
+	valResult, err := lockNodeAndValidate(inf, nodeBroker)
+	if err != nil {
+		log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
+		return
+	}
+
+	msgValidation, err := ToMsgValidation(valResult)
+	if err != nil {
+		log.Printf("Failed to convert to MsgValidation. id = %v. err = %v", inf.InferenceId, err)
+		return
+	}
+
+	if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
+		log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
 	}
 }
 
