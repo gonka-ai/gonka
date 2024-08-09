@@ -83,7 +83,10 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 
 	if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
 		log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
+		return
 	}
+
+	log.Printf("Successfully validated inference. id = %v", inf.InferenceId)
 }
 
 func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder InferenceCosmosClient) (ValidationResult, error) {
