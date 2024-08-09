@@ -31,19 +31,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-		executor := inferenceWithExecutor.Executor
-
-		// Don't validate your own transactions
-		if executor.Index == transactionRecorder.address {
-			continue
-		}
-
-		reputationP := getReputationP(executor.Status)
-		samplingP := 1 - math.Pow(1-reputationP, 1/float64(r.NumValidators))
-
-		log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
-
-		if rand.Float64() < samplingP {
+		if shouldValidate(inferenceWithExecutor.Executor, transactionRecorder.address, r.NumValidators) {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
 	}
@@ -53,6 +41,20 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 			lockNodeAndValidate(inference, nodeBroker)
 		}()
 	}
+}
+
+func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
+	// Don't validate your own transactions
+	if executor.Index == currentAccountAddress {
+		return false
+	}
+
+	reputationP := getReputationP(executor.Status)
+	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators))
+
+	log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
+
+	return rand.Float64() < samplingP
 }
 
 func getReputationP(status types.ParticipantStatus) float64 {
