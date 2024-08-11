@@ -2,9 +2,9 @@ package keeper
 
 import (
 	"context"
-
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
+	"encoding/binary"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -87,4 +87,38 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	}
 
 	return
+}
+
+func (k Keeper) GetParticipantCounter(ctx context.Context) uint32 {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	b := store.Get(types.ParticipantCounterKey())
+	if b == nil {
+		return 0
+	}
+
+	return binary.BigEndian.Uint32(b)
+}
+
+func (k Keeper) SetParticipantCounter(counter uint32, ctx context.Context) uint32 {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, counter)
+
+	store.Set(types.ParticipantCounterKey(), b)
+
+	return counter
+}
+
+func (k Keeper) IncrementParticipantCounter(ctx context.Context) uint32 {
+	current := k.GetParticipantCounter(ctx)
+	return k.SetParticipantCounter(current+1, ctx)
+}
+
+func (k Keeper) DecrementParticipantCounter(ctx context.Context) uint32 {
+	current := k.GetParticipantCounter(ctx)
+	return k.SetParticipantCounter(current-1, ctx)
 }
