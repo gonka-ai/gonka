@@ -50,8 +50,12 @@ func shouldValidate(executor types.Participant, currentAccountAddress string, nu
 		return false
 	}
 
+	if numValidators <= 1 {
+		return true
+	}
+
 	reputationP := getReputationP(executor.Status)
-	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators))
+	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators-1))
 
 	log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
 
