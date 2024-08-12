@@ -27,5 +27,6 @@ message Inference {
   int64 startBlockTimestamp = 14;
   int64 endBlockTimestamp = 15;
   string model = 16;
+  uint64 maxTokens = 17;
 }
 

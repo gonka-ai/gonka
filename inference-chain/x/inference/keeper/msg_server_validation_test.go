@@ -2,24 +2,22 @@ package keeper_test
 
 import (
 	"context"
+	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
-const VALIDATOR = "validator"
-const EXECUTOR = "executor"
 const INFERENCE_ID = "inferenceId"
 
 func TestMsgServer_Validation(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
-	createExecutor(t, ms, ctx)
-	createValidator(t, ms, ctx)
+	createParticipants(t, ms, ctx)
 	createCompletedInference(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     VALIDATOR,
+		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
 	require.NoError(t, err)
@@ -28,14 +26,20 @@ func TestMsgServer_Validation(t *testing.T) {
 	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
 }
 
+func createParticipants(t *testing.T, ms types.MsgServer, ctx context.Context) {
+	MustAddParticipant(t, ms, ctx, testutil.Requester)
+	MustAddParticipant(t, ms, ctx, testutil.Executor)
+	MustAddParticipant(t, ms, ctx, testutil.Validator)
+	MustAddParticipant(t, ms, ctx, testutil.Creator)
+}
+
 func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
-	createExecutor(t, ms, ctx)
-	createValidator(t, ms, ctx)
+	createParticipants(t, ms, ctx)
 	createCompletedInference(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     VALIDATOR,
+		Creator:     testutil.Validator,
 		Value:       0.80,
 	})
 	require.NoError(t, err)
@@ -46,11 +50,10 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 
 func TestMsgServer_NoInference(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	createExecutor(t, ms, ctx)
-	createValidator(t, ms, ctx)
+	createParticipants(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     VALIDATOR,
+		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
 	require.Error(t, err)
@@ -58,20 +61,19 @@ func TestMsgServer_NoInference(t *testing.T) {
 
 func TestMsgServer_NotFinished(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	createExecutor(t, ms, ctx)
-	createValidator(t, ms, ctx)
+	createParticipants(t, ms, ctx)
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   INFERENCE_ID,
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    EXECUTOR,
-		Creator:       EXECUTOR,
+		ReceivedBy:    testutil.Requester,
+		Creator:       testutil.Creator,
 		Model:         "model1",
 	})
 	require.NoError(t, err)
 	_, err = ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     VALIDATOR,
+		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
 	require.Error(t, err)
@@ -79,10 +81,10 @@ func TestMsgServer_NotFinished(t *testing.T) {
 
 func TestMsgServer_InvalidExecutor(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	createValidator(t, ms, ctx)
+	MustAddParticipant(t, ms, ctx, testutil.Validator)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     EXECUTOR,
+		Creator:     testutil.Executor,
 		Value:       0.9999,
 	})
 	require.Error(t, err)
@@ -90,11 +92,10 @@ func TestMsgServer_InvalidExecutor(t *testing.T) {
 
 func TestMsgServer_ValidatorCannotBeExecutor(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	createExecutor(t, ms, ctx)
-	createValidator(t, ms, ctx)
+	createParticipants(t, ms, ctx)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
-		Creator:     VALIDATOR,
+		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
 	require.Error(t, err)
@@ -105,8 +106,8 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    "executor",
-		Creator:       "executor",
+		ReceivedBy:    testutil.Requester,
+		Creator:       testutil.Creator,
 		Model:         "model1",
 	})
 	require.NoError(t, err)
@@ -116,25 +117,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
-		ExecutedBy:           "executor",
-	})
-	require.NoError(t, err)
-}
-
-func createValidator(t *testing.T, ms types.MsgServer, ctx context.Context) {
-	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: "validator",
-		Url:     "url",
-		Models:  []string{"model1", "model2"},
-	})
-	require.NoError(t, err)
-}
-
-func createExecutor(t *testing.T, ms types.MsgServer, ctx context.Context) {
-	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: "executor",
-		Url:     "url",
-		Models:  []string{"model1", "model2"},
+		ExecutedBy:           testutil.Executor,
 	})
 	require.NoError(t, err)
 }

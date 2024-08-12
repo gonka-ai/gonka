@@ -27,4 +27,6 @@ message Participant {
   uint64 inferenceCount = 13;
   uint64 validatedInferences = 14;
   uint64 invalidatedInferences = 15;
+  // I don't see how a negative balance makes sense
+  uint64 coinBalance = 16;
 }

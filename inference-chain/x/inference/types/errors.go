@@ -14,4 +14,5 @@ var (
 	ErrParticipantNotFound                   = sdkerrors.Register(ModuleName, 1103, "participant not found")
 	ErrInferenceNotFinished                  = sdkerrors.Register(ModuleName, 1104, "inference not finished")
 	ErrParticipantCannotValidateOwnInference = sdkerrors.Register(ModuleName, 1105, "participant cannot validate own inference")
+	ErrRequesterCannotPay                    = sdkerrors.Register(ModuleName, 1106, "requester cannot pay for inference")
 )

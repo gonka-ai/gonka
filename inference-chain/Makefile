@@ -58,6 +58,11 @@ init:
 clean-state:
 	rm -rf "$$HOME/.inference"
 
+mock-expected-keepers:
+	@mockgen -source=x/inference/types/expected_keepers.go \
+		-package keeper \
+		-destination=testutil/keeper/expected_keepers_mocks.go
+
 docker-push:
 	@echo "--> pushing inferenced docker image"
 	@docker tag inferenced gcr.io/decentralized-ai/inferenced
