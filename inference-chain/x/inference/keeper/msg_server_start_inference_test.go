@@ -25,7 +25,8 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 }
 
 func TestMsgServer_StartInference(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
+	k, ms, ctx, mock := setupKeeperWithBankMock(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Creator,
 		Url:     "url",
@@ -37,6 +38,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		Url:     "url",
 		Models:  []string{"model1", "model2"},
 	})
+	mock.ExpectPay(sdkCtx, testutil.Requester, keeper.DefaultMaxTokens*keeper.PerTokenCost)
 	require.NoError(t, err)
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
