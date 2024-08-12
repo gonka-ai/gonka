@@ -30,6 +30,13 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	return mock, context
 }
 
+func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, *MockBankEscrowKeeper) {
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	return mock, context, escrowKeeper
+}
+
 func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
