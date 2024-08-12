@@ -1,6 +1,9 @@
 package keeper_test
 
 import (
+	"context"
+	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/keeper"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,18 +15,15 @@ import (
 
 func TestMsgServer_FinishInference(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
-	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: "receivedBy",
-		Url:     "url",
-		Models:  []string{"model1", "model2"},
-	})
-	require.NoError(t, err)
-	_, err = ms.StartInference(ctx, &types.MsgStartInference{
+	MustAddParticipant(t, ms, ctx, testutil.Requester)
+	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, testutil.Executor)
+	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    "receivedBy",
-		Creator:       "receivedBy",
+		ReceivedBy:    testutil.Requester,
+		Creator:       testutil.Creator,
 		Model:         "model1",
 	})
 	require.NoError(t, err)
@@ -35,10 +35,11 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		InferenceId:         "inferenceId",
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
-		ReceivedBy:          "receivedBy",
+		ReceivedBy:          testutil.Requester,
 		Status:              types.InferenceStatus_STARTED,
 		Model:               "model1",
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
+		MaxTokens:           keeper.DefaultMaxTokens,
 	}, savedInference)
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -47,7 +48,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
-		ExecutedBy:           "receivedBy",
+		ExecutedBy:           testutil.Executor,
 	})
 	require.NoError(t, err)
 	savedInference, found = k.GetInference(ctx, "inferenceId")
@@ -57,23 +58,24 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		InferenceId:          "inferenceId",
 		PromptHash:           "promptHash",
 		PromptPayload:        "promptPayload",
-		ReceivedBy:           "receivedBy",
+		ReceivedBy:           testutil.Requester,
 		Status:               types.InferenceStatus_FINISHED,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
-		ExecutedBy:           "receivedBy",
+		ExecutedBy:           testutil.Executor,
 		Model:                "model1",
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
 		EndBlockTimestamp:    ctx2.BlockTime().UnixMilli(),
+		MaxTokens:            keeper.DefaultMaxTokens,
 	}, savedInference)
 
-	participantState, found := k.GetParticipant(ctx, "receivedBy")
+	participantState, found := k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, found)
 	require.Equal(t, types.Participant{
-		Index:             "receivedBy",
-		Address:           "receivedBy",
+		Index:             testutil.Executor,
+		Address:           testutil.Executor,
 		Reputation:        1,
 		Weight:            1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
@@ -93,6 +95,15 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}, participantState)
 }
 
+func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, address string) {
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: address,
+		Url:     "url",
+		Models:  []string{"model1", "model2"},
+	})
+	require.NoError(t, err)
+}
+
 func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	_, err := ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -101,7 +112,7 @@ func TestMsgServer_FinishInference_InferenceNotFound(t *testing.T) {
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     1,
 		CompletionTokenCount: 1,
-		ExecutedBy:           "executedBy",
+		ExecutedBy:           testutil.Executor,
 	})
 	require.Error(t, err)
 	_, found := k.GetInference(ctx, "inferenceId")

@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/keeper"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -16,8 +18,8 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    "receivedBy",
-		Creator:       "receivedBy",
+		ReceivedBy:    testutil.Requester,
+		Creator:       testutil.Creator,
 	})
 	require.Error(t, err)
 }
@@ -25,7 +27,13 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 func TestMsgServer_StartInference(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
-		Creator: "receivedBy",
+		Creator: testutil.Creator,
+		Url:     "url",
+		Models:  []string{"model1", "model2"},
+	})
+	require.NoError(t, err)
+	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Requester,
 		Url:     "url",
 		Models:  []string{"model1", "model2"},
 	})
@@ -34,8 +42,8 @@ func TestMsgServer_StartInference(t *testing.T) {
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    "receivedBy",
-		Creator:       "receivedBy",
+		ReceivedBy:    testutil.Requester,
+		Creator:       testutil.Creator,
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")
@@ -46,10 +54,11 @@ func TestMsgServer_StartInference(t *testing.T) {
 		InferenceId:         "inferenceId",
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
-		ReceivedBy:          "receivedBy",
+		ReceivedBy:          testutil.Requester,
 		Status:              types.InferenceStatus_STARTED,
 		StartBlockHeight:    0,
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
+		MaxTokens:           keeper.DefaultMaxTokens,
 	}, savedInference)
 }
 
