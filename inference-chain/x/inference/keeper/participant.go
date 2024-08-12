@@ -34,9 +34,9 @@ func (k Keeper) retrieveParticipant(store *prefix.Store, key []byte) *types.Part
 		return nil
 	}
 
-	var participant *types.Participant
-	k.cdc.MustUnmarshal(b, participant)
-	return participant
+	var participant types.Participant
+	k.cdc.MustUnmarshal(b, &participant)
+	return &participant
 }
 
 func isActiveValidator(participant *types.Participant) bool {
