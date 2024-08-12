@@ -31,7 +31,5 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	}
 	k.SetParticipant(ctx, newParticipant)
 
-	k.IncrementParticipantCounter(ctx)
-
 	return &types.MsgSubmitNewParticipantResponse{}, nil
 }
