@@ -12,6 +12,7 @@ const (
 	FalsePositiveRate     = 0.05
 	MinRampUpMeasurements = 10
 	PassValue             = 0.99
+	TokenCost             = 1_000
 )
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
@@ -43,11 +44,20 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	} else {
 		inference.Status = types.InferenceStatus_INVALIDATED
 		executor.InvalidatedInferences++
+		executor.CoinBalance -= CalculateCost(inference)
+		// We need to refund the cost, so we have to lookup the person who paid
+		payer, found := k.GetParticipant(ctx, inference.ReceivedBy)
+		if !found {
+			return nil, types.ErrParticipantNotFound
+		}
+		payer.CoinBalance += CalculateCost(inference)
+		k.SetParticipant(ctx, payer)
 	}
 	// Where will we get this number? How much does it vary by model?
 
 	executor.Status = calculateStatus(FalsePositiveRate, executor)
 	k.SetParticipant(ctx, executor)
+
 	k.SetInference(ctx, inference)
 
 	return &types.MsgValidationResponse{}, nil
