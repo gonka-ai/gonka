@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"decentralized-api/broker"
 	"github.com/knadh/koanf/providers/file"
 	"log"
 	"os"
@@ -35,8 +36,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	//go func() {
-	//	StartValidationScheduledTask(*recorder, config)
-	//}()
-	StartInferenceServerWrapper(*recorder, config)
+
+	nodeBroker := broker.NewBroker()
+
+	go func() {
+		StartEventListener(nodeBroker, *recorder, config)
+	}()
+
+	StartInferenceServerWrapper(nodeBroker, *recorder, config)
 }

@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName         = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName      = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName   = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName    = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName = "/inference.inference.Query/ParticipantAll"
+	Query_Params_FullMethodName                     = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                  = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName               = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName             = "/inference.inference.Query/ParticipantAll"
+	Query_GetInferencesWithExecutors_FullMethodName = "/inference.inference.Query/GetInferencesWithExecutors"
 )
 
 // QueryClient is the client API for Query service.
@@ -38,6 +39,8 @@ type QueryClient interface {
 	// Queries a list of Participant items.
 	Participant(ctx context.Context, in *QueryGetParticipantRequest, opts ...grpc.CallOption) (*QueryGetParticipantResponse, error)
 	ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error)
+	// Queries a list of GetInferencesWithExecutors items.
+	GetInferencesWithExecutors(ctx context.Context, in *QueryGetInferencesWithExecutorsRequest, opts ...grpc.CallOption) (*QueryGetInferencesWithExecutorsResponse, error)
 }
 
 type queryClient struct {
@@ -93,6 +96,15 @@ func (c *queryClient) ParticipantAll(ctx context.Context, in *QueryAllParticipan
 	return out, nil
 }
 
+func (c *queryClient) GetInferencesWithExecutors(ctx context.Context, in *QueryGetInferencesWithExecutorsRequest, opts ...grpc.CallOption) (*QueryGetInferencesWithExecutorsResponse, error) {
+	out := new(QueryGetInferencesWithExecutorsResponse)
+	err := c.cc.Invoke(ctx, Query_GetInferencesWithExecutors_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -105,6 +117,8 @@ type QueryServer interface {
 	// Queries a list of Participant items.
 	Participant(context.Context, *QueryGetParticipantRequest) (*QueryGetParticipantResponse, error)
 	ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
+	// Queries a list of GetInferencesWithExecutors items.
+	GetInferencesWithExecutors(context.Context, *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -126,6 +140,9 @@ func (UnimplementedQueryServer) Participant(context.Context, *QueryGetParticipan
 }
 func (UnimplementedQueryServer) ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAll not implemented")
+}
+func (UnimplementedQueryServer) GetInferencesWithExecutors(context.Context, *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInferencesWithExecutors not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -230,6 +247,24 @@ func _Query_ParticipantAll_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetInferencesWithExecutors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferencesWithExecutorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetInferencesWithExecutors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetInferencesWithExecutors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetInferencesWithExecutors(ctx, req.(*QueryGetInferencesWithExecutorsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -256,6 +291,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ParticipantAll",
 			Handler:    _Query_ParticipantAll_Handler,
+		},
+		{
+			MethodName: "GetInferencesWithExecutors",
+			Handler:    _Query_GetInferencesWithExecutors_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

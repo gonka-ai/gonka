@@ -5,11 +5,12 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
 	"inference/api/inference/inference"
+	"inference/x/inference/types"
 	"io"
 	"log"
 	"net/http"
@@ -34,8 +35,13 @@ var (
 )
 
 type Config struct {
+	Api       ApiConfig              `koanf:"api"`
 	Nodes     []broker.InferenceNode `koanf:"nodes"`
 	ChainNode ChainNodeConfig        `koanf:"chain_node"`
+}
+
+type ApiConfig struct {
+	Port int `koanf:"port"`
 }
 
 type ChainNodeConfig struct {
@@ -45,10 +51,7 @@ type ChainNodeConfig struct {
 	KeyringDir     string `koanf:"keyring_dir"`
 }
 
-func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, config Config) {
-	// Initialize logger
-	nodeBroker := broker.NewBroker()
-
+func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config Config) {
 	nodes := config.Nodes
 
 	for _, node := range nodes {
@@ -57,10 +60,14 @@ func StartInferenceServerWrapper(transactionRecorder InferenceCosmosClient, conf
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
-	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
+	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
+
+	addr := fmt.Sprintf(":%d", config.Api.Port)
+	log.Printf("Starting the server on %s", addr)
 
 	// Start the server
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
@@ -249,48 +256,12 @@ func getPromptHash(requestBytes []byte) (string, string, error) {
 	return promptHash, canonicalJSON, nil
 }
 
-func lockNode[T any](
-	nodeBroker *broker.Broker,
-	model string,
-	action func(node *broker.InferenceNode) (T, error),
-) (T, error) {
-	var zero T
-	nodeChan := make(chan *broker.InferenceNode, 2)
-	err := nodeBroker.QueueMessage(broker.LockAvailableNode{
-		Model:    model,
-		Response: nodeChan,
-	})
-	if err != nil {
-		return zero, err
-	}
-	node := <-nodeChan
-	if node == nil {
-		return zero, errors.New("No nodes available")
-	}
-
-	defer func() {
-		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
-			NodeId: node.Id,
-			Outcome: broker.InferenceSuccess{
-				Response: nil,
-			},
-			Response: make(chan bool, 2),
-		})
-
-		if queueError != nil {
-			log.Printf("Error releasing node = %v", queueError)
-		}
-	}()
-
-	return action(node)
-}
-
 // Debug-only request
 type ValidationRequest struct {
 	Id string `json:"id"`
 }
 
-func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		var validationRequest ValidationRequest
 		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
@@ -298,7 +269,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			return
 		}
 
-		result, err := lockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
 			return ValidateByInferenceId(validationRequest.Id, node, recorder)
 		})
 
@@ -308,35 +279,10 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 			return
 		}
 
-		// Match type of result from implementations of ValidationResult
-		var cosineSimVal float64
-		switch result.(type) {
-		case *DifferentLengthValidationResult:
-			log.Printf("Different length validation result")
-			cosineSimVal = -1
-		case *DifferentTokensValidationResult:
-			log.Printf("Different tokens validation result")
-			cosineSimVal = -1
-		case *CosineSimilarityValidationResult:
-			log.Printf("Cosine similarity validation result")
-			cosineSimVal = result.(*CosineSimilarityValidationResult).Value
-		default:
-			http.Error(w, "Unknown validation result type", http.StatusInternalServerError)
-			return
-		}
-
-		responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+		msgVal, err := ToMsgValidation(result)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-
-		msgVal := &inference.MsgValidation{
-			Id:              uuid.New().String(),
-			InferenceId:     validationRequest.Id,
-			ResponsePayload: string(result.GetValidationResponseBytes()),
-			ResponseHash:    responseHash,
-			Value:           cosineSimVal,
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {
@@ -347,4 +293,97 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient, c
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(msgVal.String()))
 	}
+}
+
+func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == "POST" {
+			submitNewParticipant(recorder, w, request)
+		} else if request.Method == "GET" {
+			getParticipants(recorder, w, request)
+		} else {
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+}
+
+type SubmitNewParticipantDto struct {
+	Url    string   `json:"url"`
+	Models []string `json:"models"`
+}
+
+type ParticipantsDto struct {
+	Participants []ParticipantDto `json:"participants"`
+}
+
+type ParticipantDto struct {
+	Id     string   `json:"id"`
+	Url    string   `json:"url"`
+	Models []string `json:"models"`
+}
+
+func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	// Parse the request body into a SubmitNewParticipantDto
+	var body SubmitNewParticipantDto
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	msg := &inference.MsgSubmitNewParticipant{
+		Url:    body.Url,
+		Models: body.Models,
+	}
+
+	if err := recorder.SubmitNewParticipant(msg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	responseBody := ParticipantDto{
+		Id:     msg.Creator,
+		Url:    msg.Url,
+		Models: msg.Models,
+	}
+
+	responseJson, err := json.Marshal(responseBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJson)
+}
+
+func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	queryClient := recorder.NewInferenceQueryClient()
+	r, err := queryClient.ParticipantAll(recorder.context, &types.QueryAllParticipantRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	participants := make([]ParticipantDto, len(r.Participant))
+	for i, p := range r.Participant {
+		participants[i] = ParticipantDto{
+			Id:     p.Address,
+			Url:    p.InferenceUrl,
+			Models: p.Models,
+		}
+	}
+
+	responseBody := ParticipantsDto{
+		Participants: participants,
+	}
+
+	responseJson, err := json.Marshal(responseBody)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseJson)
 }

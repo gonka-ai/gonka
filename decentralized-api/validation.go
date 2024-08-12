@@ -6,44 +6,106 @@ import (
 	"decentralized-api/broker"
 	"encoding/json"
 	"errors"
-	"google.golang.org/grpc"
+	"github.com/google/uuid"
+	"inference/api/inference/inference"
 	"inference/x/inference/types"
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
-	"time"
 )
 
-func StartValidationScheduledTask(transactionRecorder InferenceCosmosClient, config Config) {
-	// Sleep but every X seconds wake up and do the task
-	for {
-		time.Sleep(5 * time.Second)
-		// TODO: query transaction
-		conn, err := grpc.NewClient(config.ChainNode.Url)
-		if err != nil {
-			log.Printf("Error creating grpc client: %v", err)
-			continue
-		}
+func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
+	log.Printf("Sampling inf transactions to validate")
 
-		queryClient := types.NewQueryClient(conn)
-		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: "1"})
-		if err != nil {
-			log.Printf("Failed to query a transaction for validation	: %v", err)
+	queryClient := transactionRecorder.NewInferenceQueryClient()
+
+	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
+	if err != nil {
+		// FIXME: what should we do with validating the transaction?
+		log.Printf("Failed to query GetInferencesWithExecutors")
+		return
+	}
+
+	log.Printf("Inferences to validate: %v", r.InferenceWithExecutor)
+
+	var toValidate []types.Inference
+	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
+		if shouldValidate(inferenceWithExecutor.Executor, transactionRecorder.address, r.NumValidators) {
+			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
-		log.Printf("Inference to validate: %v", r.Inference)
-		//validate(r.Inference)
+	}
+
+	for _, inf := range toValidate {
+		go func() {
+			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder)
+		}()
 	}
 }
 
+func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
+	// Don't validate your own transactions
+	if executor.Index == currentAccountAddress {
+		return false
+	}
+
+	if numValidators <= 1 {
+		return true
+	}
+
+	reputationP := getReputationP(executor.Status)
+	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators-1))
+
+	log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
+
+	return rand.Float64() < samplingP
+}
+
+func getReputationP(status types.ParticipantStatus) float64 {
+	switch status {
+	case types.ParticipantStatus_ACTIVE:
+		return 0.95
+	default:
+		return 0.1
+	}
+}
+
+func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient) {
+	valResult, err := lockNodeAndValidate(inf, nodeBroker)
+	if err != nil {
+		log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
+		return
+	}
+
+	msgValidation, err := ToMsgValidation(valResult)
+	if err != nil {
+		log.Printf("Failed to convert to MsgValidation. id = %v. err = %v", inf.InferenceId, err)
+		return
+	}
+
+	if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
+		log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
+		return
+	}
+
+	log.Printf("Successfully validated inference. id = %v", inf.InferenceId)
+}
+
 func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder InferenceCosmosClient) (ValidationResult, error) {
-	queryClient := types.NewQueryClient(transactionRecorder.client.Context())
+	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
 		log.Printf("Failed get inference by id query. id = %s. err = %v", id, err)
 	}
 
 	return validate(r.Inference, node)
+}
+
+func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
+	return broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		return validate(inference, node)
+	})
 }
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {
@@ -192,4 +254,35 @@ func cosineSimilarity(a, b []float64) float64 {
 		magnitudeB += b[i] * b[i]
 	}
 	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
+}
+
+func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
+	// Match type of result from implementations of ValidationResult
+	var cosineSimVal float64
+	switch result.(type) {
+	case *DifferentLengthValidationResult:
+		log.Printf("Different length validation result")
+		cosineSimVal = -1
+	case *DifferentTokensValidationResult:
+		log.Printf("Different tokens validation result")
+		cosineSimVal = -1
+	case *CosineSimilarityValidationResult:
+		log.Printf("Cosine similarity validation result")
+		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
+	default:
+		return nil, errors.New("unknown validation result type")
+	}
+
+	responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return &inference.MsgValidation{
+		Id:              uuid.New().String(),
+		InferenceId:     result.GetInferenceId(),
+		ResponsePayload: string(result.GetValidationResponseBytes()),
+		ResponseHash:    responseHash,
+		Value:           cosineSimVal,
+	}, nil
 }

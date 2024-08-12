@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	"inference/x/inference/types"
 )
 
 type InferenceCosmosClient struct {
@@ -110,6 +111,11 @@ func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgVal
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
+	transaction.Creator = icc.address
+	return icc.sendTransaction(transaction)
+}
+
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	response, err := icc.client.BroadcastTx(icc.context, *icc.account, msg)
 	if err != nil {
@@ -119,4 +125,8 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	_ = response
 	println(response.Data)
 	return nil
+}
+
+func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
+	return types.NewQueryClient(icc.client.Context())
 }

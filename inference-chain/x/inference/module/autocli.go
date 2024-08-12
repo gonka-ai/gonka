@@ -39,6 +39,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
+				{
+					RpcMethod:      "GetInferencesWithExecutors",
+					Use:            "get-inferences-with-executors [ids]",
+					Short:          "Query get-inferences-with-executors",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

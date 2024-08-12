@@ -19,6 +19,8 @@ func createNParticipant(keeper keeper.Keeper, ctx context.Context, n int) []type
 	items := make([]types.Participant, n)
 	for i := range items {
 		items[i].Index = strconv.Itoa(i)
+		// To test counter
+		items[i].Status = types.ParticipantStatus_ACTIVE
 
 		keeper.SetParticipant(ctx, items[i])
 	}
@@ -28,6 +30,7 @@ func createNParticipant(keeper keeper.Keeper, ctx context.Context, n int) []type
 func TestParticipantGet(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNParticipant(keeper, ctx, 10)
+	var expectedCounter uint32 = 0
 	for _, item := range items {
 		rst, found := keeper.GetParticipant(ctx,
 			item.Index,
@@ -37,15 +40,23 @@ func TestParticipantGet(t *testing.T) {
 			nullify.Fill(&item),
 			nullify.Fill(&rst),
 		)
+		expectedCounter++
 	}
+	counter := keeper.GetParticipantCounter(ctx)
+	require.Equal(t, expectedCounter, counter)
 }
 func TestParticipantRemove(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNParticipant(keeper, ctx, 10)
+	var expectedCounter uint32 = 10
+	require.Equal(t, expectedCounter, keeper.GetParticipantCounter(ctx))
 	for _, item := range items {
 		keeper.RemoveParticipant(ctx,
 			item.Index,
 		)
+		expectedCounter--
+		counter := keeper.GetParticipantCounter(ctx)
+		require.Equal(t, expectedCounter, counter)
 		_, found := keeper.GetParticipant(ctx,
 			item.Index,
 		)

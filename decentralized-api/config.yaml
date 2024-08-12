@@ -1,3 +1,5 @@
+api:
+  port: 8080
 nodes:
   - id: node1
     url: http://localhost:2020/
