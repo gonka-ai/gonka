@@ -59,15 +59,15 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 
 	// Subscribe to custom events
 	subscribeMsg := `{"jsonrpc": "2.0", "method": "subscribe", "id": "1", "params": ["tm.event='Tx' AND message.action='/inference.inference.MsgFinishInference'"]}`
-	if err := ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
-		log.Fatal("write:", err)
+	if err = ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
+		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 
 	// Listen for events
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
-			log.Printf("read:", err)
+			log.Printf("Failed to read a websocket message. %v", err)
 		}
 
 		log.Printf("Received: %s", message)

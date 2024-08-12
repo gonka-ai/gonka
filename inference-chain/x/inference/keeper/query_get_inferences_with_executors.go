@@ -45,8 +45,10 @@ func (k Keeper) GetInferencesWithExecutors(goCtx context.Context, req *types.Que
 		}
 	}
 
+	numValidators := k.GetParticipantCounter(ctx)
+
 	return &types.QueryGetInferencesWithExecutorsResponse{
 		InferenceWithExecutor: result,
-		NumValidators:         10, // PRTODO: set num validators
+		NumValidators:         numValidators,
 	}, nil
 }
