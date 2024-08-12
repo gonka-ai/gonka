@@ -8,6 +8,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const DefaultMaxTokens = 2048
+
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -21,7 +23,12 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator)
 	}
 
-	k.SetInference(ctx, types.Inference{
+	_, found = k.GetParticipant(ctx, msg.ReceivedBy)
+	if !found {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ReceivedBy)
+	}
+
+	inference := types.Inference{
 		Index:               msg.InferenceId,
 		InferenceId:         msg.InferenceId,
 		PromptHash:          msg.PromptHash,
@@ -31,7 +38,14 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		Model:               msg.Model,
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
-	})
+		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
+		MaxTokens: DefaultMaxTokens,
+	}
+	err := k.PutPaymentInEscrow(ctx, &inference)
+	if err != nil {
+		return nil, err
+	}
+	k.SetInference(ctx, inference)
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
