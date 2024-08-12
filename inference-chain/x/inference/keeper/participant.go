@@ -16,23 +16,27 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
 	key := types.ParticipantKey(participant.Index)
 
-	oldB := store.Get(key)
+	oldParticipant := k.retrieveParticipant(&store, key)
 
 	b := k.cdc.MustMarshal(&participant)
 	store.Set(key, b)
-
-	var oldParticipant *types.Participant
-	if oldB == nil {
-		oldParticipant = nil
-	} else {
-		k.cdc.MustUnmarshal(oldB, oldParticipant)
-	}
 
 	if !isActiveValidator(oldParticipant) && isActiveValidator(&participant) {
 		k.incrementParticipantCounter(ctx)
 	} else if isActiveValidator(oldParticipant) && !isActiveValidator(&participant) {
 		k.decrementParticipantCounter(ctx)
 	}
+}
+
+func (k Keeper) retrieveParticipant(store *prefix.Store, key []byte) *types.Participant {
+	b := store.Get(key)
+	if b == nil {
+		return nil
+	}
+
+	var participant *types.Participant
+	k.cdc.MustUnmarshal(b, participant)
+	return participant
 }
 
 func isActiveValidator(participant *types.Participant) bool {
@@ -107,9 +111,14 @@ func (k Keeper) RemoveParticipant(
 ) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
-	store.Delete(types.ParticipantKey(
-		index,
-	))
+	key := types.ParticipantKey(index)
+
+	participant := k.retrieveParticipant(&store, key)
+
+	store.Delete(key)
+	if participant != nil && isActiveValidator(participant) {
+		k.decrementParticipantCounter(ctx)
+	}
 }
 
 // GetAllParticipant returns all participant
