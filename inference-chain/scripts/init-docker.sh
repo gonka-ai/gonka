@@ -50,7 +50,7 @@ exit
 APP_NAME="inferenced"
 CHAIN_ID="prod-sim"
 COIN_DENOM="icoin"
-STATE_DIR="/root/.$APP_NAME"
+STATE_DIR="/root/.inference"
 
 KEY_NAME=$1
 if [ -z "$KEY_NAME" ]; then

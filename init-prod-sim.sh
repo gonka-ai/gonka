@@ -1,25 +1,30 @@
-rm -r prod-sim
+BASE_DIR="prod-sim"
+rm -r "$BASE_DIR"
 
-mkdir prod-sim
-mkdir prod-sim/requester
-mkdir prod-sim/requester/node
-mkdir prod-sim/requester/api
-mkdir prod-sim/executor
-mkdir prod-sim/executor/node
-mkdir prod-sim/executor/api
-mkdir prod-sim/validator
-mkdir prod-sim/validator/node
-mkdir prod-sim/validator/api
+mkdir "$BASE_DIR"
+mkdir "$BASE_DIR/requester"
+mkdir "$BASE_DIR/requester/node"
+mkdir "$BASE_DIR/requester/api"
+mkdir "$BASE_DIR/executor"
+mkdir "$BASE_DIR/executor/node"
+mkdir "$BASE_DIR/executor/api"
+mkdir "$BASE_DIR/validator"
+mkdir "$BASE_DIR/validator/node"
+mkdir "$BASE_DIR/validator/api"
 
 APP_NAME="inferenced"
 IMAGE_NAME="inferenced"
 CHAIN_ID="test-chain"
 COIN_DENOM="icoin"
+STATE_DIR_NAME=".inference"
+
+MOUNT_PATH=$(pwd)/prod-sim
+echo "MOUNT_PATH=$MOUNT_PATH"
 
 echo requester'\n'executor'\n'validator \
     | xargs -I {} \
     docker run --rm -i \
-    -v $(pwd)/prod-sim/{}/node:/root/.$APP_NAME \
+    -v $MOUNT_PATH/{}/node:/root/$STATE_DIR_NAME \
     "$IMAGE_NAME" \
     "$APP_NAME" init \
     --chain-id $CHAIN_ID \
