@@ -21,6 +21,7 @@ STATE_DIR_NAME=".inference"
 MOUNT_PATH=$(pwd)/prod-sim
 echo "MOUNT_PATH=$MOUNT_PATH"
 
+<<'###BLOCK-COMMENT'
 echo requester'\n'executor'\n'validator \
     | xargs -I {} \
     docker run --rm -i \
@@ -30,3 +31,39 @@ echo requester'\n'executor'\n'validator \
     --chain-id $CHAIN_ID \
     --default-denom $COIN_DENOM \
     prod-sim-node # moniker is not chain id!
+###BLOCK-COMMENT
+
+docker run --rm -it \
+    -v "$MOUNT_PATH/requester/node:/root/$STATE_DIR_NAME" \
+    "$IMAGE_NAME" \
+    sh -c "chmod +x init-docker.sh; KEY_NAME=requester IS_GENESIS=true ./init-docker.sh"
+
+function get_node_id() {
+  local x=$1
+  docker run --rm \
+      -v "$MOUNT_PATH/$x/node:/root/$STATE_DIR_NAME" \
+      "$IMAGE_NAME" \
+      "$APP_NAME" tendermint show-node-id
+}
+
+requester_node_id=$(get_node_id requester)
+echo "requester_node_id=$requester_node_id"
+
+SEEDS="$requester_node_id@requester:26656"
+
+echo "--INITIALIZING EXECUTOR--"
+docker run --rm -it \
+    -v "$MOUNT_PATH/executor/node:/root/$STATE_DIR_NAME" \
+    "$IMAGE_NAME" \
+    sh -c "chmod +x init-docker.sh; KEY_NAME=executor SEEDS=$SEEDS ./init-docker.sh"
+
+executor_node_id=$(get_node_id executor)
+
+SEEDS="\"$requester_node_id@requester:26656,$executor_node_id@executor:26656\""
+
+echo "--INITIALIZING EXECUTOR--"
+# TODO: add executor as a seed too?
+docker run --rm -it \
+    -v "$MOUNT_PATH/validator/node:/root/$STATE_DIR_NAME" \
+    "$IMAGE_NAME" \
+    sh -c "chmod +x init-docker.sh; KEY_NAME=validator SEEDS=$SEEDS ./init-docker.sh"
