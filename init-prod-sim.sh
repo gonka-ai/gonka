@@ -67,3 +67,18 @@ docker run --rm -it \
     -v "$MOUNT_PATH/validator/node:/root/$STATE_DIR_NAME" \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=validator SEEDS=$SEEDS ./init-docker.sh"
+
+function initialize_config() {
+    local x=$1
+    local yaml_file="$MOUNT_PATH/$x/api/config.yaml"
+    cp decentralized-api/config-docker.yaml "$yaml_file"
+
+    sed -i '' "s|^[[:space:]]url: .*|url: http://$x:26657|" "$yaml_file"
+    sed -i '' "s|^[[:space:]]account_name: \".*\"|account_name: \"$x\"|" "$yaml_file"
+    sed -i '' "s|^[[:space:]]keyring_backend: \".*\"|keyring_backend: \"file\"|" "$yaml_file"
+}
+
+initialize_config requester
+cp decentralized-api/config.yaml "$MOUNT_PATH/requester/api/config.yaml"
+cp decentralized-api/config.yaml "$MOUNT_PATH/executor/api/config.yaml"
+cp decentralized-api/config.yaml "$MOUNT_PATH/validator/api/config.yaml"

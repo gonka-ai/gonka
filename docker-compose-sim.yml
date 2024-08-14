@@ -6,42 +6,42 @@ services:
     container_name: val-alice
     image: inferenced
     volumes:
-      - ./prod-sim/requester/node:/root/.inferenced
+      - ./prod-sim/requester:/root/.inferenced
     networks:
       - net-public
 
   requester-api:
     image: decentralized-api
     volumes:
-      - ./prod-sim/requester/api:/root/.inferenced
+      - ./prod-sim/requester:/root/.inferenced
 
   executor-node:
     command: inferenced start
     container_name: sentry-alice
     image: inferenced
     volumes:
-      - ./prod-sim/executor/node:/root/.inferenced
+      - ./prod-sim/executor:/root/.inferenced
     networks:
       - net-public
 
   executor-api:
     image: decentralized-api
     volumes:
-      - ./prod-sim/executor/api:/root/.inferenced
+      - ./prod-sim/executor:/root/.inferenced
 
   validator-node:
     command: inferenced start
     container_name: val-bob
     image: inferenced
     volumes:
-      - ./prod-sim/validator/node:/root/.inferenced
+      - ./prod-sim/validator:/root/.inferenced
     networks:
       - net-public
 
   validator-api:
     image: decentralized-api
     volumes:
-      - ./prod-sim/validator/api:/root/.inferenced
+      - ./prod-sim/validator:/root/.inferenced
 
 networks:
   net-public:
