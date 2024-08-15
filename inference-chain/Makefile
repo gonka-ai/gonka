@@ -57,3 +57,10 @@ init:
 
 clean-state:
 	rm -rf "$$HOME/.inference"
+
+docker-push:
+	@echo "--> pushing inferenced docker image"
+	@docker tag inferenced gcr.io/decentralized-ai/inferenced
+	@docker push gcr.io/decentralized-ai/inferenced
+
+build-and-push-docker: build-docker-amd docker-push

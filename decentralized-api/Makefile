@@ -56,3 +56,5 @@ docker-push:
 	@echo "--> pushing decentralized-api docker image"
 	@docker tag decentralized-api gcr.io/decentralized-ai/api
 	@docker push gcr.io/decentralized-ai/api
+
+build-and-push-docker: build-docker-amd docker-push
