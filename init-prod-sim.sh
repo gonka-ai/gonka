@@ -3,14 +3,8 @@ rm -r "$BASE_DIR"
 
 mkdir "$BASE_DIR"
 mkdir "$BASE_DIR/requester"
-mkdir "$BASE_DIR/requester/node"
-mkdir "$BASE_DIR/requester/api"
 mkdir "$BASE_DIR/executor"
-mkdir "$BASE_DIR/executor/node"
-mkdir "$BASE_DIR/executor/api"
 mkdir "$BASE_DIR/validator"
-mkdir "$BASE_DIR/validator/node"
-mkdir "$BASE_DIR/validator/api"
 
 APP_NAME="inferenced"
 IMAGE_NAME="inferenced"
@@ -34,14 +28,14 @@ echo requester'\n'executor'\n'validator \
 ###BLOCK-COMMENT
 
 docker run --rm -it \
-    -v "$MOUNT_PATH/requester/node:/root/$STATE_DIR_NAME" \
+    -v "$MOUNT_PATH/requester:/root/$STATE_DIR_NAME" \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=requester IS_GENESIS=true ./init-docker.sh"
 
 function get_node_id() {
   local x=$1
   docker run --rm \
-      -v "$MOUNT_PATH/$x/node:/root/$STATE_DIR_NAME" \
+      -v "$MOUNT_PATH/$x:/root/$STATE_DIR_NAME" \
       "$IMAGE_NAME" \
       "$APP_NAME" tendermint show-node-id
 }
@@ -53,7 +47,7 @@ SEEDS="$requester_node_id@requester:26656"
 
 echo "--INITIALIZING EXECUTOR--"
 docker run --rm -it \
-    -v "$MOUNT_PATH/executor/node:/root/$STATE_DIR_NAME" \
+    -v "$MOUNT_PATH/executor:/root/$STATE_DIR_NAME" \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=executor SEEDS=$SEEDS ./init-docker.sh"
 
@@ -64,13 +58,13 @@ SEEDS="\"$requester_node_id@requester:26656,$executor_node_id@executor:26656\""
 echo "--INITIALIZING EXECUTOR--"
 # TODO: add executor as a seed too?
 docker run --rm -it \
-    -v "$MOUNT_PATH/validator/node:/root/$STATE_DIR_NAME" \
+    -v "$MOUNT_PATH/validator:/root/$STATE_DIR_NAME" \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=validator SEEDS=$SEEDS ./init-docker.sh"
 
 function initialize_config() {
     local x=$1
-    local yaml_file="$MOUNT_PATH/$x/api/config.yaml"
+    local yaml_file="$MOUNT_PATH/$x/config.yaml"
     cp decentralized-api/config-docker.yaml "$yaml_file"
 
     sed -i '' "s|^[[:space:]]url: .*|url: http://$x:26657|" "$yaml_file"
@@ -79,6 +73,5 @@ function initialize_config() {
 }
 
 initialize_config requester
-cp decentralized-api/config.yaml "$MOUNT_PATH/requester/api/config.yaml"
-cp decentralized-api/config.yaml "$MOUNT_PATH/executor/api/config.yaml"
-cp decentralized-api/config.yaml "$MOUNT_PATH/validator/api/config.yaml"
+initialize_config executor
+initialize_config validator
