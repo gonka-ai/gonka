@@ -17,6 +17,8 @@ services:
       - "8080:8080"
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
+    networks:
+      net-public:
 
   executor-node:
     command: inferenced start
@@ -34,6 +36,8 @@ services:
       - "8081:8080"
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
+    networks:
+      net-public:
 
   validator-node:
     command: inferenced start
@@ -51,6 +55,8 @@ services:
       - "8082:8080"
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
+    networks:
+      net-public:
 
 networks:
   net-public:
