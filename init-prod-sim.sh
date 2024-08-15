@@ -8,7 +8,6 @@ mkdir "$BASE_DIR/validator"
 
 APP_NAME="inferenced"
 IMAGE_NAME="inferenced"
-CHAIN_ID="test-chain"
 COIN_DENOM="icoin"
 STATE_DIR_NAME=".inference"
 
