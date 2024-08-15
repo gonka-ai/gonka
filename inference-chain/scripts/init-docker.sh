@@ -6,11 +6,17 @@ if [ -z "$KEY_NAME" ]; then
   exit 1
 fi
 
+if [ -z "$KEYRING_BACKEND" ]; then
+  echo "KEYRING_BACKEND is not specified defaulting to test"
+  KEYRING_BACKEND="test"
+fi
+
 # Display the parsed values (for debugging)
 echo "Using the following arguments"
 echo "KEY_NAME: $KEY_NAME"
 echo "SEEDS: $SEEDS"
 echo "IS_GENESIS: $IS_GENESIS"
+echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 APP_NAME="inferenced"
 CHAIN_ID="prod-sim"
@@ -29,7 +35,7 @@ $APP_NAME init \
   my-node
 
 $APP_NAME config set client chain-id $CHAIN_ID
-$APP_NAME config set client keyring-backend file
+$APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
@@ -38,12 +44,12 @@ sed -Ei "s/^seeds = .*$/seeds = \"$SEEDS\"/g" \
 
 # Create a key
 $APP_NAME keys \
-    --keyring-backend file --keyring-dir "$STATE_DIR" \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
     add "$KEY_NAME"
 
 if [ "$IS_GENESIS" = true ]; then
   echo "This is a genesis node setup."
-  $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000$COIN_DENOM" --keyring-backend file
+  $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
   $APP_NAME genesis gentx "$KEY_NAME" "1000000$COIN_DENOM" --chain-id "$CHAIN_ID"
   $APP_NAME genesis collect-gentxs
 else

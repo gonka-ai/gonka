@@ -73,7 +73,7 @@ function initialize_config() {
 
     sed -i '' "s/url: .*:26657/url: http:\/\/$x-node:26657/" "$yaml_file"
     sed -i '' "s/account_name: .*/account_name: \"$x\"/" "$yaml_file"
-    sed -i '' "s/keyring_backend: .*/keyring_backend: file/" "$yaml_file"
+    sed -i '' "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 }
 
 initialize_config requester
