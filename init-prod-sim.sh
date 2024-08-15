@@ -64,12 +64,12 @@ docker run --rm -it \
 
 function initialize_config() {
     local x=$1
-    local yaml_file="$MOUNT_PATH/$x/config.yaml"
+    local yaml_file="$MOUNT_PATH/$x/api-config.yaml"
     cp decentralized-api/config-docker.yaml "$yaml_file"
 
-    sed -i '' "s|^[[:space:]]url: .*|url: http://$x:26657|" "$yaml_file"
-    sed -i '' "s|^[[:space:]]account_name: \".*\"|account_name: \"$x\"|" "$yaml_file"
-    sed -i '' "s|^[[:space:]]keyring_backend: \".*\"|keyring_backend: \"file\"|" "$yaml_file"
+    sed -i '' "s/url: .*:26657/url: http:\/\/$x:26657/" "$yaml_file"
+    sed -i '' "s/account_name: .*/account_name: \"$x\"/" "$yaml_file"
+    sed -i '' "s/keyring_backend: .*/keyring_backend: file/" "$yaml_file"
 }
 
 initialize_config requester

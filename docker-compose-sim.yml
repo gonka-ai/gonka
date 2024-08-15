@@ -9,13 +9,15 @@ services:
       - ./prod-sim/requester:/root/.inferenced
     networks:
       - net-public
-    ports:
-      - "5000:26657"
 
   requester-api:
     image: decentralized-api
     volumes:
       - ./prod-sim/requester:/root/.inferenced
+    ports:
+      - "8080:8080"
+    environment:
+      - API_CONFIG_PATH=/root/.inferenced/api-config.yaml
 
   executor-node:
     command: inferenced start
@@ -32,6 +34,8 @@ services:
       - ./prod-sim/executor:/root/.inferenced
     ports:
       - "8081:8080"
+    environment:
+      - API_CONFIG_PATH=/root/.inferenced/api-config.yaml
 
   validator-node:
     command: inferenced start
@@ -48,6 +52,8 @@ services:
       - ./prod-sim/validator:/root/.inferenced
     ports:
       - "8082:8080"
+    environment:
+      - API_CONFIG_PATH=/root/.inferenced/api-config.yaml
 
 networks:
   net-public:
