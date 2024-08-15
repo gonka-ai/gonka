@@ -43,7 +43,7 @@ function get_node_id() {
 requester_node_id=$(get_node_id requester)
 echo "requester_node_id=$requester_node_id"
 
-SEEDS="$requester_node_id@requester:26656"
+SEEDS="$requester_node_id@requester-node:26656"
 
 echo "--INITIALIZING EXECUTOR--"
 docker run --rm -it \
@@ -53,7 +53,7 @@ docker run --rm -it \
 
 executor_node_id=$(get_node_id executor)
 
-SEEDS="\"$requester_node_id@requester:26656,$executor_node_id@executor:26656\""
+SEEDS="\"$requester_node_id@requester-node:26656,$executor_node_id@executor-node:26656\""
 
 echo "--INITIALIZING EXECUTOR--"
 # TODO: add executor as a seed too?
@@ -62,12 +62,16 @@ docker run --rm -it \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=validator SEEDS=$SEEDS ./init-docker.sh"
 
+# Distribute the genesis
+cp "$MOUNT_PATH/requester/config/genesis.json" "$MOUNT_PATH/executor/config/genesis.json"
+cp "$MOUNT_PATH/requester/config/genesis.json" "$MOUNT_PATH/validator/config/genesis.json"
+
 function initialize_config() {
     local x=$1
     local yaml_file="$MOUNT_PATH/$x/api-config.yaml"
     cp decentralized-api/config-docker.yaml "$yaml_file"
 
-    sed -i '' "s/url: .*:26657/url: http:\/\/$x:26657/" "$yaml_file"
+    sed -i '' "s/url: .*:26657/url: http:\/\/$x-node:26657/" "$yaml_file"
     sed -i '' "s/account_name: .*/account_name: \"$x\"/" "$yaml_file"
     sed -i '' "s/keyring_backend: .*/keyring_backend: file/" "$yaml_file"
 }
