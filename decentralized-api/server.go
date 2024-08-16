@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type InferenceTransaction struct {
@@ -87,6 +88,11 @@ type ResponseWithBody struct {
 
 func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			processGetCompletionById(w, request, recorder)
+			return
+		}
+
 		respWithBody, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*ResponseWithBody, error) {
 			return getInference(request, node.Url, &recorder, config.ChainNode.AccountName)
 		})
@@ -108,6 +114,34 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 		w.WriteHeader(respWithBody.Response.StatusCode)
 		w.Write(respWithBody.BodyBytes)
 	}
+}
+
+func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder InferenceCosmosClient) {
+	// Manually extract the {id} from the URL path
+	id := strings.TrimPrefix(request.URL.Path, "/v1/chat/completions/")
+	if id == "" {
+		http.Error(w, "ID is required", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("GET inference. id = %s", id)
+	queryClient := recorder.NewInferenceQueryClient()
+	response, err := queryClient.Inference(recorder.context, &types.QueryGetInferenceRequest{Index: id})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respBytes, err := json.Marshal(response.Inference)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBytes)
+
+	return
 }
 
 func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*ResponseWithBody, error) {
