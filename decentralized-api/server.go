@@ -147,6 +147,7 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
 		ReceivedBy:    accountName,
+		Model:         testModel,
 	})
 	if err != nil {
 		return nil, nil, err
