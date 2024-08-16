@@ -61,6 +61,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 
 	// Create an HTTP server
 	http.HandleFunc("/v1/chat/completions/", wrapChat(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 
@@ -86,11 +87,25 @@ type ResponseWithBody struct {
 	BodyBytes []byte
 }
 
+func wrapGetCompletion(recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		log.Printf("Received request. method = %s. path = %s", request.Method, request.URL.Path)
+
+		if request.Method == http.MethodGet {
+			processGetCompletionById(w, request, recorder)
+			return
+		}
+
+		http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+	}
+
+}
 func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		log.Printf("Received request. method = %s. path = %s", request.Method, request.URL.Path)
-		if request.Method == http.MethodGet {
-			processGetCompletionById(w, request, recorder)
+
+		if request.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 
