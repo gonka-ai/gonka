@@ -170,6 +170,11 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		return nil, nil, err
 	}
 
+	bodyBytes, err = addIdToBodyBytes(bodyBytes, transactionUUID)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp, bodyBytes, nil
 	}
@@ -199,7 +204,25 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 	if err == nil {
 		log.Println(string(transactionJson))
 	}
+
 	return resp, bodyBytes, nil
+}
+
+func addIdToBodyBytes(bodyBytes []byte, id string) ([]byte, error) {
+	var bodyMap map[string]interface{}
+	err := json.Unmarshal(bodyBytes, &bodyMap)
+	if err != nil {
+		return nil, err
+	}
+
+	bodyMap["id"] = id
+
+	updatedBodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return updatedBodyBytes, nil
 }
 
 func ReadRequestBody(r *http.Request) ([]byte, error) {
@@ -225,7 +248,10 @@ func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClien
 	}
 
 	println("--TRANSACTIONID--" + transaction.Id)
-	recorder.FinishInference(message)
+	err := recorder.FinishInference(message)
+	if err != nil {
+		log.Printf("Failed to submit MsgFinishInference. %v", err)
+	}
 }
 
 func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
