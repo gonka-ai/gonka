@@ -24,7 +24,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
-		log.Printf("Failed to query GetInferencesWithExecutors")
+		log.Printf("Failed to query GetInferencesWithExecutors. %v", err)
 		return
 	}
 
