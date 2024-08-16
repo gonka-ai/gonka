@@ -151,6 +151,9 @@ curl -X POST 'http://35.232.251.227:8080/v1/participants' \
   "models": ["unsloth/llama-3-8b-Instruct"]
 }'
 
+curl -X GET 'http://34.46.180.72:8080/v1/chat/completions/some-id' \
+--header 'Content-Type: application/json'
+
 # Validator
 curl -X POST 'http://34.172.126.50:8080/v1/participants' \
 --header 'Content-Type: application/json' \

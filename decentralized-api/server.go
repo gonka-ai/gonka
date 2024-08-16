@@ -60,7 +60,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	}
 
 	// Create an HTTP server
-	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
+	http.HandleFunc("/v1/chat/completions/", wrapChat(nodeBroker, transactionRecorder, config))
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 
