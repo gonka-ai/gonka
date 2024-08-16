@@ -6,8 +6,7 @@ services:
     container_name: node
     image: gcr.io/decentralized-ai/inferenced
     volumes:
-      # TODO: abstract it
-      - /Users/dima/.inference:/root/.inference
+      - .inference:/root/.inference
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
@@ -22,5 +21,4 @@ services:
       - "8080:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
-      # TODO: abstract it
-      - /Users/dima/.inference:/root/.inference
+      - .inference:/root/.inference
