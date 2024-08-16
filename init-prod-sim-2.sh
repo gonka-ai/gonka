@@ -64,6 +64,6 @@ initialize_config requester
 initialize_config executor
 initialize_config validator
 
-v_addr="cosmos1x4c24exedfdy6czz5ck92ka9xw2pdd2eq76gh3"
-e_addr="cosmos1xql6r5dqqljs4j0me8s6ummadyvpwjwuga06sp"
-r_addr="cosmos1yq6duhnjl6jr0dwxsjmv9ujfjscxzp2u6v6cw9"
+VALIDATOR_ADDRESS="cosmos1x4c24exedfdy6czz5ck92ka9xw2pdd2eq76gh3"
+EXECUTOR_ADDRESS="cosmos1xql6r5dqqljs4j0me8s6ummadyvpwjwuga06sp"
+REQUESTER_ADDRESS="cosmos1yq6duhnjl6jr0dwxsjmv9ujfjscxzp2u6v6cw9"

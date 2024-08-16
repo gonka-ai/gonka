@@ -100,3 +100,57 @@ gscp gcp/validator-config.yaml validator-node:~/api-config.yaml
 docker compose -f docker-compose-cloud.yml up -d
 docker compose -f docker-compose-cloud.yml logs -f
 docker compose -f docker-compose-cloud.yml down
+
+# WAY #2:
+# Launch init-prod-sim-2.sh
+# Then copy-to-gcp.sh
+
+# Fund accounts
+APP_NAME="inferenced"
+IMAGE_NAME="gcr.io/decentralized-ai/inferenced"
+CHAIN_ID="prod-sim"
+COIN_DENOM="icoin"
+STATE_DIR_NAME=".inference"
+
+echo "Add Executor"
+docker run --rm -it \
+    -v ~/.inference:/root/.inference \
+    "$IMAGE_NAME" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $EXECUTOR_ADDRESS "100$COIN_DENOM" \
+        --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
+        --chain-id $CHAIN_ID --yes \
+        --node tcp://10.128.0.21:26657
+
+echo "Add Validator"
+docker run --rm -it \
+    -v ~/.inference:/root/.inference \
+    "$IMAGE_NAME" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $VALIDATOR_ADDRESS "100$COIN_DENOM" \
+        --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
+        --chain-id $CHAIN_ID --yes \
+        --node tcp://10.128.0.21:26657
+
+# Create participants
+# Requester
+curl -X POST 'http://34.46.180.72:8080/v1/participants' \
+--header 'Content-Type: application/json' \
+--data '{
+  "url": "http://34.46.180.72:8080",
+  "models": ["unsloth/llama-3-8b-Instruct"]
+}'
+
+# Executor
+curl -X POST 'http://35.232.251.227:8080/v1/participants' \
+--header 'Content-Type: application/json' \
+--data '{
+  "url": "http://35.232.251.227:8080",
+  "models": ["unsloth/llama-3-8b-Instruct"]
+}'
+
+# Validator
+curl -X POST 'http://34.172.126.50:8080/v1/participants' \
+--header 'Content-Type: application/json' \
+--data '{
+  "url": "http://34.172.126.50:8080",
+  "models": ["unsloth/llama-3-8b-Instruct"]
+}'
