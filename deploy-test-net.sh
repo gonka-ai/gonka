@@ -112,6 +112,10 @@ CHAIN_ID="prod-sim"
 COIN_DENOM="icoin"
 STATE_DIR_NAME=".inference"
 
+VALIDATOR_ADDRESS="cosmos1x4c24exedfdy6czz5ck92ka9xw2pdd2eq76gh3"
+EXECUTOR_ADDRESS="cosmos1xql6r5dqqljs4j0me8s6ummadyvpwjwuga06sp"
+REQUESTER_ADDRESS="cosmos1yq6duhnjl6jr0dwxsjmv9ujfjscxzp2u6v6cw9"
+
 echo "Add Executor"
 docker run --rm -it \
     -v ~/.inference:/root/.inference \
@@ -154,3 +158,11 @@ curl -X POST 'http://34.172.126.50:8080/v1/participants' \
   "url": "http://34.172.126.50:8080",
   "models": ["unsloth/llama-3-8b-Instruct"]
 }'
+
+docker compose -f docker-compose-cloud.yml down
+docker rmi gcr.io/decentralized-ai/inferenced gcr.io/decentralized-ai/api
+
+docker compose -f docker-compose-cloud.yml up -d
+
+docker compose -f docker-compose-cloud.yml logs -f
+docker logs --follow api

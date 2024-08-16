@@ -97,6 +97,10 @@ func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config 
 
 		// Copy the response back to the client
 		for key, values := range respWithBody.Response.Header {
+			// Skip Content-Length, because we're modifying body
+			if key == "Content-Length" {
+				continue
+			}
 			for _, value := range values {
 				w.Header().Add(key, value)
 			}
