@@ -34,6 +34,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.PromptTokenCount[existingInference.Model] += existingInference.PromptTokenCount
 	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
+	executor.InferenceCount++
 	k.SetParticipant(ctx, executor)
 
 	ctx.EventManager().EmitEvent(
