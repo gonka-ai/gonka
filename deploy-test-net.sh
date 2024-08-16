@@ -15,8 +15,8 @@ docker run --rm -it \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=requester IS_GENESIS=true ./init-docker.sh"
 
-sudo chmod +rw .inference
-sudo chmod +rw .inference/config
+sudo chmod o+rw .inference
+sudo chmod o+rw .inference/config/genesis.json
 
 docker run --rm \
     -v "$MOUNT_PATH/$STATE_DIR_NAME:/root/$STATE_DIR_NAME" \
@@ -44,9 +44,8 @@ docker run --rm -it \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=executor SEEDS=$SEEDS ./init-docker.sh"
 
-sudo chmod +rw .inference
-sudo chmod +rw .inference/config
-sudo chmod +rw .inference/config/genesis.json
+sudo chmod o+rw .inference
+sudo chmod o+rw .inference/config/genesis.json
 
 EXECUTOR_ADDRESS="cosmos1wlnjqegc5k05ulruyex5j58c6g9mfrzj25sfh4"
 
@@ -67,9 +66,8 @@ docker run --rm -it \
     "$IMAGE_NAME" \
     sh -c "chmod +x init-docker.sh; KEY_NAME=validator SEEDS=$SEEDS ./init-docker.sh"
 
-sudo chmod +rw .inference
-sudo chmod +rw .inference/config
-sudo chmod +rw .inference/config/genesis.json
+sudo chmod o+rw .inference
+sudo chmod o+rw .inference/config/genesis.json
 #
 VALIDATOR_ADDRESS="cosmos1mdm3dc3xjqqrwuzqk3np6nnzs75zl6j89sasfd"
 
@@ -87,6 +85,8 @@ gscp requester-node:~/.inference/config/genesis.json genesis.json
 gscp genesis.json executor-node:~/genesis.json
 gscp genesis.json validator-node:~/genesis.json
 
+gscp executor-node:~/genesis.json e-genesis.json
+
 # Copy api-configs
 gscp gcp/requester-config.yaml requester-node:~/.inference/api-config.yaml
 gscp gcp/executor-config.yaml executor-node:~/.inference/api-config.yaml
@@ -98,3 +98,5 @@ gscp gcp/executor-config.yaml executor-node:~/api-config.yaml
 gscp gcp/validator-config.yaml validator-node:~/api-config.yaml
 
 docker compose -f docker-compose-cloud.yml up -d
+docker compose -f docker-compose-cloud.yml logs -f
+docker compose -f docker-compose-cloud.yml down
