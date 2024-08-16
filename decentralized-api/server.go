@@ -88,6 +88,7 @@ type ResponseWithBody struct {
 
 func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
+		log.Printf("Received request. method = %s. path = %s", request.Method, request.URL.Path)
 		if request.Method == http.MethodGet {
 			processGetCompletionById(w, request, recorder)
 			return
