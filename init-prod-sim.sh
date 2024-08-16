@@ -78,3 +78,5 @@ function initialize_config() {
 initialize_config requester
 initialize_config executor
 initialize_config validator
+
+# inferenced query inference list-inference --node tcp://34.172.126.50:26657
