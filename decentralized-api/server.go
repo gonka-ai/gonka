@@ -80,66 +80,47 @@ func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 	}
 }
 
+type ResponseWithBody struct {
+	Response  *http.Response
+	BodyBytes []byte
+}
+
 func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		// Get the inference server URL
-		nodeChan := make(chan *broker.InferenceNode, 2)
-		err := nodeBroker.QueueMessage(broker.LockAvailableNode{
-			Model:    testModel,
-			Response: nodeChan,
+		respWithBody, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*ResponseWithBody, error) {
+			return getInference(request, node.Url, &recorder, config.ChainNode.AccountName)
 		})
-		if err != nil {
-			http.Error(w, "Error getting node", http.StatusInternalServerError)
-			return
-		}
-		node := <-nodeChan
-		if node == nil {
-			http.Error(w, "No nodes available", http.StatusServiceUnavailable)
-			return
-		}
-		resp, bodyBytes, err := getInference(request, node.Url, &recorder, config.ChainNode.AccountName)
-		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
-			NodeId: node.Id,
-			Outcome: broker.InferenceSuccess{
-				Response: nil,
-			},
-			Response: make(chan bool, 2),
-		})
-		if queueError != nil {
-			http.Error(w, queueError.Error(), http.StatusInternalServerError)
-			return
-		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		// Copy the response back to the client
-		for key, values := range resp.Header {
+		for key, values := range respWithBody.Response.Header {
 			for _, value := range values {
 				w.Header().Add(key, value)
 			}
 		}
-		w.WriteHeader(resp.StatusCode)
-		w.Write(bodyBytes)
+		w.WriteHeader(respWithBody.Response.StatusCode)
+		w.Write(respWithBody.BodyBytes)
 	}
 }
 
-func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
+func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*ResponseWithBody, error) {
 	requestBytes, err := ReadRequestBody(request)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	promptHash, promptPayload, err := getPromptHash(modifiedRequestBody.NewBody)
 	transactionUUID := uuid.New().String()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	err = recorder.StartInference(&inference.MsgStartInference{
 		Creator:       accountName,
@@ -150,7 +131,7 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		Model:         testModel,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Forward the request to the inference server
@@ -160,28 +141,32 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		bytes.NewReader(modifiedRequestBody.NewBody),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	// Read the response body
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	bodyBytes, err = addIdToBodyBytes(bodyBytes, transactionUUID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp, bodyBytes, nil
+		result := &ResponseWithBody{
+			Response:  resp,
+			BodyBytes: bodyBytes,
+		}
+		return result, nil
 	}
 
 	hash, response, err := getResponseHash(bodyBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	transaction := InferenceTransaction{
@@ -205,7 +190,11 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		log.Println(string(transactionJson))
 	}
 
-	return resp, bodyBytes, nil
+	result := &ResponseWithBody{
+		Response:  resp,
+		BodyBytes: bodyBytes,
+	}
+	return result, nil
 }
 
 func addIdToBodyBytes(bodyBytes []byte, id string) ([]byte, error) {
