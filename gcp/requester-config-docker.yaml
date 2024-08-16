@@ -1,0 +1,13 @@
+api:
+  port: 8080
+nodes:
+  - id: node1
+    url:  http://34.171.235.205:8080/ # Deployed inference node
+    max_concurrent: 500
+    models:
+      - unsloth/llama-3-8b-Instruct
+chain_node:
+  url: http://node:26657
+  account_name: "requester"
+  keyring_backend: "test"
+  keyring_dir: "/root/.inference"
