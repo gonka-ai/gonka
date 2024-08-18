@@ -166,6 +166,7 @@ docker compose -f docker-compose-cloud.yml down
 docker rmi gcr.io/decentralized-ai/inferenced gcr.io/decentralized-ai/api
 
 docker compose -f docker-compose-cloud.yml up -d
+docker logs --follow api
 
 docker compose -f docker-compose-cloud.yml logs -f
 docker logs --follow api
