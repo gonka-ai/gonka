@@ -185,6 +185,7 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		Model:         testModel,
 	})
 	if err != nil {
+		log.Printf("Failed to submit MsgStartInference. %v", err)
 		return nil, err
 	}
 
@@ -356,6 +357,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) f
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {
+			log.Printf("Failed to submit MsgValidation. %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -407,6 +409,7 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 	}
 
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
+		log.Printf("Failed to submit MsgSubmitNewParticipant. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
