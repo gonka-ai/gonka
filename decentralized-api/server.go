@@ -144,7 +144,14 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(recorder.context, &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
+		log.Printf("Failed to get inference. id = %s. err = %v", id, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if response == nil {
+		log.Printf("Inference not found. id = %s", id)
+		http.Error(w, "Inference not found", http.StatusNotFound)
 		return
 	}
 
