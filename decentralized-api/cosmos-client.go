@@ -72,6 +72,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		cosmosclient.WithKeyringBackend(cosmosaccount.KeyringBackend(nodeConfig.KeyringBackend)),
 		cosmosclient.WithKeyringDir(keyringDir),
 		cosmosclient.WithGasPrices("0icoin"),
+		cosmosclient.WithFees("0icoin"),
+		cosmosclient.WithGas("0icoin"),
 	)
 	if err != nil {
 		return nil, err
