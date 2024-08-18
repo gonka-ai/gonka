@@ -170,3 +170,7 @@ docker logs --follow api
 
 docker compose -f docker-compose-cloud.yml logs -f
 docker logs --follow api
+
+# Check balances
+inferenced query bank balances $REQUESTER_ADDRESS \
+  --node tcp://34.46.180.72:26657

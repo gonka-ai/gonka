@@ -73,7 +73,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		cosmosclient.WithKeyringDir(keyringDir),
 		cosmosclient.WithGasPrices("0icoin"),
 		cosmosclient.WithFees("0icoin"),
-		cosmosclient.WithGas("0"), // Sic! no icoin is needed. They parse it as uint64, not coins
+		cosmosclient.WithGas("auto"),
 	)
 	if err != nil {
 		return nil, err
