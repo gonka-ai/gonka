@@ -31,6 +31,7 @@ var (
 	fd_Inference_endBlockTimestamp    protoreflect.FieldDescriptor
 	fd_Inference_model                protoreflect.FieldDescriptor
 	fd_Inference_maxTokens            protoreflect.FieldDescriptor
+	fd_Inference_actualCost           protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -53,6 +54,7 @@ func init() {
 	fd_Inference_endBlockTimestamp = md_Inference.Fields().ByName("endBlockTimestamp")
 	fd_Inference_model = md_Inference.Fields().ByName("model")
 	fd_Inference_maxTokens = md_Inference.Fields().ByName("maxTokens")
+	fd_Inference_actualCost = md_Inference.Fields().ByName("actualCost")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -222,6 +224,12 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.ActualCost != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.ActualCost)
+		if !f(fd_Inference_actualCost, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -271,6 +279,8 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.Model != ""
 	case "inference.inference.Inference.maxTokens":
 		return x.MaxTokens != uint64(0)
+	case "inference.inference.Inference.actualCost":
+		return x.ActualCost != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -321,6 +331,8 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 		x.Model = ""
 	case "inference.inference.Inference.maxTokens":
 		x.MaxTokens = uint64(0)
+	case "inference.inference.Inference.actualCost":
+		x.ActualCost = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -388,6 +400,9 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.maxTokens":
 		value := x.MaxTokens
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Inference.actualCost":
+		value := x.ActualCost
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -442,6 +457,8 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 		x.Model = value.Interface().(string)
 	case "inference.inference.Inference.maxTokens":
 		x.MaxTokens = value.Uint()
+	case "inference.inference.Inference.actualCost":
+		x.ActualCost = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -496,6 +513,8 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 		panic(fmt.Errorf("field model of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.maxTokens":
 		panic(fmt.Errorf("field maxTokens of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.actualCost":
+		panic(fmt.Errorf("field actualCost of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -542,6 +561,8 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 	case "inference.inference.Inference.model":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Inference.maxTokens":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Inference.actualCost":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
@@ -672,6 +693,9 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.MaxTokens != 0 {
 			n += 2 + runtime.Sov(uint64(x.MaxTokens))
 		}
+		if x.ActualCost != 0 {
+			n += 2 + runtime.Sov(uint64(x.ActualCost))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -700,6 +724,13 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ActualCost != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ActualCost))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x90
 		}
 		if x.MaxTokens != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.MaxTokens))
@@ -1297,6 +1328,25 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 18:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ActualCost", wireType)
+				}
+				x.ActualCost = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ActualCost |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1419,6 +1469,7 @@ type Inference struct {
 	EndBlockTimestamp    int64           `protobuf:"varint,15,opt,name=endBlockTimestamp,proto3" json:"endBlockTimestamp,omitempty"`
 	Model                string          `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
 	MaxTokens            uint64          `protobuf:"varint,17,opt,name=maxTokens,proto3" json:"maxTokens,omitempty"`
+	ActualCost           uint64          `protobuf:"varint,18,opt,name=actualCost,proto3" json:"actualCost,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -1560,13 +1611,20 @@ func (x *Inference) GetMaxTokens() uint64 {
 	return 0
 }
 
+func (x *Inference) GetActualCost() uint64 {
+	if x != nil {
+		return x.ActualCost
+	}
+	return 0
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x0a, 0x23, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x9d, 0x05, 0x0a, 0x09, 0x49,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xbd, 0x05, 0x0a, 0x09, 0x49,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x20,
 	0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20,
@@ -1608,7 +1666,9 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x18,
 	0x10, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x1c, 0x0a, 0x09,
 	0x6d, 0x61, 0x78, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x11, 0x20, 0x01, 0x28, 0x04, 0x52,
-	0x09, 0x6d, 0x61, 0x78, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x2a, 0x4c, 0x0a, 0x0f, 0x49, 0x6e,
+	0x09, 0x6d, 0x61, 0x78, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x1e, 0x0a, 0x0a, 0x61, 0x63,
+	0x74, 0x75, 0x61, 0x6c, 0x43, 0x6f, 0x73, 0x74, 0x18, 0x12, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a,
+	0x61, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x43, 0x6f, 0x73, 0x74, 0x2a, 0x4c, 0x0a, 0x0f, 0x49, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x0b, 0x0a,
 	0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x46, 0x49,
 	0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56, 0x41, 0x4c, 0x49,
