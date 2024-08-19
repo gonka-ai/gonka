@@ -95,18 +95,18 @@ func shouldValidate(executor types.Participant, currentAccountAddress string, nu
 func getReputationP(status types.ParticipantStatus) float64 {
 	switch status {
 	case types.ParticipantStatus_UNSPECIFIED:
-		return 0.95
+		return 1.0
 	case types.ParticipantStatus_ACTIVE:
-		return 0.5
+		return 1.0
 	case types.ParticipantStatus_INACTIVE:
-		return 0.95
+		return 1.0
 	case types.ParticipantStatus_INVALID:
-		return 0.95
+		return 1.0
 	case types.ParticipantStatus_RAMPING:
-		return 0.75
+		return 1.0
 	default:
 
-		return 0.1
+		return 1.0
 	}
 }
 
