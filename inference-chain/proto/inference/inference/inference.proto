@@ -28,5 +28,6 @@ message Inference {
   int64 endBlockTimestamp = 15;
   string model = 16;
   uint64 maxTokens = 17;
+  uint64 actualCost = 18;
 }
 

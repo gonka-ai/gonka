@@ -190,7 +190,7 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 	}
 
 	if recorder != nil {
-		createInferenceFinishedTransaction(transactionUUID, *recorder, transaction)
+		createInferenceFinishedTransaction(transactionUUID, *recorder, transaction, accountName)
 	}
 
 	// print the json of the transaction:
@@ -212,19 +212,22 @@ func ReadRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClient, transaction InferenceTransaction) {
+func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClient, transaction InferenceTransaction, accountName string) {
 	message := &inference.MsgFinishInference{
-		Creator:              "????",
+		Creator:              accountName,
 		InferenceId:          id,
 		ResponseHash:         transaction.ResponseHash,
 		ResponsePayload:      transaction.ResponsePayload,
 		PromptTokenCount:     transaction.PromptTokenCount,
 		CompletionTokenCount: transaction.CompletionTokenCount,
-		ExecutedBy:           "???",
+		ExecutedBy:           accountName,
 	}
 
 	println("--TRANSACTIONID--" + transaction.Id)
-	recorder.FinishInference(message)
+	err := recorder.FinishInference(message)
+	if err != nil {
+		log.Printf("Failed to finish inference. id = %s. err = %v", id, err)
+	}
 }
 
 func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
@@ -318,9 +321,11 @@ type ParticipantsDto struct {
 }
 
 type ParticipantDto struct {
-	Id     string   `json:"id"`
-	Url    string   `json:"url"`
-	Models []string `json:"models"`
+	Id        string   `json:"id"`
+	Url       string   `json:"url"`
+	Models    []string `json:"models"`
+	CoinsOwed uint64   `json:"coins_owed"`
+	Balance   int64    `json:"balance"`
 }
 
 func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
@@ -367,10 +372,27 @@ func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, requ
 
 	participants := make([]ParticipantDto, len(r.Participant))
 	for i, p := range r.Participant {
+		balances, err := recorder.client.BankBalances(recorder.context, p.Address, nil)
+		pBalance := int64(0)
+		if err == nil {
+			for _, balance := range balances {
+				// TODO: surely there is a place to get denom from
+				if balance.Denom == "icoin" {
+					pBalance = balance.Amount.Int64()
+				}
+			}
+			if pBalance == 0 {
+				log.Printf("Participant %s has no balance", p.Address)
+			}
+		} else {
+			log.Printf("Failed to get balance for participant %s: %v", p.Address, err)
+		}
 		participants[i] = ParticipantDto{
-			Id:     p.Address,
-			Url:    p.InferenceUrl,
-			Models: p.Models,
+			Id:        p.Address,
+			Url:       p.InferenceUrl,
+			Models:    p.Models,
+			CoinsOwed: p.CoinBalance,
+			Balance:   pBalance,
 		}
 	}
 
@@ -384,6 +406,7 @@ func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, requ
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseJson)
 }

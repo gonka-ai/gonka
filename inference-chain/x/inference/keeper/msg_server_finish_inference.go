@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-
 	sdkerrors "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -29,11 +28,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.ExecutedBy = msg.ExecutedBy
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
+	existingInference.ActualCost = CalculateCost(existingInference)
 	k.SetInference(ctx, existingInference)
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.PromptTokenCount[existingInference.Model] += existingInference.PromptTokenCount
 	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
+	executor.CoinBalance += existingInference.ActualCost
 	k.SetParticipant(ctx, executor)
 
 	ctx.EventManager().EmitEvent(
