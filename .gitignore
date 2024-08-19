@@ -7,3 +7,7 @@ release/
 *.dot
 *.log
 *.ign
+prod-sim/
+decentralized-api/build/
+inference-chain/build/
+/decentralized-api/decentralized-api

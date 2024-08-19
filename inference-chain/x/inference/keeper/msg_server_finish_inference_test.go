@@ -40,6 +40,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		Model:               "model1",
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
+		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
 	}, savedInference)
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -69,6 +70,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
 		EndBlockTimestamp:    ctx2.BlockTime().UnixMilli(),
 		MaxTokens:            keeper.DefaultMaxTokens,
+		EscrowAmount:         keeper.DefaultMaxTokens * keeper.PerTokenCost,
+		ActualCost:           30 * keeper.PerTokenCost,
 	}, savedInference)
 
 	participantState, found := k.GetParticipant(ctx, testutil.Executor)
@@ -92,6 +95,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 			"model1": 20,
 			"model2": 0,
 		},
+		CoinBalance:    30 * keeper.PerTokenCost,
+		InferenceCount: uint64(1),
 	}, participantState)
 }
 

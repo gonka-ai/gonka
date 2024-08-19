@@ -61,6 +61,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		StartBlockHeight:    0,
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
+		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
 	}, savedInference)
 }
 
