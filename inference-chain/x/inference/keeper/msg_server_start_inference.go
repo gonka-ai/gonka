@@ -41,10 +41,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
 		MaxTokens: DefaultMaxTokens,
 	}
-	err := k.PutPaymentInEscrow(ctx, &inference)
+	escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
 	if err != nil {
 		return nil, err
 	}
+	inference.EscrowAmount = escrowAmount
 	k.SetInference(ctx, inference)
 
 	return &types.MsgStartInferenceResponse{

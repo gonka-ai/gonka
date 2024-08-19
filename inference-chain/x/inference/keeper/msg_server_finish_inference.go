@@ -19,6 +19,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
 	}
+	requester, found := k.GetParticipant(ctx, existingInference.ReceivedBy)
+	if !found {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.ReceivedBy)
+	}
 
 	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
@@ -36,6 +40,16 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
 	executor.CoinBalance += existingInference.ActualCost
 	executor.InferenceCount++
+
+	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
+	if refundAmount > 0 {
+		if requester.Address == executor.Address {
+			executor.CoinBalance += refundAmount
+		} else {
+			requester.CoinBalance += refundAmount
+			k.SetParticipant(ctx, requester)
+		}
+	}
 	k.SetParticipant(ctx, executor)
 
 	ctx.EventManager().EmitEvent(

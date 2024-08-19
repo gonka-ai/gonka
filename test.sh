@@ -10,6 +10,6 @@ make node-build-docker
 docker compose -f docker-compose-sim.yml up -d
 
 # Give time for chain to bootstrap
-sleep 20
+sleep 10
 
 ./fund_accounts.py

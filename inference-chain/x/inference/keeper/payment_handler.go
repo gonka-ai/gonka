@@ -10,15 +10,15 @@ import (
 
 const inferenceDenom = "icoin"
 
-func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) error {
+func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (uint64, error) {
 	cost := CalculateCost(*inference)
 	payeeAddress, err := sdk.AccAddressFromBech32(inference.ReceivedBy)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	err = k.bank.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, int64(cost))))
 	if err != nil {
-		return sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
+		return 0, sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
 	}
-	return nil
+	return cost, nil
 }

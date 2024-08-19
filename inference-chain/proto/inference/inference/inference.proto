@@ -29,5 +29,6 @@ message Inference {
   string model = 16;
   uint64 maxTokens = 17;
   uint64 actualCost = 18;
+  uint64 escrowAmount = 19;
 }
 

@@ -25,12 +25,11 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
     except requests.exceptions.HTTPError as err:
         error_message = err.response.text
 
-        print(f"Error: {error_message}")
         # Look for the account ID in the error message
         match = re.search(r'account (\w+)', error_message)
         if match:
             extracted_address = match.group(1)
-            print(f"Extracted Address: {extracted_address}")
+            print(f"Account {name} not found. Address: {extracted_address}")
 
             if funded_address and funded_name:
                 # Run the docker command to fund the new account
@@ -46,10 +45,9 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
                     f"--node=tcp://{funded_name}-node:26657"
                 ]
 
-                result = subprocess.run(docker_command, check=False)
-                print(result)
+                result = subprocess.run(docker_command, check=False, capture_output=True)
                 if result.returncode == 0:
-                    print(f"Account funded. Extracted Address: {extracted_address}")
+                    print(f"Account {name} funded. Address: {extracted_address}")
                     time.sleep(5)
                     add_participant(name, port)
                 else:
@@ -65,7 +63,7 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
         # If the response is successful and contains an ID, return it
         data = response.json()
         account_id = data.get("id")
-        print(f"Account ID: {account_id}")
+        print(f"Account {name} already added. Address: {account_id}")
         return account_id
 
 
@@ -75,8 +73,14 @@ def add_participant(name, port):
         "url": f"http://{name}-api:8080",
         "models": ["unsloth/llama-3-8b-Instruct"]
     }
-    response = requests.post(url, json=payload)
-    return response
+
+    while True:
+        response = requests.post(url, json=payload)
+        if "please wait for first block: invalid height" in response.text:
+            print("Blockchain not ready, waiting...", end="\r")
+            time.sleep(5)  # Wait for 5 seconds before retrying
+        else:
+            return response
 
 
 # Example usage of the function
