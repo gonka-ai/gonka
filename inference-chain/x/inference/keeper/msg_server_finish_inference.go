@@ -50,6 +50,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			k.SetParticipant(ctx, requester)
 		}
 	}
+
 	k.SetParticipant(ctx, executor)
 
 	ctx.EventManager().EmitEvent(

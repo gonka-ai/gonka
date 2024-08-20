@@ -21,7 +21,7 @@ compose-down:
          --project-name inference-chain down
 
 sim-up:
-	@docker compose -f docker-compose-sim.yml up -d
+	@docker compose -f docker-compose-sim.yml up
 
 sim-down:
 	@docker compose -f docker-compose-sim.yml down
