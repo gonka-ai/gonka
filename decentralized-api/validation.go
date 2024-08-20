@@ -24,11 +24,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
-		log.Printf("Failed to query GetInferencesWithExecutors")
+		log.Printf("Failed to query GetInferencesWithExecutors. %v", err)
 		return
 	}
 
-	log.Printf("Inferences to validate: %v", r.InferenceWithExecutor)
+	logInferencesToSample(r.InferenceWithExecutor)
+	log.Printf("Inferences to sample: %v", r.InferenceWithExecutor)
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
@@ -37,11 +38,39 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 		}
 	}
 
+	logInferencesToValidate(toValidate)
 	for _, inf := range toValidate {
 		go func() {
 			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder)
 		}()
 	}
+}
+
+func logInferencesToSample(inferences []types.InferenceWithExecutor) {
+	var ids []struct {
+		InferenceId string
+		ExecutorId  string
+	}
+
+	for _, inf := range inferences {
+		ids = append(ids, struct {
+			InferenceId string
+			ExecutorId  string
+		}{
+			InferenceId: inf.Inference.InferenceId,
+			ExecutorId:  inf.Executor.Index,
+		})
+	}
+
+	log.Printf("Inferences to sample. %v", ids)
+}
+
+func logInferencesToValidate(toValidate []types.Inference) {
+	var ids []string
+	for _, inf := range toValidate {
+		ids = append(ids, inf.InferenceId)
+	}
+	log.Printf("Inferences to validate: %v", ids)
 }
 
 func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
@@ -56,18 +85,28 @@ func shouldValidate(executor types.Participant, currentAccountAddress string, nu
 
 	reputationP := getReputationP(executor.Status)
 	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators-1))
+	randFloat := rand.Float64()
 
-	log.Printf("reputationP = %v. samplingP = %v", reputationP, samplingP)
+	log.Printf("reputationP = %v. samplingP = %v. randFloat = %v", reputationP, samplingP, randFloat)
 
-	return rand.Float64() < samplingP
+	return randFloat < samplingP
 }
 
 func getReputationP(status types.ParticipantStatus) float64 {
 	switch status {
+	case types.ParticipantStatus_UNSPECIFIED:
+		return 1.0
 	case types.ParticipantStatus_ACTIVE:
-		return 0.95
+		return 1.0
+	case types.ParticipantStatus_INACTIVE:
+		return 1.0
+	case types.ParticipantStatus_INVALID:
+		return 1.0
+	case types.ParticipantStatus_RAMPING:
+		return 1.0
 	default:
-		return 0.1
+
+		return 1.0
 	}
 }
 

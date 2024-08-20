@@ -37,7 +37,6 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	passed := msg.Value > PassValue
 
-	executor.InferenceCount++
 	if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
 		executor.ValidatedInferences++

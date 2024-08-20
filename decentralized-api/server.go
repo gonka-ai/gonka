@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type InferenceTransaction struct {
@@ -59,6 +60,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	}
 
 	// Create an HTTP server
+	http.HandleFunc("/v1/chat/completions/", wrapGetCompletion(transactionRecorder))
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
@@ -80,66 +82,106 @@ func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 	}
 }
 
+type ResponseWithBody struct {
+	Response  *http.Response
+	BodyBytes []byte
+}
+
+func wrapGetCompletion(recorder InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		log.Printf("Received request. method = %s. path = %s", request.Method, request.URL.Path)
+
+		if request.Method == http.MethodGet {
+			processGetCompletionById(w, request, recorder)
+			return
+		}
+
+		http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+	}
+
+}
 func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		// Get the inference server URL
-		nodeChan := make(chan *broker.InferenceNode, 2)
-		err := nodeBroker.QueueMessage(broker.LockAvailableNode{
-			Model:    testModel,
-			Response: nodeChan,
+		log.Printf("wrapChat. Received request. method = %s. path = %s", request.Method, request.URL.Path)
+
+		if request.Method != http.MethodPost {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		respWithBody, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*ResponseWithBody, error) {
+			return getInference(request, node.Url, &recorder, config.ChainNode.AccountName)
 		})
-		if err != nil {
-			http.Error(w, "Error getting node", http.StatusInternalServerError)
-			return
-		}
-		node := <-nodeChan
-		if node == nil {
-			http.Error(w, "No nodes available", http.StatusServiceUnavailable)
-			return
-		}
-		resp, bodyBytes, err := getInference(request, node.Url, &recorder, config.ChainNode.AccountName)
-		queueError := nodeBroker.QueueMessage(broker.ReleaseNode{
-			NodeId: node.Id,
-			Outcome: broker.InferenceSuccess{
-				Response: nil,
-			},
-			Response: make(chan bool, 2),
-		})
-		if queueError != nil {
-			http.Error(w, queueError.Error(), http.StatusInternalServerError)
-			return
-		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		// Copy the response back to the client
-		for key, values := range resp.Header {
+		for key, values := range respWithBody.Response.Header {
+			// Skip Content-Length, because we're modifying body
+			if key == "Content-Length" {
+				continue
+			}
 			for _, value := range values {
 				w.Header().Add(key, value)
 			}
 		}
-		w.WriteHeader(resp.StatusCode)
-		w.Write(bodyBytes)
+		w.WriteHeader(respWithBody.Response.StatusCode)
+		w.Write(respWithBody.BodyBytes)
 	}
 }
 
-func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*http.Response, []byte, error) {
+func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder InferenceCosmosClient) {
+	// Manually extract the {id} from the URL path
+	id := strings.TrimPrefix(request.URL.Path, "/v1/chat/completions/")
+	if id == "" {
+		http.Error(w, "ID is required", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("GET inference. id = %s", id)
+	queryClient := recorder.NewInferenceQueryClient()
+	response, err := queryClient.Inference(recorder.context, &types.QueryGetInferenceRequest{Index: id})
+	if err != nil {
+		log.Printf("Failed to get inference. id = %s. err = %v", id, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if response == nil {
+		log.Printf("Inference not found. id = %s", id)
+		http.Error(w, "Inference not found", http.StatusNotFound)
+		return
+	}
+
+	respBytes, err := json.Marshal(response.Inference)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBytes)
+
+	return
+}
+
+func getInference(request *http.Request, serverUrl string, recorder *InferenceCosmosClient, accountName string) (*ResponseWithBody, error) {
 	requestBytes, err := ReadRequestBody(request)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	modifiedRequestBody, err := completionapi.ModifyRequestBody(requestBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	promptHash, promptPayload, err := getPromptHash(modifiedRequestBody.NewBody)
 	transactionUUID := uuid.New().String()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	err = recorder.StartInference(&inference.MsgStartInference{
 		Creator:       accountName,
@@ -147,9 +189,11 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
 		ReceivedBy:    accountName,
+		Model:         testModel,
 	})
 	if err != nil {
-		return nil, nil, err
+		log.Printf("Failed to submit MsgStartInference. %v", err)
+		return nil, err
 	}
 
 	// Forward the request to the inference server
@@ -159,23 +203,32 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 		bytes.NewReader(modifiedRequestBody.NewBody),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	// Read the response body
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+
+	bodyBytes, err = addIdToBodyBytes(bodyBytes, transactionUUID)
+	if err != nil {
+		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp, bodyBytes, nil
+		result := &ResponseWithBody{
+			Response:  resp,
+			BodyBytes: bodyBytes,
+		}
+		return result, nil
 	}
 
 	hash, response, err := getResponseHash(bodyBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	transaction := InferenceTransaction{
@@ -198,7 +251,29 @@ func getInference(request *http.Request, serverUrl string, recorder *InferenceCo
 	if err == nil {
 		log.Println(string(transactionJson))
 	}
-	return resp, bodyBytes, nil
+
+	result := &ResponseWithBody{
+		Response:  resp,
+		BodyBytes: bodyBytes,
+	}
+	return result, nil
+}
+
+func addIdToBodyBytes(bodyBytes []byte, id string) ([]byte, error) {
+	var bodyMap map[string]interface{}
+	err := json.Unmarshal(bodyBytes, &bodyMap)
+	if err != nil {
+		return nil, err
+	}
+
+	bodyMap["id"] = id
+
+	updatedBodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return updatedBodyBytes, nil
 }
 
 func ReadRequestBody(r *http.Request) ([]byte, error) {
@@ -224,7 +299,10 @@ func createInferenceFinishedTransaction(id string, recorder InferenceCosmosClien
 	}
 
 	println("--TRANSACTIONID--" + transaction.Id)
-	recorder.FinishInference(message)
+	err := recorder.FinishInference(message)
+	if err != nil {
+		log.Printf("Failed to submit MsgFinishInference. %v", err)
+	}
 }
 
 func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
@@ -286,6 +364,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder InferenceCosmosClient) f
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {
+			log.Printf("Failed to submit MsgValidation. %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -337,6 +416,7 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 	}
 
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
+		log.Printf("Failed to submit MsgSubmitNewParticipant. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

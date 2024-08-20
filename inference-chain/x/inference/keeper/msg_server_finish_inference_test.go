@@ -90,6 +90,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 			"model1": 20,
 			"model2": 0,
 		},
+		InferenceCount: 1,
 	}, participantState)
 }
 
