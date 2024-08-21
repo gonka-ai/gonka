@@ -17,6 +17,11 @@ import (
 )
 
 func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
+	if ids == nil {
+		log.Printf("No inferences to validate")
+		return
+	}
+
 	log.Printf("Sampling inf transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
