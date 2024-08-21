@@ -63,6 +63,11 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 
+	subscribeMsg2 := `{"jsonrpc": "2.0", "method": "subscribe", "id": "2", "params": ["tm.event='NewBlock'"]}`
+	if err = ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg2)); err != nil {
+		log.Fatalf("Failed to subscribe to a websocket. %v", err)
+	}
+
 	// Listen for events
 	for {
 		_, message, err := ws.ReadMessage()
