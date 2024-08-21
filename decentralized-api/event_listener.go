@@ -30,6 +30,9 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 
+	powOrchestrator := proof_of_compute.NewPowOrchestrator()
+	go powOrchestrator.Run()
+
 	// Listen for events
 	for {
 		_, message, err := ws.ReadMessage()
@@ -45,7 +48,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			log.Printf("New block event received. type = %s", event.Result.Data.Type)
-			proof_of_compute.ProcessNewBlockEvent(&event)
+			proof_of_compute.ProcessNewBlockEvent(powOrchestrator, &event)
 		default:
 			log.Printf("New Tx event received. Inference finished. type = %s", event.Result.Data.Type)
 			go func() {
