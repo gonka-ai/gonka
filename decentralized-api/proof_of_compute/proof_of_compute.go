@@ -27,6 +27,16 @@ func ProcessNewBlockEvent(event *chain_events.JSONRPCResponse) {
 	}
 
 	log.Printf("New block event received. blockHeight = %d, blockHash = %s", blockHeight, blockHash)
+
+	if blockHeight%240 == 0 {
+		// Start POW
+		return
+	}
+
+	if blockHeight%300 == 0 {
+		// Stop POW
+		return
+	}
 }
 
 func getBlockHeight(data map[string]interface{}) (uint64, error) {
