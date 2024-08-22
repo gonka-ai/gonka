@@ -6,22 +6,32 @@ import (
 	"github.com/cometbft/cometbft/crypto"
 )
 
-func proofOfCompute(blockHash string, pubKey string) string {
-	// Step 1: Concatenate hash and pubKey
+type ProofOfWork struct {
+	Hash      string
+	Nonce     []byte
+	BlockHash string
+}
+
+func proofOfWork(blockHash string, pubKey string) ProofOfWork {
+	// Step 1: Concatenate Hash and pubKey
 	concat := blockHash + pubKey
 
 	// Step 2: Generate random bit sequence of the same length as concatenated string
-	randomBits := generateRandomBytes(len(concat))
+	randomBytes := generateRandomBytes(len(concat))
 
 	// Step 3: XOR random bit sequence with the concatenated string
 	concatBytes := []byte(concat)
-	xorResult := xorBytes(concatBytes, randomBits)
+	xorResult := xorBytes(concatBytes, randomBytes)
 
 	// Step 4: Apply SHA-256 to the XOR result
 	hashResult := sha256.Sum256(xorResult)
 
-	// Return the hash result as a hex string
-	return hex.EncodeToString(hashResult[:])
+	// Return the Hash result as a hex string
+	return ProofOfWork{
+		Hash:      hex.EncodeToString(hashResult[:]),
+		Nonce:     randomBytes,
+		BlockHash: blockHash,
+	}
 }
 
 func xorBytes(a, b []byte) []byte {

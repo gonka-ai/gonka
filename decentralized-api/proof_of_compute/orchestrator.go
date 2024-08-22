@@ -10,7 +10,7 @@ import (
 )
 
 type POWOrchestrator struct {
-	results    []string
+	results    []*ProofOfWork
 	startChan  chan StartPowEvent
 	stopChan   chan struct{}
 	running    bool
@@ -26,7 +26,7 @@ type StartPowEvent struct {
 
 func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	return &POWOrchestrator{
-		results:    []string{},
+		results:    []*ProofOfWork{},
 		startChan:  make(chan StartPowEvent),
 		stopChan:   make(chan struct{}),
 		running:    false,
@@ -35,9 +35,9 @@ func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	}
 }
 
-func (o *POWOrchestrator) acceptProofOfCompute(proof string) bool {
+func (o *POWOrchestrator) acceptProofOfCompute(proof *ProofOfWork) bool {
 	prefix := strings.Repeat("0", o.difficulty)
-	return strings.HasPrefix(proof, prefix)
+	return strings.HasPrefix(proof.Hash, prefix)
 }
 
 // startProcessing is the function that starts when a start event is triggered
@@ -54,14 +54,14 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 				return
 			default:
 				// Execute the function and store the result
-				result := proofOfCompute(event.blockHash, o.pubKey)
+				proof := proofOfWork(event.blockHash, o.pubKey)
 
-				if !o.acceptProofOfCompute(result) {
+				if !o.acceptProofOfCompute(&proof) {
 					continue
 				}
 
 				o.mu.Lock()
-				o.results = append(o.results, result)
+				o.results = append(o.results, &proof)
 				o.mu.Unlock()
 			}
 		}
@@ -69,7 +69,7 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 }
 
 // StopProcessing stops the processing and returns the results immediately
-func (o *POWOrchestrator) stopProcessing() []string {
+func (o *POWOrchestrator) stopProcessing() []*ProofOfWork {
 	// Send the signal to stop the goroutine
 	close(o.stopChan)
 
@@ -77,7 +77,7 @@ func (o *POWOrchestrator) stopProcessing() []string {
 	defer o.mu.Unlock()
 
 	results := o.results
-	o.results = []string{} // Clear the results for the next start event
+	o.results = []*ProofOfWork{} // Clear the results for the next start event
 	return results
 }
 
@@ -136,11 +136,11 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chain_events.JSO
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
-		log.Printf("Failed to get blockHash from event data. %v", err)
+		log.Printf("Failed to get BlockHash from event data. %v", err)
 		return
 	}
 
-	log.Printf("New block event received. blockHeight = %d, blockHash = %s", blockHeight, blockHash)
+	log.Printf("New block event received. blockHeight = %d, BlockHash = %s", blockHeight, blockHash)
 
 	if blockHeight%240 == 0 {
 		powEvent := StartPowEvent{blockHash: blockHash, blockHeight: blockHeight}
@@ -179,9 +179,9 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 		return "", errors.New("failed to access 'block_id' key")
 	}
 
-	hash, ok := blockID["hash"].(string)
+	hash, ok := blockID["Hash"].(string)
 	if !ok {
-		return "", errors.New("failed to access 'hash' key or it's not a string")
+		return "", errors.New("failed to access 'Hash' key or it's not a string")
 	}
 
 	return hash, nil
