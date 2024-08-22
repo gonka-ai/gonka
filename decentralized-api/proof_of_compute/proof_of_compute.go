@@ -1,9 +1,12 @@
 package proof_of_compute
 
 import (
+	"crypto/sha256"
 	"decentralized-api/chain_events"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/cometbft/cometbft/crypto"
 	"log"
 	"sync"
 	"time"
@@ -11,22 +14,28 @@ import (
 
 type POWOrchestrator struct {
 	results   []string
-	startChan chan struct{}
+	startChan chan StartPowEvent
 	stopChan  chan struct{}
 	running   bool
 	mu        sync.Mutex
 }
 
+type StartPowEvent struct {
+	blockHeight uint64
+	blockHash   string
+	pubKey      string
+}
+
 func NewPowOrchestrator() *POWOrchestrator {
 	return &POWOrchestrator{
 		results:   []string{},
-		startChan: make(chan struct{}),
+		startChan: make(chan StartPowEvent),
 		stopChan:  make(chan struct{}),
 	}
 }
 
 // startProcessing is the function that starts when a start event is triggered
-func (o *POWOrchestrator) startProcessing() {
+func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 	o.mu.Lock()
 	o.running = true
 	o.mu.Unlock()
@@ -39,7 +48,7 @@ func (o *POWOrchestrator) startProcessing() {
 				return
 			default:
 				// Execute the function and store the result
-				result := o.proofOfCompute()
+				result := o.proofOfCompute(event)
 				o.mu.Lock()
 				o.results = append(o.results, result)
 				o.mu.Unlock()
@@ -52,8 +61,40 @@ func (o *POWOrchestrator) startProcessing() {
 }
 
 // proofOfCompute represents the task you want to execute repeatedly
-func (o *POWOrchestrator) proofOfCompute() string {
-	return fmt.Sprintf("Result at %v", time.Now())
+func (o *POWOrchestrator) proofOfCompute(event StartPowEvent) string {
+	// Step 1: Concatenate hash and pubKey
+	concat := event.blockHash + event.pubKey
+
+	// Step 2: Generate random bit sequence of the same length as concatenated string
+	randomBits := generateRandomBytes(len(concat))
+
+	// Step 3: XOR random bit sequence with the concatenated string
+	concatBytes := []byte(concat)
+	xorResult := xorBytes(concatBytes, randomBits)
+
+	// Step 4: Apply SHA-256 to the XOR result
+	hashResult := sha256.Sum256(xorResult)
+
+	// Return the hash result as a hex string
+	return hex.EncodeToString(hashResult[:])
+}
+
+func xorBytes(a, b []byte) []byte {
+	length := len(a)
+	if len(b) < length {
+		length = len(b)
+	}
+
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		result[i] = a[i] ^ b[i]
+	}
+	return result
+}
+
+func generateRandomBytes(length int) []byte {
+	randomBytes := crypto.CRandBytes(length)
+	return randomBytes
 }
 
 // StopProcessing stops the processing and returns the results immediately
@@ -73,10 +114,10 @@ func (o *POWOrchestrator) stopProcessing() []string {
 func (o *POWOrchestrator) Run() {
 	for {
 		select {
-		case <-o.startChan:
+		case event := <-o.startChan:
 			if !o.isRunning() {
 				fmt.Println("Start event received, processing...")
-				o.startProcessing()
+				o.startProcessing(event)
 			}
 		case <-o.stopChan:
 			if o.isRunning() {
@@ -96,11 +137,11 @@ func (o *POWOrchestrator) isRunning() bool {
 }
 
 // StartProcessing triggers the start event
-func (o *POWOrchestrator) StartProcessing() {
+func (o *POWOrchestrator) StartProcessing(event StartPowEvent) {
 	o.mu.Lock()
 	o.stopChan = make(chan struct{}) // Reset stop channel for the next run
 	o.mu.Unlock()
-	o.startChan <- struct{}{}
+	o.startChan <- event
 }
 
 // StopProcessing triggers the stop event
@@ -131,7 +172,9 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chain_events.JSO
 	log.Printf("New block event received. blockHeight = %d, blockHash = %s", blockHeight, blockHash)
 
 	if blockHeight%240 == 0 {
-		orchestrator.StartProcessing()
+		// PRTODO: retrieve pubKey for the current node
+		powEvent := StartPowEvent{blockHash: blockHash, blockHeight: blockHeight, pubKey: "pubKey"}
+		orchestrator.StartProcessing(powEvent)
 		return
 	}
 
