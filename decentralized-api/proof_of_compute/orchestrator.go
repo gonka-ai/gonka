@@ -15,19 +15,21 @@ type POWOrchestrator struct {
 	stopChan  chan struct{}
 	running   bool
 	mu        sync.Mutex
+	pubKey    string
 }
 
 type StartPowEvent struct {
 	blockHeight uint64
 	blockHash   string
-	pubKey      string
 }
 
-func NewPowOrchestrator() *POWOrchestrator {
+func NewPowOrchestrator(pubKey string) *POWOrchestrator {
 	return &POWOrchestrator{
 		results:   []string{},
 		startChan: make(chan StartPowEvent),
 		stopChan:  make(chan struct{}),
+		running:   false,
+		pubKey:    pubKey,
 	}
 }
 
@@ -45,7 +47,7 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 				return
 			default:
 				// Execute the function and store the result
-				result := o.proofOfCompute(event)
+				result := o.proofOfCompute(event.blockHash, o.pubKey)
 				o.mu.Lock()
 				o.results = append(o.results, result)
 				o.mu.Unlock()
@@ -132,8 +134,7 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chain_events.JSO
 	log.Printf("New block event received. blockHeight = %d, blockHash = %s", blockHeight, blockHash)
 
 	if blockHeight%240 == 0 {
-		// PRTODO: retrieve pubKey for the current node
-		powEvent := StartPowEvent{blockHash: blockHash, blockHeight: blockHeight, pubKey: "pubKey"}
+		powEvent := StartPowEvent{blockHash: blockHash, blockHeight: blockHeight}
 		orchestrator.StartProcessing(powEvent)
 		return
 	}

@@ -6,9 +6,9 @@ import (
 	"github.com/cometbft/cometbft/crypto"
 )
 
-func (o *POWOrchestrator) proofOfCompute(event StartPowEvent) string {
+func (o *POWOrchestrator) proofOfCompute(blockHash string, pubKey string) string {
 	// Step 1: Concatenate hash and pubKey
-	concat := event.blockHash + event.pubKey
+	concat := blockHash + pubKey
 
 	// Step 2: Generate random bit sequence of the same length as concatenated string
 	randomBits := generateRandomBytes(len(concat))

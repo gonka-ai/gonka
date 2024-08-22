@@ -30,7 +30,12 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 
-	powOrchestrator := proof_of_compute.NewPowOrchestrator()
+	pubKey, err := transactionRecorder.account.PubKey()
+	if err != nil {
+		log.Fatalf("Failed to get public key. %v", err)
+		return
+	}
+	powOrchestrator := proof_of_compute.NewPowOrchestrator(pubKey)
 	go powOrchestrator.Run()
 
 	// Listen for events
