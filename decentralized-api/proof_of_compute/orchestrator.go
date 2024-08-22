@@ -2,6 +2,7 @@ package proof_of_compute
 
 import (
 	"decentralized-api/chain_events"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -24,6 +25,14 @@ type StartPowEvent struct {
 	blockHash   string
 }
 
+type ProofOfWork struct {
+	BlockHeight uint64
+	BlockHash   string
+	PubKey      string
+	Nonce       string
+	ProofHash   string
+}
+
 func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	return &POWOrchestrator{
 		results:    []*ProofOfWork{},
@@ -35,9 +44,9 @@ func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	}
 }
 
-func (o *POWOrchestrator) acceptProofOfCompute(proof *ProofOfWork) bool {
+func (o *POWOrchestrator) acceptHash(hash string) bool {
 	prefix := strings.Repeat("0", o.difficulty)
-	return strings.HasPrefix(proof.Hash, prefix)
+	return strings.HasPrefix(hash, prefix)
 }
 
 // startProcessing is the function that starts when a start event is triggered
@@ -46,6 +55,8 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 	o.running = true
 	o.mu.Unlock()
 
+	input := []byte(event.blockHash + o.pubKey)
+	nonce := make([]byte, len(input))
 	go func() {
 		for {
 			select {
@@ -54,11 +65,21 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 				return
 			default:
 				// Execute the function and store the result
-				proof := proofOfWork(event.blockHash, o.pubKey)
+				hashAndNonce := proofOfWork(input, nonce)
 
-				if !o.acceptProofOfCompute(&proof) {
+				if !o.acceptHash(hashAndNonce.Hash) {
 					continue
 				}
+
+				proof := ProofOfWork{
+					BlockHeight: event.blockHeight,
+					BlockHash:   event.blockHash,
+					PubKey:      o.pubKey,
+					Nonce:       hex.EncodeToString(nonce),
+					ProofHash:   hashAndNonce.Hash,
+				}
+
+				incrementBytes(nonce)
 
 				o.mu.Lock()
 				o.results = append(o.results, &proof)

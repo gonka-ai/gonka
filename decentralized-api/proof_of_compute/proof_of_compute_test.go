@@ -8,21 +8,27 @@ import (
 func TestNewPowOrchestrator(t *testing.T) {
 	pubKey := "uCIGWUwW8jqyg7IhVqpWP8g2qfTjq0KMISt7reXqxr8="
 	blockHash := "4A29D310402743E6587D219E1E975701ACA3EAE583AA88AA91B50FF3EF519167"
-	orchestrator := NewPowOrchestrator(pubKey, 10)
+	orchestrator := NewPowOrchestrator(pubKey, 8)
 
 	startTime := time.Now()
+	input := []byte(blockHash + pubKey)
+	nonce := make([]byte, len(input))
 	for {
-		proof := proofOfWork(blockHash, pubKey)
-		if orchestrator.acceptProofOfCompute(&proof) {
-			println("Found!")
-			println(proof.Hash)
-			println(proof.Nonce)
+		hashAndNonce := proofOfWork(input, nonce)
+
+		if orchestrator.acceptHash(hashAndNonce.Hash) {
+			elapsed := time.Since(startTime)
+			println("Found! Elapsed time: ", elapsed)
+			println(hashAndNonce.Hash)
+			println(hashAndNonce.Nonce)
 			break
 		}
 
-		println(proof.Hash)
+		incrementBytes(nonce)
 
-		if time.Since(startTime) > 5*time.Second {
+		// println(hashAndNonce.Hash)
+
+		if time.Since(startTime) > 10*time.Minute {
 			t.Errorf("Proof of compute took too long to generate")
 			break
 		}

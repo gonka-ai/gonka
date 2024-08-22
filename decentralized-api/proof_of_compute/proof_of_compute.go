@@ -6,31 +6,22 @@ import (
 	"github.com/cometbft/cometbft/crypto"
 )
 
-type ProofOfWork struct {
-	Hash      string
-	Nonce     []byte
-	BlockHash string
+type HashAndNonce struct {
+	Hash  string
+	Input []byte
+	Nonce []byte
 }
 
-func proofOfWork(blockHash string, pubKey string) ProofOfWork {
-	// Step 1: Concatenate Hash and pubKey
-	concat := blockHash + pubKey
+func proofOfWork(input []byte, nonce []byte) HashAndNonce {
+	inputBytes := []byte(input)
+	xorResult := xorBytes(inputBytes, nonce)
 
-	// Step 2: Generate random bit sequence of the same length as concatenated string
-	randomBytes := generateRandomBytes(len(concat))
-
-	// Step 3: XOR random bit sequence with the concatenated string
-	concatBytes := []byte(concat)
-	xorResult := xorBytes(concatBytes, randomBytes)
-
-	// Step 4: Apply SHA-256 to the XOR result
 	hashResult := sha256.Sum256(xorResult)
 
-	// Return the Hash result as a hex string
-	return ProofOfWork{
-		Hash:      hex.EncodeToString(hashResult[:]),
-		Nonce:     randomBytes,
-		BlockHash: blockHash,
+	return HashAndNonce{
+		Hash:  hex.EncodeToString(hashResult[:]),
+		Input: inputBytes,
+		Nonce: nonce,
 	}
 }
 
@@ -50,4 +41,13 @@ func xorBytes(a, b []byte) []byte {
 func generateRandomBytes(length int) []byte {
 	randomBytes := crypto.CRandBytes(length)
 	return randomBytes
+}
+
+func incrementBytes(nonce []byte) {
+	for i := len(nonce) - 1; i >= 0; i-- {
+		nonce[i]++
+		if nonce[i] != 0 {
+			break // If no carry, we're done
+		}
+	}
 }
