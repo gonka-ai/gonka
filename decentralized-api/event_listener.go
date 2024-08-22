@@ -35,7 +35,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		log.Fatalf("Failed to get public key. %v", err)
 		return
 	}
-	powOrchestrator := proof_of_compute.NewPowOrchestrator(pubKey)
+	powOrchestrator := proof_of_compute.NewPowOrchestrator(pubKey, 10)
 	go powOrchestrator.Run()
 
 	// Listen for events

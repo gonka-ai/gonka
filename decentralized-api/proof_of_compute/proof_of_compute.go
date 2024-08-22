@@ -6,7 +6,7 @@ import (
 	"github.com/cometbft/cometbft/crypto"
 )
 
-func (o *POWOrchestrator) proofOfCompute(blockHash string, pubKey string) string {
+func proofOfCompute(blockHash string, pubKey string) string {
 	// Step 1: Concatenate hash and pubKey
 	concat := blockHash + pubKey
 

@@ -5,17 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
-	"time"
 )
 
 type POWOrchestrator struct {
-	results   []string
-	startChan chan StartPowEvent
-	stopChan  chan struct{}
-	running   bool
-	mu        sync.Mutex
-	pubKey    string
+	results    []string
+	startChan  chan StartPowEvent
+	stopChan   chan struct{}
+	running    bool
+	mu         sync.Mutex
+	pubKey     string
+	difficulty int
 }
 
 type StartPowEvent struct {
@@ -23,14 +24,20 @@ type StartPowEvent struct {
 	blockHash   string
 }
 
-func NewPowOrchestrator(pubKey string) *POWOrchestrator {
+func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	return &POWOrchestrator{
-		results:   []string{},
-		startChan: make(chan StartPowEvent),
-		stopChan:  make(chan struct{}),
-		running:   false,
-		pubKey:    pubKey,
+		results:    []string{},
+		startChan:  make(chan StartPowEvent),
+		stopChan:   make(chan struct{}),
+		running:    false,
+		pubKey:     pubKey,
+		difficulty: difficulty,
 	}
+}
+
+func (o *POWOrchestrator) acceptProofOfCompute(proof string) bool {
+	prefix := strings.Repeat("0", o.difficulty)
+	return strings.HasPrefix(proof, prefix)
 }
 
 // startProcessing is the function that starts when a start event is triggered
@@ -47,13 +54,15 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 				return
 			default:
 				// Execute the function and store the result
-				result := o.proofOfCompute(event.blockHash, o.pubKey)
+				result := proofOfCompute(event.blockHash, o.pubKey)
+
+				if !o.acceptProofOfCompute(result) {
+					continue
+				}
+
 				o.mu.Lock()
 				o.results = append(o.results, result)
 				o.mu.Unlock()
-
-				// Simulate time-consuming task
-				time.Sleep(500 * time.Millisecond)
 			}
 		}
 	}()
