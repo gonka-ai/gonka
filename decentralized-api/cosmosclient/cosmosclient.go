@@ -120,6 +120,11 @@ func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.Ms
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) SubmitPow(transaction *inference.MsgSubmitPow) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	response, err := icc.client.BroadcastTx(icc.Context, *icc.Account, msg)
 	if err != nil {

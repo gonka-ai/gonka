@@ -2,9 +2,11 @@ package pow
 
 import (
 	"decentralized-api/chainevents"
+	"decentralized-api/cosmosclient"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"inference/api/inference/inference"
 	"log"
 	"strings"
 	"sync"
@@ -13,7 +15,7 @@ import (
 type POWOrchestrator struct {
 	results    []*ProofOfWork
 	startChan  chan StartPowEvent
-	stopChan   chan struct{}
+	stopChan   chan StopPowEvent
 	running    bool
 	mu         sync.Mutex
 	pubKey     string
@@ -23,6 +25,10 @@ type POWOrchestrator struct {
 type StartPowEvent struct {
 	blockHeight uint64
 	blockHash   string
+}
+
+type StopPowEvent struct {
+	action func([]*ProofOfWork)
 }
 
 type ProofOfWork struct {
@@ -37,7 +43,7 @@ func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 	return &POWOrchestrator{
 		results:    []*ProofOfWork{},
 		startChan:  make(chan StartPowEvent),
-		stopChan:   make(chan struct{}),
+		stopChan:   make(chan StopPowEvent),
 		running:    false,
 		pubKey:     pubKey,
 		difficulty: difficulty,
@@ -52,6 +58,7 @@ func (o *POWOrchestrator) acceptHash(hash string) bool {
 // startProcessing is the function that starts when a start event is triggered
 func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 	o.mu.Lock()
+	o.results = []*ProofOfWork{}
 	o.running = true
 	o.mu.Unlock()
 
@@ -99,16 +106,7 @@ func (o *POWOrchestrator) stopProcessing() []*ProofOfWork {
 
 	results := o.results
 
-	go func() {
-		o.sendResults(results)
-	}()
-
-	o.results = []*ProofOfWork{} // Clear the results for the next start event
 	return results
-}
-
-func (o *POWOrchestrator) sendResults(results []*ProofOfWork) {
-	// PRTODO: implement!
 }
 
 // Run listens for start and stop events
@@ -120,11 +118,12 @@ func (o *POWOrchestrator) Run() {
 				fmt.Println("Start event received, processing...")
 				o.startProcessing(event)
 			}
-		case <-o.stopChan:
+		case event := <-o.stopChan:
 			if o.isRunning() {
 				fmt.Println("Stop event received, stopping...")
 				results := o.stopProcessing()
 				fmt.Println("Final results:", results)
+				event.action(results)
 			}
 		}
 	}
@@ -140,17 +139,17 @@ func (o *POWOrchestrator) isRunning() bool {
 // StartProcessing triggers the start event
 func (o *POWOrchestrator) StartProcessing(event StartPowEvent) {
 	o.mu.Lock()
-	o.stopChan = make(chan struct{}) // Reset stop channel for the next run
+	o.stopChan = make(chan StopPowEvent) // Reset stop channel for the next run
 	o.mu.Unlock()
 	o.startChan <- event
 }
 
 // StopProcessing triggers the stop event
-func (o *POWOrchestrator) StopProcessing() {
-	o.stopChan <- struct{}{}
+func (o *POWOrchestrator) StopProcessing(action func([]*ProofOfWork)) {
+	o.stopChan <- StopPowEvent{action: action}
 }
 
-func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSONRPCResponse) {
+func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return
@@ -179,7 +178,7 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSON
 	}
 
 	if blockHeight%300 == 0 {
-		orchestrator.StopProcessing()
+		orchestrator.StopProcessing(createSubmitPowCallback(blockHeight, transactionRecorder))
 		return
 	}
 }
@@ -215,4 +214,23 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	}
 
 	return hash, nil
+}
+
+func createSubmitPowCallback(blockHeight uint64, transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs []*ProofOfWork) {
+	return func(proofs []*ProofOfWork) {
+		nonce := make([]string, len(proofs))
+		for i, p := range proofs {
+			nonce[i] = p.Nonce
+		}
+
+		message := inference.MsgSubmitPow{
+			BlockHeight: blockHeight,
+			Nonce:       nonce,
+		}
+
+		err := transactionRecorder.SubmitPow(&message)
+		if err != nil {
+			log.Printf("Failed to send SubmitPow transaction. %v", err)
+		}
+	}
 }

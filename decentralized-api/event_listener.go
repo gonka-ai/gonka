@@ -55,7 +55,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			log.Printf("New block event received. type = %s", event.Result.Data.Type)
-			pow.ProcessNewBlockEvent(powOrchestrator, &event)
+			pow.ProcessNewBlockEvent(powOrchestrator, &event, transactionRecorder)
 		default:
 			log.Printf("New Tx event received. Inference finished. type = %s", event.Result.Data.Type)
 			go func() {
