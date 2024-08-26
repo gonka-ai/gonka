@@ -3,6 +3,7 @@ package main
 import (
 	"decentralized-api/broker"
 	"decentralized-api/chain_events"
+	cosmosclient "decentralized-api/cosmos-client"
 	"decentralized-api/dapi_config"
 	"decentralized-api/proof_of_compute"
 	"encoding/json"
@@ -11,7 +12,7 @@ import (
 	"net/url"
 )
 
-func StartEventListener(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config dapi_config.Config) {
+func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, config dapi_config.Config) {
 	websocketUrl := getWebsocketUrl(config)
 	log.Printf("Connecting to websocket at %s", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -31,7 +32,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 
-	pubKey, err := transactionRecorder.account.PubKey()
+	pubKey, err := transactionRecorder.Account.PubKey()
 	if err != nil {
 		log.Fatalf("Failed to get public key. %v", err)
 		return

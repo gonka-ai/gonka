@@ -1,4 +1,4 @@
-package main
+package cosmos_client
 
 import (
 	"context"
@@ -19,9 +19,9 @@ import (
 
 type InferenceCosmosClient struct {
 	client  *cosmosclient.Client
-	account *cosmosaccount.Account
-	address string
-	context context.Context
+	Account *cosmosaccount.Account
+	Address string
+	Context context.Context
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -92,36 +92,36 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 
 	return &InferenceCosmosClient{
 		client:  &client,
-		account: &account,
-		address: addr,
-		context: ctx,
+		Account: &account,
+		Address: addr,
+		Context: ctx,
 	}, nil
 }
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
-	transaction.Creator = icc.address
-	transaction.ReceivedBy = icc.address
+	transaction.Creator = icc.Address
+	transaction.ReceivedBy = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
-	transaction.Creator = icc.address
-	transaction.ExecutedBy = icc.address
+	transaction.Creator = icc.Address
+	transaction.ExecutedBy = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
-	transaction.Creator = icc.address
+	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
-	transaction.Creator = icc.address
+	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, msg)
+	response, err := icc.client.BroadcastTx(icc.Context, *icc.Account, msg)
 	if err != nil {
 		return err
 	}
