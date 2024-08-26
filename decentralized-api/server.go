@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
+	"decentralized-api/dapi_config"
 	"encoding/json"
 	"fmt"
+
 	"github.com/google/uuid"
-	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/v2"
 	"inference/api/inference/inference"
 	"inference/x/inference/types"
 	"io"
@@ -30,29 +30,7 @@ type InferenceTransaction struct {
 
 const testModel = "unsloth/llama-3-8b-Instruct"
 
-var (
-	k      = koanf.New(".")
-	parser = yaml.Parser()
-)
-
-type Config struct {
-	Api       ApiConfig              `koanf:"api"`
-	Nodes     []broker.InferenceNode `koanf:"nodes"`
-	ChainNode ChainNodeConfig        `koanf:"chain_node"`
-}
-
-type ApiConfig struct {
-	Port int `koanf:"port"`
-}
-
-type ChainNodeConfig struct {
-	Url            string `koanf:"url"`
-	AccountName    string `koanf:"account_name"`
-	KeyringBackend string `koanf:"keyring_backend"`
-	KeyringDir     string `koanf:"keyring_dir"`
-}
-
-func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config Config) {
+func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config dapi_config.Config) {
 	nodes := config.Nodes
 
 	for _, node := range nodes {
@@ -100,7 +78,7 @@ func wrapGetCompletion(recorder InferenceCosmosClient) func(w http.ResponseWrite
 	}
 
 }
-func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapChat(nodeBroker *broker.Broker, recorder InferenceCosmosClient, config dapi_config.Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		log.Printf("wrapChat. Received request. method = %s. path = %s", request.Method, request.URL.Path)
 

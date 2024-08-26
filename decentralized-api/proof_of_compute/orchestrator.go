@@ -98,8 +98,17 @@ func (o *POWOrchestrator) stopProcessing() []*ProofOfWork {
 	defer o.mu.Unlock()
 
 	results := o.results
+
+	go func() {
+		o.sendResults(results)
+	}()
+
 	o.results = []*ProofOfWork{} // Clear the results for the next start event
 	return results
+}
+
+func (o *POWOrchestrator) sendResults(results []*ProofOfWork) {
+	// PRTODO: implement!
 }
 
 // Run listens for start and stop events

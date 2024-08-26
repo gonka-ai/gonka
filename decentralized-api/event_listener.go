@@ -3,6 +3,7 @@ package main
 import (
 	"decentralized-api/broker"
 	"decentralized-api/chain_events"
+	"decentralized-api/dapi_config"
 	"decentralized-api/proof_of_compute"
 	"encoding/json"
 	"github.com/gorilla/websocket"
@@ -10,7 +11,7 @@ import (
 	"net/url"
 )
 
-func StartEventListener(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config Config) {
+func StartEventListener(nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient, config dapi_config.Config) {
 	websocketUrl := getWebsocketUrl(config)
 	log.Printf("Connecting to websocket at %s", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -63,7 +64,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder Inference
 	}
 }
 
-func getWebsocketUrl(config Config) string {
+func getWebsocketUrl(config dapi_config.Config) string {
 	// Parse the input URL
 	u, err := url.Parse(config.ChainNode.Url)
 	if err != nil {
