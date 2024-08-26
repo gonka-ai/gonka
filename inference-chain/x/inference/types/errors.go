@@ -14,4 +14,6 @@ var (
 	ErrParticipantNotFound                   = sdkerrors.Register(ModuleName, 1103, "participant not found")
 	ErrInferenceNotFinished                  = sdkerrors.Register(ModuleName, 1104, "inference not finished")
 	ErrParticipantCannotValidateOwnInference = sdkerrors.Register(ModuleName, 1105, "participant cannot validate own inference")
+	ErrWrongStartBlockHeight                 = sdkerrors.Register(ModuleName, 1106, "start block height must be divisible by 240")
+	ErrPowTooLate                            = sdkerrors.Register(ModuleName, 1107, "pow submission is too late")
 )
