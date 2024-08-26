@@ -1,8 +1,8 @@
-package cosmos_client
+package cosmosclient
 
 import (
 	"context"
-	"decentralized-api/dapi_config"
+	"decentralized-api/apiconfig"
 	"errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
@@ -29,7 +29,7 @@ func NewInferenceCosmosClientWithRetry(
 	addressPrefix string,
 	maxRetries int,
 	delay time.Duration,
-	config dapi_config.Config,
+	config apiconfig.Config,
 ) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
@@ -57,7 +57,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig dapi_config.ChainNodeConfig) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig) (*InferenceCosmosClient, error) {
 	// Get absolute path to keyring directory
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
 	if err != nil {

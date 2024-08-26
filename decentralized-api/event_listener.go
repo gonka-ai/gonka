@@ -1,18 +1,18 @@
 package main
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/chain_events"
-	cosmosclient "decentralized-api/cosmos-client"
-	"decentralized-api/dapi_config"
-	"decentralized-api/proof_of_compute"
+	"decentralized-api/chainevents"
+	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/pow"
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"log"
 	"net/url"
 )
 
-func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, config dapi_config.Config) {
+func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, config apiconfig.Config) {
 	websocketUrl := getWebsocketUrl(config)
 	log.Printf("Connecting to websocket at %s", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -37,7 +37,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		log.Fatalf("Failed to get public key. %v", err)
 		return
 	}
-	powOrchestrator := proof_of_compute.NewPowOrchestrator(pubKey, 10)
+	powOrchestrator := pow.NewPowOrchestrator(pubKey, 10)
 	go powOrchestrator.Run()
 
 	// Listen for events
@@ -47,7 +47,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 			log.Printf("Failed to read a websocket message. %v", err)
 		}
 
-		var event chain_events.JSONRPCResponse
+		var event chainevents.JSONRPCResponse
 		if err = json.Unmarshal(message, &event); err != nil {
 			log.Printf("Error unmarshalling message to JSONRPCResponse. err = %s. message = %s", err, message)
 		}
@@ -55,7 +55,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			log.Printf("New block event received. type = %s", event.Result.Data.Type)
-			proof_of_compute.ProcessNewBlockEvent(powOrchestrator, &event)
+			pow.ProcessNewBlockEvent(powOrchestrator, &event)
 		default:
 			log.Printf("New Tx event received. Inference finished. type = %s", event.Result.Data.Type)
 			go func() {
@@ -65,7 +65,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 	}
 }
 
-func getWebsocketUrl(config dapi_config.Config) string {
+func getWebsocketUrl(config apiconfig.Config) string {
 	// Parse the input URL
 	u, err := url.Parse(config.ChainNode.Url)
 	if err != nil {

@@ -1,4 +1,4 @@
-package proof_of_compute
+package pow
 
 import (
 	"crypto/sha256"

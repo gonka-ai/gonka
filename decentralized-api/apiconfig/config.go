@@ -1,4 +1,4 @@
-package dapi_config
+package apiconfig
 
 import (
 	"decentralized-api/broker"

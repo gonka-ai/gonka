@@ -1,7 +1,7 @@
-package proof_of_compute
+package pow
 
 import (
-	"decentralized-api/chain_events"
+	"decentralized-api/chainevents"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -150,7 +150,7 @@ func (o *POWOrchestrator) StopProcessing() {
 	o.stopChan <- struct{}{}
 }
 
-func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chain_events.JSONRPCResponse) {
+func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSONRPCResponse) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return

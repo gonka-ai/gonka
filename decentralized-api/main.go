@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	cosmos_client "decentralized-api/cosmos-client"
-	"decentralized-api/dapi_config"
+	cosmos_client "decentralized-api/cosmosclient"
 	"time"
 )
 
 func main() {
-	config := dapi_config.ReadConfig()
+	config := apiconfig.ReadConfig()
 	recorder, err := cosmos_client.NewInferenceCosmosClientWithRetry(context.Background(), "cosmos", 5, 5*time.Second, config)
 	if err != nil {
 		panic(err)

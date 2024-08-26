@@ -1,4 +1,4 @@
-package chain_events
+package chainevents
 
 type JSONRPCResponse struct {
 	JSONRPC string `json:"jsonrpc"`

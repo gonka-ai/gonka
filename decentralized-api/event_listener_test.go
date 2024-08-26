@@ -1,7 +1,7 @@
 package main
 
 import (
-	"decentralized-api/chain_events"
+	"decentralized-api/chainevents"
 	"encoding/json"
 	"log"
 	"testing"
@@ -152,7 +152,7 @@ const (
 )
 
 func Test(t *testing.T) {
-	var res chain_events.JSONRPCResponse
+	var res chainevents.JSONRPCResponse
 	err := json.Unmarshal([]byte(e3), &res)
 	if err != nil {
 		t.Fatalf("error unmarshalling: %v", err)

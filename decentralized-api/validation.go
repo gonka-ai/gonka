@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/broker"
-	cosmosclient "decentralized-api/cosmos-client"
+	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"

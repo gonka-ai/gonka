@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
-	cosmos_client "decentralized-api/cosmos-client"
-	"decentralized-api/dapi_config"
+	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
 
@@ -31,7 +31,7 @@ type InferenceTransaction struct {
 
 const testModel = "unsloth/llama-3-8b-Instruct"
 
-func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.InferenceCosmosClient, config dapi_config.Config) {
+func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) {
 	nodes := config.Nodes
 
 	for _, node := range nodes {
@@ -79,7 +79,7 @@ func wrapGetCompletion(recorder cosmos_client.InferenceCosmosClient) func(w http
 	}
 
 }
-func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config dapi_config.Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		log.Printf("wrapChat. Received request. method = %s. path = %s", request.Method, request.URL.Path)
 
