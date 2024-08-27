@@ -23,9 +23,17 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 		return nil, types.ErrPowTooLate
 	}
 
-	// TODO: 1. Get block hash from startBlockHeight
+	// 1. Get block hash from startBlockHeight
 
-	// TODO: 2. Get signer public key
+	// 2. Get signer public key
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	account := k.AccountKeeper.GetAccount(ctx, addr)
+	pubKey := account.GetPubKey()
+	// PRTODO: use block hash and pubKey to verify proofs
+	_ = pubKey
 
 	_ = ctx
 
