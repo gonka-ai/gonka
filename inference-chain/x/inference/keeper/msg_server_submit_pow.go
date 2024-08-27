@@ -2,8 +2,14 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	types2 "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"io"
+	"net/http"
 )
 
 func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*types.MsgSubmitPowResponse, error) {
@@ -24,18 +30,74 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 	}
 
 	// 1. Get block hash from startBlockHeight
+	// PRTODO
+	// http://localhost:26657/block?height=4000
+	blockHash, err := k.getBlockHash(int64(startBlockHeight))
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. Get signer public key
+	pubKey, err := k.getMsgSignerPubKey(msg, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// PRTODO: use block hash and pubKey to verify proofs
+	_ = pubKey
+	_ = blockHash
+
+	return &types.MsgSubmitPowResponse{}, nil
+}
+
+func (k msgServer) getBlockHash(height int64) (string, error) {
+	// Send http request to http://localhost:26657/block?height=4000
+	url := fmt.Sprintf("http://localhost:26657/block?height=%d", height)
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var responseMap map[string]interface{}
+	err = json.Unmarshal(respBytes, &responseMap)
+	if err != nil {
+		return "", err
+	}
+
+	return getBlockHash(responseMap)
+}
+
+func getBlockHash(data map[string]interface{}) (string, error) {
+	result, ok := data["result"].(map[string]interface{})
+	if !ok {
+		return "", errors.New("failed to access 'result' key")
+	}
+
+	blockID, ok := result["block_id"].(map[string]interface{})
+	if !ok {
+		return "", errors.New("failed to access 'block_id' key")
+	}
+
+	hash, ok := blockID["hash"].(string)
+	if !ok {
+		return "", errors.New("failed to access 'hash' key or it's not a string")
+	}
+
+	return hash, nil
+}
+
+func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPow, ctx sdk.Context) (types2.PubKey, error) {
 	addr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
 		return nil, err
 	}
 	account := k.AccountKeeper.GetAccount(ctx, addr)
 	pubKey := account.GetPubKey()
-	// PRTODO: use block hash and pubKey to verify proofs
-	_ = pubKey
-
-	_ = ctx
-
-	return &types.MsgSubmitPowResponse{}, nil
+	return pubKey, nil
 }
