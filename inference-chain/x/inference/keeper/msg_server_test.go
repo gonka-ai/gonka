@@ -13,7 +13,11 @@ import (
 
 func setupMsgServer(t testing.TB) (keeper.Keeper, types.MsgServer, context.Context) {
 	k, ctx := keepertest.InferenceKeeper(t)
-	return k, keeper.NewMsgServerImpl(k), ctx
+	return k, setupMsgServerWithKeeper(k), ctx
+}
+
+func setupMsgServerWithKeeper(k keeper.Keeper) types.MsgServer {
+	return keeper.NewMsgServerImpl(k)
 }
 
 func TestMsgServer(t *testing.T) {

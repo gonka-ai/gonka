@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	sdkerrors "cosmossdk.io/errors"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,18 +21,19 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 	currentBlockHeight := ctx.BlockHeight()
 
 	if startBlockHeight%240 != 0 {
-		return nil, types.ErrWrongStartBlockHeight
+		errMsg := fmt.Sprintf("start block height must be divisible by 240. msg.BlockHeight = %d", startBlockHeight)
+		return nil, sdkerrors.Wrap(types.ErrWrongStartBlockHeight, errMsg)
 	}
 
 	switch uint64(currentBlockHeight) - startBlockHeight {
 	case 300, 301, 302, 303: // DO NOTHING
 	default:
-		return nil, types.ErrPowTooLate
+		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
+		return nil, sdkerrors.Wrap(types.ErrPowTooLate, errMsg)
 	}
 
 	// 1. Get block hash from startBlockHeight
-	// PRTODO
-	// http://localhost:26657/block?height=4000
+
 	blockHash, err := k.getBlockHash(int64(startBlockHeight))
 	if err != nil {
 		return nil, err

@@ -24,6 +24,12 @@ import (
 )
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
+	mockCtrl := gomock.NewController(t)
+	accountKeeper := authtestutil.NewMockAccountKeeper(mockCtrl)
+	return InferenceKeeperWithMockAccountKeeper(t, accountKeeper)
+}
+
+func InferenceKeeperWithMockAccountKeeper(t testing.TB, accountKeeper *authtestutil.MockAccountKeeper) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -34,9 +40,6 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
-
-	mockCtrl := gomock.NewController(t)
-	accountKeeper := authtestutil.NewMockAccountKeeper(mockCtrl)
 
 	k := keeper.NewKeeper(
 		cdc,
