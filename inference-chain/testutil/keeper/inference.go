@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"github.com/golang/mock/gomock"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -13,6 +14,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtestutil "github.com/cosmos/cosmos-sdk/x/auth/ante/testutil"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
@@ -33,11 +35,15 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
 
+	mockCtrl := gomock.NewController(t)
+	accountKeeper := authtestutil.NewMockAccountKeeper(mockCtrl)
+
 	k := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(storeKey),
 		log.NewNopLogger(),
 		authority.String(),
+		accountKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
