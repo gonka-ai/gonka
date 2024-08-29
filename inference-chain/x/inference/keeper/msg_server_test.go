@@ -16,6 +16,11 @@ func setupMsgServer(t testing.TB) (keeper.Keeper, types.MsgServer, context.Conte
 	return k, keeper.NewMsgServerImpl(k), ctx
 }
 
+func setupKeeperWithBankMock(t testing.TB) (keeper.Keeper, types.MsgServer, context.Context, *keepertest.MockBankEscrowKeeper) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMock(t)
+	return k, keeper.NewMsgServerImpl(k), ctx, mock
+}
+
 func TestMsgServer(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	require.NotNil(t, ms)

@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-
 	sdkerrors "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -20,6 +19,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
 	}
+	requester, found := k.GetParticipant(ctx, existingInference.ReceivedBy)
+	if !found {
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.ReceivedBy)
+	}
 
 	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
@@ -29,12 +32,25 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.ExecutedBy = msg.ExecutedBy
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
+	existingInference.ActualCost = CalculateCost(existingInference)
 	k.SetInference(ctx, existingInference)
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.PromptTokenCount[existingInference.Model] += existingInference.PromptTokenCount
 	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
+	executor.CoinBalance += existingInference.ActualCost
 	executor.InferenceCount++
+
+	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
+	if refundAmount > 0 {
+		if requester.Address == executor.Address {
+			executor.CoinBalance += refundAmount
+		} else {
+			requester.CoinBalance += refundAmount
+			k.SetParticipant(ctx, requester)
+		}
+	}
+
 	k.SetParticipant(ctx, executor)
 
 	ctx.EventManager().EmitEvent(

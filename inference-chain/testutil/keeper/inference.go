@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -22,6 +23,21 @@ import (
 )
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	escrowKeeper.ExpectAny(context)
+	return mock, context
+}
+
+func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, *MockBankEscrowKeeper) {
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	return mock, context, escrowKeeper
+}
+
+func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -38,6 +54,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 		runtime.NewKVStoreService(storeKey),
 		log.NewNopLogger(),
 		authority.String(),
+		bankMock,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
