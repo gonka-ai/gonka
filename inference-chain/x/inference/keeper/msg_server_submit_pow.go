@@ -51,9 +51,14 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 		}
 	}
 
+	// 4. Store power
 	power := len(msg.Nonce)
-	_ = power
-	// PRTODO: store power
+	k.Keeper.SetPower(ctx, types.Power{
+		ParticipantAddress:       msg.Creator,
+		Power:                    uint32(power),
+		PocStageStartBlockHeight: startBlockHeight,
+		ReceivedAtBlockHeight:    currentBlockHeight,
+	})
 
 	return &types.MsgSubmitPowResponse{}, nil
 }
