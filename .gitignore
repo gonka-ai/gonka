@@ -7,3 +7,5 @@ release/
 *.dot
 *.log
 *.ign
+prod-sim/
+gcp-prod-sim/
