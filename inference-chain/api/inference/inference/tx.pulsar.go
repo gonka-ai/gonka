@@ -5522,8 +5522,8 @@ func (x *fastReflection_MsgSubmitPow) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if x.BlockHeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.BlockHeight)
+	if x.BlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.BlockHeight)
 		if !f(fd_MsgSubmitPow_blockHeight, value) {
 			return
 		}
@@ -5552,7 +5552,7 @@ func (x *fastReflection_MsgSubmitPow) Has(fd protoreflect.FieldDescriptor) bool 
 	case "inference.inference.MsgSubmitPow.creator":
 		return x.Creator != ""
 	case "inference.inference.MsgSubmitPow.blockHeight":
-		return x.BlockHeight != uint64(0)
+		return x.BlockHeight != int64(0)
 	case "inference.inference.MsgSubmitPow.nonce":
 		return len(x.Nonce) != 0
 	default:
@@ -5574,7 +5574,7 @@ func (x *fastReflection_MsgSubmitPow) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.MsgSubmitPow.creator":
 		x.Creator = ""
 	case "inference.inference.MsgSubmitPow.blockHeight":
-		x.BlockHeight = uint64(0)
+		x.BlockHeight = int64(0)
 	case "inference.inference.MsgSubmitPow.nonce":
 		x.Nonce = nil
 	default:
@@ -5598,7 +5598,7 @@ func (x *fastReflection_MsgSubmitPow) Get(descriptor protoreflect.FieldDescripto
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgSubmitPow.blockHeight":
 		value := x.BlockHeight
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitPow.nonce":
 		if len(x.Nonce) == 0 {
 			return protoreflect.ValueOfList(&_MsgSubmitPow_3_list{})
@@ -5628,7 +5628,7 @@ func (x *fastReflection_MsgSubmitPow) Set(fd protoreflect.FieldDescriptor, value
 	case "inference.inference.MsgSubmitPow.creator":
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgSubmitPow.blockHeight":
-		x.BlockHeight = value.Uint()
+		x.BlockHeight = value.Int()
 	case "inference.inference.MsgSubmitPow.nonce":
 		lv := value.List()
 		clv := lv.(*_MsgSubmitPow_3_list)
@@ -5679,7 +5679,7 @@ func (x *fastReflection_MsgSubmitPow) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.MsgSubmitPow.creator":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitPow.blockHeight":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitPow.nonce":
 		list := []string{}
 		return protoreflect.ValueOfList(&_MsgSubmitPow_3_list{list: &list})
@@ -5910,7 +5910,7 @@ func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.BlockHeight |= uint64(b&0x7F) << shift
+					x.BlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -6854,7 +6854,7 @@ type MsgSubmitPow struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator     string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	BlockHeight uint64   `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight int64    `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
 	Nonce       []string `protobuf:"bytes,3,rep,name=nonce,proto3" json:"nonce,omitempty"`
 }
 
@@ -6885,7 +6885,7 @@ func (x *MsgSubmitPow) GetCreator() string {
 	return ""
 }
 
-func (x *MsgSubmitPow) GetBlockHeight() uint64 {
+func (x *MsgSubmitPow) GetBlockHeight() int64 {
 	if x != nil {
 		return x.BlockHeight
 	}
@@ -7026,7 +7026,7 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
 	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
 	0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
+	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
 	0x68, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x03, 0x20, 0x03, 0x28,
 	0x09, 0x52, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63,
 	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x16, 0x0a, 0x14, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62,

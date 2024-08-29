@@ -23,7 +23,7 @@ type POWOrchestrator struct {
 }
 
 type StartPowEvent struct {
-	blockHeight uint64
+	blockHeight int64
 	blockHash   string
 }
 
@@ -32,7 +32,7 @@ type StopPowEvent struct {
 }
 
 type ProofOfWork struct {
-	BlockHeight uint64
+	BlockHeight int64
 	BlockHash   string
 	PubKey      string
 	Nonce       string
@@ -182,7 +182,7 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSON
 	}
 }
 
-func getBlockHeight(data map[string]interface{}) (uint64, error) {
+func getBlockHeight(data map[string]interface{}) (int64, error) {
 	block, ok := data["block"].(map[string]interface{})
 	if !ok {
 		return 0, errors.New("failed to access 'block' key")
@@ -198,7 +198,7 @@ func getBlockHeight(data map[string]interface{}) (uint64, error) {
 		return 0, errors.New("failed to access 'height' key or it's not a float64")
 	}
 
-	return uint64(h), nil
+	return int64(h), nil
 }
 
 func getBlockHash(data map[string]interface{}) (string, error) {
@@ -215,7 +215,7 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
-func createSubmitPowCallback(blockHeight uint64, transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs []*ProofOfWork) {
+func createSubmitPowCallback(blockHeight int64, transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs []*ProofOfWork) {
 	return func(proofs []*ProofOfWork) {
 		nonce := make([]string, len(proofs))
 		for i, p := range proofs {

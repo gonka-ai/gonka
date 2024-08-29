@@ -2,11 +2,11 @@ package proofofcompute
 
 const epochLength = 240
 
-func IsStartOfPocStage(blockHeight uint64) bool {
+func IsStartOfPocStage(blockHeight int64) bool {
 	return blockHeight%epochLength == 0
 }
 
-func IsEndOfPocStage(blockHeight uint64) bool {
+func IsEndOfPocStage(blockHeight int64) bool {
 	return blockHeight%epochLength == 60
 }
 

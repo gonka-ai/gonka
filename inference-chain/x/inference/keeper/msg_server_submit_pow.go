@@ -25,13 +25,13 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !proofofcompute.IsPocExchangeWindow(int64(startBlockHeight), currentBlockHeight) {
+	if !proofofcompute.IsPocExchangeWindow(startBlockHeight, currentBlockHeight) {
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
 
 	// 1. Get block hash from startBlockHeight
-	blockHash, err := k.getBlockHash(int64(startBlockHeight))
+	blockHash, err := k.getBlockHash(startBlockHeight)
 	if err != nil {
 		return nil, err
 	}

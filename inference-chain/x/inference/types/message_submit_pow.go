@@ -8,7 +8,7 @@ import (
 
 var _ sdk.Msg = &MsgSubmitPow{}
 
-func NewMsgSubmitPow(creator string, blockHeight uint64, nonce []string) *MsgSubmitPow {
+func NewMsgSubmitPow(creator string, blockHeight int64, nonce []string) *MsgSubmitPow {
 	return &MsgSubmitPow{
 		Creator:     creator,
 		BlockHeight: blockHeight,
