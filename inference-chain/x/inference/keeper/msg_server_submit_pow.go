@@ -20,20 +20,17 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.BlockHeight
 
-	if startBlockHeight%240 != 0 {
+	if !proofofcompute.IsStartOfPocStage(startBlockHeight) {
 		errMsg := fmt.Sprintf("start block height must be divisible by 240. msg.BlockHeight = %d", startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	switch uint64(currentBlockHeight) - startBlockHeight {
-	case 300, 301, 302, 303: // DO NOTHING
-	default:
+	if !proofofcompute.IsPocExchangeWindow(int64(startBlockHeight), currentBlockHeight) {
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
 
 	// 1. Get block hash from startBlockHeight
-
 	blockHash, err := k.getBlockHash(int64(startBlockHeight))
 	if err != nil {
 		return nil, err

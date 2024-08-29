@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -151,7 +152,14 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
-func (am AppModule) EndBlock(_ context.Context) error {
+func (am AppModule) EndBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	blockHeight := sdkCtx.BlockHeight()
+
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+
+	}
+
 	return nil
 }
 

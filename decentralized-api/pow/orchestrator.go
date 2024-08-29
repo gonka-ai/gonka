@@ -170,13 +170,13 @@ func ProcessNewBlockEvent(orchestrator *POWOrchestrator, event *chainevents.JSON
 
 	log.Printf("New block event received. blockHeight = %d, BlockHash = %s", blockHeight, blockHash)
 
-	if blockHeight%240 == 0 {
+	if proofofcompute.IsStartOfPocStage(blockHeight) {
 		powEvent := StartPowEvent{blockHash: blockHash, blockHeight: blockHeight}
 		orchestrator.StartProcessing(powEvent)
 		return
 	}
 
-	if blockHeight%300 == 0 {
+	if proofofcompute.IsEndOfPocStage(blockHeight) {
 		orchestrator.StopProcessing(createSubmitPowCallback(blockHeight, transactionRecorder))
 		return
 	}
