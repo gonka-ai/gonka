@@ -1,0 +1,11 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message Power {
+  string index = 1;
+  uint32 power = 2;
+  int64 pocStageStartBlockHeight = 3;
+  int64 receivedAtBlockHeight = 4;
+}
