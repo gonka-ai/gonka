@@ -3,6 +3,7 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+// Power at the moment isn't added to Genesis, because we're reusing staking's genesis for now
 message Power {
   string index = 1;
   uint32 power = 2;
