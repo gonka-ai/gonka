@@ -33,31 +33,15 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
 
             if funded_address and funded_name:
                 # Run the docker command to fund the new account
-                docker_command = [
-                    "docker", "run", "--rm", "-it",
-                    f"-v{MOUNT_PATH}/requester:/root/{STATE_DIR_NAME}",
-                    "--network", "inference-ignite_net-public",
-                    IMAGE_NAME, APP_NAME, "tx", "bank", "send",
-                    funded_address, extracted_address, "1icoin",
-                    "--keyring-backend", "test",
-                    f"--keyring-dir=/root/{STATE_DIR_NAME}",
-                    f"--chain-id={CHAIN_ID}", "--yes",
-                    f"--node=tcp://{funded_name}-node:26657"
-                ]
-
-                result = subprocess.run(docker_command, check=False, capture_output=True)
-                if result.returncode == 0:
-                    print(f"Account {name} funded. Address: {extracted_address}")
-                    time.sleep(5)
-                    add_participant(name, port)
-                else:
-                    print("Error funding account.")
+                fund_account(extracted_address, funded_address, funded_name, name, port)
+                set_account_to_validator(extracted_address, funded_address, funded_name, name, port)
                 return extracted_address
             else:
                 print("Funded account information is missing.")
                 return None
         else:
             print("No valid account ID found in the error response.")
+            print(error_message)
             return None
     else:
         # If the response is successful and contains an ID, return it
@@ -65,6 +49,95 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
         account_id = data.get("id")
         print(f"Account {name} already added. Address: {account_id}")
         return account_id
+
+
+def fund_account(extracted_address, funded_address, funded_name, name, port):
+    docker_command = [
+        "docker", "run", "--rm", "-it",
+        f"-v{MOUNT_PATH}/requester:/root/{STATE_DIR_NAME}",
+        "--network", "inference-ignite_net-public",
+        IMAGE_NAME, APP_NAME, "tx", "bank", "send",
+        funded_address, extracted_address, "200000icoin",
+        "--keyring-backend", "test",
+        f"--keyring-dir=/root/{STATE_DIR_NAME}",
+        f"--chain-id={CHAIN_ID}", "--yes",
+        f"--node=tcp://{funded_name}-node:26657"
+    ]
+    print(" ".join(docker_command))
+    result = subprocess.run(docker_command, check=False, capture_output=True)
+    if result.returncode == 0:
+        print(f"Account {name} funded. Address: {extracted_address}")
+        time.sleep(5)
+        add_participant(name, port)
+    else:
+        print("Error funding account.")
+        print("stdout:", result.stdout)
+
+def set_account_to_validator(extracted_address, funded_address, funded_name, name, port):
+    # Command to fetch the public key of the validator node
+    pubkey = get_pubkey()
+
+    # Create the JSON content for the validator
+    validator_data = {
+        "pubkey": {
+            "@type": "/cosmos.crypto.ed25519.PubKey",
+            "key": pubkey
+        },
+        "amount": "100000icoin",
+        "moniker": f"{name}-validator",
+        "identity": "",
+        "website": f"https://{name}validator.example.com",
+        "security": "security@example.com",
+        "details": f"{name} validator's details",
+        "commission-rate": "0.1",
+        "commission-max-rate": "0.2",
+        "commission-max-change-rate": "0.01",
+        "min-self-delegation": "1"
+    }
+    with open(f"{MOUNT_PATH}/{name}/{name}-validator.json", "w") as f:
+        json.dump(validator_data, f)
+
+    # setup as validator:
+    docker_command = [
+        "docker", "run", "--rm", "-it",
+        f"-v{MOUNT_PATH}/{name}:/root/{STATE_DIR_NAME}",
+        "--network", "inference-ignite_net-public",
+        IMAGE_NAME, APP_NAME, "tx", "staking", "create-validator",
+        f"/root/{STATE_DIR_NAME}/{name}-validator.json",
+        "--chain-id", CHAIN_ID,
+        "--from", name,
+        "--keyring-backend", "test",
+        f"--keyring-dir=/root/{STATE_DIR_NAME}",
+        "--yes",
+        f"--node=tcp://{funded_name}-node:26657"
+    ]
+    # print out command line:
+    print(" ".join(docker_command))
+    result = subprocess.run(docker_command, check=False, capture_output=False)
+    if result.returncode == 0:
+        print(f"Account {name} setup as validator. Address: {extracted_address}")
+        time.sleep(5)
+        add_participant(name, port)
+    else:
+        print("Error setting up as validator.")
+        print(result.stdout)
+        print(result.stderr)
+
+
+def get_pubkey():
+    docker_get_pubkey_command = [
+        "docker", "run", "--rm",
+        "-v", f"{MOUNT_PATH}/requester:/root/{STATE_DIR_NAME}",
+        "--network", "inference-ignite_net-public",
+        IMAGE_NAME, APP_NAME, "tendermint", "show-validator"
+    ]
+    # Execute the command to get the public key
+    pubkey_result = subprocess.run(docker_get_pubkey_command, capture_output=True, text=True)
+    pubkey_json = pubkey_result.stdout.strip()
+    # Parse the JSON output to get the 'key' field
+    pubkey_dict = json.loads(pubkey_json)
+    pubkey = pubkey_dict["key"]
+    return pubkey
 
 
 def add_participant(name, port):

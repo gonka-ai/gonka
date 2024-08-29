@@ -1,3 +1,6 @@
+# Stop on error! Otherwise the script will run, but use an older version that succeeded.
+set -e
+
 #In case previous run hasn't stopped:
 docker compose -f docker-compose-sim.yml down
 # Build

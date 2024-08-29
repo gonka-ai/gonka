@@ -14,7 +14,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		Index:                msg.Creator,
 		Address:              msg.Creator,
 		Reputation:           1,
-		Weight:               1,
+		Weight:               int32(ctx.BlockHeight()),
 		JoinTime:             ctx.BlockTime().UnixMilli(),
 		JoinHeight:           ctx.BlockHeight(),
 		LastInferenceTime:    0,
@@ -30,6 +30,5 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		newParticipant.CompletionTokenCount[model] = 0
 	}
 	k.SetParticipant(ctx, newParticipant)
-
 	return &types.MsgSubmitNewParticipantResponse{}, nil
 }
