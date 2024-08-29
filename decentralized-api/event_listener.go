@@ -8,6 +8,7 @@ import (
 	"decentralized-api/pow"
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"inference/x/inference/proofofcompute"
 	"log"
 	"net/url"
 )
@@ -37,7 +38,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		log.Fatalf("Failed to get public key. %v", err)
 		return
 	}
-	powOrchestrator := pow.NewPowOrchestrator(pubKey, 10)
+	powOrchestrator := pow.NewPowOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
 	go powOrchestrator.Run()
 
 	// Listen for events

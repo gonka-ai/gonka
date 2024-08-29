@@ -1,6 +1,7 @@
 package pow
 
 import (
+	"inference/x/inference/proofofcompute"
 	"testing"
 	"time"
 )
@@ -11,10 +12,10 @@ func TestNewPowOrchestrator(t *testing.T) {
 	orchestrator := NewPowOrchestrator(pubKey, 8)
 
 	startTime := time.Now()
-	input := []byte(blockHash + pubKey)
+	input := proofofcompute.GetInput(blockHash, pubKey)
 	nonce := make([]byte, len(input))
 	for {
-		hashAndNonce := proofOfWork(input, nonce)
+		hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
 
 		if orchestrator.acceptHash(hashAndNonce.Hash) {
 			elapsed := time.Since(startTime)

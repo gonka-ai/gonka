@@ -8,6 +8,7 @@ import (
 	"fmt"
 	types2 "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"net/http"
@@ -16,20 +17,19 @@ import (
 func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*types.MsgSubmitPowResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// 1. Get block hash
-	startBlockHeight := msg.BlockHeight
 	currentBlockHeight := ctx.BlockHeight()
+	startBlockHeight := msg.BlockHeight
 
 	if startBlockHeight%240 != 0 {
 		errMsg := fmt.Sprintf("start block height must be divisible by 240. msg.BlockHeight = %d", startBlockHeight)
-		return nil, sdkerrors.Wrap(types.ErrWrongStartBlockHeight, errMsg)
+		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
 	switch uint64(currentBlockHeight) - startBlockHeight {
 	case 300, 301, 302, 303: // DO NOTHING
 	default:
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
-		return nil, sdkerrors.Wrap(types.ErrPowTooLate, errMsg)
+		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
 
 	// 1. Get block hash from startBlockHeight
@@ -45,9 +45,18 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 		return nil, err
 	}
 
-	// PRTODO: use block hash and pubKey to verify proofs
-	_ = pubKey
-	_ = blockHash
+	// 3. Verify all nonces
+	input := proofofcompute.GetInput(blockHash, string(pubKey.Bytes()))
+	for _, n := range msg.Nonce {
+		proof := proofofcompute.ProofOfCompute(input, []byte(n))
+		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
+			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
+		}
+	}
+
+	power := len(msg.Nonce)
+	_ = power
+	// PRTODO: store power
 
 	return &types.MsgSubmitPowResponse{}, nil
 }

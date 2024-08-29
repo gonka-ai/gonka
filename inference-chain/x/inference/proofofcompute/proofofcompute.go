@@ -1,10 +1,16 @@
-package pow
+package proofofcompute
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/cometbft/cometbft/crypto"
+	"strings"
 )
+
+const DefaultDifficulty = 7
+
+func GetInput(blockHash, pubKey string) []byte {
+	return []byte(blockHash + pubKey)
+}
 
 type HashAndNonce struct {
 	Hash  string
@@ -12,8 +18,8 @@ type HashAndNonce struct {
 	Nonce []byte
 }
 
-func proofOfWork(input []byte, nonce []byte) HashAndNonce {
-	inputBytes := []byte(input)
+func ProofOfCompute(input []byte, nonce []byte) HashAndNonce {
+	inputBytes := input
 	xorResult := xorBytes(inputBytes, nonce)
 
 	hashResult := sha256.Sum256(xorResult)
@@ -38,16 +44,7 @@ func xorBytes(a, b []byte) []byte {
 	return result
 }
 
-func generateRandomBytes(length int) []byte {
-	randomBytes := crypto.CRandBytes(length)
-	return randomBytes
-}
-
-func incrementBytes(nonce []byte) {
-	for i := len(nonce) - 1; i >= 0; i-- {
-		nonce[i]++
-		if nonce[i] != 0 {
-			break // If no carry, we're done
-		}
-	}
+func AcceptHash(hash string, difficulty int) bool {
+	prefix := strings.Repeat("0", difficulty)
+	return strings.HasPrefix(hash, prefix)
 }

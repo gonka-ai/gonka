@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"inference/api/inference/inference"
+	"inference/x/inference/proofofcompute"
 	"log"
-	"strings"
 	"sync"
 )
 
@@ -51,8 +51,7 @@ func NewPowOrchestrator(pubKey string, difficulty int) *POWOrchestrator {
 }
 
 func (o *POWOrchestrator) acceptHash(hash string) bool {
-	prefix := strings.Repeat("0", o.difficulty)
-	return strings.HasPrefix(hash, prefix)
+	return proofofcompute.AcceptHash(hash, o.difficulty)
 }
 
 // startProcessing is the function that starts when a start event is triggered
@@ -62,7 +61,7 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 	o.running = true
 	o.mu.Unlock()
 
-	input := []byte(event.blockHash + o.pubKey)
+	input := proofofcompute.GetInput(event.blockHash, o.pubKey)
 	nonce := make([]byte, len(input))
 	go func() {
 		for {
@@ -72,7 +71,7 @@ func (o *POWOrchestrator) startProcessing(event StartPowEvent) {
 				return
 			default:
 				// Execute the function and store the result
-				hashAndNonce := proofOfWork(input, nonce)
+				hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
 
 				if !o.acceptHash(hashAndNonce.Hash) {
 					continue
@@ -231,6 +230,15 @@ func createSubmitPowCallback(blockHeight uint64, transactionRecorder cosmosclien
 		err := transactionRecorder.SubmitPow(&message)
 		if err != nil {
 			log.Printf("Failed to send SubmitPow transaction. %v", err)
+		}
+	}
+}
+
+func incrementBytes(nonce []byte) {
+	for i := len(nonce) - 1; i >= 0; i-- {
+		nonce[i]++
+		if nonce[i] != 0 {
+			break // If no carry, we're done
 		}
 	}
 }
