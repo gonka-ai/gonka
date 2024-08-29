@@ -9,7 +9,7 @@ import (
 func TestNewPowOrchestrator(t *testing.T) {
 	pubKey := "uCIGWUwW8jqyg7IhVqpWP8g2qfTjq0KMISt7reXqxr8="
 	blockHash := "4A29D310402743E6587D219E1E975701ACA3EAE583AA88AA91B50FF3EF519167"
-	orchestrator := NewPowOrchestrator(pubKey, 8)
+	orchestrator := NewPowOrchestrator(pubKey, 1)
 
 	startTime := time.Now()
 	input := proofofcompute.GetInput(blockHash, pubKey)
