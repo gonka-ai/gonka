@@ -157,7 +157,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-
+		am.SendNewValidatorWeightsToStaking()
 	}
 
 	return nil
