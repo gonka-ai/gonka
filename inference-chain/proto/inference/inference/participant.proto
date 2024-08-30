@@ -29,4 +29,5 @@ message Participant {
   uint64 invalidatedInferences = 15;
   // I don't see how a negative balance makes sense
   uint64 coinBalance = 16;
+  string validatorKey = 17;
 }

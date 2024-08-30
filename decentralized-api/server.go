@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
-	"inference/api/inference/inference"
-	"inference/x/inference/types"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"net/http"
@@ -390,8 +390,9 @@ func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.Respon
 }
 
 type SubmitNewParticipantDto struct {
-	Url    string   `json:"url"`
-	Models []string `json:"models"`
+	Url          string   `json:"url"`
+	Models       []string `json:"models"`
+	ValidatorKey string   `json:"validator_key"`
 }
 
 type ParticipantsDto struct {
@@ -416,10 +417,12 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 	}
 
 	msg := &inference.MsgSubmitNewParticipant{
-		Url:    body.Url,
-		Models: body.Models,
+		Url:          body.Url,
+		Models:       body.Models,
+		ValidatorKey: body.ValidatorKey,
 	}
 
+	log.Printf("ValidatorKey in dapi: %s", body.ValidatorKey)
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
 		log.Printf("Failed to submit MsgSubmitNewParticipant. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

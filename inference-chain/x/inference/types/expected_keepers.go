@@ -4,6 +4,7 @@ import (
 	"context"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
@@ -53,5 +54,5 @@ type ValidatorSet interface {
 }
 
 type StakingKeeper interface {
-	SetComputeValidators(ctx context.Context, computeResults map[string]int64) ([]types.Validator, error)
+	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types.Validator, error)
 }

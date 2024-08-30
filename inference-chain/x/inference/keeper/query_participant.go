@@ -35,16 +35,6 @@ func (k Keeper) ParticipantAll(ctx context.Context, req *types.QueryAllParticipa
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	newPowerMap := make(map[string]int64)
-	for _, participant := range participants {
-		newPowerMap[participant.Index] = int64(participant.Weight)
-	}
-	_, err = k.staking.SetComputeValidators(ctx, newPowerMap)
-	if err != nil {
-		k.Logger().Error("Error setting compute validators", "error", err)
-		return nil, err
-	}
-
 	return &types.QueryAllParticipantResponse{Participant: participants, Pagination: pageRes}, nil
 }
 

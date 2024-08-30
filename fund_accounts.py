@@ -34,7 +34,7 @@ def get_or_create_account(port, name, funded_address=None, funded_name=None):
             if funded_address and funded_name:
                 # Run the docker command to fund the new account
                 fund_account(extracted_address, funded_address, funded_name, name, port)
-                set_account_to_validator(extracted_address, funded_address, funded_name, name, port)
+                # set_account_to_validator(extracted_address, funded_address, funded_name, name, port)
                 return extracted_address
             else:
                 print("Funded account information is missing.")
@@ -75,7 +75,7 @@ def fund_account(extracted_address, funded_address, funded_name, name, port):
 
 def set_account_to_validator(extracted_address, funded_address, funded_name, name, port):
     # Command to fetch the public key of the validator node
-    pubkey = get_pubkey()
+    pubkey = get_pubkey(name)
 
     # Create the JSON content for the validator
     validator_data = {
@@ -124,10 +124,16 @@ def set_account_to_validator(extracted_address, funded_address, funded_name, nam
         print(result.stderr)
 
 
-def get_pubkey():
+def get_pubkey(name):
+    pubkey_dict = get_pubkey_dict(name)
+    pubkey = pubkey_dict["key"]
+    return pubkey
+
+
+def get_pubkey_dict(name):
     docker_get_pubkey_command = [
         "docker", "run", "--rm",
-        "-v", f"{MOUNT_PATH}/requester:/root/{STATE_DIR_NAME}",
+        "-v", f"{MOUNT_PATH}/{name}:/root/{STATE_DIR_NAME}",
         "--network", "inference-ignite_net-public",
         IMAGE_NAME, APP_NAME, "tendermint", "show-validator"
     ]
@@ -135,17 +141,19 @@ def get_pubkey():
     pubkey_result = subprocess.run(docker_get_pubkey_command, capture_output=True, text=True)
     pubkey_json = pubkey_result.stdout.strip()
     # Parse the JSON output to get the 'key' field
-    pubkey_dict = json.loads(pubkey_json)
-    pubkey = pubkey_dict["key"]
-    return pubkey
+    return json.loads(pubkey_json)
 
 
 def add_participant(name, port):
+    pubkey = get_pubkey(name)
     url = f"http://localhost:{port}/v1/participants"
     payload = {
         "url": f"http://{name}-api:8080",
-        "models": ["unsloth/llama-3-8b-Instruct"]
+        "models": ["unsloth/llama-3-8b-Instruct"],
+        "validator_key": pubkey
     }
+
+    print(payload)
 
     while True:
         response = requests.post(url, json=payload)
