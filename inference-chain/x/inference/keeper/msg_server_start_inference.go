@@ -2,10 +2,11 @@ package keeper
 
 import (
 	"context"
-
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	staketypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
+	"log"
 )
 
 const DefaultMaxTokens = 2048
@@ -13,6 +14,14 @@ const DefaultMaxTokens = 2048
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	log.Println("Iterating validators")
+	err := k.validatorSet.IterateValidators(goCtx, func(index int64, val staketypes.ValidatorI) (stop bool) {
+		log.Println("ValidatorI", "index", index, "val", val)
+		return false
+	})
+	if err != nil {
+		log.Println("Error iterating validators", "error", err)
+	}
 	_, found := k.GetInference(ctx, msg.InferenceId)
 	if found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)

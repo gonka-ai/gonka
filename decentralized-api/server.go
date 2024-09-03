@@ -6,11 +6,13 @@ import (
 	"decentralized-api/completionapi"
 	"encoding/json"
 	"fmt"
+	types2 "github.com/cometbft/cometbft/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/google/uuid"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/v2"
-	"inference/api/inference/inference"
-	"inference/x/inference/types"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"net/http"
@@ -388,8 +390,9 @@ func wrapSubmitNewParticipant(recorder InferenceCosmosClient) func(w http.Respon
 }
 
 type SubmitNewParticipantDto struct {
-	Url    string   `json:"url"`
-	Models []string `json:"models"`
+	Url          string   `json:"url"`
+	Models       []string `json:"models"`
+	ValidatorKey string   `json:"validator_key"`
 }
 
 type ParticipantsDto struct {
@@ -397,11 +400,12 @@ type ParticipantsDto struct {
 }
 
 type ParticipantDto struct {
-	Id        string   `json:"id"`
-	Url       string   `json:"url"`
-	Models    []string `json:"models"`
-	CoinsOwed uint64   `json:"coins_owed"`
-	Balance   int64    `json:"balance"`
+	Id          string   `json:"id"`
+	Url         string   `json:"url"`
+	Models      []string `json:"models"`
+	CoinsOwed   uint64   `json:"coins_owed"`
+	Balance     int64    `json:"balance"`
+	VotingPower int64    `json:"voting_power"`
 }
 
 func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
@@ -413,10 +417,12 @@ func submitNewParticipant(recorder InferenceCosmosClient, w http.ResponseWriter,
 	}
 
 	msg := &inference.MsgSubmitNewParticipant{
-		Url:    body.Url,
-		Models: body.Models,
+		Url:          body.Url,
+		Models:       body.Models,
+		ValidatorKey: body.ValidatorKey,
 	}
 
+	log.Printf("ValidatorKey in dapi: %s", body.ValidatorKey)
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
 		log.Printf("Failed to submit MsgSubmitNewParticipant. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -446,6 +452,45 @@ func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	validators, err := recorder.client.Context().Client.Validators(recorder.context, nil, nil, nil)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	list, err := recorder.client.Context().Keyring.List()
+	for _, key := range list {
+		log.Printf("KeyRecord: %s", key.String())
+		log.Printf("Name: %s", key.Name)
+		pubKey, err := key.GetPubKey()
+		if err != nil {
+			log.Printf("Failed to get pubkey for key %s: %v", key)
+		} else {
+			log.Printf("PubKey: %s", pubKey.Address().String())
+		}
+		log.Printf("Key: %s", key.PubKey.String())
+		log.Printf("Item: %s", key.Item)
+	}
+
+	// Index validators by address
+	validatorMap := make(map[string]types2.Validator)
+	for _, v := range validators.Validators {
+		log.Printf("-Validator info:")
+		log.Printf("Validator: %s", v.Address)
+		// Use public key... account is based on this anyhow
+		s := v.PubKey.Address().String()
+		log.Printf("PubKey: %s", s)
+		log.Printf("VotingPower: %d", v.VotingPower)
+		accAddress := sdk.AccAddress(v.PubKey.Address()).String()
+		valAddress := sdk.ValAddress(v.PubKey.Address()).String()
+		consAdress := sdk.ConsAddress(v.PubKey.Address()).String()
+		log.Printf("AccAddress: %s", accAddress)
+		log.Printf("ValAddress: %s", valAddress)
+		log.Printf("ConsAddress: %s", consAdress)
+		log.Printf("-----")
+		validatorMap[s] = *v
+	}
 
 	participants := make([]ParticipantDto, len(r.Participant))
 	for i, p := range r.Participant {
@@ -464,12 +509,14 @@ func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, requ
 		} else {
 			log.Printf("Failed to get balance for participant %s: %v", p.Address, err)
 		}
+		power := getVotingPower(recorder, p.Address, validatorMap)
 		participants[i] = ParticipantDto{
-			Id:        p.Address,
-			Url:       p.InferenceUrl,
-			Models:    p.Models,
-			CoinsOwed: p.CoinBalance,
-			Balance:   pBalance,
+			Id:          p.Address,
+			Url:         p.InferenceUrl,
+			Models:      p.Models,
+			CoinsOwed:   p.CoinBalance,
+			Balance:     pBalance,
+			VotingPower: power,
 		}
 	}
 
@@ -486,4 +533,37 @@ func getParticipants(recorder InferenceCosmosClient, w http.ResponseWriter, requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseJson)
+}
+
+func getVotingPower(recorder InferenceCosmosClient, address string, validatorMap map[string]types2.Validator) int64 {
+	addr, err := sdk.AccAddressFromBech32(address)
+	if err != nil {
+		log.Printf("Failed to get account for participant %s: %v", address, err)
+	}
+	log.Printf("AccAddressFromBech32: %s", addr.String())
+	account, err := recorder.client.Account(address)
+	if err != nil {
+		log.Printf("Failed to get account for participant %s: %v", address, err)
+		return 0
+	}
+	s, err := account.Address("")
+	log.Printf("Address: %s", s)
+	pubKey, err := account.PubKey()
+	log.Printf("PubKey: %s", pubKey)
+	log.Printf("Name: %s", account.Name)
+	log.Printf("Record: %s", account.Record.String())
+	if err != nil {
+		log.Printf("Failed to get pubkey for participant %s: %v", address, err)
+		return 0
+	}
+	power := getValueOrDefault(validatorMap, pubKey, types2.Validator{}).VotingPower
+	return power
+}
+
+// Why u no have this in std lib????
+func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V {
+	if value, exists := m[key]; exists {
+		return value
+	}
+	return defaultValue
 }

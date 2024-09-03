@@ -55,6 +55,8 @@ func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keep
 		log.NewNopLogger(),
 		authority.String(),
 		bankMock,
+		nil,
+		nil,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
