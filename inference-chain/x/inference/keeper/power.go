@@ -35,8 +35,12 @@ func (k Keeper) AllPower(ctx context.Context) (list []types.Power) {
 }
 
 func (k Keeper) RemoveAllPower(ctx context.Context) {
+	existingPower := k.AllPower(ctx)
+
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PowerKeyPrefix))
 
-	store.Delete(types.PowerKey(types.PowerKeyPrefix))
+	for _, p := range existingPower {
+		store.Delete(types.PowerKey(p.ParticipantAddress))
+	}
 }

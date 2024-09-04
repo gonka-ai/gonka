@@ -1,4 +1,4 @@
-package keeper
+package keeper_test
 
 import (
 	keepertest "github.com/productscience/inference/testutil/keeper"
