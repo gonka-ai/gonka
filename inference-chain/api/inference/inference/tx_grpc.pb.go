@@ -24,7 +24,7 @@ const (
 	Msg_FinishInference_FullMethodName      = "/inference.inference.Msg/FinishInference"
 	Msg_SubmitNewParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewParticipant"
 	Msg_Validation_FullMethodName           = "/inference.inference.Msg/Validation"
-	Msg_SubmitPow_FullMethodName            = "/inference.inference.Msg/SubmitPow"
+	Msg_SubmitPow_FullMethodName            = "/inference.inference.Msg/SubmitPoC"
 )
 
 // MsgClient is the client API for Msg service.
@@ -138,7 +138,7 @@ func (UnimplementedMsgServer) Validation(context.Context, *MsgValidation) (*MsgV
 	return nil, status.Errorf(codes.Unimplemented, "method Validation not implemented")
 }
 func (UnimplementedMsgServer) SubmitPow(context.Context, *MsgSubmitPow) (*MsgSubmitPowResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitPow not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoC not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -289,7 +289,7 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_Validation_Handler,
 		},
 		{
-			MethodName: "SubmitPow",
+			MethodName: "SubmitPoC",
 			Handler:    _Msg_SubmitPow_Handler,
 		},
 	},

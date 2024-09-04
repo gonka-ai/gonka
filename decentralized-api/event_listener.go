@@ -5,7 +5,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
 	cosmosclient "decentralized-api/cosmosclient"
-	"decentralized-api/pow"
+	"decentralized-api/poc"
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/proofofcompute"
@@ -38,8 +38,8 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		log.Fatalf("Failed to get public key. %v", err)
 		return
 	}
-	powOrchestrator := pow.NewPowOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
-	go powOrchestrator.Run()
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
+	go pocOrchestrator.Run()
 
 	// Listen for events
 	for {
@@ -56,7 +56,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			log.Printf("New block event received. type = %s", event.Result.Data.Type)
-			pow.ProcessNewBlockEvent(powOrchestrator, &event, transactionRecorder)
+			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
 		default:
 			log.Printf("New Tx event received. Inference finished. type = %s", event.Result.Data.Type)
 			go func() {

@@ -22,8 +22,8 @@ func SimulateMsgSubmitPow(
 			Creator: simAccount.Address.String(),
 		}
 
-		// TODO: Handling the SubmitPow simulation
+		// TODO: Handling the SubmitPoC simulation
 
-		return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "SubmitPow simulation not implemented"), nil, nil
+		return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "SubmitPoC simulation not implemented"), nil, nil
 	}
 }

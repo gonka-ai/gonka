@@ -879,7 +879,7 @@ func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...g
 
 func (c *msgClient) SubmitPow(ctx context.Context, in *MsgSubmitPow, opts ...grpc.CallOption) (*MsgSubmitPowResponse, error) {
 	out := new(MsgSubmitPowResponse)
-	err := c.cc.Invoke(ctx, "/inference.inference.Msg/SubmitPow", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/inference.inference.Msg/SubmitPoC", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -918,7 +918,7 @@ func (*UnimplementedMsgServer) Validation(ctx context.Context, req *MsgValidatio
 	return nil, status.Errorf(codes.Unimplemented, "method Validation not implemented")
 }
 func (*UnimplementedMsgServer) SubmitPow(ctx context.Context, req *MsgSubmitPow) (*MsgSubmitPowResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitPow not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoC not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -1025,7 +1025,7 @@ func _Msg_SubmitPow_Handler(srv interface{}, ctx context.Context, dec func(inter
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/inference.inference.Msg/SubmitPow",
+		FullMethod: "/inference.inference.Msg/SubmitPoC",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SubmitPow(ctx, req.(*MsgSubmitPow))
@@ -1059,7 +1059,7 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_Validation_Handler,
 		},
 		{
-			MethodName: "SubmitPow",
+			MethodName: "SubmitPoC",
 			Handler:    _Msg_SubmitPow_Handler,
 		},
 	},

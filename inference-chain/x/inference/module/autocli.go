@@ -82,7 +82,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inferenceId"}, {ProtoField: "responsePayload"}, {ProtoField: "responseHash"}, {ProtoField: "value"}},
 				},
 				{
-					RpcMethod:      "SubmitPow",
+					RpcMethod:      "SubmitPoC",
 					Use:            "submit-pow [block-height] [nonce]",
 					Short:          "Send a submit-pow tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "nonce"}},

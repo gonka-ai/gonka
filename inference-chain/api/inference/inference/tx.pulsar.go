@@ -7197,13 +7197,13 @@ var file_inference_inference_tx_proto_depIdxs = []int32{
 	4,  // 3: inference.inference.Msg.FinishInference:input_type -> inference.inference.MsgFinishInference
 	6,  // 4: inference.inference.Msg.SubmitNewParticipant:input_type -> inference.inference.MsgSubmitNewParticipant
 	8,  // 5: inference.inference.Msg.Validation:input_type -> inference.inference.MsgValidation
-	10, // 6: inference.inference.Msg.SubmitPow:input_type -> inference.inference.MsgSubmitPow
+	10, // 6: inference.inference.Msg.SubmitPoC:input_type -> inference.inference.MsgSubmitPow
 	1,  // 7: inference.inference.Msg.UpdateParams:output_type -> inference.inference.MsgUpdateParamsResponse
 	3,  // 8: inference.inference.Msg.StartInference:output_type -> inference.inference.MsgStartInferenceResponse
 	5,  // 9: inference.inference.Msg.FinishInference:output_type -> inference.inference.MsgFinishInferenceResponse
 	7,  // 10: inference.inference.Msg.SubmitNewParticipant:output_type -> inference.inference.MsgSubmitNewParticipantResponse
 	9,  // 11: inference.inference.Msg.Validation:output_type -> inference.inference.MsgValidationResponse
-	11, // 12: inference.inference.Msg.SubmitPow:output_type -> inference.inference.MsgSubmitPowResponse
+	11, // 12: inference.inference.Msg.SubmitPoC:output_type -> inference.inference.MsgSubmitPowResponse
 	7,  // [7:13] is the sub-list for method output_type
 	1,  // [1:7] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
