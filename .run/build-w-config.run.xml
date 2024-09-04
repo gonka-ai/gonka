@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="build-w-config" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="inference-ignite" />
+    <working_directory value="$PROJECT_DIR$/decentralized-api" />
+    <envs>
+      <env name="API_CONFIG_PATH" value="config-local.yaml" />
+    </envs>
+    <kind value="PACKAGE" />
+    <package value="decentralized-api" />
+    <directory value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>

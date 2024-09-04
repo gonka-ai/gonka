@@ -24,7 +24,7 @@ const (
 	Msg_FinishInference_FullMethodName      = "/inference.inference.Msg/FinishInference"
 	Msg_SubmitNewParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewParticipant"
 	Msg_Validation_FullMethodName           = "/inference.inference.Msg/Validation"
-	Msg_SubmitPow_FullMethodName            = "/inference.inference.Msg/SubmitPoC"
+	Msg_SubmitPoC_FullMethodName            = "/inference.inference.Msg/SubmitPoC"
 )
 
 // MsgClient is the client API for Msg service.
@@ -38,7 +38,7 @@ type MsgClient interface {
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
-	SubmitPow(ctx context.Context, in *MsgSubmitPow, opts ...grpc.CallOption) (*MsgSubmitPowResponse, error)
+	SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error)
 }
 
 type msgClient struct {
@@ -94,9 +94,9 @@ func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...g
 	return out, nil
 }
 
-func (c *msgClient) SubmitPow(ctx context.Context, in *MsgSubmitPow, opts ...grpc.CallOption) (*MsgSubmitPowResponse, error) {
-	out := new(MsgSubmitPowResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitPow_FullMethodName, in, out, opts...)
+func (c *msgClient) SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error) {
+	out := new(MsgSubmitPoCResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitPoC_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ type MsgServer interface {
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
-	SubmitPow(context.Context, *MsgSubmitPow) (*MsgSubmitPowResponse, error)
+	SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -137,7 +137,7 @@ func (UnimplementedMsgServer) SubmitNewParticipant(context.Context, *MsgSubmitNe
 func (UnimplementedMsgServer) Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Validation not implemented")
 }
-func (UnimplementedMsgServer) SubmitPow(context.Context, *MsgSubmitPow) (*MsgSubmitPowResponse, error) {
+func (UnimplementedMsgServer) SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoC not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
@@ -243,20 +243,20 @@ func _Msg_Validation_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_SubmitPow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitPow)
+func _Msg_SubmitPoC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitPoC)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MsgServer).SubmitPow(ctx, in)
+		return srv.(MsgServer).SubmitPoC(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Msg_SubmitPow_FullMethodName,
+		FullMethod: Msg_SubmitPoC_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitPow(ctx, req.(*MsgSubmitPow))
+		return srv.(MsgServer).SubmitPoC(ctx, req.(*MsgSubmitPoC))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -290,7 +290,7 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		},
 		{
 			MethodName: "SubmitPoC",
-			Handler:    _Msg_SubmitPow_Handler,
+			Handler:    _Msg_SubmitPoC_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

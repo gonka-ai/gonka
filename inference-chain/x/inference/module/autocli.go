@@ -83,8 +83,8 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "SubmitPoC",
-					Use:            "submit-pow [block-height] [nonce]",
-					Short:          "Send a submit-pow tx",
+					Use:            "submit-poc [block-height] [nonce]",
+					Short:          "Send a submit-poc tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "nonce"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx

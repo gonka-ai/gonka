@@ -39,9 +39,9 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgValidation int = 100
 
-	opWeightMsgSubmitPow = "op_weight_msg_submit_pow"
+	opWeightMsgSubmitPoC = "op_weight_msg_submit_po_c"
 	// TODO: Determine the simulation weight value
-	defaultWeightMsgSubmitPow int = 100
+	defaultWeightMsgSubmitPoC int = 100
 
 	// this line is used by starport scaffolding # simapp/module/const
 )
@@ -110,15 +110,15 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgValidation(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
-	var weightMsgSubmitPow int
-	simState.AppParams.GetOrGenerate(opWeightMsgSubmitPow, &weightMsgSubmitPow, nil,
+	var weightMsgSubmitPoC int
+	simState.AppParams.GetOrGenerate(opWeightMsgSubmitPoC, &weightMsgSubmitPoC, nil,
 		func(_ *rand.Rand) {
-			weightMsgSubmitPow = defaultWeightMsgSubmitPow
+			weightMsgSubmitPoC = defaultWeightMsgSubmitPoC
 		},
 	)
 	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSubmitPow,
-		inferencesimulation.SimulateMsgSubmitPow(am.accountKeeper, am.bankKeeper, am.keeper),
+		weightMsgSubmitPoC,
+		inferencesimulation.SimulateMsgSubmitPoС(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
 	// this line is used by starport scaffolding # simapp/module/operation
@@ -162,10 +162,10 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			},
 		),
 		simulation.NewWeightedProposalMsg(
-			opWeightMsgSubmitPow,
-			defaultWeightMsgSubmitPow,
+			opWeightMsgSubmitPoC,
+			defaultWeightMsgSubmitPoC,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSubmitPow(am.accountKeeper, am.bankKeeper, am.keeper)
+				inferencesimulation.SimulateMsgSubmitPoС(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-func TestSubmitPow(t *testing.T) {
+func TestSubmitPoC(t *testing.T) {
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMock(t)
 	_ = mocks
 	ms := setupMsgServerWithKeeper(k)
 
-	resp, err := ms.SubmitPow(ctx, &types.MsgSubmitPow{
+	resp, err := ms.SubmitPoC(ctx, &types.MsgSubmitPoC{
 		BlockHeight: 240,
 		Nonce:       []string{"helloworld"},
 	})

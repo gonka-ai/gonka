@@ -10,7 +10,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func SimulateMsgSubmitPow(
+func SimulateMsgSubmitPoC(
 	ak types.AccountKeeper,
 	bk types.BankKeeper,
 	k keeper.Keeper,
@@ -18,7 +18,7 @@ func SimulateMsgSubmitPow(
 	return func(r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
 	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
 		simAccount, _ := simtypes.RandomAcc(r, accs)
-		msg := &types.MsgSubmitPow{
+		msg := &types.MsgSubmitPoC{
 			Creator: simAccount.Address.String(),
 		}
 

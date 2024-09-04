@@ -5455,76 +5455,76 @@ func (x *fastReflection_MsgValidationResponse) ProtoMethods() *protoiface.Method
 	}
 }
 
-var _ protoreflect.List = (*_MsgSubmitPow_3_list)(nil)
+var _ protoreflect.List = (*_MsgSubmitPoC_3_list)(nil)
 
-type _MsgSubmitPow_3_list struct {
+type _MsgSubmitPoC_3_list struct {
 	list *[]string
 }
 
-func (x *_MsgSubmitPow_3_list) Len() int {
+func (x *_MsgSubmitPoC_3_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_MsgSubmitPow_3_list) Get(i int) protoreflect.Value {
+func (x *_MsgSubmitPoC_3_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfString((*x.list)[i])
 }
 
-func (x *_MsgSubmitPow_3_list) Set(i int, value protoreflect.Value) {
+func (x *_MsgSubmitPoC_3_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.String()
 	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_MsgSubmitPow_3_list) Append(value protoreflect.Value) {
+func (x *_MsgSubmitPoC_3_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.String()
 	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_MsgSubmitPow_3_list) AppendMutable() protoreflect.Value {
-	panic(fmt.Errorf("AppendMutable can not be called on message MsgSubmitPow at list field Nonce as it is not of Message kind"))
+func (x *_MsgSubmitPoC_3_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message MsgSubmitPoC at list field Nonce as it is not of Message kind"))
 }
 
-func (x *_MsgSubmitPow_3_list) Truncate(n int) {
+func (x *_MsgSubmitPoC_3_list) Truncate(n int) {
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_MsgSubmitPow_3_list) NewElement() protoreflect.Value {
+func (x *_MsgSubmitPoC_3_list) NewElement() protoreflect.Value {
 	v := ""
 	return protoreflect.ValueOfString(v)
 }
 
-func (x *_MsgSubmitPow_3_list) IsValid() bool {
+func (x *_MsgSubmitPoC_3_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_MsgSubmitPow             protoreflect.MessageDescriptor
-	fd_MsgSubmitPow_creator     protoreflect.FieldDescriptor
-	fd_MsgSubmitPow_blockHeight protoreflect.FieldDescriptor
-	fd_MsgSubmitPow_nonce       protoreflect.FieldDescriptor
+	md_MsgSubmitPoC             protoreflect.MessageDescriptor
+	fd_MsgSubmitPoC_creator     protoreflect.FieldDescriptor
+	fd_MsgSubmitPoC_blockHeight protoreflect.FieldDescriptor
+	fd_MsgSubmitPoC_nonce       protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
-	md_MsgSubmitPow = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPow")
-	fd_MsgSubmitPow_creator = md_MsgSubmitPow.Fields().ByName("creator")
-	fd_MsgSubmitPow_blockHeight = md_MsgSubmitPow.Fields().ByName("blockHeight")
-	fd_MsgSubmitPow_nonce = md_MsgSubmitPow.Fields().ByName("nonce")
+	md_MsgSubmitPoC = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPoC")
+	fd_MsgSubmitPoC_creator = md_MsgSubmitPoC.Fields().ByName("creator")
+	fd_MsgSubmitPoC_blockHeight = md_MsgSubmitPoC.Fields().ByName("blockHeight")
+	fd_MsgSubmitPoC_nonce = md_MsgSubmitPoC.Fields().ByName("nonce")
 }
 
-var _ protoreflect.Message = (*fastReflection_MsgSubmitPow)(nil)
+var _ protoreflect.Message = (*fastReflection_MsgSubmitPoC)(nil)
 
-type fastReflection_MsgSubmitPow MsgSubmitPow
+type fastReflection_MsgSubmitPoC MsgSubmitPoC
 
-func (x *MsgSubmitPow) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_MsgSubmitPow)(x)
+func (x *MsgSubmitPoC) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgSubmitPoC)(x)
 }
 
-func (x *MsgSubmitPow) slowProtoReflect() protoreflect.Message {
+func (x *MsgSubmitPoC) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_tx_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5536,43 +5536,43 @@ func (x *MsgSubmitPow) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_MsgSubmitPow_messageType fastReflection_MsgSubmitPow_messageType
-var _ protoreflect.MessageType = fastReflection_MsgSubmitPow_messageType{}
+var _fastReflection_MsgSubmitPoC_messageType fastReflection_MsgSubmitPoC_messageType
+var _ protoreflect.MessageType = fastReflection_MsgSubmitPoC_messageType{}
 
-type fastReflection_MsgSubmitPow_messageType struct{}
+type fastReflection_MsgSubmitPoC_messageType struct{}
 
-func (x fastReflection_MsgSubmitPow_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_MsgSubmitPow)(nil)
+func (x fastReflection_MsgSubmitPoC_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgSubmitPoC)(nil)
 }
-func (x fastReflection_MsgSubmitPow_messageType) New() protoreflect.Message {
-	return new(fastReflection_MsgSubmitPow)
+func (x fastReflection_MsgSubmitPoC_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitPoC)
 }
-func (x fastReflection_MsgSubmitPow_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_MsgSubmitPow
+func (x fastReflection_MsgSubmitPoC_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitPoC
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_MsgSubmitPow) Descriptor() protoreflect.MessageDescriptor {
-	return md_MsgSubmitPow
+func (x *fastReflection_MsgSubmitPoC) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitPoC
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_MsgSubmitPow) Type() protoreflect.MessageType {
-	return _fastReflection_MsgSubmitPow_messageType
+func (x *fastReflection_MsgSubmitPoC) Type() protoreflect.MessageType {
+	return _fastReflection_MsgSubmitPoC_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_MsgSubmitPow) New() protoreflect.Message {
-	return new(fastReflection_MsgSubmitPow)
+func (x *fastReflection_MsgSubmitPoC) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitPoC)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_MsgSubmitPow) Interface() protoreflect.ProtoMessage {
-	return (*MsgSubmitPow)(x)
+func (x *fastReflection_MsgSubmitPoC) Interface() protoreflect.ProtoMessage {
+	return (*MsgSubmitPoC)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -5580,22 +5580,22 @@ func (x *fastReflection_MsgSubmitPow) Interface() protoreflect.ProtoMessage {
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_MsgSubmitPow) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_MsgSubmitPoC) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.Creator != "" {
 		value := protoreflect.ValueOfString(x.Creator)
-		if !f(fd_MsgSubmitPow_creator, value) {
+		if !f(fd_MsgSubmitPoC_creator, value) {
 			return
 		}
 	}
 	if x.BlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_MsgSubmitPow_blockHeight, value) {
+		if !f(fd_MsgSubmitPoC_blockHeight, value) {
 			return
 		}
 	}
 	if len(x.Nonce) != 0 {
-		value := protoreflect.ValueOfList(&_MsgSubmitPow_3_list{list: &x.Nonce})
-		if !f(fd_MsgSubmitPow_nonce, value) {
+		value := protoreflect.ValueOfList(&_MsgSubmitPoC_3_list{list: &x.Nonce})
+		if !f(fd_MsgSubmitPoC_nonce, value) {
 			return
 		}
 	}
@@ -5612,19 +5612,19 @@ func (x *fastReflection_MsgSubmitPow) Range(f func(protoreflect.FieldDescriptor,
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_MsgSubmitPow) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_MsgSubmitPoC) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitPow.creator":
+	case "inference.inference.MsgSubmitPoC.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgSubmitPow.blockHeight":
+	case "inference.inference.MsgSubmitPoC.blockHeight":
 		return x.BlockHeight != int64(0)
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		return len(x.Nonce) != 0
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -5634,19 +5634,19 @@ func (x *fastReflection_MsgSubmitPow) Has(fd protoreflect.FieldDescriptor) bool 
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPow) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_MsgSubmitPoC) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitPow.creator":
+	case "inference.inference.MsgSubmitPoC.creator":
 		x.Creator = ""
-	case "inference.inference.MsgSubmitPow.blockHeight":
+	case "inference.inference.MsgSubmitPoC.blockHeight":
 		x.BlockHeight = int64(0)
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		x.Nonce = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -5656,25 +5656,25 @@ func (x *fastReflection_MsgSubmitPow) Clear(fd protoreflect.FieldDescriptor) {
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_MsgSubmitPow) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoC) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.MsgSubmitPow.creator":
+	case "inference.inference.MsgSubmitPoC.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitPow.blockHeight":
+	case "inference.inference.MsgSubmitPoC.blockHeight":
 		value := x.BlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		if len(x.Nonce) == 0 {
-			return protoreflect.ValueOfList(&_MsgSubmitPow_3_list{})
+			return protoreflect.ValueOfList(&_MsgSubmitPoC_3_list{})
 		}
-		listValue := &_MsgSubmitPow_3_list{list: &x.Nonce}
+		listValue := &_MsgSubmitPoC_3_list{list: &x.Nonce}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -5688,21 +5688,21 @@ func (x *fastReflection_MsgSubmitPow) Get(descriptor protoreflect.FieldDescripto
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPow) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_MsgSubmitPoC) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitPow.creator":
+	case "inference.inference.MsgSubmitPoC.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgSubmitPow.blockHeight":
+	case "inference.inference.MsgSubmitPoC.blockHeight":
 		x.BlockHeight = value.Int()
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		lv := value.List()
-		clv := lv.(*_MsgSubmitPow_3_list)
+		clv := lv.(*_MsgSubmitPoC_3_list)
 		x.Nonce = *clv.list
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -5716,53 +5716,53 @@ func (x *fastReflection_MsgSubmitPow) Set(fd protoreflect.FieldDescriptor, value
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPow) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoC) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		if x.Nonce == nil {
 			x.Nonce = []string{}
 		}
-		value := &_MsgSubmitPow_3_list{list: &x.Nonce}
+		value := &_MsgSubmitPoC_3_list{list: &x.Nonce}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.MsgSubmitPow.creator":
-		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitPow is not mutable"))
-	case "inference.inference.MsgSubmitPow.blockHeight":
-		panic(fmt.Errorf("field blockHeight of message inference.inference.MsgSubmitPow is not mutable"))
+	case "inference.inference.MsgSubmitPoC.creator":
+		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitPoC is not mutable"))
+	case "inference.inference.MsgSubmitPoC.blockHeight":
+		panic(fmt.Errorf("field blockHeight of message inference.inference.MsgSubmitPoC is not mutable"))
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_MsgSubmitPow) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoC) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitPow.creator":
+	case "inference.inference.MsgSubmitPoC.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitPow.blockHeight":
+	case "inference.inference.MsgSubmitPoC.blockHeight":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.MsgSubmitPow.nonce":
+	case "inference.inference.MsgSubmitPoC.nonce":
 		list := []string{}
-		return protoreflect.ValueOfList(&_MsgSubmitPow_3_list{list: &list})
+		return protoreflect.ValueOfList(&_MsgSubmitPoC_3_list{list: &list})
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPow"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPow does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoC does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_MsgSubmitPow) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_MsgSubmitPoC) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitPow", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitPoC", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -5770,7 +5770,7 @@ func (x *fastReflection_MsgSubmitPow) WhichOneof(d protoreflect.OneofDescriptor)
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_MsgSubmitPow) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_MsgSubmitPoC) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -5781,7 +5781,7 @@ func (x *fastReflection_MsgSubmitPow) GetUnknown() protoreflect.RawFields {
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPow) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_MsgSubmitPoC) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -5793,7 +5793,7 @@ func (x *fastReflection_MsgSubmitPow) SetUnknown(fields protoreflect.RawFields) 
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_MsgSubmitPow) IsValid() bool {
+func (x *fastReflection_MsgSubmitPoC) IsValid() bool {
 	return x != nil
 }
 
@@ -5803,9 +5803,9 @@ func (x *fastReflection_MsgSubmitPow) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_MsgSubmitPoC) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*MsgSubmitPow)
+		x := input.Message.Interface().(*MsgSubmitPoC)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -5840,7 +5840,7 @@ func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*MsgSubmitPow)
+		x := input.Message.Interface().(*MsgSubmitPoC)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -5891,7 +5891,7 @@ func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*MsgSubmitPow)
+		x := input.Message.Interface().(*MsgSubmitPoC)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -5923,10 +5923,10 @@ func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPow: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPoC: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPow: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPoC: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -6048,23 +6048,23 @@ func (x *fastReflection_MsgSubmitPow) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_MsgSubmitPowResponse protoreflect.MessageDescriptor
+	md_MsgSubmitPoCResponse protoreflect.MessageDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
-	md_MsgSubmitPowResponse = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPowResponse")
+	md_MsgSubmitPoCResponse = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPoCResponse")
 }
 
-var _ protoreflect.Message = (*fastReflection_MsgSubmitPowResponse)(nil)
+var _ protoreflect.Message = (*fastReflection_MsgSubmitPoCResponse)(nil)
 
-type fastReflection_MsgSubmitPowResponse MsgSubmitPowResponse
+type fastReflection_MsgSubmitPoCResponse MsgSubmitPoCResponse
 
-func (x *MsgSubmitPowResponse) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_MsgSubmitPowResponse)(x)
+func (x *MsgSubmitPoCResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgSubmitPoCResponse)(x)
 }
 
-func (x *MsgSubmitPowResponse) slowProtoReflect() protoreflect.Message {
+func (x *MsgSubmitPoCResponse) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_tx_proto_msgTypes[11]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6076,43 +6076,43 @@ func (x *MsgSubmitPowResponse) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_MsgSubmitPowResponse_messageType fastReflection_MsgSubmitPowResponse_messageType
-var _ protoreflect.MessageType = fastReflection_MsgSubmitPowResponse_messageType{}
+var _fastReflection_MsgSubmitPoCResponse_messageType fastReflection_MsgSubmitPoCResponse_messageType
+var _ protoreflect.MessageType = fastReflection_MsgSubmitPoCResponse_messageType{}
 
-type fastReflection_MsgSubmitPowResponse_messageType struct{}
+type fastReflection_MsgSubmitPoCResponse_messageType struct{}
 
-func (x fastReflection_MsgSubmitPowResponse_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_MsgSubmitPowResponse)(nil)
+func (x fastReflection_MsgSubmitPoCResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgSubmitPoCResponse)(nil)
 }
-func (x fastReflection_MsgSubmitPowResponse_messageType) New() protoreflect.Message {
-	return new(fastReflection_MsgSubmitPowResponse)
+func (x fastReflection_MsgSubmitPoCResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitPoCResponse)
 }
-func (x fastReflection_MsgSubmitPowResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_MsgSubmitPowResponse
+func (x fastReflection_MsgSubmitPoCResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitPoCResponse
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_MsgSubmitPowResponse) Descriptor() protoreflect.MessageDescriptor {
-	return md_MsgSubmitPowResponse
+func (x *fastReflection_MsgSubmitPoCResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitPoCResponse
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_MsgSubmitPowResponse) Type() protoreflect.MessageType {
-	return _fastReflection_MsgSubmitPowResponse_messageType
+func (x *fastReflection_MsgSubmitPoCResponse) Type() protoreflect.MessageType {
+	return _fastReflection_MsgSubmitPoCResponse_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_MsgSubmitPowResponse) New() protoreflect.Message {
-	return new(fastReflection_MsgSubmitPowResponse)
+func (x *fastReflection_MsgSubmitPoCResponse) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitPoCResponse)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_MsgSubmitPowResponse) Interface() protoreflect.ProtoMessage {
-	return (*MsgSubmitPowResponse)(x)
+func (x *fastReflection_MsgSubmitPoCResponse) Interface() protoreflect.ProtoMessage {
+	return (*MsgSubmitPoCResponse)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -6120,7 +6120,7 @@ func (x *fastReflection_MsgSubmitPowResponse) Interface() protoreflect.ProtoMess
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_MsgSubmitPowResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_MsgSubmitPoCResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 }
 
 // Has reports whether a field is populated.
@@ -6134,13 +6134,13 @@ func (x *fastReflection_MsgSubmitPowResponse) Range(f func(protoreflect.FieldDes
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_MsgSubmitPowResponse) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_MsgSubmitPoCResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -6150,13 +6150,13 @@ func (x *fastReflection_MsgSubmitPowResponse) Has(fd protoreflect.FieldDescripto
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPowResponse) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_MsgSubmitPoCResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -6166,13 +6166,13 @@ func (x *fastReflection_MsgSubmitPowResponse) Clear(fd protoreflect.FieldDescrip
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_MsgSubmitPowResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoCResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -6186,13 +6186,13 @@ func (x *fastReflection_MsgSubmitPowResponse) Get(descriptor protoreflect.FieldD
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPowResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_MsgSubmitPoCResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -6206,36 +6206,36 @@ func (x *fastReflection_MsgSubmitPowResponse) Set(fd protoreflect.FieldDescripto
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPowResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoCResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_MsgSubmitPowResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_MsgSubmitPoCResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPowResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoCResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.MsgSubmitPowResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.MsgSubmitPoCResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_MsgSubmitPowResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_MsgSubmitPoCResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitPowResponse", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitPoCResponse", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -6243,7 +6243,7 @@ func (x *fastReflection_MsgSubmitPowResponse) WhichOneof(d protoreflect.OneofDes
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_MsgSubmitPowResponse) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_MsgSubmitPoCResponse) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -6254,7 +6254,7 @@ func (x *fastReflection_MsgSubmitPowResponse) GetUnknown() protoreflect.RawField
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_MsgSubmitPowResponse) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_MsgSubmitPoCResponse) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -6266,7 +6266,7 @@ func (x *fastReflection_MsgSubmitPowResponse) SetUnknown(fields protoreflect.Raw
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_MsgSubmitPowResponse) IsValid() bool {
+func (x *fastReflection_MsgSubmitPoCResponse) IsValid() bool {
 	return x != nil
 }
 
@@ -6276,9 +6276,9 @@ func (x *fastReflection_MsgSubmitPowResponse) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_MsgSubmitPowResponse) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_MsgSubmitPoCResponse) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*MsgSubmitPowResponse)
+		x := input.Message.Interface().(*MsgSubmitPoCResponse)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -6300,7 +6300,7 @@ func (x *fastReflection_MsgSubmitPowResponse) ProtoMethods() *protoiface.Methods
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*MsgSubmitPowResponse)
+		x := input.Message.Interface().(*MsgSubmitPoCResponse)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -6330,7 +6330,7 @@ func (x *fastReflection_MsgSubmitPowResponse) ProtoMethods() *protoiface.Methods
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*MsgSubmitPowResponse)
+		x := input.Message.Interface().(*MsgSubmitPoCResponse)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -6362,10 +6362,10 @@ func (x *fastReflection_MsgSubmitPowResponse) ProtoMethods() *protoiface.Methods
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPowResponse: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPoCResponse: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPowResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitPoCResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			default:
@@ -6921,7 +6921,7 @@ func (*MsgValidationResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{9}
 }
 
-type MsgSubmitPow struct {
+type MsgSubmitPoC struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -6931,8 +6931,8 @@ type MsgSubmitPow struct {
 	Nonce       []string `protobuf:"bytes,3,rep,name=nonce,proto3" json:"nonce,omitempty"`
 }
 
-func (x *MsgSubmitPow) Reset() {
-	*x = MsgSubmitPow{}
+func (x *MsgSubmitPoC) Reset() {
+	*x = MsgSubmitPoC{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_tx_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6940,46 +6940,46 @@ func (x *MsgSubmitPow) Reset() {
 	}
 }
 
-func (x *MsgSubmitPow) String() string {
+func (x *MsgSubmitPoC) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MsgSubmitPow) ProtoMessage() {}
+func (*MsgSubmitPoC) ProtoMessage() {}
 
-// Deprecated: Use MsgSubmitPow.ProtoReflect.Descriptor instead.
-func (*MsgSubmitPow) Descriptor() ([]byte, []int) {
+// Deprecated: Use MsgSubmitPoC.ProtoReflect.Descriptor instead.
+func (*MsgSubmitPoC) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *MsgSubmitPow) GetCreator() string {
+func (x *MsgSubmitPoC) GetCreator() string {
 	if x != nil {
 		return x.Creator
 	}
 	return ""
 }
 
-func (x *MsgSubmitPow) GetBlockHeight() int64 {
+func (x *MsgSubmitPoC) GetBlockHeight() int64 {
 	if x != nil {
 		return x.BlockHeight
 	}
 	return 0
 }
 
-func (x *MsgSubmitPow) GetNonce() []string {
+func (x *MsgSubmitPoC) GetNonce() []string {
 	if x != nil {
 		return x.Nonce
 	}
 	return nil
 }
 
-type MsgSubmitPowResponse struct {
+type MsgSubmitPoCResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *MsgSubmitPowResponse) Reset() {
-	*x = MsgSubmitPowResponse{}
+func (x *MsgSubmitPoCResponse) Reset() {
+	*x = MsgSubmitPoCResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_tx_proto_msgTypes[11]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6987,14 +6987,14 @@ func (x *MsgSubmitPowResponse) Reset() {
 	}
 }
 
-func (x *MsgSubmitPowResponse) String() string {
+func (x *MsgSubmitPoCResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MsgSubmitPowResponse) ProtoMessage() {}
+func (*MsgSubmitPoCResponse) ProtoMessage() {}
 
-// Deprecated: Use MsgSubmitPowResponse.ProtoReflect.Descriptor instead.
-func (*MsgSubmitPowResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use MsgSubmitPoCResponse.ProtoReflect.Descriptor instead.
+func (*MsgSubmitPoCResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{11}
 }
 
@@ -7100,14 +7100,14 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a,
 	0x15, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65,
 	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x6e, 0x0a, 0x0c, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62,
-	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
+	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
 	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
 	0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
 	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
 	0x68, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x03, 0x20, 0x03, 0x28,
 	0x09, 0x52, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63,
 	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x16, 0x0a, 0x14, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62,
-	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0xfc,
+	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0xfc,
 	0x04, 0x0a, 0x03, 0x4d, 0x73, 0x67, 0x12, 0x62, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
 	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
@@ -7142,11 +7142,11 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
 	0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x59, 0x0a, 0x09, 0x53,
-	0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x12, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
 	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d,
-	0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x1a, 0x29, 0x2e, 0x69, 0x6e,
+	0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x1a, 0x29, 0x2e, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x77, 0x52, 0x65,
+	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x52, 0x65,
 	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x1a, 0x05, 0x80, 0xe7, 0xb0, 0x2a, 0x01, 0x42, 0xb5, 0x01,
 	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x07, 0x54, 0x78, 0x50, 0x72, 0x6f,
@@ -7186,8 +7186,8 @@ var file_inference_inference_tx_proto_goTypes = []interface{}{
 	(*MsgSubmitNewParticipantResponse)(nil), // 7: inference.inference.MsgSubmitNewParticipantResponse
 	(*MsgValidation)(nil),                   // 8: inference.inference.MsgValidation
 	(*MsgValidationResponse)(nil),           // 9: inference.inference.MsgValidationResponse
-	(*MsgSubmitPow)(nil),                    // 10: inference.inference.MsgSubmitPow
-	(*MsgSubmitPowResponse)(nil),            // 11: inference.inference.MsgSubmitPowResponse
+	(*MsgSubmitPoC)(nil),                    // 10: inference.inference.MsgSubmitPoC
+	(*MsgSubmitPoCResponse)(nil),            // 11: inference.inference.MsgSubmitPoCResponse
 	(*Params)(nil),                          // 12: inference.inference.Params
 }
 var file_inference_inference_tx_proto_depIdxs = []int32{
@@ -7197,13 +7197,13 @@ var file_inference_inference_tx_proto_depIdxs = []int32{
 	4,  // 3: inference.inference.Msg.FinishInference:input_type -> inference.inference.MsgFinishInference
 	6,  // 4: inference.inference.Msg.SubmitNewParticipant:input_type -> inference.inference.MsgSubmitNewParticipant
 	8,  // 5: inference.inference.Msg.Validation:input_type -> inference.inference.MsgValidation
-	10, // 6: inference.inference.Msg.SubmitPoC:input_type -> inference.inference.MsgSubmitPow
+	10, // 6: inference.inference.Msg.SubmitPoC:input_type -> inference.inference.MsgSubmitPoC
 	1,  // 7: inference.inference.Msg.UpdateParams:output_type -> inference.inference.MsgUpdateParamsResponse
 	3,  // 8: inference.inference.Msg.StartInference:output_type -> inference.inference.MsgStartInferenceResponse
 	5,  // 9: inference.inference.Msg.FinishInference:output_type -> inference.inference.MsgFinishInferenceResponse
 	7,  // 10: inference.inference.Msg.SubmitNewParticipant:output_type -> inference.inference.MsgSubmitNewParticipantResponse
 	9,  // 11: inference.inference.Msg.Validation:output_type -> inference.inference.MsgValidationResponse
-	11, // 12: inference.inference.Msg.SubmitPoC:output_type -> inference.inference.MsgSubmitPowResponse
+	11, // 12: inference.inference.Msg.SubmitPoC:output_type -> inference.inference.MsgSubmitPoCResponse
 	7,  // [7:13] is the sub-list for method output_type
 	1,  // [1:7] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
@@ -7339,7 +7339,7 @@ func file_inference_inference_tx_proto_init() {
 			}
 		}
 		file_inference_inference_tx_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MsgSubmitPow); i {
+			switch v := v.(*MsgSubmitPoC); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7351,7 +7351,7 @@ func file_inference_inference_tx_proto_init() {
 			}
 		}
 		file_inference_inference_tx_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MsgSubmitPowResponse); i {
+			switch v := v.(*MsgSubmitPoCResponse); i {
 			case 0:
 				return &v.state
 			case 1:

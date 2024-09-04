@@ -230,7 +230,7 @@ func createSubmitPoCCallback(blockHeight int64, transactionRecorder cosmosclient
 			nonce[i] = p.Nonce
 		}
 
-		message := inference.MsgSubmitPow{
+		message := inference.MsgSubmitPoC{
 			BlockHeight: blockHeight,
 			Nonce:       nonce,
 		}

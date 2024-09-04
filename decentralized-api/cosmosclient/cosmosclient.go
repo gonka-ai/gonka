@@ -120,7 +120,7 @@ func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.Ms
 	return icc.sendTransaction(transaction)
 }
 
-func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPow) error {
+func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
 	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }

@@ -14,7 +14,7 @@ import (
 	"net/http"
 )
 
-func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*types.MsgSubmitPowResponse, error) {
+func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*types.MsgSubmitPoCResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	currentBlockHeight := ctx.BlockHeight()
@@ -60,7 +60,7 @@ func (k msgServer) SubmitPow(goCtx context.Context, msg *types.MsgSubmitPow) (*t
 		ReceivedAtBlockHeight:    currentBlockHeight,
 	})
 
-	return &types.MsgSubmitPowResponse{}, nil
+	return &types.MsgSubmitPoCResponse{}, nil
 }
 
 func (k msgServer) getBlockHash(height int64) (string, error) {
@@ -105,7 +105,7 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
-func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPow, ctx sdk.Context) (types2.PubKey, error) {
+func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPoC, ctx sdk.Context) (types2.PubKey, error) {
 	addr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
 		return nil, err
