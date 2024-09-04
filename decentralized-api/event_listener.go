@@ -57,11 +57,13 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		case "tendermint/event/NewBlock":
 			log.Printf("New block event received. type = %s", event.Result.Data.Type)
 			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
-		default:
+		case "tendermint/event/Tx":
 			log.Printf("New Tx event received. Inference finished. type = %s", event.Result.Data.Type)
 			go func() {
 				SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
 			}()
+		default:
+			log.Printf("Unexpected event type received. type = %s", event.Result.Data.Type)
 		}
 	}
 }
