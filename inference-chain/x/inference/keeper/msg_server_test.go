@@ -22,7 +22,7 @@ func setupMsgServerWithKeeper(k keeper.Keeper) types.MsgServer {
 
 func setupKeeperWithBankMock(t testing.TB) (keeper.Keeper, types.MsgServer, context.Context, *keepertest.MockBankEscrowKeeper) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMock(t)
-	return k, keeper.NewMsgServerImpl(k), ctx, mock
+	return k, keeper.NewMsgServerImpl(k), ctx, mock.BankKeeper
 }
 
 func TestMsgServer(t *testing.T) {
