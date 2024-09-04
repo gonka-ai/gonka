@@ -2,30 +2,37 @@ package inference
 
 import (
 	"context"
+	"encoding/base64"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"log"
 )
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 	allPower := am.keeper.AllPower(ctx)
 
-	participantsById := make(map[string]types.Participant)
+	var computeResults []keeper.ComputeResult
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
 		if !ok {
 			continue
-		} else {
-			participantsById[p.ParticipantAddress] = participant
 		}
-	}
 
-	var computeResults []keeper.ComputeResult
-	for i, p := range allPower {
+		if participant.ValidatorKey == "" {
+			continue
+		}
+		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
+		if err != nil {
+			log.Printf("Error decoding pubkey", "error", err)
+			continue
+		}
+
+		pubKey := ed25519.PubKey{Key: pubKeyBytes}
+
 		computeResults = append(computeResults, keeper.ComputeResult{
 			Power:           p.Power,
-			ValidatorPubKey: p.ParticipantAddress,
-			OperatorAddress: int64(i),
+			ValidatorPubKey: &pubKey,
+			OperatorAddress: p.ParticipantAddress,
 		})
 	}
 
@@ -34,10 +41,10 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 		log.Fatalf("Error setting compute validators: %v", err)
 	}
 
+	am.keeper.RemoveAllPower(ctx)
+
 	// TODO: You probably should also set new weight here for Participants?
 	//   Or should we do it as soon as we receive nonces?
 
 	// TODO: We should also delete/mark inactive any participants that failed to provide weight
-
-	// TODO: We should also delete any weights from last epochs
 }
