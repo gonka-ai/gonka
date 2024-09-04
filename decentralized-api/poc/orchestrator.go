@@ -172,12 +172,14 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 	log.Printf("New block event received. blockHeight = %d, BlockHash = %s", blockHeight, blockHash)
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
+		log.Printf("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
 		pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		orchestrator.StartProcessing(pocEvent)
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
+		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
 		orchestrator.StopProcessing(createSubmitPoCCallback(blockHeight, transactionRecorder))
 		return
 	}
