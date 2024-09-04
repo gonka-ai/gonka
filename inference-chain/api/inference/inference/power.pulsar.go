@@ -100,8 +100,8 @@ func (x *fastReflection_Power) Range(f func(protoreflect.FieldDescriptor, protor
 			return
 		}
 	}
-	if x.Power != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.Power)
+	if x.Power != int64(0) {
+		value := protoreflect.ValueOfInt64(x.Power)
 		if !f(fd_Power_power, value) {
 			return
 		}
@@ -136,7 +136,7 @@ func (x *fastReflection_Power) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.Power.participantAddress":
 		return x.ParticipantAddress != ""
 	case "inference.inference.Power.power":
-		return x.Power != uint32(0)
+		return x.Power != int64(0)
 	case "inference.inference.Power.pocStageStartBlockHeight":
 		return x.PocStageStartBlockHeight != int64(0)
 	case "inference.inference.Power.receivedAtBlockHeight":
@@ -160,7 +160,7 @@ func (x *fastReflection_Power) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.Power.participantAddress":
 		x.ParticipantAddress = ""
 	case "inference.inference.Power.power":
-		x.Power = uint32(0)
+		x.Power = int64(0)
 	case "inference.inference.Power.pocStageStartBlockHeight":
 		x.PocStageStartBlockHeight = int64(0)
 	case "inference.inference.Power.receivedAtBlockHeight":
@@ -186,7 +186,7 @@ func (x *fastReflection_Power) Get(descriptor protoreflect.FieldDescriptor) prot
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.Power.power":
 		value := x.Power
-		return protoreflect.ValueOfUint32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Power.pocStageStartBlockHeight":
 		value := x.PocStageStartBlockHeight
 		return protoreflect.ValueOfInt64(value)
@@ -216,7 +216,7 @@ func (x *fastReflection_Power) Set(fd protoreflect.FieldDescriptor, value protor
 	case "inference.inference.Power.participantAddress":
 		x.ParticipantAddress = value.Interface().(string)
 	case "inference.inference.Power.power":
-		x.Power = uint32(value.Uint())
+		x.Power = value.Int()
 	case "inference.inference.Power.pocStageStartBlockHeight":
 		x.PocStageStartBlockHeight = value.Int()
 	case "inference.inference.Power.receivedAtBlockHeight":
@@ -265,7 +265,7 @@ func (x *fastReflection_Power) NewField(fd protoreflect.FieldDescriptor) protore
 	case "inference.inference.Power.participantAddress":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Power.power":
-		return protoreflect.ValueOfUint32(uint32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Power.pocStageStartBlockHeight":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Power.receivedAtBlockHeight":
@@ -498,7 +498,7 @@ func (x *fastReflection_Power) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.Power |= uint32(b&0x7F) << shift
+					x.Power |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -596,7 +596,7 @@ type Power struct {
 	unknownFields protoimpl.UnknownFields
 
 	ParticipantAddress       string `protobuf:"bytes,1,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
-	Power                    uint32 `protobuf:"varint,2,opt,name=power,proto3" json:"power,omitempty"`
+	Power                    int64  `protobuf:"varint,2,opt,name=power,proto3" json:"power,omitempty"`
 	PocStageStartBlockHeight int64  `protobuf:"varint,3,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
 	ReceivedAtBlockHeight    int64  `protobuf:"varint,4,opt,name=receivedAtBlockHeight,proto3" json:"receivedAtBlockHeight,omitempty"`
 }
@@ -628,7 +628,7 @@ func (x *Power) GetParticipantAddress() string {
 	return ""
 }
 
-func (x *Power) GetPower() uint32 {
+func (x *Power) GetPower() int64 {
 	if x != nil {
 		return x.Power
 	}
@@ -659,7 +659,7 @@ var file_inference_inference_power_proto_rawDesc = []byte{
 	0x12, 0x2e, 0x0a, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41,
 	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x12, 0x70, 0x61,
 	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
-	0x12, 0x14, 0x0a, 0x05, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52,
+	0x12, 0x14, 0x0a, 0x05, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
 	0x05, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x12, 0x3a, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61,
 	0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
 	0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61,
