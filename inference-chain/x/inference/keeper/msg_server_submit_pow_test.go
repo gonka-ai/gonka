@@ -1,17 +1,14 @@
 package keeper_test
 
 import (
-	"github.com/cosmos/cosmos-sdk/x/auth/ante/testutil"
-	"github.com/golang/mock/gomock"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"testing"
 )
 
 func TestSubmitPow(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	mockAccountKeeper := testutil.NewMockAccountKeeper(mockCtrl)
-	k, ctx := keepertest.InferenceKeeperWithMockAccountKeeper(t, mockAccountKeeper)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMock(t)
+	_ = mocks
 	ms := setupMsgServerWithKeeper(k)
 
 	resp, err := ms.SubmitPow(ctx, &types.MsgSubmitPow{
