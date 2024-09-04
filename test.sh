@@ -15,4 +15,9 @@ docker compose -f docker-compose-sim.yml up -d
 # Give time for chain to bootstrap
 sleep 10
 
+# Activate Python virtual environment
+if [ -d "chain-venv" ]; then
+    source chain-venv/bin/activate
+fi
+
 ./fund_accounts.py
