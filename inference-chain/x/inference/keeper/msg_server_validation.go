@@ -2,16 +2,16 @@ package keeper
 
 import (
 	"context"
-	"math"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"math"
 )
 
 const (
 	FalsePositiveRate     = 0.05
 	MinRampUpMeasurements = 10
 	PassValue             = 0.99
+	TokenCost             = 1_000
 )
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
@@ -43,11 +43,26 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	} else {
 		inference.Status = types.InferenceStatus_INVALIDATED
 		executor.InvalidatedInferences++
+		executor.CoinBalance -= inference.ActualCost
+		// We need to refund the cost, so we have to lookup the person who paid
+		payer, found := k.GetParticipant(ctx, inference.ReceivedBy)
+		if !found {
+			return nil, types.ErrParticipantNotFound
+		}
+		if payer.Address == executor.Address {
+			// It is possible that a participant returns an invalid
+			// inference for it's own self-inference
+			executor.CoinBalance += inference.ActualCost
+		} else {
+			payer.CoinBalance += inference.ActualCost
+			k.SetParticipant(ctx, payer)
+		}
 	}
 	// Where will we get this number? How much does it vary by model?
 
 	executor.Status = calculateStatus(FalsePositiveRate, executor)
 	k.SetParticipant(ctx, executor)
+
 	k.SetInference(ctx, inference)
 
 	return &types.MsgValidationResponse{}, nil

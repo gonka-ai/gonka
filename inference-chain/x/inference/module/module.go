@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 
 	"cosmossdk.io/core/appmodule"
@@ -188,8 +189,11 @@ type ModuleInputs struct {
 	Config       *modulev1.Module
 	Logger       log.Logger
 
-	AccountKeeper types.AccountKeeper
-	BankKeeper    types.BankKeeper
+	AccountKeeper    types.AccountKeeper
+	BankKeeper       types.BankKeeper
+	BankEscrowKeeper types.BankEscrowKeeper
+	ValidatorSet     types.ValidatorSet
+	StakingKeeper    types.StakingKeeper
 }
 
 type ModuleOutputs struct {
@@ -197,6 +201,7 @@ type ModuleOutputs struct {
 
 	InferenceKeeper keeper.Keeper
 	Module          appmodule.AppModule
+	Hooks           stakingtypes.StakingHooksWrapper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -210,6 +215,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.StoreService,
 		in.Logger,
 		authority.String(),
+		in.BankEscrowKeeper,
+		in.ValidatorSet,
+		in.StakingKeeper,
 		in.AccountKeeper,
 	)
 	m := NewAppModule(
@@ -219,5 +227,9 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.BankKeeper,
 	)
 
-	return ModuleOutputs{InferenceKeeper: k, Module: m}
+	return ModuleOutputs{
+		InferenceKeeper: k,
+		Module:          m,
+		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
+	}
 }

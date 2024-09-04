@@ -6,7 +6,7 @@ import (
 	"errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
-	"inference/api/inference/inference"
+	"github.com/productscience/inference/api/inference/inference"
 	"log"
 	"os/user"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
-	"inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type InferenceCosmosClient struct {

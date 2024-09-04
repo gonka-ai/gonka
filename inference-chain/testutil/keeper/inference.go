@@ -1,7 +1,7 @@
 package keeper
 
 import (
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -24,12 +24,21 @@ import (
 )
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
-	mockCtrl := gomock.NewController(t)
-	accountKeeper := authtestutil.NewMockAccountKeeper(mockCtrl)
-	return InferenceKeeperWithMockAccountKeeper(t, accountKeeper)
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	escrowKeeper.ExpectAny(context)
+	return mock, context
 }
 
-func InferenceKeeperWithMockAccountKeeper(t testing.TB, accountKeeper *authtestutil.MockAccountKeeper) (keeper.Keeper, sdk.Context) {
+func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, *MockBankEscrowKeeper) {
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	return mock, context, escrowKeeper
+}
+
+func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -46,6 +55,9 @@ func InferenceKeeperWithMockAccountKeeper(t testing.TB, accountKeeper *authtestu
 		runtime.NewKVStoreService(storeKey),
 		log.NewNopLogger(),
 		authority.String(),
+		bankMock,
+		nil,
+		nil,
 		accountKeeper,
 	)
 
