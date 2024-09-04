@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"inference/api/inference/inference"
-	"inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"log"
 	"sync"
 )

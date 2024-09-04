@@ -1,7 +1,7 @@
 package pow
 
 import (
-	"inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"testing"
 	"time"
 )

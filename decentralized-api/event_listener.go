@@ -8,7 +8,7 @@ import (
 	"decentralized-api/pow"
 	"encoding/json"
 	"github.com/gorilla/websocket"
-	"inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"log"
 	"net/url"
 )

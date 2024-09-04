@@ -18,7 +18,7 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	client  *cosmosclient.Client
+	Client  *cosmosclient.Client
 	Account *cosmosaccount.Account
 	Address string
 	Context context.Context
@@ -64,7 +64,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
-	log.Printf("Initializing cosmos client."+
+	log.Printf("Initializing cosmos Client."+
 		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
 	client, err := cosmosclient.New(
 		ctx,
@@ -91,7 +91,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 	}
 
 	return &InferenceCosmosClient{
-		client:  &client,
+		Client:  &client,
 		Account: &account,
 		Address: addr,
 		Context: ctx,
@@ -126,7 +126,7 @@ func (icc *InferenceCosmosClient) SubmitPow(transaction *inference.MsgSubmitPow)
 }
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
-	response, err := icc.client.BroadcastTx(icc.Context, *icc.Account, msg)
+	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
 	if err != nil {
 		return err
 	}
@@ -137,5 +137,5 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
-	return types.NewQueryClient(icc.client.Context())
+	return types.NewQueryClient(icc.Client.Context())
 }

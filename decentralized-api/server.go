@@ -431,20 +431,20 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	validators, err := recorder.client.Context().Client.Validators(recorder.context, nil, nil, nil)
+	validators, err := recorder.Client.Context().Client.Validators(recorder.Context, nil, nil, nil)
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	list, err := recorder.client.Context().Keyring.List()
+	list, err := recorder.Client.Context().Keyring.List()
 	for _, key := range list {
 		log.Printf("KeyRecord: %s", key.String())
 		log.Printf("Name: %s", key.Name)
 		pubKey, err := key.GetPubKey()
 		if err != nil {
-			log.Printf("Failed to get pubkey for key %s: %v", key)
+			log.Printf("Failed to get pubkey for key %s: %v", key, err)
 		} else {
 			log.Printf("PubKey: %s", pubKey.Address().String())
 		}
@@ -473,7 +473,7 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 
 	participants := make([]ParticipantDto, len(r.Participant))
 	for i, p := range r.Participant {
-		balances, err := recorder.client.BankBalances(recorder.context, p.Address, nil)
+		balances, err := recorder.Client.BankBalances(recorder.Context, p.Address, nil)
 		pBalance := int64(0)
 		if err == nil {
 			for _, balance := range balances {
@@ -514,13 +514,13 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 	w.Write(responseJson)
 }
 
-func getVotingPower(recorder InferenceCosmosClient, address string, validatorMap map[string]types2.Validator) int64 {
+func getVotingPower(recorder cosmos_client.InferenceCosmosClient, address string, validatorMap map[string]types2.Validator) int64 {
 	addr, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
 		log.Printf("Failed to get account for participant %s: %v", address, err)
 	}
 	log.Printf("AccAddressFromBech32: %s", addr.String())
-	account, err := recorder.client.Account(address)
+	account, err := recorder.Client.Account(address)
 	if err != nil {
 		log.Printf("Failed to get account for participant %s: %v", address, err)
 		return 0
