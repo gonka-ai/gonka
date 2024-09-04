@@ -23,7 +23,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 		}
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			log.Printf("Error decoding pubkey", "error", err)
+			log.Printf("Error decoding pubkey. err = %v", err)
 			continue
 		}
 

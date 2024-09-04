@@ -118,7 +118,7 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 	)
 	operations = append(operations, simulation.NewWeightedOperation(
 		weightMsgSubmitPoC,
-		inferencesimulation.SimulateMsgSubmitPoС(am.accountKeeper, am.bankKeeper, am.keeper),
+		inferencesimulation.SimulateMsgSubmitPoC(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
 	// this line is used by starport scaffolding # simapp/module/operation
@@ -165,7 +165,7 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			opWeightMsgSubmitPoC,
 			defaultWeightMsgSubmitPoC,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSubmitPoС(am.accountKeeper, am.bankKeeper, am.keeper)
+				inferencesimulation.SimulateMsgSubmitPoC(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),
