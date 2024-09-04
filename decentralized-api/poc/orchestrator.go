@@ -9,6 +9,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"log"
+	"strconv"
 	"sync"
 )
 
@@ -193,12 +194,17 @@ func getBlockHeight(data map[string]interface{}) (int64, error) {
 		return 0, errors.New("failed to access 'header' key")
 	}
 
-	h, ok := header["height"].(float64)
+	heightString, ok := header["height"].(string)
 	if !ok {
-		return 0, errors.New("failed to access 'height' key or it's not a float64")
+		return 0, errors.New("failed to access 'height' key or it's not a string")
 	}
 
-	return int64(h), nil
+	height, err := strconv.ParseInt(heightString, 10, 64)
+	if err != nil {
+		return 0, errors.New("Failed to convert retrieve height value to int64")
+	}
+
+	return height, nil
 }
 
 func getBlockHash(data map[string]interface{}) (string, error) {
@@ -207,9 +213,9 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 		return "", errors.New("failed to access 'block_id' key")
 	}
 
-	hash, ok := blockID["Hash"].(string)
+	hash, ok := blockID["hash"].(string)
 	if !ok {
-		return "", errors.New("failed to access 'Hash' key or it's not a string")
+		return "", errors.New("failed to access 'hash' key or it's not a string")
 	}
 
 	return hash, nil
