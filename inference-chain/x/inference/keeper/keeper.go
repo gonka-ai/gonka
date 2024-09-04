@@ -18,7 +18,7 @@ type (
 		logger       log.Logger
 		bank         types.BankEscrowKeeper
 		validatorSet types.ValidatorSet
-		staking      types.StakingKeeper
+		Staking      types.StakingKeeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
 		authority     string
@@ -41,13 +41,13 @@ func NewKeeper(
 	}
 
 	return Keeper{
-		cdc:          cdc,
-		storeService: storeService,
-		authority:    authority,
-		logger:       logger,
-		bank:         bank,
-		validatorSet: validatorSet,
-		staking:      staking,
+		cdc:           cdc,
+		storeService:  storeService,
+		authority:     authority,
+		logger:        logger,
+		bank:          bank,
+		validatorSet:  validatorSet,
+		Staking:       staking,
 		AccountKeeper: accountKeeper,
 	}
 }

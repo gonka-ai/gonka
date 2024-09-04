@@ -63,7 +63,7 @@ func (k msgServer) updateComputeResults(ctx sdk.Context, logger log.Logger) (*ty
 		}
 		newPowerMap = append(newPowerMap, result)
 	}
-	_, err := k.staking.SetComputeValidators(ctx, newPowerMap)
+	_, err := k.Staking.SetComputeValidators(ctx, newPowerMap)
 	if err != nil {
 		k.Logger().Error("Error setting compute validators", "error", err)
 		return nil, err
