@@ -81,6 +81,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a validation tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inferenceId"}, {ProtoField: "responsePayload"}, {ProtoField: "responseHash"}, {ProtoField: "value"}},
 				},
+				{
+					RpcMethod:      "SubmitPoC",
+					Use:            "submit-poc [block-height] [nonce]",
+					Short:          "Send a submit-poc tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "nonce"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

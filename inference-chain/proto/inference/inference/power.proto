@@ -1,0 +1,12 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Power at the moment isn't added to Genesis, because we're reusing staking's genesis for now
+message Power {
+  string participantAddress = 1;
+  int64 power = 2;
+  int64 pocStageStartBlockHeight = 3;
+  int64 receivedAtBlockHeight = 4;
+}

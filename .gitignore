@@ -8,6 +8,8 @@ release/
 *.log
 *.ign
 prod-sim/
+gcp-prod-sim/
 decentralized-api/build/
 inference-chain/build/
 /decentralized-api/decentralized-api
+chain-venv/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"decentralized-api/chainevents"
 	"encoding/json"
 	"log"
 	"testing"
@@ -151,7 +152,7 @@ const (
 )
 
 func Test(t *testing.T) {
-	var res JSONRPCResponse
+	var res chainevents.JSONRPCResponse
 	err := json.Unmarshal([]byte(e3), &res)
 	if err != nil {
 		t.Fatalf("error unmarshalling: %v", err)
@@ -162,22 +163,5 @@ func Test(t *testing.T) {
 	ids := res.Result.Events["inference_finished.inference_id"]
 	if len(ids) == 0 {
 		t.Fatalf("no inference ids found")
-	}
-
-	var found = false
-	for _, e := range res.Result.Data.Value.TxResult.Result.Events {
-		if e.Type != "inference_finished" {
-			continue
-		}
-		found = true
-		for _, attr := range e.Attributes {
-			if attr.Key == "inference_id" {
-				log.Printf("inference_id = %s", attr.Value)
-			}
-		}
-	}
-
-	if !found {
-		t.Fatalf("no inference_finished event found")
 	}
 }

@@ -25,19 +25,30 @@ import (
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
+	accountKeeperMock := NewMockAccountKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
 
-func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, *MockBankEscrowKeeper) {
-	ctrl := gomock.NewController(t)
-	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper)
-	return mock, context, escrowKeeper
+type InferenceMocks struct {
+	BankKeeper    *MockBankEscrowKeeper
+	AccountKeeper *MockAccountKeeper
 }
 
-func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keeper.Keeper, sdk.Context) {
+func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
+	ctrl := gomock.NewController(t)
+	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
+	accountKeeperMock := NewMockAccountKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock)
+	mocks := InferenceMocks{
+		BankKeeper:    escrowKeeper,
+		AccountKeeper: accountKeeperMock,
+	}
+	return keep, context, mocks
+}
+
+func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper, accountKeeper types.AccountKeeper) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -57,6 +68,7 @@ func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper) (keep
 		bankMock,
 		nil,
 		nil,
+		accountKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

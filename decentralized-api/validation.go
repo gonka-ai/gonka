@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/broker"
+	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
@@ -16,12 +17,17 @@ import (
 	"net/http"
 )
 
-func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmosClient, nodeBroker *broker.Broker) {
+func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+	if ids == nil {
+		log.Printf("No inferences to validate")
+		return
+	}
+
 	log.Printf("Sampling inf transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
-	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
+	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.Context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
 		log.Printf("Failed to query GetInferencesWithExecutors. %v", err)
@@ -33,7 +39,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder InferenceCosmos
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-		if shouldValidate(inferenceWithExecutor.Executor, transactionRecorder.address, r.NumValidators) {
+		if shouldValidate(inferenceWithExecutor.Executor, transactionRecorder.Address, r.NumValidators) {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
 	}
@@ -110,7 +116,7 @@ func getReputationP(status types.ParticipantStatus) float64 {
 	}
 }
 
-func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder InferenceCosmosClient) {
+func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	valResult, err := lockNodeAndValidate(inf, nodeBroker)
 	if err != nil {
 		log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
@@ -131,7 +137,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	log.Printf("Successfully validated inference. id = %v", inf.InferenceId)
 }
 
-func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder InferenceCosmosClient) (ValidationResult, error) {
+func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.InferenceCosmosClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {

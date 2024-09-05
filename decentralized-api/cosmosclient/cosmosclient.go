@@ -1,7 +1,8 @@
-package main
+package cosmosclient
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
@@ -17,10 +18,10 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	client  *cosmosclient.Client
-	account *cosmosaccount.Account
-	address string
-	context context.Context
+	Client  *cosmosclient.Client
+	Account *cosmosaccount.Account
+	Address string
+	Context context.Context
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -28,7 +29,7 @@ func NewInferenceCosmosClientWithRetry(
 	addressPrefix string,
 	maxRetries int,
 	delay time.Duration,
-	config Config,
+	config apiconfig.Config,
 ) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
@@ -56,14 +57,14 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig ChainNodeConfig) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeConfig apiconfig.ChainNodeConfig) (*InferenceCosmosClient, error) {
 	// Get absolute path to keyring directory
 	keyringDir, err := expandPath(nodeConfig.KeyringDir)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("Initializing cosmos client."+
+	log.Printf("Initializing cosmos Client."+
 		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
 	client, err := cosmosclient.New(
 		ctx,
@@ -90,37 +91,42 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 	}
 
 	return &InferenceCosmosClient{
-		client:  &client,
-		account: &account,
-		address: addr,
-		context: ctx,
+		Client:  &client,
+		Account: &account,
+		Address: addr,
+		Context: ctx,
 	}, nil
 }
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
-	transaction.Creator = icc.address
-	transaction.ReceivedBy = icc.address
+	transaction.Creator = icc.Address
+	transaction.ReceivedBy = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
-	transaction.Creator = icc.address
-	transaction.ExecutedBy = icc.address
+	transaction.Creator = icc.Address
+	transaction.ExecutedBy = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
-	transaction.Creator = icc.address
+	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
-	transaction.Creator = icc.address
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
+	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
-	response, err := icc.client.BroadcastTx(icc.context, *icc.account, msg)
+	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
 	if err != nil {
 		return err
 	}
@@ -131,5 +137,5 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
-	return types.NewQueryClient(icc.client.Context())
+	return types.NewQueryClient(icc.Client.Context())
 }

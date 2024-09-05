@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	"github.com/productscience/inference/x/inference/proofofcompute"
+	log2 "log"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -152,7 +154,15 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
-func (am AppModule) EndBlock(_ context.Context) error {
+func (am AppModule) EndBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	blockHeight := sdkCtx.BlockHeight()
+
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+		log2.Printf("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
+		am.SendNewValidatorWeightsToStaking(ctx)
+	}
+
 	return nil
 }
 
@@ -210,6 +220,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.BankEscrowKeeper,
 		in.ValidatorSet,
 		in.StakingKeeper,
+		in.AccountKeeper,
 	)
 	m := NewAppModule(
 		in.Cdc,
