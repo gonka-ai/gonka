@@ -83,9 +83,9 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 	o.runningAtomic.Store(true)
 	o.mu.Unlock()
 
-	input := proofofcompute.GetInput(event.blockHash, o.pubKey)
-	nonce := make([]byte, len(input))
 	go func() {
+		input := proofofcompute.GetInput(event.blockHash, o.pubKey)
+		nonce := make([]byte, len(input))
 		for {
 			if !o.isRunning() {
 				return
@@ -93,11 +93,13 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 
 			// Execute the function and store the result
 			hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
+			log.Printf("Computing hashes. nonce = %v. hash = %v", hex.EncodeToString(nonce), hashAndNonce.Hash)
 
 			if !o.acceptHash(hashAndNonce.Hash) {
 				continue
 			}
 
+			log.Printf("Hash accepted, adding")
 			proof := ProofOfCompute{
 				Nonce:     hex.EncodeToString(nonce),
 				ProofHash: hashAndNonce.Hash,
