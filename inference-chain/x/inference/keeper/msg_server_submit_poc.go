@@ -44,8 +44,12 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		return nil, err
 	}
 
+	log.Printf("pubKey = %s. pubKey.String() = %s.", pubKey, pubKey.String())
+
 	// 3. Verify all nonces
-	input := proofofcompute.GetInput(blockHash, string(pubKey.Bytes()))
+	// pubKey.String() yields something like: PubKeySecp256k1{<hex-key>}
+	// If you change how you pass it to input here don't forget to change it in decentralized-api as well
+	input := proofofcompute.GetInput(blockHash, pubKey.String())
 	for _, n := range msg.Nonce {
 		nonce, err := hex.DecodeString(n)
 		if err != nil {
@@ -119,6 +123,8 @@ func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPoC, ctx sdk.Context) 
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("Retrieveing addr for. msg.Creator = %s. addr = %s", msg.Creator, addr)
+
 	account := k.AccountKeeper.GetAccount(ctx, addr)
 	pubKey := account.GetPubKey()
 	return pubKey, nil

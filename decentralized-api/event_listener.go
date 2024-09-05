@@ -38,6 +38,8 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		log.Fatalf("Failed to get public key. %v", err)
 		return
 	}
+
+	log.Printf("Initializing PoC orchestrator. name = %s. address = %s. pubKey = %s", transactionRecorder.Account.Name, transactionRecorder.Address, pubKey)
 	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
 	go pocOrchestrator.Run()
 
