@@ -14,7 +14,7 @@ import (
 )
 
 type PoCOrchestrator struct {
-	results    []*ProofOfCompute
+	results    *ProofOfComputeResults
 	startChan  chan StartPoCEvent
 	stopChan   chan StopPoCEvent
 	running    bool
@@ -29,25 +29,42 @@ type StartPoCEvent struct {
 }
 
 type StopPoCEvent struct {
-	action func([]*ProofOfCompute)
+	action func(results *ProofOfComputeResults)
 }
 
-type ProofOfCompute struct {
+type ProofOfComputeResults struct {
 	BlockHeight int64
 	BlockHash   string
 	PubKey      string
-	Nonce       string
-	ProofHash   string
+	Results     []*ProofOfCompute
+}
+
+func (r *ProofOfComputeResults) addResult(proof ProofOfCompute) {
+	r.Results = append(r.Results, &proof)
+}
+
+type ProofOfCompute struct {
+	Nonce     string
+	ProofHash string
 }
 
 func NewPoCOrchestrator(pubKey string, difficulty int) *PoCOrchestrator {
 	return &PoCOrchestrator{
-		results:    []*ProofOfCompute{},
+		results:    nil,
 		startChan:  make(chan StartPoCEvent),
 		stopChan:   make(chan StopPoCEvent),
 		running:    false,
 		pubKey:     pubKey,
 		difficulty: difficulty,
+	}
+}
+
+func (o *PoCOrchestrator) clearResults(blockHeight int64, blockHash string) {
+	o.results = &ProofOfComputeResults{
+		BlockHeight: blockHeight,
+		BlockHash:   blockHash,
+		PubKey:      o.pubKey,
+		Results:     []*ProofOfCompute{},
 	}
 }
 
@@ -58,7 +75,7 @@ func (o *PoCOrchestrator) acceptHash(hash string) bool {
 // startProcessing is the function that starts when a start event is triggered
 func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 	o.mu.Lock()
-	o.results = []*ProofOfCompute{}
+	o.clearResults(event.blockHeight, event.blockHash)
 	o.running = true
 	o.mu.Unlock()
 
@@ -79,17 +96,14 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 				}
 
 				proof := ProofOfCompute{
-					BlockHeight: event.blockHeight,
-					BlockHash:   event.blockHash,
-					PubKey:      o.pubKey,
-					Nonce:       hex.EncodeToString(nonce),
-					ProofHash:   hashAndNonce.Hash,
+					Nonce:     hex.EncodeToString(nonce),
+					ProofHash: hashAndNonce.Hash,
 				}
 
 				incrementBytes(nonce)
 
 				o.mu.Lock()
-				o.results = append(o.results, &proof)
+				o.results.addResult(proof)
 				o.mu.Unlock()
 			}
 		}
@@ -97,7 +111,7 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 }
 
 // StopProcessing stops the processing and returns the results immediately
-func (o *PoCOrchestrator) stopProcessing() []*ProofOfCompute {
+func (o *PoCOrchestrator) stopProcessing() *ProofOfComputeResults {
 	// Send the signal to stop the goroutine
 	close(o.stopChan)
 
@@ -145,7 +159,7 @@ func (o *PoCOrchestrator) StartProcessing(event StartPoCEvent) {
 }
 
 // StopProcessing triggers the stop event
-func (o *PoCOrchestrator) StopProcessing(action func([]*ProofOfCompute)) {
+func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
@@ -180,7 +194,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
 		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
-		orchestrator.StopProcessing(createSubmitPoCCallback(blockHeight, transactionRecorder))
+		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 		return
 	}
 }
@@ -223,15 +237,15 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
-func createSubmitPoCCallback(blockHeight int64, transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs []*ProofOfCompute) {
-	return func(proofs []*ProofOfCompute) {
-		nonce := make([]string, len(proofs))
-		for i, p := range proofs {
+func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
+	return func(proofs *ProofOfComputeResults) {
+		nonce := make([]string, len(proofs.Results))
+		for i, p := range proofs.Results {
 			nonce[i] = p.Nonce
 		}
 
 		message := inference.MsgSubmitPoC{
-			BlockHeight: blockHeight,
+			BlockHeight: proofs.BlockHeight,
 			Nonce:       nonce,
 		}
 
