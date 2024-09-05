@@ -95,21 +95,19 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 			hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
 			log.Printf("Computing hashes. nonce = %v. hash = %v", hex.EncodeToString(nonce), hashAndNonce.Hash)
 
-			if !o.acceptHash(hashAndNonce.Hash) {
-				continue
-			}
+			if o.acceptHash(hashAndNonce.Hash) {
+				log.Printf("Hash accepted, adding")
+				proof := ProofOfCompute{
+					Nonce:     hex.EncodeToString(nonce),
+					ProofHash: hashAndNonce.Hash,
+				}
 
-			log.Printf("Hash accepted, adding")
-			proof := ProofOfCompute{
-				Nonce:     hex.EncodeToString(nonce),
-				ProofHash: hashAndNonce.Hash,
+				o.mu.Lock()
+				o.results.addResult(proof)
+				o.mu.Unlock()
 			}
 
 			incrementBytes(nonce)
-
-			o.mu.Lock()
-			o.results.addResult(proof)
-			o.mu.Unlock()
 		}
 	}()
 }
