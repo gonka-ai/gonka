@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
+	"log"
 	"net/http"
 )
 
@@ -45,7 +47,14 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	// 3. Verify all nonces
 	input := proofofcompute.GetInput(blockHash, string(pubKey.Bytes()))
 	for _, n := range msg.Nonce {
-		proof := proofofcompute.ProofOfCompute(input, []byte(n))
+		nonce, err := hex.DecodeString(n)
+		if err != nil {
+			return nil, err
+		}
+		proof := proofofcompute.ProofOfCompute(input, nonce)
+
+		log.Printf("input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash)
+
 		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
 			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
 		}

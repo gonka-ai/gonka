@@ -96,7 +96,7 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 			log.Printf("Computing hashes. nonce = %v. hash = %v", hex.EncodeToString(nonce), hashAndNonce.Hash)
 
 			if o.acceptHash(hashAndNonce.Hash) {
-				log.Printf("Hash accepted, adding")
+				log.Printf("Hash accepted, adding. input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), hex.EncodeToString(nonce), hashAndNonce.Hash)
 				proof := ProofOfCompute{
 					Nonce:     hex.EncodeToString(nonce),
 					ProofHash: hashAndNonce.Hash,
