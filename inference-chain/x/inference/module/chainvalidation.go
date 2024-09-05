@@ -15,6 +15,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
 		if !ok {
+			log.Printf("Error getting participant: %v", p.ParticipantAddress)
 			continue
 		}
 
@@ -29,11 +30,13 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
-		computeResults = append(computeResults, keeper.ComputeResult{
+		r := keeper.ComputeResult{
 			Power:           p.Power,
 			ValidatorPubKey: &pubKey,
 			OperatorAddress: p.ParticipantAddress,
-		})
+		}
+		log.Printf("Setting compute validator: %v", r)
+		computeResults = append(computeResults, r)
 	}
 
 	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)

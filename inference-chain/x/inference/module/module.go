@@ -6,6 +6,7 @@ import (
 	"fmt"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	log2 "log"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -158,6 +159,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+		log2.Printf("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
 		am.SendNewValidatorWeightsToStaking(ctx)
 	}
 
