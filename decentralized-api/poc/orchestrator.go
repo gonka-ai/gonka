@@ -249,6 +249,8 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			Nonce:       nonce,
 		}
 
+		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
+
 		err := transactionRecorder.SubmitPoC(&message)
 		if err != nil {
 			log.Printf("Failed to send SubmitPoC transaction. %v", err)
