@@ -11,16 +11,18 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 type PoCOrchestrator struct {
-	results    *ProofOfComputeResults
-	startChan  chan StartPoCEvent
-	stopChan   chan StopPoCEvent
-	running    bool
-	mu         sync.Mutex
-	pubKey     string
-	difficulty int
+	results       *ProofOfComputeResults
+	startChan     chan StartPoCEvent
+	stopChan      chan StopPoCEvent
+	mu            sync.Mutex
+	wg            sync.WaitGroup
+	pubKey        string
+	difficulty    int
+	runningAtomic atomic.Bool
 }
 
 type StartPoCEvent struct {
@@ -49,14 +51,16 @@ type ProofOfCompute struct {
 }
 
 func NewPoCOrchestrator(pubKey string, difficulty int) *PoCOrchestrator {
-	return &PoCOrchestrator{
-		results:    nil,
-		startChan:  make(chan StartPoCEvent),
-		stopChan:   make(chan StopPoCEvent),
-		running:    false,
-		pubKey:     pubKey,
-		difficulty: difficulty,
+	orchestrator := &PoCOrchestrator{
+		results:       nil,
+		startChan:     make(chan StartPoCEvent),
+		stopChan:      make(chan StopPoCEvent),
+		pubKey:        pubKey,
+		difficulty:    difficulty,
+		runningAtomic: atomic.Bool{},
 	}
+	orchestrator.runningAtomic.Store(false)
+	return orchestrator
 }
 
 func (o *PoCOrchestrator) clearResults(blockHeight int64, blockHash string) {
@@ -76,49 +80,45 @@ func (o *PoCOrchestrator) acceptHash(hash string) bool {
 func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 	o.mu.Lock()
 	o.clearResults(event.blockHeight, event.blockHash)
-	o.running = true
+	o.runningAtomic.Store(true)
 	o.mu.Unlock()
 
 	input := proofofcompute.GetInput(event.blockHash, o.pubKey)
 	nonce := make([]byte, len(input))
 	go func() {
 		for {
-			select {
-			case <-o.stopChan:
-				// Stop as soon as the stop signal is received
+			if !o.isRunning() {
 				return
-			default:
-				// Execute the function and store the result
-				hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
-
-				if !o.acceptHash(hashAndNonce.Hash) {
-					continue
-				}
-
-				proof := ProofOfCompute{
-					Nonce:     hex.EncodeToString(nonce),
-					ProofHash: hashAndNonce.Hash,
-				}
-
-				incrementBytes(nonce)
-
-				o.mu.Lock()
-				o.results.addResult(proof)
-				o.mu.Unlock()
 			}
+
+			// Execute the function and store the result
+			hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
+
+			if !o.acceptHash(hashAndNonce.Hash) {
+				continue
+			}
+
+			proof := ProofOfCompute{
+				Nonce:     hex.EncodeToString(nonce),
+				ProofHash: hashAndNonce.Hash,
+			}
+
+			incrementBytes(nonce)
+
+			o.mu.Lock()
+			o.results.addResult(proof)
+			o.mu.Unlock()
 		}
 	}()
 }
 
 // StopProcessing stops the processing and returns the results immediately
 func (o *PoCOrchestrator) stopProcessing() *ProofOfComputeResults {
-	// Send the signal to stop the goroutine
-	close(o.stopChan)
-
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	results := o.results
+	o.runningAtomic.Store(false)
 
 	return results
 }
@@ -145,16 +145,11 @@ func (o *PoCOrchestrator) Run() {
 
 // isRunning checks if the component is running
 func (o *PoCOrchestrator) isRunning() bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.running
+	return o.runningAtomic.Load()
 }
 
 // StartProcessing triggers the start event
 func (o *PoCOrchestrator) StartProcessing(event StartPoCEvent) {
-	o.mu.Lock()
-	o.stopChan = make(chan StopPoCEvent) // Reset stop channel for the next run
-	o.mu.Unlock()
 	o.startChan <- event
 }
 
