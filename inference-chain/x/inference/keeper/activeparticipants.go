@@ -1,0 +1,33 @@
+package keeper
+
+import (
+	"context"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
+	"github.com/productscience/inference/x/inference/types"
+)
+
+func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.ActiveParticipants) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	key := types.ActiveParticipantsKey()
+
+	b := k.cdc.MustMarshal(&participants)
+	store.Set(key, b)
+}
+
+func (k Keeper) GetActiveParticipants(ctx context.Context) (val types.ActiveParticipants, found bool) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	key := types.ActiveParticipantsKey()
+
+	b := store.Get(key)
+	if b == nil {
+		return types.ActiveParticipants{}, false
+	}
+
+	k.cdc.MustUnmarshal(b, &val)
+	return val, true
+}
