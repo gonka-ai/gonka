@@ -1,6 +1,7 @@
 package loadbalancer
 
 import (
+	"github.com/productscience/inference/x/inference/types"
 	"math/rand"
 	"sync"
 )
@@ -16,7 +17,15 @@ type participant struct {
 	weight int64
 }
 
-func NewLoadBalancer(participants []participant) *LoadBalancer {
+func NewLoadBalancer(activeParticipants types.ActiveParticipants) *LoadBalancer {
+	participants := make([]participant, len(activeParticipants.Participants))
+	for i, p := range activeParticipants.Participants {
+		participants[i] = participant{
+			id:     p.Index,
+			weight: p.Weight,
+		}
+	}
+
 	lb := &LoadBalancer{
 		participants: participants,
 	}
