@@ -31,3 +31,11 @@ func (k Keeper) GetActiveParticipants(ctx context.Context) (val types.ActivePart
 	k.cdc.MustUnmarshal(b, &val)
 	return val, true
 }
+
+func (k Keeper) GetParticipantCounter(ctx context.Context) uint32 {
+	activeParticipants, ok := k.GetActiveParticipants(ctx)
+	if !ok {
+		return 0
+	}
+	return uint32(len(activeParticipants.Participants))
+}
