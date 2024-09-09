@@ -160,7 +160,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		log2.Printf("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
-		am.SendNewValidatorWeightsToStaking(ctx)
+		am.SendNewValidatorWeightsToStaking(ctx, blockHeight)
 	}
 
 	return nil
