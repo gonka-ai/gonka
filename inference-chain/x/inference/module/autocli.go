@@ -46,6 +46,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}},
 				},
 
+				{
+					RpcMethod:      "GetRandomExecutor",
+					Use:            "get-random-executor",
+					Short:          "Query get-random-executor",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

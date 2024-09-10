@@ -46,6 +46,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/get_inferences_with_executors/{ids}";
 
   }
+
+  // Queries a list of GetRandomExecutor items.
+  rpc GetRandomExecutor (QueryGetRandomExecutorRequest) returns (QueryGetRandomExecutorResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_random_executor";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -97,11 +103,15 @@ message QueryGetInferencesWithExecutorsRequest {
 
 message QueryGetInferencesWithExecutorsResponse {
   repeated InferenceWithExecutor inferenceWithExecutor = 1 [(gogoproto.nullable) = false];
-  uint32 NumValidators = 2;
+  uint32                NumValidators = 2;
 }
 
 message InferenceWithExecutor {
-  Inference inference = 1 [(gogoproto.nullable) = false];
-  Participant    executor = 2 [(gogoproto.nullable) = false];
+  Inference   inference = 1 [(gogoproto.nullable) = false];
+  Participant executor = 2 [(gogoproto.nullable) = false];
 }
+
+message QueryGetRandomExecutorRequest {}
+
+message QueryGetRandomExecutorResponse {}
 
