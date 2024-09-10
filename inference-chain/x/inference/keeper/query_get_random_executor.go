@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -10,7 +11,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// PRTODO: add more informative logs here
 func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRandomExecutorRequest) (*types.QueryGetRandomExecutorResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -20,18 +20,21 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 
 	activeParticipants, ok := k.GetActiveParticipants(ctx)
 	if !ok {
-		return nil, status.Error(codes.Internal, "active participants not found")
+		return nil, status.Error(codes.Internal, "Active participants not found")
 	}
 
 	if len(activeParticipants.Participants) == 0 {
-		return nil, status.Error(codes.Internal, "no active participants")
+		return nil, status.Error(codes.Internal, "Active participants found, but length is 0")
 	}
 
 	participantIndex := selectRandomParticipant(&activeParticipants)
 
 	participant, ok := k.GetParticipant(ctx, participantIndex)
 	if !ok {
-		return nil, status.Error(codes.Internal, "participant not found")
+		msg := fmt.Sprintf(
+			"Selected active participant, but not found in participants list. index =  %s", participantIndex,
+		)
+		return nil, status.Error(codes.Internal, msg)
 	}
 
 	return &types.QueryGetRandomExecutorResponse{
