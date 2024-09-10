@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"math/rand"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// PRTODO: add more informative logs here
 func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRandomExecutorRequest) (*types.QueryGetRandomExecutorResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -16,8 +18,45 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	activeParticipants, ok := k.GetActiveParticipants(ctx)
+	if !ok {
+		return nil, status.Error(codes.Internal, "active participants not found")
+	}
 
-	return &types.QueryGetRandomExecutorResponse{}, nil
+	if len(activeParticipants.Participants) == 0 {
+		return nil, status.Error(codes.Internal, "no active participants")
+	}
+
+	participantIndex := selectRandomParticipant(&activeParticipants)
+
+	participant, ok := k.GetParticipant(ctx, participantIndex)
+	if !ok {
+		return nil, status.Error(codes.Internal, "participant not found")
+	}
+
+	return &types.QueryGetRandomExecutorResponse{
+		Executor: participant,
+	}, nil
+}
+
+func selectRandomParticipant(participants *types.ActiveParticipants) string {
+	cumulativeArray := computeCumulativeArray(participants.Participants)
+
+	randomNumber := rand.Int63n(cumulativeArray[len(cumulativeArray)-1])
+	for i, cumulativeWeight := range cumulativeArray {
+		if randomNumber < cumulativeWeight {
+			return participants.Participants[i].Index
+		}
+	}
+
+	return participants.Participants[len(participants.Participants)-1].Index
+}
+
+func computeCumulativeArray(participants []*types.ActiveParticipant) []int64 {
+	cumulativeArray := make([]int64, len(participants))
+	cumulativeArray[0] = participants[0].Weight
+	for i := 1; i < len(participants); i++ {
+		cumulativeArray[i] = cumulativeArray[i-1] + participants[i].Weight
+	}
+	return cumulativeArray
 }

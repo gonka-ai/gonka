@@ -113,5 +113,6 @@ message InferenceWithExecutor {
 
 message QueryGetRandomExecutorRequest {}
 
-message QueryGetRandomExecutorResponse {}
-
+message QueryGetRandomExecutorResponse {
+  Participant executor = 1 [(gogoproto.nullable) = false];
+}
