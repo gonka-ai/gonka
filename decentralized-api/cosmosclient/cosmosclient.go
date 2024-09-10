@@ -139,3 +139,12 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
 	return types.NewQueryClient(icc.Client.Context())
 }
+
+func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, error) {
+	queryClient := icc.NewInferenceQueryClient()
+	resp, err := queryClient.GetRandomExecutor(icc.Context, &types.QueryGetRandomExecutorRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Executor, nil
+}
