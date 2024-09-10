@@ -47,6 +47,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod:      "GetRandomExecutor",
+					Use:            "get-random-executor",
+					Short:          "Query get-random-executor",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
 					RpcMethod:      "InferenceParticipant",
 					Use:            "inference-participant [address]",
 					Short:          "Query inference-participant",

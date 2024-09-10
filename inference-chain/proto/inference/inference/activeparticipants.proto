@@ -1,0 +1,15 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Not added to the Genesis, because at genesis it's constructed based on Participants
+message ActiveParticipants {
+  repeated ActiveParticipant participants = 1;
+  int64 createdAtBlockHeight = 2;
+}
+
+message ActiveParticipant {
+  string index = 1;
+  int64  weight = 2;
+}
