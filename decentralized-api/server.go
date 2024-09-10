@@ -176,12 +176,16 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-func getExecutorForRequest(request *http.Request) *ExecutorDestination {
-	return &ExecutorDestination{
-		Url: request.URL.String(),
-		// TODO: This is just a placeholder, for testing maybe it could be the address of this node? Do we even have that?
-		Address: "",
+func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*ExecutorDestination, error) {
+	executor, err := recorder.QueryRandomExecutor()
+	if err != nil {
+		return nil, err
 	}
+	log.Printf("LB Executor:" + executor.InferenceUrl)
+	return &ExecutorDestination{
+		Url:     executor.InferenceUrl,
+		Address: executor.Address,
+	}, nil
 }
 
 func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.InferenceCosmosClient) bool {
@@ -193,7 +197,12 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-	executor := getExecutorForRequest(request.Request)
+	executor, err := getExecutorForRequest(recorder)
+	if err != nil {
+		log.Printf("Failed to get executor. %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true
+	}
 	// Response is filled out with validate? Probably want to standardize
 	hadError := validateClient(w, request, client)
 	if hadError {
@@ -226,7 +235,9 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(finalRequest.NewBody))
+	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
+	// the same process to create the same final request body
+	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
@@ -288,7 +299,7 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) bool {
 	err := validateRequestAgainstPubKey(request, request.PubKey)
 	if err != nil {
-		http.Error(w, "Unable to validate request against PubKey", http.StatusUnauthorized)
+		http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
 		return true
 	}
 	seed, err := strconv.Atoi(request.Seed)
