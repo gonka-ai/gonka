@@ -11,7 +11,7 @@ type ModifiedRequest struct {
 	OriginalTopLogprobsValue *int
 }
 
-func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
+func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
 	// Unmarshal the JSON request
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
@@ -26,6 +26,10 @@ func ModifyRequestBody(requestBytes []byte) (*ModifiedRequest, error) {
 	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
 	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 3 {
 		requestMap["top_logprobs"] = 3
+	}
+
+	if _, ok := requestMap["seed"]; !ok {
+		requestMap["seed"] = defaultSeed
 	}
 
 	// Marshal the map back into JSON bytes

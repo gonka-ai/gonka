@@ -49,7 +49,7 @@ $APP_NAME keys \
 
 if [ "$IS_GENESIS" = true ]; then
   echo "This is a genesis node setup."
-  $APP_NAME genesis add-genesis-account "$KEY_NAME" "100000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
+  $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
   $APP_NAME genesis gentx "$KEY_NAME" "10000000$COIN_DENOM" --chain-id "$CHAIN_ID"
   $APP_NAME genesis collect-gentxs
 else

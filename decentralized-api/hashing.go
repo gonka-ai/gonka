@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"math/rand"
 	"sort"
 )
 
@@ -17,9 +16,6 @@ func CanonicalizeJSON(jsonBytes []byte) (string, error) {
 		return "", err
 	}
 	// add a random seed if it doesn't exist in jsonObj
-	if _, ok := jsonObj.(map[string]interface{})["seed"]; !ok {
-		jsonObj.(map[string]interface{})["seed"] = rand.Int31()
-	}
 
 	// Use a buffer to write the canonical JSON
 	buf := &bytes.Buffer{}
