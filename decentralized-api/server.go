@@ -133,6 +133,7 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		RequesterAddress: request.Header.Get("X-Requester-Address"),
 	}, nil
 }
+
 func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		log.Printf("wrapChat. Received request. method = %s. path = %s", request.Method, request.URL.Path)
@@ -210,31 +211,18 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	}
 
 	seed := rand.Int31()
-	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true
-	}
-	promptHash, promptPayload, err := getPromptHash(finalRequest.NewBody)
 	inferenceUUID := uuid.New().String()
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-	err = recorder.StartInference(&inference.MsgStartInference{
-		Creator:       request.RequesterAddress,
-		InferenceId:   inferenceUUID,
-		PromptHash:    promptHash,
-		PromptPayload: promptPayload,
-		// TODO: This should actually be the Executor selected by the address
-		ReceivedBy: executor.Address,
-		Model:      testModel,
-	})
-	if err != nil {
-		log.Printf("Failed to submit MsgStartInference. %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true
-	}
+	go func() {
+		err := recorder.StartInference(inferenceRequest)
+		if err != nil {
+			log.Printf("Failed to submit MsgStartInference. %v", err)
+		}
+	}()
 	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
 	// the same process to create the same final request body
 	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
@@ -269,6 +257,27 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 		log.Printf("Error copying response body: %v", err)
 	}
 	return true
+}
+
+func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
+	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
+	if err != nil {
+		return nil, err
+	}
+	promptHash, promptPayload, err := getPromptHash(finalRequest.NewBody)
+	if err != nil {
+		return nil, err
+	}
+	transaction := &inference.MsgStartInference{
+		Creator:       request.RequesterAddress,
+		InferenceId:   inferenceId,
+		PromptHash:    promptHash,
+		PromptPayload: promptPayload,
+		// TODO: This should actually be the Executor selected by the address
+		ReceivedBy: executor.Address,
+		Model:      testModel,
+	}
+	return transaction, nil
 }
 
 func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.QueryInferenceParticipantResponse) bool {
@@ -537,10 +546,13 @@ func createInferenceFinishedTransaction(id string, recorder cosmos_client.Infere
 	}
 
 	println("--TRANSACTIONID--" + transaction.Id)
-	err := recorder.FinishInference(message)
-	if err != nil {
-		log.Printf("Failed to submit MsgFinishInference. %v", err)
-	}
+	// Submit to the block chain effectively AFTER we've served the request. Speed before certainty.
+	go func() {
+		err := recorder.FinishInference(message)
+		if err != nil {
+			log.Printf("Failed to submit MsgFinishInference. %v", err)
+		}
+	}()
 }
 
 func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
