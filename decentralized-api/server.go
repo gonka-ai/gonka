@@ -237,6 +237,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	req.Header.Set("X-Public-Key", client.Pubkey)
 	req.Header.Set("Authorization", request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -244,20 +245,9 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	}
 
 	defer resp.Body.Close()
-	// Copy the headers from the final server response
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
 
-	// Write the status code from the final server response
-	w.WriteHeader(resp.StatusCode)
+	proxyResponse(resp, w)
 
-	// Copy the body from the final server response
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		log.Printf("Error copying response body: %v", err)
-	}
 	return true
 }
 
@@ -271,18 +261,18 @@ func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 
-		proxyRequest(req, w)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, "Failed to reach completion server", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		proxyResponse(resp, w)
 	}
 }
 
-func proxyRequest(req *http.Request, w http.ResponseWriter) {
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		http.Error(w, "Failed to reach completion server", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
+func proxyResponse(resp *http.Response, w http.ResponseWriter) {
 	// Make sure to copy response headers to the client
 	for key, values := range resp.Header {
 		for _, value := range values {
