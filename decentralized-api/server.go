@@ -292,8 +292,18 @@ func proxyRequest(req *http.Request, w http.ResponseWriter) {
 
 	w.WriteHeader(resp.StatusCode)
 
-	// Expected when streaming: resp.Header.Get("Content-Type") == "text/event-stream; charset=utf-8"
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "text/event-stream") {
+		proxyTextStreamResponse(resp, w)
+	} else {
+		// Copy the body from the final server response
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Printf("Error copying response body: %v", err)
+		}
+	}
+}
 
+func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter) {
 	// Stream the response from the completion server to the client
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
