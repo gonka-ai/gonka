@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"decentralized-api/apiconfig"
@@ -53,6 +54,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
+	http.HandleFunc("/debug/chat/completions", debugWrapChat())
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 	log.Printf("Starting the server on %s", addr)
@@ -257,6 +259,59 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 		log.Printf("Error copying response body: %v", err)
 	}
 	return true
+}
+
+func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		chatRequest, err := readRequest(request)
+		req, err := http.NewRequest("POST", "http://34.171.235.205:8080/v1/chat/completions", bytes.NewReader(chatRequest.Body))
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		proxyRequest(req, w)
+	}
+}
+
+func proxyRequest(req *http.Request, w http.ResponseWriter) {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to reach completion server", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Make sure to copy response headers to the client
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		chunk := scanner.Bytes()
+
+		// Forward chunk to the original client
+		_, err := w.Write(chunk)
+
+		log.Printf("Chunk: %s", string(chunk))
+
+		if err != nil {
+			log.Printf("Failed to write chunk to client: %v", err)
+			return
+		}
+
+		w.(http.Flusher).Flush() // Flush the buffer to ensure the client gets the data immediately
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("Error while streaming response: %v", err)
+	}
 }
 
 func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
