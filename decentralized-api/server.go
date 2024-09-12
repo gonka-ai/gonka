@@ -292,21 +292,22 @@ func proxyRequest(req *http.Request, w http.ResponseWriter) {
 
 	w.WriteHeader(resp.StatusCode)
 
+	// Expected when streaming: resp.Header.Get("Content-Type") == "text/event-stream; charset=utf-8"
+
+	// Stream the response from the completion server to the client
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		chunk := scanner.Bytes()
+		line := scanner.Text()
 
-		// Forward chunk to the original client
-		_, err := w.Write(chunk)
+		// DEBUG LOG
+		log.Printf("Chunk: %s", line)
 
-		log.Printf("Chunk: %s", string(chunk))
-
+		// Forward the line to the client
+		_, err := fmt.Fprintln(w, line)
 		if err != nil {
-			log.Printf("Failed to write chunk to client: %v", err)
+			log.Printf("Error while streaming response: %v", err)
 			return
 		}
-
-		w.(http.Flusher).Flush() // Flush the buffer to ensure the client gets the data immediately
 	}
 
 	if err := scanner.Err(); err != nil {
