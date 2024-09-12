@@ -5,10 +5,11 @@ import (
 	"encoding/base64"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	"github.com/productscience/inference/x/inference/types"
 	"log"
 )
 
-func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
+func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
 	allPower := am.keeper.AllPower(ctx)
 
 	var computeResults []keeper.ComputeResult
@@ -46,8 +47,16 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context) {
 
 	am.keeper.RemoveAllPower(ctx)
 
-	// TODO: You probably should also set new weight here for Participants?
-	//   Or should we do it as soon as we receive nonces?
+	activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
+	for i, r := range computeResults {
+		activeParticipants[i] = &types.ActiveParticipant{
+			Index:  r.OperatorAddress,
+			Weight: r.Power,
+		}
+	}
 
-	// TODO: We should also delete/mark inactive any participants that failed to provide weight
+	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		Participants:         activeParticipants,
+		CreatedAtBlockHeight: blockHeight,
+	})
 }

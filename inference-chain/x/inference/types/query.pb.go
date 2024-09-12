@@ -634,6 +634,182 @@ func (m *InferenceWithExecutor) GetExecutor() Participant {
 	return Participant{}
 }
 
+type QueryInferenceParticipantRequest struct {
+	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+}
+
+func (m *QueryInferenceParticipantRequest) Reset()         { *m = QueryInferenceParticipantRequest{} }
+func (m *QueryInferenceParticipantRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryInferenceParticipantRequest) ProtoMessage()    {}
+func (*QueryInferenceParticipantRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_cf0cfe3b0e1cc5bd, []int{13}
+}
+func (m *QueryInferenceParticipantRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryInferenceParticipantRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryInferenceParticipantRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryInferenceParticipantRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryInferenceParticipantRequest.Merge(m, src)
+}
+func (m *QueryInferenceParticipantRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryInferenceParticipantRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryInferenceParticipantRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryInferenceParticipantRequest proto.InternalMessageInfo
+
+func (m *QueryInferenceParticipantRequest) GetAddress() string {
+	if m != nil {
+		return m.Address
+	}
+	return ""
+}
+
+type QueryInferenceParticipantResponse struct {
+	Pubkey  string `protobuf:"bytes,1,opt,name=pubkey,proto3" json:"pubkey,omitempty"`
+	Balance int64  `protobuf:"varint,2,opt,name=balance,proto3" json:"balance,omitempty"`
+}
+
+func (m *QueryInferenceParticipantResponse) Reset()         { *m = QueryInferenceParticipantResponse{} }
+func (m *QueryInferenceParticipantResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryInferenceParticipantResponse) ProtoMessage()    {}
+func (*QueryInferenceParticipantResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_cf0cfe3b0e1cc5bd, []int{14}
+}
+func (m *QueryInferenceParticipantResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryInferenceParticipantResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryInferenceParticipantResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryInferenceParticipantResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryInferenceParticipantResponse.Merge(m, src)
+}
+func (m *QueryInferenceParticipantResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryInferenceParticipantResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryInferenceParticipantResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryInferenceParticipantResponse proto.InternalMessageInfo
+
+func (m *QueryInferenceParticipantResponse) GetPubkey() string {
+	if m != nil {
+		return m.Pubkey
+	}
+	return ""
+}
+
+func (m *QueryInferenceParticipantResponse) GetBalance() int64 {
+	if m != nil {
+		return m.Balance
+	}
+	return 0
+}
+
+type QueryGetRandomExecutorRequest struct {
+}
+
+func (m *QueryGetRandomExecutorRequest) Reset()         { *m = QueryGetRandomExecutorRequest{} }
+func (m *QueryGetRandomExecutorRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryGetRandomExecutorRequest) ProtoMessage()    {}
+func (*QueryGetRandomExecutorRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_cf0cfe3b0e1cc5bd, []int{15}
+}
+func (m *QueryGetRandomExecutorRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryGetRandomExecutorRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryGetRandomExecutorRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryGetRandomExecutorRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryGetRandomExecutorRequest.Merge(m, src)
+}
+func (m *QueryGetRandomExecutorRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryGetRandomExecutorRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryGetRandomExecutorRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryGetRandomExecutorRequest proto.InternalMessageInfo
+
+type QueryGetRandomExecutorResponse struct {
+	Executor Participant `protobuf:"bytes,1,opt,name=executor,proto3" json:"executor"`
+}
+
+func (m *QueryGetRandomExecutorResponse) Reset()         { *m = QueryGetRandomExecutorResponse{} }
+func (m *QueryGetRandomExecutorResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryGetRandomExecutorResponse) ProtoMessage()    {}
+func (*QueryGetRandomExecutorResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_cf0cfe3b0e1cc5bd, []int{16}
+}
+func (m *QueryGetRandomExecutorResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryGetRandomExecutorResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryGetRandomExecutorResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryGetRandomExecutorResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryGetRandomExecutorResponse.Merge(m, src)
+}
+func (m *QueryGetRandomExecutorResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryGetRandomExecutorResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryGetRandomExecutorResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryGetRandomExecutorResponse proto.InternalMessageInfo
+
+func (m *QueryGetRandomExecutorResponse) GetExecutor() Participant {
+	if m != nil {
+		return m.Executor
+	}
+	return Participant{}
+}
+
 func init() {
 	proto.RegisterType((*QueryParamsRequest)(nil), "inference.inference.QueryParamsRequest")
 	proto.RegisterType((*QueryParamsResponse)(nil), "inference.inference.QueryParamsResponse")
@@ -648,62 +824,75 @@ func init() {
 	proto.RegisterType((*QueryGetInferencesWithExecutorsRequest)(nil), "inference.inference.QueryGetInferencesWithExecutorsRequest")
 	proto.RegisterType((*QueryGetInferencesWithExecutorsResponse)(nil), "inference.inference.QueryGetInferencesWithExecutorsResponse")
 	proto.RegisterType((*InferenceWithExecutor)(nil), "inference.inference.InferenceWithExecutor")
+	proto.RegisterType((*QueryInferenceParticipantRequest)(nil), "inference.inference.QueryInferenceParticipantRequest")
+	proto.RegisterType((*QueryInferenceParticipantResponse)(nil), "inference.inference.QueryInferenceParticipantResponse")
+	proto.RegisterType((*QueryGetRandomExecutorRequest)(nil), "inference.inference.QueryGetRandomExecutorRequest")
+	proto.RegisterType((*QueryGetRandomExecutorResponse)(nil), "inference.inference.QueryGetRandomExecutorResponse")
 }
 
 func init() { proto.RegisterFile("inference/inference/query.proto", fileDescriptor_cf0cfe3b0e1cc5bd) }
 
 var fileDescriptor_cf0cfe3b0e1cc5bd = []byte{
-	// 794 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x96, 0x4d, 0x4f, 0x13, 0x41,
-	0x18, 0xc7, 0x3b, 0x20, 0x84, 0x0e, 0x62, 0x74, 0x80, 0x04, 0x17, 0x53, 0xc8, 0xaa, 0x40, 0x1a,
-	0xd9, 0x81, 0x1a, 0x42, 0x7c, 0x0f, 0x4d, 0x14, 0xb9, 0x08, 0x36, 0x51, 0x13, 0x2f, 0xcd, 0xb6,
-	0x1d, 0x96, 0x49, 0xb6, 0x3b, 0x4b, 0x67, 0xaa, 0x10, 0xc2, 0xc5, 0x2f, 0xa0, 0x89, 0x1f, 0xc0,
-	0x8b, 0x07, 0x4c, 0x3c, 0xe0, 0xc9, 0xc4, 0x4f, 0xc0, 0x91, 0xc4, 0x8b, 0x27, 0x63, 0xc0, 0x44,
-	0x3f, 0x86, 0xe9, 0xec, 0xec, 0x76, 0x6b, 0xa7, 0xa5, 0x25, 0x5c, 0xc8, 0xec, 0xf0, 0xbc, 0xfc,
-	0xfe, 0xcf, 0xf3, 0xec, 0xb3, 0x85, 0x13, 0xd4, 0x5b, 0x27, 0x15, 0xe2, 0x15, 0x09, 0xae, 0x9f,
-	0x36, 0xab, 0xa4, 0xb2, 0x6d, 0xf9, 0x15, 0x26, 0x18, 0x1a, 0x8e, 0xae, 0xad, 0xe8, 0x64, 0x5c,
-	0xb2, 0xcb, 0xd4, 0x63, 0x58, 0xfe, 0x0d, 0xec, 0x8c, 0x11, 0x87, 0x39, 0x4c, 0x1e, 0x71, 0xed,
-	0xa4, 0x6e, 0xaf, 0x38, 0x8c, 0x39, 0x2e, 0xc1, 0xb6, 0x4f, 0xb1, 0xed, 0x79, 0x4c, 0xd8, 0x82,
-	0x32, 0x8f, 0xab, 0xff, 0xa6, 0x8b, 0x8c, 0x97, 0x19, 0xc7, 0x05, 0x9b, 0xab, 0xa4, 0xf8, 0xd5,
-	0x7c, 0x81, 0x08, 0x7b, 0x1e, 0xfb, 0xb6, 0x43, 0x3d, 0x69, 0xac, 0x6c, 0x27, 0x75, 0xa0, 0xbe,
-	0x5d, 0xb1, 0xcb, 0x61, 0xb4, 0xab, 0x3a, 0x8b, 0x3a, 0x7d, 0x60, 0x74, 0xbd, 0x45, 0x18, 0x41,
-	0x8b, 0xd4, 0xb7, 0x3d, 0x11, 0x98, 0x99, 0x23, 0x10, 0x3d, 0xad, 0xf1, 0xac, 0xc9, 0x04, 0x39,
-	0xb2, 0x59, 0x25, 0x5c, 0x98, 0xcf, 0xe0, 0x70, 0xc3, 0x2d, 0xf7, 0x99, 0xc7, 0x09, 0xba, 0x0f,
-	0xfb, 0x03, 0x90, 0x31, 0x30, 0x09, 0x66, 0x06, 0x33, 0xe3, 0x96, 0xa6, 0x66, 0x56, 0xe0, 0x94,
-	0x4d, 0x1e, 0xfc, 0x9c, 0x48, 0xec, 0xfd, 0xd9, 0x4f, 0x83, 0x9c, 0xf2, 0x32, 0xe7, 0xe0, 0x98,
-	0x0c, 0xbb, 0x4c, 0xc4, 0x4a, 0x68, 0xae, 0x52, 0xa2, 0x11, 0xd8, 0x47, 0xbd, 0x12, 0xd9, 0x92,
-	0xa1, 0x93, 0xb9, 0xe0, 0xc1, 0xcc, 0xc3, 0xcb, 0x1a, 0x0f, 0x85, 0x93, 0x85, 0xc9, 0x28, 0xab,
-	0x22, 0x4a, 0x69, 0x89, 0x22, 0xd7, 0xec, 0xb9, 0x1a, 0x54, 0xae, 0xee, 0x66, 0x16, 0x14, 0xd2,
-	0x92, 0xeb, 0x36, 0x21, 0x3d, 0x82, 0xb0, 0xde, 0x1d, 0x95, 0x60, 0xca, 0x0a, 0x5a, 0x69, 0xd5,
-	0x5a, 0x69, 0x05, 0xf3, 0xa3, 0x5a, 0x69, 0xad, 0xd9, 0x4e, 0xe8, 0x9b, 0x8b, 0x79, 0x9a, 0x7b,
-	0x40, 0xa9, 0x68, 0x4c, 0xa2, 0x57, 0xd1, 0x7b, 0x0a, 0x15, 0x68, 0xb9, 0x81, 0xb4, 0x47, 0x92,
-	0x4e, 0x9f, 0x48, 0x1a, 0x00, 0x34, 0xa0, 0x66, 0xa0, 0x11, 0xd6, 0x7b, 0xad, 0x3e, 0x2b, 0xed,
-	0x7b, 0xe4, 0xc0, 0x71, 0xad, 0x8f, 0xd2, 0xf7, 0x18, 0x0e, 0xc6, 0xc6, 0x4e, 0x95, 0x71, 0xb2,
-	0xd5, 0xe4, 0x84, 0x76, 0x4a, 0x63, 0xdc, 0xd5, 0x2c, 0x29, 0xb8, 0x25, 0xd7, 0xd5, 0xc0, 0x9d,
-	0x55, 0xb7, 0xf6, 0x81, 0xd2, 0xf3, 0x7f, 0x9a, 0x56, 0x7a, 0x7a, 0x4f, 0xa9, 0xe7, 0xec, 0xba,
-	0x76, 0x1b, 0x4e, 0x35, 0xbd, 0x25, 0xfc, 0x05, 0x15, 0x1b, 0x0f, 0xb7, 0x48, 0xb1, 0x2a, 0x58,
-	0x25, 0x7c, 0xb1, 0xd1, 0x45, 0xd8, 0x4b, 0x4b, 0x5c, 0x42, 0x27, 0x73, 0xb5, 0xa3, 0xf9, 0x15,
-	0xc0, 0xe9, 0x13, 0x9d, 0x95, 0xf4, 0x75, 0x38, 0x1a, 0x89, 0x8b, 0x5b, 0xa8, 0x22, 0xa4, 0xdb,
-	0x8f, 0x6d, 0xdc, 0x43, 0x95, 0x43, 0x1f, 0x0e, 0x5d, 0x83, 0x43, 0x4f, 0xaa, 0xe5, 0xe7, 0xb6,
-	0x4b, 0x4b, 0x76, 0x0d, 0x40, 0xd6, 0x66, 0x28, 0xd7, 0x78, 0x69, 0x7e, 0x00, 0x70, 0x54, 0x1b,
-	0xfc, 0x2c, 0x16, 0x03, 0xca, 0xc2, 0x01, 0x12, 0xca, 0xeb, 0xe9, 0x6a, 0x66, 0x23, 0xbf, 0xcc,
-	0xb7, 0x01, 0xd8, 0x27, 0x6b, 0x8b, 0xde, 0x02, 0xd8, 0x1f, 0xec, 0x45, 0x34, 0xad, 0x0d, 0xd3,
-	0xbc, 0x84, 0x8d, 0x99, 0x93, 0x0d, 0x83, 0xbe, 0x98, 0x99, 0x37, 0xdf, 0x7f, 0xbf, 0xef, 0xb9,
-	0x81, 0xd2, 0xd8, 0xaf, 0xb0, 0x52, 0xb5, 0x28, 0x78, 0x91, 0xb6, 0xfa, 0x3c, 0xa8, 0x4f, 0x09,
-	0xfa, 0x04, 0x60, 0x32, 0x92, 0x8f, 0x66, 0x5b, 0xe7, 0xd2, 0x2c, 0x6b, 0xc3, 0xea, 0xd4, 0x5c,
-	0x01, 0xde, 0x93, 0x80, 0x8b, 0x68, 0xa1, 0x13, 0xc0, 0xfa, 0x69, 0x47, 0x2e, 0x98, 0x5d, 0xf4,
-	0x11, 0xc0, 0xf3, 0x51, 0xd0, 0x25, 0xd7, 0x6d, 0x87, 0xab, 0x59, 0xe4, 0xed, 0x70, 0x75, 0x2b,
-	0xd9, 0x5c, 0x90, 0xb8, 0x18, 0xcd, 0x76, 0x85, 0x8b, 0xbe, 0x00, 0x38, 0x18, 0x1b, 0x07, 0x84,
-	0xdb, 0x56, 0xa9, 0x79, 0x85, 0x19, 0x73, 0x9d, 0x3b, 0x28, 0xd2, 0x07, 0x92, 0xf4, 0x16, 0x5a,
-	0xec, 0xb0, 0xf3, 0x61, 0x80, 0xa8, 0xb4, 0x9f, 0x01, 0xbc, 0x10, 0x0b, 0x5c, 0x2b, 0x2e, 0x6e,
-	0x5b, 0xad, 0xee, 0xb0, 0xf5, 0x3b, 0xd4, 0x5c, 0x94, 0xd8, 0xf3, 0x08, 0x77, 0x89, 0x8d, 0xfe,
-	0x02, 0x68, 0xb4, 0x5e, 0x54, 0xe8, 0x4e, 0x67, 0x73, 0xa9, 0xdd, 0x8d, 0xc6, 0xdd, 0xd3, 0x39,
-	0x2b, 0x49, 0xab, 0x52, 0xd2, 0x0a, 0x5a, 0xee, 0x44, 0x92, 0x43, 0x44, 0x3e, 0x7a, 0xe2, 0xf9,
-	0xd7, 0x54, 0x6c, 0xe4, 0xc3, 0xad, 0xc1, 0xf1, 0x0e, 0x2d, 0xf1, 0xdd, 0xec, 0xea, 0xc1, 0x51,
-	0x0a, 0x1c, 0x1e, 0xa5, 0xc0, 0xaf, 0xa3, 0x14, 0x78, 0x77, 0x9c, 0x4a, 0x1c, 0x1e, 0xa7, 0x12,
-	0x3f, 0x8e, 0x53, 0x89, 0x97, 0x0b, 0x0e, 0x15, 0x1b, 0xd5, 0x82, 0x55, 0x64, 0xe5, 0xd6, 0xc9,
-	0xb6, 0x62, 0x67, 0xb1, 0xed, 0x13, 0x5e, 0xe8, 0x97, 0xbf, 0xf8, 0x6e, 0xfe, 0x0b, 0x00, 0x00,
-	0xff, 0xff, 0x88, 0x82, 0xf5, 0xe8, 0x0a, 0x0b, 0x00, 0x00,
+	// 944 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x57, 0x41, 0x6f, 0xdc, 0x44,
+	0x14, 0xce, 0x24, 0x34, 0xb0, 0x6f, 0x29, 0xa2, 0xd3, 0x2d, 0x0a, 0x2e, 0x38, 0x8b, 0x81, 0xa6,
+	0x5a, 0x51, 0xbb, 0xd9, 0x6a, 0x89, 0x80, 0x02, 0xca, 0xa2, 0x12, 0x2a, 0x24, 0x1a, 0x2c, 0x15,
+	0x24, 0x2e, 0xab, 0xd9, 0xf5, 0xd4, 0xb1, 0xf0, 0x7a, 0x5c, 0x8f, 0x17, 0x12, 0x55, 0xb9, 0xf0,
+	0x07, 0x40, 0xe2, 0x07, 0x70, 0xe1, 0x50, 0x24, 0x0e, 0xe5, 0xc4, 0x89, 0x7b, 0x6f, 0x44, 0x70,
+	0xe1, 0x84, 0x50, 0x82, 0x04, 0x3f, 0x03, 0x79, 0x3c, 0xf6, 0x7a, 0xd9, 0xb1, 0xb3, 0xbb, 0xca,
+	0x25, 0x9a, 0x71, 0xde, 0xf7, 0xde, 0xf7, 0xbe, 0xf7, 0xe6, 0x3d, 0x2d, 0xac, 0x7b, 0xc1, 0x3d,
+	0x1a, 0xd1, 0x60, 0x40, 0xad, 0xf1, 0xe9, 0xfe, 0x88, 0x46, 0x07, 0x66, 0x18, 0xb1, 0x98, 0xe1,
+	0x8b, 0xf9, 0x67, 0x33, 0x3f, 0x69, 0x17, 0xc8, 0xd0, 0x0b, 0x98, 0x25, 0xfe, 0xa6, 0x76, 0x5a,
+	0xc3, 0x65, 0x2e, 0x13, 0x47, 0x2b, 0x39, 0xc9, 0xaf, 0x2f, 0xb8, 0x8c, 0xb9, 0x3e, 0xb5, 0x48,
+	0xe8, 0x59, 0x24, 0x08, 0x58, 0x4c, 0x62, 0x8f, 0x05, 0x5c, 0xfe, 0xb7, 0x35, 0x60, 0x7c, 0xc8,
+	0xb8, 0xd5, 0x27, 0x5c, 0x06, 0xb5, 0xbe, 0xd8, 0xec, 0xd3, 0x98, 0x6c, 0x5a, 0x21, 0x71, 0xbd,
+	0x40, 0x18, 0x4b, 0xdb, 0xa6, 0x8a, 0x68, 0x48, 0x22, 0x32, 0xcc, 0xbc, 0xbd, 0xac, 0xb2, 0x18,
+	0xb3, 0x4f, 0x8d, 0x5e, 0x2d, 0x71, 0x13, 0x7b, 0x03, 0x2f, 0x24, 0x41, 0x9c, 0x9a, 0x19, 0x0d,
+	0xc0, 0x1f, 0x27, 0x7c, 0x76, 0x45, 0x00, 0x9b, 0xde, 0x1f, 0x51, 0x1e, 0x1b, 0x77, 0xe1, 0xe2,
+	0xc4, 0x57, 0x1e, 0xb2, 0x80, 0x53, 0xfc, 0x0e, 0xac, 0xa6, 0x44, 0xd6, 0x50, 0x13, 0x5d, 0xad,
+	0xb7, 0x2f, 0x9b, 0x0a, 0xcd, 0xcc, 0x14, 0xd4, 0xad, 0x3d, 0xfe, 0x73, 0x7d, 0xe9, 0xe1, 0x3f,
+	0x8f, 0x5a, 0xc8, 0x96, 0x28, 0xe3, 0x3a, 0xac, 0x09, 0xb7, 0x3b, 0x34, 0xbe, 0x9d, 0x99, 0xcb,
+	0x90, 0xb8, 0x01, 0xe7, 0xbc, 0xc0, 0xa1, 0xfb, 0xc2, 0x75, 0xcd, 0x4e, 0x2f, 0x46, 0x0f, 0x9e,
+	0x57, 0x20, 0x24, 0x9d, 0x2e, 0xd4, 0xf2, 0xa8, 0x92, 0x91, 0xae, 0x64, 0x94, 0x43, 0xbb, 0x4f,
+	0x24, 0xa4, 0xec, 0x31, 0xcc, 0xe8, 0x4b, 0x4a, 0xdb, 0xbe, 0x3f, 0x45, 0xe9, 0x7d, 0x80, 0x71,
+	0x75, 0x64, 0x80, 0x2b, 0x66, 0x5a, 0x4a, 0x33, 0x29, 0xa5, 0x99, 0xf6, 0x8f, 0x2c, 0xa5, 0xb9,
+	0x4b, 0xdc, 0x0c, 0x6b, 0x17, 0x90, 0xc6, 0x43, 0x24, 0xb3, 0x98, 0x0c, 0xa2, 0xce, 0x62, 0x65,
+	0x81, 0x2c, 0xf0, 0xce, 0x04, 0xd3, 0x65, 0xc1, 0x74, 0xe3, 0x54, 0xa6, 0x29, 0x81, 0x09, 0xaa,
+	0x6d, 0xd0, 0x32, 0xbd, 0x77, 0xc7, 0xbd, 0x52, 0x5d, 0x23, 0x17, 0x2e, 0x2b, 0x31, 0x32, 0xbf,
+	0x0f, 0xa0, 0x5e, 0x68, 0x3b, 0x29, 0x63, 0xb3, 0xac, 0x73, 0x32, 0x3b, 0x99, 0x63, 0x11, 0x6a,
+	0x38, 0x92, 0xdc, 0xb6, 0xef, 0x2b, 0xc8, 0x9d, 0x55, 0xb5, 0x1e, 0x21, 0x99, 0xcf, 0xff, 0xc3,
+	0x94, 0xe5, 0xb3, 0xb2, 0x60, 0x3e, 0x67, 0x57, 0xb5, 0x37, 0xe1, 0xca, 0xd4, 0x2b, 0xe1, 0x9f,
+	0x7a, 0xf1, 0xde, 0xad, 0x7d, 0x3a, 0x18, 0xc5, 0x2c, 0xca, 0x1e, 0x36, 0x7e, 0x16, 0x56, 0x3c,
+	0x87, 0x0b, 0xd2, 0x35, 0x3b, 0x39, 0x1a, 0x3f, 0x23, 0xd8, 0x38, 0x15, 0x2c, 0x53, 0xbf, 0x07,
+	0x97, 0xf2, 0xe4, 0x8a, 0x16, 0x52, 0x84, 0x56, 0x75, 0xdb, 0x16, 0x11, 0x52, 0x0e, 0xb5, 0x3b,
+	0xfc, 0x0a, 0x9c, 0xff, 0x68, 0x34, 0xfc, 0x84, 0xf8, 0x9e, 0x43, 0x12, 0x02, 0x42, 0x9b, 0xf3,
+	0xf6, 0xe4, 0x47, 0xe3, 0x3b, 0x04, 0x97, 0x94, 0xce, 0xcf, 0x62, 0x30, 0xe0, 0x2e, 0x3c, 0x45,
+	0xb3, 0xf4, 0x96, 0xe7, 0xea, 0xd9, 0x1c, 0x67, 0xdc, 0x84, 0xa6, 0x90, 0x36, 0x0f, 0xa3, 0x68,
+	0xdb, 0x35, 0x78, 0x92, 0x38, 0x4e, 0x44, 0x39, 0x97, 0xaf, 0x2a, 0xbb, 0x1a, 0x77, 0xe1, 0xa5,
+	0x0a, 0xb4, 0x2c, 0xc9, 0x73, 0xb0, 0x1a, 0x8e, 0xfa, 0x9f, 0xd3, 0x03, 0x89, 0x96, 0xb7, 0xc4,
+	0x6d, 0x9f, 0xf8, 0x24, 0x11, 0x20, 0x61, 0xbf, 0x62, 0x67, 0x57, 0x63, 0x1d, 0x5e, 0xcc, 0xea,
+	0x6d, 0x93, 0xc0, 0x61, 0xc3, 0x4c, 0xb6, 0x6c, 0xf8, 0x3b, 0xa0, 0x97, 0x19, 0xe4, 0x23, 0x6b,
+	0xac, 0x0d, 0x5a, 0x4c, 0x9b, 0xf6, 0xaf, 0x75, 0x38, 0x27, 0xc2, 0xe0, 0xaf, 0x11, 0xac, 0xa6,
+	0x3b, 0x03, 0x6f, 0x28, 0xdd, 0x4c, 0x2f, 0x28, 0xed, 0xea, 0xe9, 0x86, 0x29, 0x57, 0xa3, 0xfd,
+	0xd5, 0xef, 0x7f, 0x7f, 0xbb, 0xfc, 0x1a, 0x6e, 0x59, 0x61, 0xc4, 0x9c, 0xd1, 0x20, 0xe6, 0x03,
+	0xaf, 0x6c, 0x75, 0xca, 0x35, 0x8b, 0x7f, 0x40, 0x50, 0xcb, 0x55, 0xc7, 0xd7, 0xca, 0x63, 0x29,
+	0x16, 0x99, 0x66, 0xce, 0x6a, 0x2e, 0x09, 0xbe, 0x2d, 0x08, 0x6e, 0xe1, 0xce, 0x2c, 0x04, 0xc7,
+	0xa7, 0x07, 0x62, 0xf8, 0x1e, 0xe2, 0xef, 0x11, 0x3c, 0x9d, 0x3b, 0xdd, 0xf6, 0xfd, 0x2a, 0xba,
+	0x8a, 0x25, 0x57, 0x45, 0x57, 0xb5, 0xae, 0x8c, 0x8e, 0xa0, 0x6b, 0xe1, 0x6b, 0x73, 0xd1, 0xc5,
+	0x3f, 0x21, 0xa8, 0x17, 0xda, 0x01, 0x5b, 0x95, 0x2a, 0x4d, 0xbf, 0x13, 0xed, 0xfa, 0xec, 0x00,
+	0xc9, 0xf4, 0x5d, 0xc1, 0xf4, 0x0d, 0xbc, 0x35, 0x63, 0xe5, 0x33, 0x07, 0xb9, 0xb4, 0x3f, 0x22,
+	0x78, 0xa6, 0xe0, 0x38, 0x11, 0xd7, 0xaa, 0x54, 0x6b, 0x3e, 0xda, 0xea, 0xfd, 0x62, 0x6c, 0x09,
+	0xda, 0x9b, 0xd8, 0x9a, 0x93, 0x36, 0xfe, 0x17, 0x81, 0x56, 0x3e, 0xc4, 0xf1, 0x5b, 0xb3, 0xf5,
+	0xa5, 0x72, 0x6f, 0x68, 0x37, 0x17, 0x03, 0xcb, 0x94, 0xee, 0x88, 0x94, 0x6e, 0xe3, 0x9d, 0x59,
+	0x52, 0x72, 0x69, 0xdc, 0xcb, 0x6f, 0xbc, 0xf7, 0xa5, 0x17, 0xef, 0xf5, 0xb2, 0xa9, 0xc1, 0xad,
+	0x07, 0x9e, 0xc3, 0x0f, 0xf1, 0x6f, 0x08, 0x1a, 0xaa, 0xb1, 0x88, 0x3b, 0xe5, 0x3c, 0x2b, 0x86,
+	0xb0, 0xf6, 0xfa, 0xbc, 0x30, 0x99, 0xd8, 0x87, 0x22, 0xb1, 0x5b, 0xf8, 0xbd, 0xb9, 0x1e, 0x43,
+	0x6f, 0xa2, 0xd9, 0xe4, 0xb8, 0x3f, 0xc4, 0xbf, 0x20, 0xb8, 0x30, 0x35, 0x73, 0x71, 0xbb, 0x52,
+	0x79, 0xe5, 0x04, 0xd7, 0x6e, 0xcc, 0x85, 0x59, 0xe4, 0xb9, 0x24, 0x45, 0x8a, 0x84, 0x9f, 0xbc,
+	0x36, 0xdd, 0x3b, 0x8f, 0x8f, 0x75, 0x74, 0x74, 0xac, 0xa3, 0xbf, 0x8e, 0x75, 0xf4, 0xcd, 0x89,
+	0xbe, 0x74, 0x74, 0xa2, 0x2f, 0xfd, 0x71, 0xa2, 0x2f, 0x7d, 0xd6, 0x71, 0xbd, 0x78, 0x6f, 0xd4,
+	0x37, 0x07, 0x6c, 0x58, 0xee, 0x7c, 0xbf, 0x70, 0x8e, 0x0f, 0x42, 0xca, 0xfb, 0xab, 0xe2, 0x27,
+	0xca, 0x8d, 0xff, 0x02, 0x00, 0x00, 0xff, 0xff, 0x9d, 0x9e, 0xcc, 0x6e, 0xbb, 0x0d, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -728,6 +917,10 @@ type QueryClient interface {
 	ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error)
 	// Queries a list of GetInferencesWithExecutors items.
 	GetInferencesWithExecutors(ctx context.Context, in *QueryGetInferencesWithExecutorsRequest, opts ...grpc.CallOption) (*QueryGetInferencesWithExecutorsResponse, error)
+	// Queries a list of InferenceParticipant items.
+	InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error)
+	// Queries a list of GetRandomExecutor items.
+	GetRandomExecutor(ctx context.Context, in *QueryGetRandomExecutorRequest, opts ...grpc.CallOption) (*QueryGetRandomExecutorResponse, error)
 }
 
 type queryClient struct {
@@ -792,6 +985,24 @@ func (c *queryClient) GetInferencesWithExecutors(ctx context.Context, in *QueryG
 	return out, nil
 }
 
+func (c *queryClient) InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error) {
+	out := new(QueryInferenceParticipantResponse)
+	err := c.cc.Invoke(ctx, "/inference.inference.Query/InferenceParticipant", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetRandomExecutor(ctx context.Context, in *QueryGetRandomExecutorRequest, opts ...grpc.CallOption) (*QueryGetRandomExecutorResponse, error) {
+	out := new(QueryGetRandomExecutorResponse)
+	err := c.cc.Invoke(ctx, "/inference.inference.Query/GetRandomExecutor", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 type QueryServer interface {
 	// Parameters queries the parameters of the module.
@@ -804,6 +1015,10 @@ type QueryServer interface {
 	ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 	// Queries a list of GetInferencesWithExecutors items.
 	GetInferencesWithExecutors(context.Context, *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error)
+	// Queries a list of InferenceParticipant items.
+	InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error)
+	// Queries a list of GetRandomExecutor items.
+	GetRandomExecutor(context.Context, *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error)
 }
 
 // UnimplementedQueryServer can be embedded to have forward compatible implementations.
@@ -827,6 +1042,12 @@ func (*UnimplementedQueryServer) ParticipantAll(ctx context.Context, req *QueryA
 }
 func (*UnimplementedQueryServer) GetInferencesWithExecutors(ctx context.Context, req *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetInferencesWithExecutors not implemented")
+}
+func (*UnimplementedQueryServer) InferenceParticipant(ctx context.Context, req *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceParticipant not implemented")
+}
+func (*UnimplementedQueryServer) GetRandomExecutor(ctx context.Context, req *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRandomExecutor not implemented")
 }
 
 func RegisterQueryServer(s grpc1.Server, srv QueryServer) {
@@ -941,6 +1162,42 @@ func _Query_GetInferencesWithExecutors_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferenceParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryInferenceParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Query/InferenceParticipant",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceParticipant(ctx, req.(*QueryInferenceParticipantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetRandomExecutor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetRandomExecutorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetRandomExecutor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Query/GetRandomExecutor",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetRandomExecutor(ctx, req.(*QueryGetRandomExecutorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Query_serviceDesc = _Query_serviceDesc
 var _Query_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.inference.Query",
@@ -969,6 +1226,14 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetInferencesWithExecutors",
 			Handler:    _Query_GetInferencesWithExecutors_Handler,
+		},
+		{
+			MethodName: "InferenceParticipant",
+			Handler:    _Query_InferenceParticipant_Handler,
+		},
+		{
+			MethodName: "GetRandomExecutor",
+			Handler:    _Query_GetRandomExecutor_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1442,6 +1707,127 @@ func (m *InferenceWithExecutor) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *QueryInferenceParticipantRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryInferenceParticipantRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryInferenceParticipantRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Address) > 0 {
+		i -= len(m.Address)
+		copy(dAtA[i:], m.Address)
+		i = encodeVarintQuery(dAtA, i, uint64(len(m.Address)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryInferenceParticipantResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryInferenceParticipantResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryInferenceParticipantResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Balance != 0 {
+		i = encodeVarintQuery(dAtA, i, uint64(m.Balance))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Pubkey) > 0 {
+		i -= len(m.Pubkey)
+		copy(dAtA[i:], m.Pubkey)
+		i = encodeVarintQuery(dAtA, i, uint64(len(m.Pubkey)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryGetRandomExecutorRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryGetRandomExecutorRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryGetRandomExecutorRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryGetRandomExecutorResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryGetRandomExecutorResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryGetRandomExecutorResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Executor.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintQuery(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintQuery(dAtA []byte, offset int, v uint64) int {
 	offset -= sovQuery(v)
 	base := offset
@@ -1626,6 +2012,55 @@ func (m *InferenceWithExecutor) Size() (n int) {
 	_ = l
 	l = m.Inference.Size()
 	n += 1 + l + sovQuery(uint64(l))
+	l = m.Executor.Size()
+	n += 1 + l + sovQuery(uint64(l))
+	return n
+}
+
+func (m *QueryInferenceParticipantRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Address)
+	if l > 0 {
+		n += 1 + l + sovQuery(uint64(l))
+	}
+	return n
+}
+
+func (m *QueryInferenceParticipantResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Pubkey)
+	if l > 0 {
+		n += 1 + l + sovQuery(uint64(l))
+	}
+	if m.Balance != 0 {
+		n += 1 + sovQuery(uint64(m.Balance))
+	}
+	return n
+}
+
+func (m *QueryGetRandomExecutorRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *QueryGetRandomExecutorResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
 	l = m.Executor.Size()
 	n += 1 + l + sovQuery(uint64(l))
 	return n
@@ -2760,6 +3195,322 @@ func (m *InferenceWithExecutor) Unmarshal(dAtA []byte) error {
 			}
 			iNdEx = postIndex
 		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Executor", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Executor.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryInferenceParticipantRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryInferenceParticipantRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryInferenceParticipantRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Address = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryInferenceParticipantResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryInferenceParticipantResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryInferenceParticipantResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pubkey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pubkey = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Balance", wireType)
+			}
+			m.Balance = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Balance |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryGetRandomExecutorRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryGetRandomExecutorRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryGetRandomExecutorRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryGetRandomExecutorResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryGetRandomExecutorResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryGetRandomExecutorResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Executor", wireType)
 			}

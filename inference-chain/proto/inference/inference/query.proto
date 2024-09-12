@@ -46,6 +46,19 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/get_inferences_with_executors/{ids}";
 
   }
+
+  // Queries a list of InferenceParticipant items.
+  rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
+
+
+  }
+
+  // Queries a list of GetRandomExecutor items.
+  rpc GetRandomExecutor (QueryGetRandomExecutorRequest) returns (QueryGetRandomExecutorResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_random_executor";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -70,8 +83,8 @@ message QueryAllInferenceRequest {
 }
 
 message QueryAllInferenceResponse {
-  repeated Inference                              inference = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  repeated Inference                              inference  = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetParticipantRequest {
@@ -88,7 +101,7 @@ message QueryAllParticipantRequest {
 
 message QueryAllParticipantResponse {
   repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+           cosmos.base.query.v1beta1.PageResponse pagination  = 2;
 }
 
 message QueryGetInferencesWithExecutorsRequest {
@@ -97,11 +110,25 @@ message QueryGetInferencesWithExecutorsRequest {
 
 message QueryGetInferencesWithExecutorsResponse {
   repeated InferenceWithExecutor inferenceWithExecutor = 1 [(gogoproto.nullable) = false];
-  uint32 NumValidators = 2;
+           uint32                NumValidators         = 2;
 }
 
 message InferenceWithExecutor {
-  Inference inference = 1 [(gogoproto.nullable) = false];
-  Participant    executor = 2 [(gogoproto.nullable) = false];
+  Inference   inference = 1 [(gogoproto.nullable) = false];
+  Participant executor  = 2 [(gogoproto.nullable) = false];
 }
 
+message QueryInferenceParticipantRequest {
+  string address = 1;
+}
+
+message QueryInferenceParticipantResponse {
+  string pubkey  = 1;
+  int64  balance = 2;
+}
+
+message QueryGetRandomExecutorRequest {}
+
+message QueryGetRandomExecutorResponse {
+  Participant executor = 1 [(gogoproto.nullable) = false];
+}

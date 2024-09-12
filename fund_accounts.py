@@ -16,6 +16,7 @@ COIN_DENOM = "icoin"
 STATE_DIR_NAME = ".inference"
 # Define MOUNT_PATH in Python
 MOUNT_PATH = os.path.join(os.getcwd(), "prod-sim")
+fundingAmount = "20000000icoin"
 
 
 def get_or_create_account(port, name, funded_address=None, funded_name=None):
@@ -57,7 +58,7 @@ def fund_account(extracted_address, funded_address, funded_name, name, port):
         f"-v{MOUNT_PATH}/requester:/root/{STATE_DIR_NAME}",
         "--network", "inference-ignite_net-public",
         IMAGE_NAME, APP_NAME, "tx", "bank", "send",
-        funded_address, extracted_address, "200000icoin",
+        funded_address, extracted_address, fundingAmount,
         "--keyring-backend", "test",
         f"--keyring-dir=/root/{STATE_DIR_NAME}",
         f"--chain-id={CHAIN_ID}", "--yes",

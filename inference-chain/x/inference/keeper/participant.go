@@ -138,18 +138,6 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	return
 }
 
-func (k Keeper) GetParticipantCounter(ctx context.Context) uint32 {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, []byte{})
-
-	b := store.Get(types.ParticipantCounterKey())
-	if b == nil {
-		return 0
-	}
-
-	return binary.BigEndian.Uint32(b)
-}
-
 func (k Keeper) setParticipantCounter(counter uint32, ctx context.Context) uint32 {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte{})
