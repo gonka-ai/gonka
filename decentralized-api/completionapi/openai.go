@@ -1,8 +1,9 @@
 package completionapi
 
-type StreamedResponse struct {
-	Data []Response `json:"data"`
-}
+import (
+	"encoding/json"
+	"strings"
+)
 
 type Response struct {
 	ID                string   `json:"id"`
@@ -50,4 +51,32 @@ type Usage struct {
 	PromptTokens     uint64 `json:"prompt_tokens"`
 	CompletionTokens uint64 `json:"completion_tokens"`
 	TotalTokens      uint64 `json:"total_tokens"`
+}
+
+const DataPrefix = "data: "
+
+type SerializedStreamedResponse struct {
+	Events []string `json:"events"`
+}
+
+type StreamedResponse struct {
+	Data []Response `json:"data"`
+}
+
+func UnmarshalEvent(event string) (*Response, error) {
+	if !strings.HasPrefix(event, DataPrefix) {
+		return nil, nil
+	}
+
+	trimmed := strings.TrimSpace(strings.TrimPrefix(event, DataPrefix))
+	if strings.HasPrefix(trimmed, "[DONE]") {
+		return nil, nil
+	}
+
+	var response Response
+	if err := json.Unmarshal([]byte(trimmed), &response); err != nil {
+		return nil, err
+	}
+
+	return &response, nil
 }

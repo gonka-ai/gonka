@@ -8,6 +8,7 @@ import (
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
@@ -165,15 +166,19 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
-	// PRTODO: unmarshal in either
-	var originalResponse completionapi.Response
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
+	originalResponse, err := unmarshalResponse(&inference)
+	if err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
 		return nil, err
 	}
 
-	//goland:noinspection GoDfaNilDereference
-	requestMap["enforced_str"] = originalResponse.Choices[0].Message.Content
+	enforcedStr, err := originalResponse.GetEnforcedStr()
+	if err != nil {
+		return nil, err
+	}
+	requestMap["enforced_str"] = enforcedStr
+	// A hack to simplify processing the response:
+	requestMap["stream"] = false
 
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
@@ -202,7 +207,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	}
 
 	originalLogits := extractLogits(originalResponse)
-	validationLogits := extractLogits(responseValidation)
+	validationLogits := extractLogitsFromJsonResponse(responseValidation)
 	baseResult := BaseValidationResult{
 		InferenceId:   inference.InferenceId,
 		ResponseBytes: respBodyBytes,
@@ -211,11 +216,77 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func extractLogits(response completionapi.Response) []completionapi.Logprob {
+type UnmarshalledResponse struct {
+	JsonResponse     *completionapi.Response
+	StreamedResponse *completionapi.StreamedResponse
+}
+
+func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
+	if r.JsonResponse != nil {
+		return r.JsonResponse.Choices[0].Message.Content, nil
+	} else if r.StreamedResponse != nil {
+		return r.StreamedResponse.Data[0].Choices[0].Message.Content, nil
+	} else {
+		return "", errors.New("UnmarshalledResponse has no valid response")
+	}
+}
+
+func unmarshalResponse(inference *types.Inference) (*UnmarshalledResponse, error) {
+	var originalResponse completionapi.Response
+	err1 := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse)
+	if err1 == nil {
+		log.Printf("Unmarshalled json response. inference.id = %s", inference.InferenceId)
+		return &UnmarshalledResponse{JsonResponse: &originalResponse}, nil
+	}
+
+	var streamedResponse completionapi.SerializedStreamedResponse
+	err2 := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse)
+	if err2 == nil {
+		log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
+		var unmarshalledEvents []completionapi.Response
+		for _, line := range streamedResponse.Events {
+			event, err := completionapi.UnmarshalEvent(line)
+			if err != nil {
+				// PRTODO: ???
+				return nil, err
+			}
+			if event != nil {
+				unmarshalledEvents = append(unmarshalledEvents, *event)
+			}
+		}
+		return &UnmarshalledResponse{StreamedResponse: &completionapi.StreamedResponse{Data: unmarshalledEvents}}, nil
+	}
+
+	msg := fmt.Sprintf("Failed to unmarshal inference.ResponsePayload. id = %v. err1 = %v. err2 = %v", inference.InferenceId, err1, err2)
+	return nil, errors.New(msg)
+}
+
+func extractLogits(response *UnmarshalledResponse) []completionapi.Logprob {
+	if response.JsonResponse != nil {
+		return extractLogitsFromJsonResponse(*response.JsonResponse)
+	} else if response.StreamedResponse != nil {
+		return extractLogitsFromStreamedResponse(*response.StreamedResponse)
+	} else {
+		return nil
+	}
+}
+
+func extractLogitsFromJsonResponse(response completionapi.Response) []completionapi.Logprob {
 	var logits []completionapi.Logprob
 	// Concatenate all logrpobs
 	for _, c := range response.Choices {
 		logits = append(logits, c.Logprobs.Content...)
+	}
+	return logits
+}
+
+func extractLogitsFromStreamedResponse(response completionapi.StreamedResponse) []completionapi.Logprob {
+	// PRTODO: review this
+	var logits []completionapi.Logprob
+	for _, r := range response.Data {
+		for _, c := range r.Choices {
+			logits = append(logits, c.Logprobs.Content...)
+		}
 	}
 	return logits
 }

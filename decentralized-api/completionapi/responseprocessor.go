@@ -19,10 +19,6 @@ type ExecutorResponseProcessor struct {
 	streamedResponse  []string
 }
 
-type SerializedStreamedResponse struct {
-	Events []string `json:"events"`
-}
-
 func NewExecutorResponseProcessor(inferenceId string) *ExecutorResponseProcessor {
 	return &ExecutorResponseProcessor{
 		inferenceId:       inferenceId,
@@ -41,8 +37,6 @@ func (rt ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([
 
 	return updatedBodyBytes, nil
 }
-
-const DataPrefix = "data: "
 
 func (rt ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
 	updatedLine, err := getUpdatedLine(line, rt.inferenceId)
