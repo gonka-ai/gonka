@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strings"
 )
 
 func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
@@ -225,9 +226,15 @@ func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
 	if r.JsonResponse != nil {
 		return r.JsonResponse.Choices[0].Message.Content, nil
 	} else if r.StreamedResponse != nil {
-		return r.StreamedResponse.Data[0].Choices[0].Message.Content, nil
+		var stringBuilder strings.Builder
+		for _, event := range r.StreamedResponse.Data {
+			if event.Choices[0].Delta.Content != nil {
+				stringBuilder.WriteString(*event.Choices[0].Delta.Content)
+			}
+		}
+		return stringBuilder.String(), nil
 	} else {
-		return "", errors.New("UnmarshalledResponse has no valid response")
+		return "", errors.New("UnmarshalledResponse has invalid state, both responses are nil")
 	}
 }
 
@@ -281,7 +288,6 @@ func extractLogitsFromJsonResponse(response completionapi.Response) []completion
 }
 
 func extractLogitsFromStreamedResponse(response completionapi.StreamedResponse) []completionapi.Logprob {
-	// PRTODO: review this
 	var logits []completionapi.Logprob
 	for _, r := range response.Data {
 		for _, c := range r.Choices {
