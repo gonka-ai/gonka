@@ -12,8 +12,9 @@ type Response struct {
 }
 
 type Choice struct {
-	Index    int     `json:"index"`
-	Message  Message `json:"message"`
+	Index    int      `json:"index"`
+	Message  *Message `json:"message"`
+	Delta    *Message `json:"delta"`
 	Logprobs struct {
 		Content []Logprob `json:"content"`
 	} `json:"logprobs"`

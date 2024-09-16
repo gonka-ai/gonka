@@ -1,4 +1,4 @@
-package broker
+package completionapi
 
 import (
 	"encoding/json"
@@ -432,6 +432,127 @@ const (
     "completion_tokens": 8
   }
 }`
+	START_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "role": "assistant"
+      },
+      "logprobs": null,
+      "finish_reason": null
+	}
+  ]
+}
+`
+	MID_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "content": "."
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": ".",
+            "logprob": -0.04858766868710518,
+            "bytes": [
+              46
+            ],
+            "top_logprobs": [
+              {
+                "token": ".",
+                "logprob": -0.04858766868710518,
+                "bytes": [
+                  46
+                ]
+              },
+              {
+                "token": ",",
+                "logprob": -3.0485875606536865,
+                "bytes": [
+                  44
+                ]
+              },
+              {
+                "token": " when",
+                "logprob": -15.673587799072266,
+                "bytes": [
+                  32,
+                  119,
+                  104,
+                  101,
+                  110
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "finish_reason": null
+    }
+  ]
+}
+`
+	END_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "content": ""
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": "",
+            "logprob": -2.264974000354414e-6,
+            "bytes": [],
+            "top_logprobs": [
+              {
+                "token": "",
+                "logprob": -2.264974000354414e-6,
+                "bytes": []
+              },
+              {
+                "token": " It",
+                "logprob": -13.000001907348633,
+                "bytes": [
+                  32,
+                  73,
+                  116
+                ]
+              },
+              {
+                "token": "",
+                "logprob": -19.000001907348633,
+                "bytes": []
+              }
+            ]
+          }
+        ]
+      },
+      "finish_reason": "stop",
+      "stop_reason": null
+    }
+  ]
+}
+`
 )
 
 func TestNoLogprobsAnswer(t *testing.T) {
