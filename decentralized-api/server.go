@@ -246,7 +246,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 
 	defer resp.Body.Close()
 
-	proxyResponse(resp, w, false)
+	proxyResponse(resp, w, false, nil)
 
 	return true
 }
@@ -268,7 +268,7 @@ func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
 		}
 		defer resp.Body.Close()
 
-		proxyResponse(resp, w, false)
+		proxyResponse(resp, w, false, nil)
 	}
 }
 
@@ -278,6 +278,7 @@ func proxyResponse(
 	resp *http.Response,
 	w http.ResponseWriter,
 	excludeContentLength bool,
+	responseProcessor completionapi.ResponseProcessor,
 ) {
 	// Make sure to copy response headers to the client
 	for key, values := range resp.Header {
@@ -291,20 +292,18 @@ func proxyResponse(
 		}
 	}
 
-	w.WriteHeader(resp.StatusCode)
-
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
 		proxyTextStreamResponse(resp, w)
 	} else {
-		// Copy the body from the final server response
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			log.Printf("Error copying response body: %v", err)
-		}
+		proxyJsonResponse(resp, w, responseProcessor)
 	}
 }
 
+// PRTODO: add responseProcessor
 func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter) {
+	w.WriteHeader(resp.StatusCode)
+
 	// Stream the response from the completion server to the client
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -317,13 +316,31 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter) {
 		_, err := fmt.Fprintln(w, line)
 		if err != nil {
 			log.Printf("Error while streaming response: %v", err)
-			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		log.Printf("Error while streaming response: %v", err)
 	}
+}
+
+func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor) {
+	var bodyBytes, err = io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read inference node response body", http.StatusInternalServerError)
+		return
+	}
+
+	if responseProcessor != nil {
+		bodyBytes, err = responseProcessor.AddIdToJsonResponse(bodyBytes)
+		if err != nil {
+			http.Error(w, "Failed to add ID to response", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	w.Write(bodyBytes)
 }
 
 func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
@@ -407,9 +424,14 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		// PRTODO: What should we do here?
 	}
 
-	proxyResponse(resp, w, true)
+	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
+	proxyResponse(resp, w, true, responseProcessor)
+	responseBodyBytes, err := responseProcessor.GetResponseBytes()
+	if err != nil {
+		// Not returning http.Error, because we assume that it was handled in proxyResponse
+		return true
+	}
 
-	var responseBodyBytes []byte // PRTODO: initialize
 	// PRTODO: process error
 	sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, &recorder, config.ChainNode.AccountName)
 
