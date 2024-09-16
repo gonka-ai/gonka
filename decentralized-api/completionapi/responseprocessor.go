@@ -27,7 +27,7 @@ func NewExecutorResponseProcessor(inferenceId string) *ExecutorResponseProcessor
 	}
 }
 
-func (rt ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([]byte, error) {
+func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([]byte, error) {
 	updatedBodyBytes, err := addOrReplaceIdValue(responseBytes, rt.inferenceId)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (rt ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([
 	return updatedBodyBytes, nil
 }
 
-func (rt ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
+func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
 	updatedLine, err := getUpdatedLine(line, rt.inferenceId)
 	rt.streamedResponse = append(rt.streamedResponse, updatedLine)
 	return updatedLine, err
@@ -74,7 +74,7 @@ func addOrReplaceIdValue(bytes []byte, id string) ([]byte, error) {
 	return json.Marshal(bodyMap)
 }
 
-func (rt ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
+func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 	if rt.jsonResponseBytes != nil {
 		return rt.jsonResponseBytes, nil
 	} else if rt.streamedResponse != nil {
