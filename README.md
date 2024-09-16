@@ -1,1 +1,1 @@
-# proof-of-work
+# Proof of Work v2
