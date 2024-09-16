@@ -590,3 +590,57 @@ func TestTopLogprobsAnswer(t *testing.T) {
 	}
 	t.Logf("Response: %v", r)
 }
+
+func TestStartCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(START_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if *delta.Role != "assistant" {
+		t.Fatalf("Expected role to be assistant, got %s", *delta.Role)
+	}
+}
+
+func TestMidCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(MID_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if delta.Content == nil {
+		t.Fatalf("Expected content to be non-empty, got empty")
+	}
+}
+
+func TestEndCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(END_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if delta.Content == nil {
+		t.Fatalf("Expected content to be non-empty, got empty")
+	}
+}
+
+func assertStreamedEventChoices(t *testing.T, r Response) *Delta {
+	if len(r.Choices) != 1 {
+		t.Fatalf("Expected 1 choices, got %d", len(r.Choices))
+	}
+
+	if r.Choices[0].Delta == nil {
+		t.Fatalf("Expected delta to be non-nil, got nil")
+	}
+
+	return r.Choices[0].Delta
+}
