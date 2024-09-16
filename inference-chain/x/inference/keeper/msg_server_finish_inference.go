@@ -44,9 +44,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
 	if refundAmount > 0 {
 		if requester.Address == executor.Address {
-			executor.CoinBalance += refundAmount
+			executor.RefundBalance += refundAmount
 		} else {
-			requester.CoinBalance += refundAmount
+			requester.RefundBalance += refundAmount
 			k.SetParticipant(ctx, requester)
 		}
 	}

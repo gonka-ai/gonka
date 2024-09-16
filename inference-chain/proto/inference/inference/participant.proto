@@ -30,4 +30,5 @@ message Participant {
   // I don't see how a negative balance makes sense
   uint64 coinBalance = 16;
   string validatorKey = 17;
+  uint64 refundBalance = 18;
 }

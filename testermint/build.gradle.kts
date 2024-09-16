@@ -18,6 +18,8 @@ dependencies {
     implementation("org.tinylog:tinylog-api-kotlin:2.8.0-M1")
     implementation("org.tinylog:tinylog-impl:2.8.0-M1")
     testImplementation(kotlin("test"))
+    // Add AssertJ for fluent assertions
+    testImplementation("org.assertj:assertj-core:3.26.3")
 }
 
 tasks.test {

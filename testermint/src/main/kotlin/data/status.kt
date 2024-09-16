@@ -33,11 +33,11 @@ data class Other(
 data class SyncInfo(
     val latestBlockHash: String,
     val latestAppHash: String,
-    val latestBlockHeight: Int,
+    val latestBlockHeight: Long,
     val latestBlockTime: String,
     val earliestBlockHash: String,
     val earliestAppHash: String,
-    val earliestBlockHeight: Int,
+    val earliestBlockHeight: Long,
     val earliestBlockTime: Instant,
     val catchingUp: Boolean
 )

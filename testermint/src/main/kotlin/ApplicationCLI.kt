@@ -8,27 +8,7 @@ import com.productscience.data.BalanceResponse
 import com.productscience.data.NodeInfoResponse
 import com.productscience.data.TxResponse
 import com.productscience.data.Validator
-import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
-
-interface HasConfig {
-    val config: ApplicationConfig
-    fun <T> wrapLog(operation: String, block: () -> T): T {
-        val outerContext = ThreadContext.getMapping()
-        ThreadContext.put("operation", operation)
-        ThreadContext.put("pair", config.pairName)
-        Logger.info("Start $operation")
-        val result = block()
-        Logger.debug("End $operation")
-        ThreadContext.remove("operation")
-        ThreadContext.remove("pair")
-        outerContext.forEach {
-            ThreadContext.put(it.key, it.value)
-        }
-        return result
-    }
-
-}
 
 // Usage
 data class ApplicationCLI(val containerId: String, override val config: ApplicationConfig) : HasConfig {
@@ -36,7 +16,8 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         .build()
 
     fun waitForMinimumBlock(minBlockHeight: Long) {
-        wrapLog("waitForMinimumBlock") {
+        wrapLog("waitForMinimumBlock", false) {
+            Logger.info("Waiting for block height to reach $minBlockHeight")
             while (true) {
                 val currentState = getStatus()
                 val currentBlock = currentState.syncInfo.latestBlockHeight
@@ -44,14 +25,14 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
                     Logger.info("Block height reached $currentBlock")
                     break
                 }
-                Logger.info("Current block height is $currentBlock, waiting...")
+                Logger.debug("Current block height is $currentBlock, waiting...")
                 Thread.sleep(1000)
             }
         }
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
-        wrapLog("waitForNextBlock") {
+        wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
             val currentBlock = currentState.syncInfo.latestBlockHeight
             Logger.info("Waiting for block + $blocksToWait after $currentBlock")
@@ -59,19 +40,19 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
                 val newState = getStatus()
                 val newBlock = newState.syncInfo.latestBlockHeight
                 if (newBlock >= currentBlock + blocksToWait) {
-                    Logger.info("New block height is $newBlock")
+                    Logger.info("Block height reached $newBlock")
                     break
                 }
-                Logger.info("Current block height is $newBlock, waiting...")
+                Logger.debug("Current block height is $newBlock, waiting...")
                 Thread.sleep(1000)
             }
         }
     }
 
-    fun getStatus(): NodeInfoResponse = wrapLog("getStatus") { execAndParse(listOf("status")) }
+    fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
     var addresss: String? = null
-    fun getAddress(): String = wrapLog("getAddress") {
+    fun getAddress(): String = wrapLog("getAddress", false) {
         if (addresss == null) {
             addresss = getKeys()[0].address
         }
@@ -79,20 +60,20 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     }
 
     // Use TypeToken to properly deserialize List<Validator>
-    fun getKeys(): List<Validator> = wrapLog("getKeys") {
+    fun getKeys(): List<Validator> = wrapLog("getKeys", false) {
         execAndParseWithType(
             object : TypeToken<List<Validator>>() {},
             listOf("keys", "list")
         )
     }
 
-    fun getSelfBalance(denom: String): Long = wrapLog("getSelfBalance") {
-        val account = getKeys()[0].address
+    fun getSelfBalance(denom: String): Long = wrapLog("getSelfBalance", false) {
+        val account = getAddress()
         val balance = getBalance(account, denom)
         balance.balance.amount
     }
 
-    fun getBalance(address: String, denom: String): BalanceResponse = wrapLog("getBalance") {
+    fun getBalance(address: String, denom: String): BalanceResponse = wrapLog("getBalance", false) {
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
@@ -103,7 +84,7 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
         Logger.debug("Output:$output")
-        return gson.fromJson(output, T::class.java)
+        return gsonSnakeCase.fromJson(output, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
@@ -113,7 +94,7 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
         Logger.debug("Output:$output")
-        return gson.fromJson(output, typeToken.type)
+        return gsonSnakeCase.fromJson(output, typeToken.type)
     }
 
 
@@ -131,7 +112,7 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         return output.output
     }
 
-    fun signPayload(payload: String): String = wrapLog("signPayload") {
+    fun signPayload(payload: String): String = wrapLog("signPayload", true) {
         val response = this.exec(
             listOf(
                 config.appName,
@@ -146,7 +127,7 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         response[1].dropWhile { it != ' ' }.drop(1)
     }
 
-    fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo") {
+    fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
         val sourceAccount = this.getKeys()[0].address
         val destAccount = destinationNode.getKeys()[0].address
         val response = this.execAndParse<TxResponse>(
@@ -175,5 +156,44 @@ class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
     val output = mutableListOf<String>()
     override fun onNext(frame: Frame) {
         output.add(String(frame.payload).trim())
+    }
+}
+
+class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
+    var currentHeight = 0L
+    override fun onNext(frame: Frame) = logContext(
+        mapOf(
+            "operation" to type,
+            "pair" to name,
+            "source" to "container"
+        )
+    ) {
+        val logEntry = String(frame.payload).trim()
+        if (logEntry.contains("committed state")) {
+            // extract out height=123
+
+            "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
+                val height = it.groupValues[1].toLong()
+                if (height > currentHeight) {
+                    Logger.info("Block height:$height")
+                    currentHeight = height
+                }
+            }
+        }
+
+        if (logEntry.contains("INFO+")) {
+            Logger.info(logEntry)
+        } else if (logEntry.contains("INF")) {
+            // We map this to debug as there is a LOT of info level logs
+            Logger.debug(logEntry)
+        } else if (logEntry.contains("ERR")) {
+            Logger.error(logEntry)
+        } else if (logEntry.contains("DBG")) {
+            Logger.debug(logEntry)
+        } else if (logEntry.contains("WRN")) {
+            Logger.warn(logEntry)
+        } else {
+            Logger.trace(logEntry)
+        }
     }
 }

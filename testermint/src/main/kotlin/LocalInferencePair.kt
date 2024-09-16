@@ -4,7 +4,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
-import kotlin.math.sign
+import java.time.Instant
 
 val nameExtractor = "inference-ignite-(.+)-node-1".toRegex()
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
@@ -16,6 +16,17 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val name = nameExtractor.find(it.names.first())!!.groupValues[1]
         val matchingApi = apis.find { it.names.any { it.contains(name) } }!!
         val configWithName = config.copy(pairName = name)
+        dockerClient.logContainerCmd(it.id)
+            .withTailAll()
+            .withSince(Instant.now().epochSecond.toInt())
+            .withStdErr(true)
+            .withStdOut(true)
+            .withFollowStream(true)
+            .exec(LogOutput(name, "node"))
+        dockerClient.logContainerCmd(matchingApi.id).withTailAll().withStdErr(true).withStdOut(true)
+            .withFollowStream(true)
+            .exec(LogOutput(name, "api"))
+
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
             ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
@@ -45,6 +56,10 @@ data class LocalInferencePair(
         val signature = node.signPayload(request)
         val address = node.getAddress()
         return api.makeInferenceRequest(request, address, signature)
+    }
+
+    fun getCurrentBlockHeight(): Long {
+        return node.getStatus().syncInfo.latestBlockHeight
     }
 }
 

@@ -16,23 +16,23 @@ import com.productscience.data.ParticipantsResponse
 import org.tinylog.kotlin.Logger
 
 data class ApplicationAPI(val url: String, override val config: ApplicationConfig) : HasConfig {
-    fun getParticipants(): List<Participant> = wrapLog("GetParticipants") {
+    fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val resp = Fuel.get("$url/v1/participants")
-            .responseObject<ParticipantsResponse>(gsonDeserializer(gson))
+            .responseObject<ParticipantsResponse>(gsonDeserializer(gsonSnakeCase))
         logResponse(resp)
         resp.third.get().participants
     }
 
-    fun addInferenceParticipant(inferenceParticipant: InferenceParticipant) = wrapLog("AddInferenceParticipant") {
+    fun addInferenceParticipant(inferenceParticipant: InferenceParticipant) = wrapLog("AddInferenceParticipant", true) {
         val response = Fuel.post("$url/v1/participants")
-            .jsonBody(inferenceParticipant, gson)
+            .jsonBody(inferenceParticipant, gsonSnakeCase)
             .response()
         logResponse(response)
     }
     
-    fun getInference(inferenceId: String):String = wrapLog("getInference"){
+    fun getInference(inferenceId: String):InferencePayload = wrapLog("getInference", true){
         val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
-            .responseString()
+            .responseObject<InferencePayload>(gsonDeserializer(gsonCamelCase))
         logResponse(response)
         response.third.get()
     }
@@ -42,12 +42,12 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         address: String,
         signature: String,
     ): OpenAIResponse =
-        wrapLog("MakeInferenceRequest") {
+        wrapLog("MakeInferenceRequest", true) {
             val response = Fuel.post((url + "/v1/chat/completions"))
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
                 .header("Authorization", signature)
-                .responseObject<OpenAIResponse>(gsonDeserializer(gson))
+                .responseObject<OpenAIResponse>(gsonDeserializer(gsonSnakeCase))
             logResponse(response)
             response.third.get()
         }
