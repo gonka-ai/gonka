@@ -246,7 +246,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 
 	defer resp.Body.Close()
 
-	proxyResponse(resp, w)
+	proxyResponse(resp, w, false)
 
 	return true
 }
@@ -268,13 +268,24 @@ func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
 		}
 		defer resp.Body.Close()
 
-		proxyResponse(resp, w)
+		proxyResponse(resp, w, false)
 	}
 }
 
-func proxyResponse(resp *http.Response, w http.ResponseWriter) {
+// PRTODO: give it ability to modify body (separate callbacks for stream vs non-stream)
+// PRTODO: make it return body (modified)
+func proxyResponse(
+	resp *http.Response,
+	w http.ResponseWriter,
+	excludeContentLength bool,
+) {
 	// Make sure to copy response headers to the client
 	for key, values := range resp.Header {
+		// Skip Content-Length, because we're modifying body
+		if excludeContentLength && key == "Content-Length" {
+			continue
+		}
+
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
@@ -372,26 +383,36 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		http.Error(w, "Unable to parse seed", http.StatusBadRequest)
 		return true
 	}
-	respWithBody, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*ResponseWithBody, error) {
-		return getInference(request, node.Url, &recorder, config.ChainNode.AccountName, int32(seed))
-	})
+
+	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, int32(seed))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
 
-	// Copy the response back to the client
-	for key, values := range respWithBody.Response.Header {
-		// Skip Content-Length, because we're modifying body
-		if key == "Content-Length" {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
+	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*http.Response, error) {
+		return http.Post(
+			node.Url+"v1/chat/completions",
+			request.Request.Header.Get("Content-Type"),
+			bytes.NewReader(modifiedRequestBody.NewBody),
+		)
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true
 	}
-	w.WriteHeader(respWithBody.Response.StatusCode)
-	w.Write(respWithBody.BodyBytes)
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// PRTODO: What should we do here?
+	}
+
+	proxyResponse(resp, w, true)
+
+	var responseBodyBytes []byte // PRTODO: initialize
+	// PRTODO: process error
+	sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, &recorder, config.ChainNode.AccountName)
+
 	return false
 }
 
@@ -494,11 +515,6 @@ func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_clien
 		return nil, err
 	}
 
-	promptHash, promptPayload, err := getPromptHash(modifiedRequestBody.NewBody)
-	if err != nil {
-		return nil, err
-	}
-
 	// Forward the request to the inference server
 	resp, err := http.Post(
 		serverUrl+"v1/chat/completions",
@@ -529,16 +545,34 @@ func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_clien
 		return result, nil
 	}
 
-	hash, response, err := getResponseHash(bodyBytes)
+	err2 := sendInferenceTransaction(request.InferenceId, bodyBytes, modifiedRequestBody.NewBody, recorder, accountName)
+	if err2 != nil {
+		return nil, err2
+	}
+
+	result := &ResponseWithBody{
+		Response:  resp,
+		BodyBytes: bodyBytes,
+	}
+	return result, nil
+}
+
+func sendInferenceTransaction(inferenceId string, responseBodyBytes []byte, modifiedRequestBodyBytes []byte, recorder *cosmos_client.InferenceCosmosClient, accountName string) error {
+	hash, response, err := getResponseHash(responseBodyBytes)
 	if err != nil {
-		return nil, err
+		return err
+	}
+
+	promptHash, promptPayload, err := getPromptHash(modifiedRequestBodyBytes)
+	if err != nil {
+		return err
 	}
 
 	transaction := InferenceTransaction{
 		PromptHash:           promptHash,
 		PromptPayload:        promptPayload,
 		ResponseHash:         hash,
-		ResponsePayload:      string(bodyBytes),
+		ResponsePayload:      string(responseBodyBytes),
 		PromptTokenCount:     response.Usage.PromptTokens,
 		CompletionTokenCount: response.Usage.CompletionTokens,
 		Model:                response.Model,
@@ -546,7 +580,7 @@ func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_clien
 	}
 
 	if recorder != nil {
-		createInferenceFinishedTransaction(request.InferenceId, *recorder, transaction, accountName)
+		createInferenceFinishedTransaction(inferenceId, *recorder, transaction, accountName)
 	}
 
 	// print the json of the transaction:
@@ -555,11 +589,7 @@ func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_clien
 		log.Println(string(transactionJson))
 	}
 
-	result := &ResponseWithBody{
-		Response:  resp,
-		BodyBytes: bodyBytes,
-	}
-	return result, nil
+	return nil
 }
 
 func addIdToBodyBytes(bodyBytes []byte, id string) ([]byte, error) {
