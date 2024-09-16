@@ -1,6 +1,9 @@
 package completionapi
 
-// Define the structs that match the JSON structure
+type StreamedResponse struct {
+	Data []Response `json:"data"`
+}
+
 type Response struct {
 	ID                string   `json:"id"`
 	Object            string   `json:"object"`

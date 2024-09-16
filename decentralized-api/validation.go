@@ -165,6 +165,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
+	// PRTODO: unmarshal in either
 	var originalResponse completionapi.Response
 	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)

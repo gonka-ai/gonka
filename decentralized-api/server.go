@@ -332,7 +332,7 @@ func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	}
 
 	if responseProcessor != nil {
-		bodyBytes, err = responseProcessor.AddIdToJsonResponse(bodyBytes)
+		bodyBytes, err = responseProcessor.ProcessJsonResponse(bodyBytes)
 		if err != nil {
 			http.Error(w, "Failed to add ID to response", http.StatusInternalServerError)
 			return
