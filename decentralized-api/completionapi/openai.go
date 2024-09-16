@@ -1,4 +1,4 @@
-package broker
+package completionapi
 
 // Define the structs that match the JSON structure
 type Response struct {

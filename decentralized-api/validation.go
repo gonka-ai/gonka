@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/broker"
+	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
@@ -164,7 +165,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
-	var originalResponse broker.Response
+	var originalResponse completionapi.Response
 	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
 		return nil, err
@@ -194,7 +195,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	}
 
 	log.Printf("responseValidation = %v", string(respBodyBytes))
-	var responseValidation broker.Response
+	var responseValidation completionapi.Response
 	if err = json.Unmarshal(respBodyBytes, &responseValidation); err != nil {
 		return nil, err
 	}
@@ -209,8 +210,8 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func extractLogits(response broker.Response) []broker.Logprob {
-	var logits []broker.Logprob
+func extractLogits(response completionapi.Response) []completionapi.Logprob {
+	var logits []completionapi.Logprob
 	// Concatenate all logrpobs
 	for _, c := range response.Choices {
 		logits = append(logits, c.Logprobs.Content...)
@@ -265,8 +266,8 @@ func (r CosineSimilarityValidationResult) IsSuccessful() bool {
 }
 
 func compareLogits(
-	originalLogits []broker.Logprob,
-	validationLogits []broker.Logprob,
+	originalLogits []completionapi.Logprob,
+	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,
 ) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {

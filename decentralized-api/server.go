@@ -611,9 +611,9 @@ func createInferenceFinishedTransaction(id string, recorder cosmos_client.Infere
 	}()
 }
 
-func getResponseHash(bodyBytes []byte) (string, *broker.Response, error) {
+func getResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) {
 	// Unmarshal the JSON response
-	var response broker.Response
+	var response completionapi.Response
 	if err := json.Unmarshal(bodyBytes, &response); err != nil {
 		return "", nil, err
 	}
