@@ -1,6 +1,17 @@
 import pytest
-from pow.compute.mvp import attention, generate_input_matrix, perform_inference, hash_with_leading_zeros, simulate_node_work
 import numpy as np
+
+from pow.compute.mvp import (
+    attention,
+    generate_input_matrix,
+    perform_inference,
+    hash_with_leading_zeros,
+    simulate_node_work,
+)
+from pow.compute.utils import (
+    meets_required_zeros,
+)
+
 
 def test_sample():
     assert 1 + 1 == 2
@@ -47,3 +58,10 @@ def test_simulate_node_work():
     assert len(result_hash) == 64
     assert isinstance(salt_list, list)
 
+
+def test_meets_required_zeros():
+    assert meets_required_zeros(b'\x00\x00\x00\x00', 32) == True
+    assert meets_required_zeros(b'\x00\x00\x00\x01', 24) == True
+    assert meets_required_zeros(b'\x00\x00\x00\x7F', 26) == False
+    assert meets_required_zeros(b'\x00\x00\x00\x00\x00\x00\x00\xff', 56) == True
+    assert meets_required_zeros(b'\x00\x00\x00\x00\x00\x00\x00\xff', 57) == False
