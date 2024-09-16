@@ -8,10 +8,15 @@ packages = [{include = "pow", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.12"
+jupyterlab = "^4.2.5"
+numpy = "^2.1.1"
+tqdm = "^4.66.5"
 
 [tool.poetry.group.dev.dependencies]
 jupyterlab = "^4.2.5"
 numpy = "^2.1.1"
+tqdm = "^4.66.5"
+pytest = "^8.3.3"
 
 [build-system]
 requires = ["poetry-core"]
