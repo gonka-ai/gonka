@@ -272,8 +272,6 @@ func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
 	}
 }
 
-// PRTODO: give it ability to modify body (separate callbacks for stream vs non-stream)
-// PRTODO: make it return body (modified)
 func proxyResponse(
 	resp *http.Response,
 	w http.ResponseWriter,
@@ -294,14 +292,13 @@ func proxyResponse(
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
-		proxyTextStreamResponse(resp, w)
+		proxyTextStreamResponse(resp, w, responseProcessor)
 	} else {
 		proxyJsonResponse(resp, w, responseProcessor)
 	}
 }
 
-// PRTODO: add responseProcessor
-func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter) {
+func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor) {
 	w.WriteHeader(resp.StatusCode)
 
 	// Stream the response from the completion server to the client
@@ -312,10 +309,24 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter) {
 		// DEBUG LOG
 		log.Printf("Chunk: %s", line)
 
+		var lineToProxy = line
+		if responseProcessor != nil {
+			var err error
+			lineToProxy, err = responseProcessor.ProcessStreamedResponse(line)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		log.Printf("Chunk to proxy: %s", lineToProxy)
+
 		// Forward the line to the client
-		_, err := fmt.Fprintln(w, line)
+		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
 			log.Printf("Error while streaming response: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -426,14 +437,19 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	proxyResponse(resp, w, true, responseProcessor)
+
 	responseBodyBytes, err := responseProcessor.GetResponseBytes()
 	if err != nil {
-		// Not returning http.Error, because we assume that it was handled in proxyResponse
+		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		return true
 	}
 
-	// PRTODO: process error
-	sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, &recorder, config.ChainNode.AccountName)
+	err = sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, &recorder, config.ChainNode.AccountName)
+	if err != nil {
+		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
+		log.Printf("Failed to send inference transaction. %v", err)
+		return true
+	}
 
 	return false
 }
