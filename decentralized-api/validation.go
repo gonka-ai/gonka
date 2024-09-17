@@ -8,7 +8,6 @@ import (
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
@@ -239,33 +238,51 @@ func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
 }
 
 func unmarshalResponse(inference *types.Inference) (*UnmarshalledResponse, error) {
-	var originalResponse completionapi.Response
-	err1 := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse)
-	if err1 == nil {
-		log.Printf("Unmarshalled json response. inference.id = %s", inference.InferenceId)
+	var genericMap map[string]interface{}
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &genericMap); err != nil {
+		log.Printf("Failed to unmarshal inference.ResponsePayload into generic map. id = %v. err = %v", inference.InferenceId, err)
+		return nil, err
+	}
+
+	if _, exists := genericMap["events"]; exists {
+		// It's likely a SerializedStreamedResponse
+		events, err := unmarshalStreamedResponse(inference)
+		if err != nil {
+			return nil, err
+		}
+		return &UnmarshalledResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
+	} else {
+		var originalResponse completionapi.Response
+		if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
+			log.Printf("Failed to unmarshal inference.ResponsePayload into Response. id = %v. err = %v", inference.InferenceId, err)
+			return nil, err
+		}
 		return &UnmarshalledResponse{JsonResponse: &originalResponse}, nil
 	}
+}
 
+func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Response, error) {
 	var streamedResponse completionapi.SerializedStreamedResponse
-	err2 := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse)
-	if err2 == nil {
-		log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
-		var unmarshalledEvents []completionapi.Response
-		for _, line := range streamedResponse.Events {
-			event, err := completionapi.UnmarshalEvent(line)
-			if err != nil {
-				// PRTODO: ???
-				return nil, err
-			}
-			if event != nil {
-				unmarshalledEvents = append(unmarshalledEvents, *event)
-			}
-		}
-		return &UnmarshalledResponse{StreamedResponse: &completionapi.StreamedResponse{Data: unmarshalledEvents}}, nil
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse); err != nil {
+		log.Printf("Failed to unmarshal inference.ResponsePayload into SerializedStreamedResponse. id = %v. err = %v", inference.InferenceId, err)
+		return nil, err
 	}
+	log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
 
-	msg := fmt.Sprintf("Failed to unmarshal inference.ResponsePayload. id = %v. err1 = %v. err2 = %v", inference.InferenceId, err1, err2)
-	return nil, errors.New(msg)
+	var unmarshalledEvents []completionapi.Response
+	for _, line := range streamedResponse.Events {
+		event, err := completionapi.UnmarshalEvent(line)
+		if err != nil {
+			// PRTODO: ???
+			return nil, err
+		}
+		if event != nil {
+			unmarshalledEvents = append(unmarshalledEvents, *event)
+		}
+	}
+	log.Printf("Unmarshalled events. inference.id = %s", inference.InferenceId)
+
+	return unmarshalledEvents, nil
 }
 
 func extractLogits(response *UnmarshalledResponse) []completionapi.Logprob {
