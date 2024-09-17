@@ -1,10 +1,5 @@
-import numpy as np
-import torch
-
-from pow.compute.pipeline import (
-    Compute,
-    Pipeline,
-)
+from pow.compute.pipeline import Pipeline
+from pow.compute.compute import Compute
 
 
 def test_compute_reproducibility():
