@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -16,7 +17,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
 		if !ok {
-			log.Printf("Error getting participant: %v", p.ParticipantAddress)
+			am.LogError("Error getting participant: %v", p.ParticipantAddress)
 			continue
 		}
 
@@ -25,7 +26,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			log.Printf("Error decoding pubkey. err = %v", err)
+			am.LogError("Error decoding pubkey. err = %v", err)
 			continue
 		}
 
@@ -36,13 +37,15 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 			ValidatorPubKey: &pubKey,
 			OperatorAddress: p.ParticipantAddress,
 		}
-		log.Printf("Setting compute validator: %v", r)
+		am.LogInfo("Setting compute validator: %v", r)
 		computeResults = append(computeResults, r)
 	}
 
 	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
 	if err != nil {
-		log.Fatalf("Error setting compute validators: %v", err)
+		msg := fmt.Sprintf("Error setting compute validators: %v", err)
+		am.LogError(msg)
+		log.Fatalf(msg)
 	}
 
 	am.keeper.RemoveAllPower(ctx)
