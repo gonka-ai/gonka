@@ -95,7 +95,8 @@ func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 			hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
 
 			if o.acceptHash(hashAndNonce.Hash) {
-				log.Printf("Hash accepted, adding. input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), hex.EncodeToString(nonce), hashAndNonce.Hash)
+				// Make it trace level maybe or even lower?
+				// log.Printf("Hash accepted, adding. input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), hex.EncodeToString(nonce), hashAndNonce.Hash)
 				proof := ProofOfCompute{
 					Nonce:     hex.EncodeToString(nonce),
 					ProofHash: hashAndNonce.Hash,
@@ -135,7 +136,7 @@ func (o *PoCOrchestrator) Run() {
 			if o.isRunning() {
 				fmt.Println("Stop event received, stopping...")
 				results := o.stopProcessing()
-				fmt.Println("Final results:", results)
+				fmt.Println("Final PoC results size:", len(results.Results))
 				event.action(results)
 			}
 		}

@@ -44,7 +44,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		return nil, err
 	}
 
-	log.Printf("pubKey = %s. pubKey.String() = %s.", pubKey, pubKey.String())
+	k.LogInfo("pubKey = %s. pubKey.String() = %s.", pubKey, pubKey.String())
 
 	// 3. Verify all nonces
 	// pubKey.String() yields something like: PubKeySecp256k1{<hex-key>}
@@ -57,9 +57,10 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		}
 		proof := proofofcompute.ProofOfCompute(input, nonce)
 
-		log.Printf("input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash)
-
 		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
+			k.LogWarn(
+				"Hash not accepted! input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash,
+			)
 			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
 		}
 	}
