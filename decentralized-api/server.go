@@ -432,7 +432,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := fmt.Sprintf("Inference node response with code %d", resp.StatusCode)
+		msg := getInferenceErrorMessage(resp)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return true
 	}
@@ -454,6 +454,16 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	}
 
 	return false
+}
+
+func getInferenceErrorMessage(resp *http.Response) string {
+	msg := fmt.Sprintf("Inference node response with an error. code = %d.", resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err == nil {
+		return msg + fmt.Sprintf(" error = %s.", string(bodyBytes))
+	} else {
+		return msg
+	}
 }
 
 func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
