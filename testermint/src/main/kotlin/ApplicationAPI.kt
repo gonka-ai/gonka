@@ -117,13 +117,13 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
 
         // Continuously read from the stream
         while (reader.readLine().also { line = it } != null) {
-            println(line)
+            Logger.debug(line)
             lines.add(line!!)
         }
 
         reader.close()
     } else {
-        println("Failed to connect: HTTP $responseCode")
+        Logger.error("Failed to connect: HTTP $responseCode")
     }
 
     connection.disconnect()
