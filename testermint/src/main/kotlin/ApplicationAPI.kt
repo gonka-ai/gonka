@@ -61,8 +61,15 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         signature: String,
     ): List<String> =
         wrapLog("MakeStreamedInferenceRequest", true) {
-            stream(url = url + "/v1/chat/completions", address = address, signature = signature, jsonBody = request)
+            stream(url = "$url/v1/chat/completions", address = address, signature = signature, jsonBody = request)
         }
+
+    fun runValidation(inferenceId: String): Unit = wrapLog("RunValidation", true) {
+        val response = Fuel.get("$url/v1/validation")
+            .jsonBody("{\"inference_id\": \"$inferenceId\"}")
+            .response()
+        logResponse(response)
+    }
 }
 
 
