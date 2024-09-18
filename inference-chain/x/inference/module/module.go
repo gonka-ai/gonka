@@ -2,16 +2,12 @@ package inference
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	"github.com/productscience/inference/x/inference/proofofcompute"
-	log2 "log"
-
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"encoding/json"
+	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -19,7 +15,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 
 	// this line is used by starport scaffolding # 1
 
@@ -159,7 +157,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-		log2.Printf("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
+		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
+		err := am.SettleAccounts(ctx)
+		if err != nil {
+			am.LogError("Unable to settle accounts", "error", err.Error())
+		}
 		am.SendNewValidatorWeightsToStaking(ctx, blockHeight)
 	}
 
@@ -235,4 +237,20 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		Module:          m,
 		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
 	}
+}
+
+func (am AppModule) LogInfo(msg string, keyvals ...interface{}) {
+	am.keeper.Logger().Info("INFO+ "+msg, keyvals...)
+}
+
+func (am AppModule) LogError(msg string, keyvals ...interface{}) {
+	am.keeper.Logger().Error(msg, keyvals...)
+}
+
+func (am AppModule) LogWarn(msg string, keyvals ...interface{}) {
+	am.keeper.Logger().Warn(msg, keyvals...)
+}
+
+func (am AppModule) LogDebug(msg string, keyvals ...interface{}) {
+	am.keeper.Logger().Debug(msg, keyvals...)
 }

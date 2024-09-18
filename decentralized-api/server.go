@@ -652,6 +652,7 @@ type ParticipantDto struct {
 	Url         string   `json:"url"`
 	Models      []string `json:"models"`
 	CoinsOwed   uint64   `json:"coins_owed"`
+	RefundsOwed uint64   `json:"refunds_owed"`
 	Balance     int64    `json:"balance"`
 	VotingPower int64    `json:"voting_power"`
 }
@@ -763,6 +764,7 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 			Url:         p.InferenceUrl,
 			Models:      p.Models,
 			CoinsOwed:   p.CoinBalance,
+			RefundsOwed: p.RefundBalance,
 			Balance:     pBalance,
 			VotingPower: power,
 		}

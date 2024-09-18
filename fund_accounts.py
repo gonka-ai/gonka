@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
+import json
 import os
+import re
+import subprocess
+import time
 
 import requests
-import subprocess
-import json
-import re
-import time
 
 # Constants for docker command (you'll need to define these)
 APP_NAME = "inferenced"
@@ -74,6 +74,7 @@ def fund_account(extracted_address, funded_address, funded_name, name, port):
         print("Error funding account.")
         print("stdout:", result.stdout)
 
+
 def set_account_to_validator(extracted_address, funded_address, funded_name, name, port):
     # Command to fetch the public key of the validator node
     pubkey = get_pubkey(name)
@@ -124,6 +125,16 @@ def set_account_to_validator(extracted_address, funded_address, funded_name, nam
         print(result.stdout)
         print(result.stderr)
 
+
+def execute_in_container(container_name, commands):
+    docker_command = ["docker", "run", "--rm", "-it",
+                      f"-v{MOUNT_PATH}/{container_name}:/root/{STATE_DIR_NAME}",
+                      "--network", "inference-ignite_net-public",
+                      IMAGE_NAME, APP_NAME]
+    docker_command.extend(commands)
+    docker_command.extend([
+
+    ])
 
 def get_pubkey(name):
     pubkey_dict = get_pubkey_dict(name)

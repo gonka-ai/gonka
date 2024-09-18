@@ -52,9 +52,9 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		if payer.Address == executor.Address {
 			// It is possible that a participant returns an invalid
 			// inference for it's own self-inference
-			executor.CoinBalance += inference.ActualCost
+			executor.RefundBalance += inference.ActualCost
 		} else {
-			payer.CoinBalance += inference.ActualCost
+			payer.RefundBalance += inference.ActualCost
 			k.SetParticipant(ctx, payer)
 		}
 	}

@@ -20,4 +20,4 @@ if [ -d "chain-venv" ]; then
     source chain-venv/bin/activate
 fi
 
-./fund_accounts.py
+#./fund_accounts.py
