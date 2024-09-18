@@ -34,7 +34,6 @@ open class TestermintTest {
                     Logger.info("Asserting: $it")
                 }
             }
-
         }
     }
 

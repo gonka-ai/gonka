@@ -6,6 +6,9 @@ const val endOfPocStage = 3L
 const val pocExchangeDeadline = 5L
 const val setNewValidatorsStage = 7L
 
+const val EPOCH_NEW_COIN = 1_048_576L
+const val COIN_HALVING_HEIGHT = 100
+
 fun isStartOfPoCStage(blockHeight: Long): Boolean {
     return isNotZeroEpoch(blockHeight) && blockHeight % EpochLength == startOfPocStage
 }

@@ -17,33 +17,32 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 		return 0, err
 	}
 	err = k.bank.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, getCoins(cost))
-	senderAddr := k.AccountKeeper.GetModuleAddress(types.ModuleName)
-	k.LogInfo("Module Address", "address", senderAddr)
 	if err != nil {
 		k.LogError("Error sending coins to escrow", "error", err)
 		return 0,
 			sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
 	}
 	k.LogInfo("Sent coins to escrow", "inference", inference.InferenceId, "coins", cost)
-	spendable := k.bankView.SpendableCoin(ctx, senderAddr, inferenceDenom)
-	k.LogInfo("New spendable coins", "coins", spendable, "address", senderAddr)
 	return cost, nil
 }
 
-func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Participant) error {
+func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins uint64) error {
+	return k.bank.MintCoins(ctx, types.ModuleName, getCoins(newCoins))
+}
+
+func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Participant, totalWork uint64, newCoin uint64) error {
 	k.LogInfo("Settling participant", "participant", participant)
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Address)
-	senderAddr := k.AccountKeeper.GetModuleAddress(types.ModuleName)
-	k.LogInfo("Module Address", "address", senderAddr)
 	if err != nil {
 		k.LogError("Error converting participant address", "error", err)
 		return err
 	}
 	if participant.CoinBalance > 0 {
-		k.LogInfo("Sending coins to participant", "coins", participant.CoinBalance, "participant", participant.Address)
-		spendable := k.bankView.SpendableCoin(ctx, senderAddr, inferenceDenom)
-		k.LogInfo("Spendable coins", "coins", spendable, "address", senderAddr)
-		err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(participant.CoinBalance))
+		bonusCoinsInt := k.calculateBonusCoins(participant, totalWork, newCoin)
+		k.LogDebug("Bonus coins", "coins", bonusCoinsInt)
+		k.LogDebug("Participant coin balance", "coins", participant.CoinBalance)
+		k.LogInfo("Sending coins to participant", "coins", participant.CoinBalance+bonusCoinsInt, "participant", participant.Address)
+		err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(participant.CoinBalance+bonusCoinsInt))
 		if err != nil {
 			k.LogError("Error sending coins to participant", "error", err)
 			return err
@@ -63,6 +62,12 @@ func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Parti
 	}
 	k.LogDebug("Settled participant", "participant", participant)
 	return nil
+}
+
+func (k *Keeper) calculateBonusCoins(participant *types.Participant, totalWork uint64, newCoin uint64) uint64 {
+	bonusCoins := float64(participant.CoinBalance) / float64(totalWork) * float64(newCoin)
+	bonusCoinsInt := uint64(bonusCoins)
+	return bonusCoinsInt
 }
 
 func getCoins(coins uint64) sdk.Coins {
