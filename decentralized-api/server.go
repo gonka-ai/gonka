@@ -432,7 +432,9 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// PRTODO: What should we do here?
+		msg := fmt.Sprintf("Inference node response with code %d", resp.StatusCode)
+		http.Error(w, msg, http.StatusInternalServerError)
+		return true
 	}
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)

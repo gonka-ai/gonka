@@ -273,7 +273,6 @@ func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Resp
 	for _, line := range streamedResponse.Events {
 		event, err := completionapi.UnmarshalEvent(line)
 		if err != nil {
-			// PRTODO: ???
 			return nil, err
 		}
 		if event != nil {
