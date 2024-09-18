@@ -408,8 +408,8 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		log.Printf("Different tokens validation result")
 		cosineSimVal = -1
 	case *CosineSimilarityValidationResult:
-		log.Printf("Cosine similarity validation result")
 		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
+		log.Printf("Cosine similarity validation result. value = %v", cosineSimVal)
 	default:
 		return nil, errors.New("unknown validation result type")
 	}
