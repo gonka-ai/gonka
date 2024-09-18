@@ -41,14 +41,19 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		computeResults = append(computeResults, r)
 	}
 
+	am.keeper.RemoveAllPower(ctx)
+
+	if len(computeResults) == 0 {
+		am.LogWarn("No compute validators to set. Keeping validators and active participants the same.")
+		return
+	}
+
 	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
 	if err != nil {
 		msg := fmt.Sprintf("Error setting compute validators: %v", err)
 		am.LogError(msg)
 		log.Fatalf(msg)
 	}
-
-	am.keeper.RemoveAllPower(ctx)
 
 	activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
 	for i, r := range computeResults {
