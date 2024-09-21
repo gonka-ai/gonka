@@ -1,11 +1,12 @@
 package proofofcompute
 
 const (
-	EpochLength           = 10
-	startOfPocStage       = 0
-	endOfPocStage         = 3
-	pocExchangeDeadline   = 5
-	setNewValidatorsStage = 7
+	Multiplier            = 5
+	EpochLength           = 10 * Multiplier
+	startOfPocStage       = 0 * Multiplier
+	endOfPocStage         = 3 * Multiplier
+	pocExchangeDeadline   = endOfPocStage + 4
+	setNewValidatorsStage = pocExchangeDeadline + 2
 )
 
 func IsStartOfPoCStage(blockHeight int64) bool {
