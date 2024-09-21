@@ -102,14 +102,15 @@ func wrapGetCompletion(recorder cosmos_client.InferenceCosmosClient) func(w http
 }
 
 type ChatRequest struct {
-	Body             []byte
-	Request          *http.Request
-	OpenAiRequest    OpenAiRequest
-	AuthKey          string
-	PubKey           string
-	Seed             string
-	InferenceId      string
-	RequesterAddress string
+	Body                 []byte
+	Request              *http.Request
+	OpenAiRequest        OpenAiRequest
+	AuthKey              string
+	PubKey               string
+	Seed                 string
+	InferenceId          string
+	RequesterAddress     string
+	FundedByTransferNode bool
 }
 
 func readRequest(request *http.Request) (*ChatRequest, error) {
@@ -124,15 +125,22 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		return nil, err
 	}
 
+	fundedByTransferNode, err := strconv.ParseBool(request.Header.Get("X-Funded-By-Transfer-Node"))
+	if err != nil {
+		fundedByTransferNode = false
+	}
+	log.Printf("fundedByTransferNode = %t", fundedByTransferNode)
+
 	return &ChatRequest{
-		Body:             body,
-		Request:          request,
-		OpenAiRequest:    openAiRequest,
-		AuthKey:          request.Header.Get("Authorization"),
-		PubKey:           request.Header.Get("X-Public-Key"),
-		Seed:             request.Header.Get("X-Seed"),
-		InferenceId:      request.Header.Get("X-Inference-Id"),
-		RequesterAddress: request.Header.Get("X-Requester-Address"),
+		Body:                 body,
+		Request:              request,
+		OpenAiRequest:        openAiRequest,
+		AuthKey:              request.Header.Get("Authorization"),
+		PubKey:               request.Header.Get("X-Public-Key"),
+		Seed:                 request.Header.Get("X-Seed"),
+		InferenceId:          request.Header.Get("X-Inference-Id"),
+		RequesterAddress:     request.Header.Get("X-Requester-Address"),
+		FundedByTransferNode: fundedByTransferNode,
 	}, nil
 }
 
@@ -148,15 +156,15 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosC
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
-		if chatRequest.AuthKey == "" {
+		if chatRequest.AuthKey == "" && !chatRequest.FundedByTransferNode {
 			http.Error(w, "Authorization is required", http.StatusUnauthorized)
 			return
 		}
 		// Is this a Transfer request or an Executor call?
-		if chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "" {
+		if (chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "") || (chatRequest.FundedByTransferNode && chatRequest.InferenceId != "" && chatRequest.Seed != "") {
 			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, config)
 			return
-		} else if request.Header.Get("X-Requester-Address") != "" {
+		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
 			handleTransferRequest(w, chatRequest, recorder)
 			return
 		} else {
@@ -192,23 +200,28 @@ func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*Execu
 }
 
 func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.InferenceCosmosClient) bool {
-	queryClient := recorder.NewInferenceQueryClient()
-	log.Printf("GET inference participant for transfer. address = %s", request.RequesterAddress)
-	client, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
-	if err != nil {
-		log.Printf("Failed to get inference participant. address = %s. err = %v", request.RequesterAddress, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true
+	var pubkey = ""
+	if !request.FundedByTransferNode {
+		queryClient := recorder.NewInferenceQueryClient()
+		log.Printf("GET inference participant for transfer. address = %s", request.RequesterAddress)
+		client, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+		if err != nil {
+			log.Printf("Failed to get inference participant. address = %s. err = %v", request.RequesterAddress, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return true
+		}
+		// Response is filled out with validate? Probably want to standardize
+		hadError := validateClient(w, request, client)
+		if hadError {
+			return true
+		}
+		pubkey = client.Pubkey
 	}
+
 	executor, err := getExecutorForRequest(recorder)
 	if err != nil {
 		log.Printf("Failed to get executor. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return true
-	}
-	// Response is filled out with validate? Probably want to standardize
-	hadError := validateClient(w, request, client)
-	if hadError {
 		return true
 	}
 
@@ -234,7 +247,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	}
 	req.Header.Set("X-Inference-Id", inferenceUUID)
 	req.Header.Set("X-Seed", strconv.Itoa(int(seed)))
-	req.Header.Set("X-Public-Key", client.Pubkey)
+	req.Header.Set("X-Public-Key", pubkey)
 	req.Header.Set("Authorization", request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
@@ -401,11 +414,14 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 }
 
 func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) bool {
-	err := validateRequestAgainstPubKey(request, request.PubKey)
-	if err != nil {
-		http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
-		return true
+	if !request.FundedByTransferNode {
+		err := validateRequestAgainstPubKey(request, request.PubKey)
+		if err != nil {
+			http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
+			return true
+		}
 	}
+
 	seed, err := strconv.Atoi(request.Seed)
 	if err != nil {
 		http.Error(w, "Unable to parse seed", http.StatusBadRequest)
