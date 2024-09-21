@@ -12,13 +12,13 @@ import (
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
 	allPower := am.keeper.AllPower(ctx)
-	am.LogInfo("Amount of power entries found = %d", len(allPower))
+	am.LogInfo("Amount of power entries found.", "n", len(allPower))
 
 	var computeResults []keeper.ComputeResult
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
 		if !ok {
-			am.LogError("Error getting participant: %v", p.ParticipantAddress)
+			am.LogError("Error getting participant.", "participant", p.ParticipantAddress)
 			continue
 		}
 
@@ -27,7 +27,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			am.LogError("Error decoding pubkey. err = %v", err)
+			am.LogError("Error decoding pubkey.", "err", err)
 			continue
 		}
 
@@ -38,7 +38,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 			ValidatorPubKey: &pubKey,
 			OperatorAddress: p.ParticipantAddress,
 		}
-		am.LogInfo("Setting compute validator: %v", r)
+		am.LogInfo("Setting compute validator.", "computeResult", r)
 		computeResults = append(computeResults, r)
 	}
 
@@ -52,7 +52,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
 	if err != nil {
 		msg := fmt.Sprintf("Error setting compute validators: %v", err)
-		am.LogError(msg)
+		am.LogError("Error setting compute validators.", "err", err)
 		log.Fatalf(msg)
 	}
 
