@@ -35,7 +35,7 @@ const (
 )
 
 func Test(t *testing.T) {
-	r, err := ModifyRequestBody([]byte(jsonBodyNullLogprobs))
+	r, err := ModifyRequestBody([]byte(jsonBodyNullLogprobs), 7)
 	if err != nil {
 		panic(err)
 	}

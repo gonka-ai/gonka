@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"decentralized-api/broker"
+	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strings"
 )
 
 func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
@@ -164,14 +166,19 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
-	var originalResponse broker.Response
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
+	originalResponse, err := unmarshalResponse(&inference)
+	if err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
 		return nil, err
 	}
 
-	//goland:noinspection GoDfaNilDereference
-	requestMap["enforced_str"] = originalResponse.Choices[0].Message.Content
+	enforcedStr, err := originalResponse.GetEnforcedStr()
+	if err != nil {
+		return nil, err
+	}
+	requestMap["enforced_str"] = enforcedStr
+	// A hack to simplify processing the response:
+	requestMap["stream"] = false
 
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
@@ -194,13 +201,13 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	}
 
 	log.Printf("responseValidation = %v", string(respBodyBytes))
-	var responseValidation broker.Response
+	var responseValidation completionapi.Response
 	if err = json.Unmarshal(respBodyBytes, &responseValidation); err != nil {
 		return nil, err
 	}
 
 	originalLogits := extractLogits(originalResponse)
-	validationLogits := extractLogits(responseValidation)
+	validationLogits := extractLogitsFromJsonResponse(responseValidation)
 	baseResult := BaseValidationResult{
 		InferenceId:   inference.InferenceId,
 		ResponseBytes: respBodyBytes,
@@ -209,11 +216,99 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func extractLogits(response broker.Response) []broker.Logprob {
-	var logits []broker.Logprob
+type UnmarshalledResponse struct {
+	JsonResponse     *completionapi.Response
+	StreamedResponse *completionapi.StreamedResponse
+}
+
+func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
+	if r.JsonResponse != nil {
+		return r.JsonResponse.Choices[0].Message.Content, nil
+	} else if r.StreamedResponse != nil {
+		var stringBuilder strings.Builder
+		for _, event := range r.StreamedResponse.Data {
+			if event.Choices[0].Delta.Content != nil {
+				stringBuilder.WriteString(*event.Choices[0].Delta.Content)
+			}
+		}
+		return stringBuilder.String(), nil
+	} else {
+		return "", errors.New("UnmarshalledResponse has invalid state, both responses are nil")
+	}
+}
+
+func unmarshalResponse(inference *types.Inference) (*UnmarshalledResponse, error) {
+	var genericMap map[string]interface{}
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &genericMap); err != nil {
+		log.Printf("Failed to unmarshal inference.ResponsePayload into generic map. id = %v. err = %v", inference.InferenceId, err)
+		return nil, err
+	}
+
+	if _, exists := genericMap["events"]; exists {
+		// It's likely a SerializedStreamedResponse
+		events, err := unmarshalStreamedResponse(inference)
+		if err != nil {
+			return nil, err
+		}
+		return &UnmarshalledResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
+	} else {
+		var originalResponse completionapi.Response
+		if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
+			log.Printf("Failed to unmarshal inference.ResponsePayload into Response. id = %v. err = %v", inference.InferenceId, err)
+			return nil, err
+		}
+		return &UnmarshalledResponse{JsonResponse: &originalResponse}, nil
+	}
+}
+
+func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Response, error) {
+	var streamedResponse completionapi.SerializedStreamedResponse
+	if err := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse); err != nil {
+		log.Printf("Failed to unmarshal inference.ResponsePayload into SerializedStreamedResponse. id = %v. err = %v", inference.InferenceId, err)
+		return nil, err
+	}
+	log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
+
+	var unmarshalledEvents []completionapi.Response
+	for _, line := range streamedResponse.Events {
+		event, err := completionapi.UnmarshalEvent(line)
+		if err != nil {
+			return nil, err
+		}
+		if event != nil {
+			unmarshalledEvents = append(unmarshalledEvents, *event)
+		}
+	}
+	log.Printf("Unmarshalled events. inference.id = %s", inference.InferenceId)
+
+	return unmarshalledEvents, nil
+}
+
+func extractLogits(response *UnmarshalledResponse) []completionapi.Logprob {
+	if response.JsonResponse != nil {
+		return extractLogitsFromJsonResponse(*response.JsonResponse)
+	} else if response.StreamedResponse != nil {
+		return extractLogitsFromStreamedResponse(*response.StreamedResponse)
+	} else {
+		return nil
+	}
+}
+
+func extractLogitsFromJsonResponse(response completionapi.Response) []completionapi.Logprob {
+	var logits []completionapi.Logprob
 	// Concatenate all logrpobs
 	for _, c := range response.Choices {
 		logits = append(logits, c.Logprobs.Content...)
+	}
+	return logits
+}
+
+func extractLogitsFromStreamedResponse(response completionapi.StreamedResponse) []completionapi.Logprob {
+	var logits []completionapi.Logprob
+	for _, r := range response.Data {
+		for _, c := range r.Choices {
+			logits = append(logits, c.Logprobs.Content...)
+		}
 	}
 	return logits
 }
@@ -265,8 +360,8 @@ func (r CosineSimilarityValidationResult) IsSuccessful() bool {
 }
 
 func compareLogits(
-	originalLogits []broker.Logprob,
-	validationLogits []broker.Logprob,
+	originalLogits []completionapi.Logprob,
+	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,
 ) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {
@@ -312,8 +407,8 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		log.Printf("Different tokens validation result")
 		cosineSimVal = -1
 	case *CosineSimilarityValidationResult:
-		log.Printf("Cosine similarity validation result")
 		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
+		log.Printf("Cosine similarity validation result. value = %v", cosineSimVal)
 	default:
 		return nil, errors.New("unknown validation result type")
 	}

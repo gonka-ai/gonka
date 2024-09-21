@@ -1,4 +1,4 @@
-package broker
+package completionapi
 
 import (
 	"encoding/json"
@@ -432,6 +432,127 @@ const (
     "completion_tokens": 8
   }
 }`
+	START_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "role": "assistant"
+      },
+      "logprobs": null,
+      "finish_reason": null
+	}
+  ]
+}
+`
+	MID_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "content": "."
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": ".",
+            "logprob": -0.04858766868710518,
+            "bytes": [
+              46
+            ],
+            "top_logprobs": [
+              {
+                "token": ".",
+                "logprob": -0.04858766868710518,
+                "bytes": [
+                  46
+                ]
+              },
+              {
+                "token": ",",
+                "logprob": -3.0485875606536865,
+                "bytes": [
+                  44
+                ]
+              },
+              {
+                "token": " when",
+                "logprob": -15.673587799072266,
+                "bytes": [
+                  32,
+                  119,
+                  104,
+                  101,
+                  110
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "finish_reason": null
+    }
+  ]
+}
+`
+	END_COMPLETION_STREAMED_EVENT = `
+{
+  "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
+  "object": "chat.completion.chunk",
+  "created": 1726472629,
+  "model": "unsloth/llama-3-8b-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "delta": {
+        "content": ""
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": "",
+            "logprob": -2.264974000354414e-6,
+            "bytes": [],
+            "top_logprobs": [
+              {
+                "token": "",
+                "logprob": -2.264974000354414e-6,
+                "bytes": []
+              },
+              {
+                "token": " It",
+                "logprob": -13.000001907348633,
+                "bytes": [
+                  32,
+                  73,
+                  116
+                ]
+              },
+              {
+                "token": "",
+                "logprob": -19.000001907348633,
+                "bytes": []
+              }
+            ]
+          }
+        ]
+      },
+      "finish_reason": "stop",
+      "stop_reason": null
+    }
+  ]
+}
+`
 )
 
 func TestNoLogprobsAnswer(t *testing.T) {
@@ -468,4 +589,58 @@ func TestTopLogprobsAnswer(t *testing.T) {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
+}
+
+func TestStartCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(START_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if *delta.Role != "assistant" {
+		t.Fatalf("Expected role to be assistant, got %s", *delta.Role)
+	}
+}
+
+func TestMidCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(MID_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if delta.Content == nil {
+		t.Fatalf("Expected content to be non-empty, got empty")
+	}
+}
+
+func TestEndCompletionStreamedEvent(t *testing.T) {
+	var r Response
+	if err := json.Unmarshal([]byte(END_COMPLETION_STREAMED_EVENT), &r); err != nil {
+		t.Fatalf("Failed to unmarshal r: %v", err)
+	}
+	t.Logf("Response: %v", r)
+
+	delta := assertStreamedEventChoices(t, r)
+
+	if delta.Content == nil {
+		t.Fatalf("Expected content to be non-empty, got empty")
+	}
+}
+
+func assertStreamedEventChoices(t *testing.T, r Response) *Delta {
+	if len(r.Choices) != 1 {
+		t.Fatalf("Expected 1 choices, got %d", len(r.Choices))
+	}
+
+	if r.Choices[0].Delta == nil {
+		t.Fatalf("Expected delta to be non-nil, got nil")
+	}
+
+	return r.Choices[0].Delta
 }

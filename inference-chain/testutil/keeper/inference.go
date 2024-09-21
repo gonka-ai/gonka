@@ -1,7 +1,7 @@
 package keeper
 
 import (
-	"go.uber.org/mock/gomock"
+	"github.com/golang/mock/gomock"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -26,7 +26,8 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock)
+	validatorSetMock := NewMockValidatorSet(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
@@ -40,7 +41,8 @@ func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, Inf
 	ctrl := gomock.NewController(t)
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock)
+	validatorSet := NewMockValidatorSet(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet)
 	mocks := InferenceMocks{
 		BankKeeper:    escrowKeeper,
 		AccountKeeper: accountKeeperMock,
@@ -48,7 +50,12 @@ func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, Inf
 	return keep, context, mocks
 }
 
-func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper, accountKeeper types.AccountKeeper) (keeper.Keeper, sdk.Context) {
+func InferenceKeeperWithMock(
+	t testing.TB,
+	bankMock *MockBankEscrowKeeper,
+	accountKeeper types.AccountKeeper,
+	validatorSet types.ValidatorSet,
+) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -67,6 +74,7 @@ func InferenceKeeperWithMock(t testing.TB, bankMock *MockBankEscrowKeeper, accou
 		authority.String(),
 		bankMock,
 		nil,
+		validatorSet,
 		nil,
 		accountKeeper,
 	)

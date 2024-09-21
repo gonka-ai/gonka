@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,7 +48,7 @@ func startTestServer() *httptest.Server {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
-		modifiedRequest, err := completionapi.ModifyRequestBody(requestBodyBytes)
+		modifiedRequest, err := completionapi.ModifyRequestBody(requestBodyBytes, rand.Int31())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {

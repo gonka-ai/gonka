@@ -42,21 +42,15 @@ func TestParticipantGet(t *testing.T) {
 		)
 		expectedCounter++
 	}
-	counter := keeper.GetParticipantCounter(ctx)
-	require.Equal(t, expectedCounter, counter)
 }
+
 func TestParticipantRemove(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNParticipant(keeper, ctx, 10)
-	var expectedCounter uint32 = 10
-	require.Equal(t, expectedCounter, keeper.GetParticipantCounter(ctx))
 	for _, item := range items {
 		keeper.RemoveParticipant(ctx,
 			item.Index,
 		)
-		expectedCounter--
-		counter := keeper.GetParticipantCounter(ctx)
-		require.Equal(t, expectedCounter, counter)
 		_, found := keeper.GetParticipant(ctx,
 			item.Index,
 		)

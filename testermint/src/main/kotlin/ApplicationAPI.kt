@@ -14,6 +14,9 @@ import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.ParticipantsResponse
 import org.tinylog.kotlin.Logger
+import java.io.*
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class ApplicationAPI(val url: String, override val config: ApplicationConfig) : HasConfig {
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
@@ -51,6 +54,22 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
             logResponse(response)
             response.third.get()
         }
+
+    fun makeStreamedInferenceRequest(
+        request: String,
+        address: String,
+        signature: String,
+    ): List<String> =
+        wrapLog("MakeStreamedInferenceRequest", true) {
+            stream(url = "$url/v1/chat/completions", address = address, signature = signature, jsonBody = request)
+        }
+
+    fun runValidation(inferenceId: String): Unit = wrapLog("RunValidation", true) {
+        val response = Fuel.get("$url/v1/validation")
+            .jsonBody("{\"inference_id\": \"$inferenceId\"}")
+            .response()
+        logResponse(response)
+    }
 }
 
 
@@ -68,4 +87,46 @@ fun logResponse(reqData: Triple<Request, Response, Result<*, FuelError>>) {
     }
 
     Logger.trace("Response Data: ${result.get()}")
+}
+
+fun stream(url: String, address: String, signature: String, jsonBody: String): List<String> {
+    // Set up the URL and connection
+    val url = URL(url)
+    val connection = url.openConnection() as HttpURLConnection
+    connection.requestMethod = "POST"
+    connection.setRequestProperty("X-Requester-Address", address)
+    connection.setRequestProperty("Authorization", signature)
+    connection.setRequestProperty("Content-Type", "application/json")
+    connection.doOutput = true
+
+    // Send the request body
+    connection.outputStream.use { outputStream ->
+        BufferedWriter(OutputStreamWriter(outputStream, "UTF-8")).use { writer ->
+            writer.write(jsonBody)
+            writer.flush()
+        }
+    }
+
+    val lines = mutableListOf<String>()
+    // Check response code
+    val responseCode = connection.responseCode
+    if (responseCode == HttpURLConnection.HTTP_OK) {
+        // Read the event stream line by line
+        val reader = BufferedReader(InputStreamReader(connection.inputStream))
+        var line: String?
+
+        // Continuously read from the stream
+        while (reader.readLine().also { line = it } != null) {
+            Logger.debug(line)
+            lines.add(line!!)
+        }
+
+        reader.close()
+    } else {
+        Logger.error("Failed to connect: HTTP $responseCode")
+    }
+
+    connection.disconnect()
+
+    return lines
 }

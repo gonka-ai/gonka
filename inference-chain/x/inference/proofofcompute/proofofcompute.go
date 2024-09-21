@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const DefaultDifficulty = 5
+const DefaultDifficulty = 3
 
 func GetInput(blockHash, pubKey string) []byte {
 	return []byte(blockHash + pubKey)
