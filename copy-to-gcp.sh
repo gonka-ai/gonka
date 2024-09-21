@@ -1,6 +1,7 @@
 # Clean existing
 sudo rm docker-compose-cloud.yml
 sudo rm -rf .inference
+sudo rm genesis.json
 
 # Copy
 gscp docker-compose-cloud.yml requester-node:~/docker-compose-cloud.yml
