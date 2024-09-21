@@ -1,7 +1,7 @@
 package proofofcompute
 
 const (
-	Multiplier            = 5
+	Multiplier            = 3
 	EpochLength           = 10 * Multiplier
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 3 * Multiplier
