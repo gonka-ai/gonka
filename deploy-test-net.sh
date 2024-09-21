@@ -134,13 +134,20 @@ docker run --rm -it \
         --chain-id $CHAIN_ID --yes \
         --node tcp://10.128.0.21:26657
 
+# Get validator keys
+docker run --rm \
+  -v ~/.inference:/root/.inference \
+  "$IMAGE_NAME" \
+  "$APP_NAME" tendermint show-validator
+
 # Create participants
 # Requester
 curl -X POST 'http://34.46.180.72:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://34.46.180.72:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "hjZiJ3ehIh25KXKZaGnLolgFs3Lw7gxWRceVV24KTMI="
 }'
 
 # Executor
@@ -148,7 +155,8 @@ curl -X POST 'http://35.232.251.227:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://35.232.251.227:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "K3L6LZSMTKJZPAlp7L7BESPlkRpB7SPBB5qevDUasK0="
 }'
 
 # Validator
@@ -156,7 +164,8 @@ curl -X POST 'http://34.172.126.50:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://34.172.126.50:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "CiAwsLlv9XGQWwi04rD4DyEtzYF2Jiyvj+veWai9hhw="
 }'
 
 docker compose -f docker-compose-cloud.yml down
