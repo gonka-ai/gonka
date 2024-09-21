@@ -5,8 +5,8 @@ const (
 	EpochLength           = 10 * Multiplier
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 3 * Multiplier
-	pocExchangeDeadline   = endOfPocStage + 4
-	setNewValidatorsStage = pocExchangeDeadline + 2
+	pocExchangeDeadline   = endOfPocStage + 5
+	setNewValidatorsStage = pocExchangeDeadline + 1
 )
 
 func IsStartOfPoCStage(blockHeight int64) bool {

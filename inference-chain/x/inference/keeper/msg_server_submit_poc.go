@@ -16,6 +16,8 @@ import (
 	"net/http"
 )
 
+const PocFailureTag = "PoC [Failure] "
+
 func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*types.MsgSubmitPoCResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -23,11 +25,13 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	startBlockHeight := msg.BlockHeight
 
 	if !proofofcompute.IsStartOfPoCStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
 		errMsg := fmt.Sprintf("start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
 	if !proofofcompute.IsPoCExchangeWindow(startBlockHeight, currentBlockHeight) {
+		k.LogError(PocFailureTag+"PoC exchange window is closed. msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
@@ -35,12 +39,14 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	// 1. Get block hash from startBlockHeight
 	blockHash, err := k.getBlockHash(startBlockHeight)
 	if err != nil {
+		k.LogError(PocFailureTag+"Failed to get block hash. startBlockHeight = %d. err = %v", startBlockHeight, err)
 		return nil, err
 	}
 
 	// 2. Get signer public key
 	pubKey, err := k.getMsgSignerPubKey(msg, ctx)
 	if err != nil {
+		k.LogError(PocFailureTag+"Failed to get signer public key. err = %v", err)
 		return nil, err
 	}
 
@@ -53,13 +59,14 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	for _, n := range msg.Nonce {
 		nonce, err := hex.DecodeString(n)
 		if err != nil {
+			k.LogError(PocFailureTag+"Failed to decode nonce. nonce = %s. err = %v", n, err)
 			return nil, err
 		}
 		proof := proofofcompute.ProofOfCompute(input, nonce)
 
 		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
 			k.LogWarn(
-				"Hash not accepted! input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash,
+				PocFailureTag+"Hash not accepted! input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash,
 			)
 			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
 		}

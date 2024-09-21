@@ -12,6 +12,7 @@ import (
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
 	allPower := am.keeper.AllPower(ctx)
+	am.LogInfo("Amount of power entries found = %d", len(allPower))
 
 	var computeResults []keeper.ComputeResult
 	for _, p := range allPower {
