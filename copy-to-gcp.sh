@@ -1,7 +1,13 @@
+# Stop existing
+docker compose -f docker-compose-cloud.yml down
+
+# Reset images
+docker rmi gcr.io/decentralized-ai/api
+docker rmi gcr.io/decentralized-ai/inferenced
+
 # Clean existing
 sudo rm docker-compose-cloud.yml
 sudo rm -rf .inference
-sudo rm genesis.json
 
 # Copy
 gscp docker-compose-cloud.yml requester-node:~/docker-compose-cloud.yml
