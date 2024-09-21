@@ -2,8 +2,8 @@ package keeper
 
 import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/golang/mock/gomock"
 	"github.com/productscience/inference/x/inference/types"
-	"go.uber.org/mock/gomock"
 )
 
 func (escrow *MockBankEscrowKeeper) ExpectAny(context sdk.Context) {
