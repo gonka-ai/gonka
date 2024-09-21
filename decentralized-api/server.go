@@ -250,6 +250,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	req.Header.Set("X-Public-Key", pubkey)
 	req.Header.Set("Authorization", request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
+	req.Header.Set("X-Funded-By-Transfer-Node", strconv.FormatBool(request.FundedByTransferNode))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
