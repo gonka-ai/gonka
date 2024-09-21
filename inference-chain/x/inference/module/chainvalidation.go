@@ -23,6 +23,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 
 		if participant.ValidatorKey == "" {
+			am.LogError("Participant hasn't provided their validator key.", "participant", p.ParticipantAddress)
 			continue
 		}
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
