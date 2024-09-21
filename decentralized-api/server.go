@@ -15,6 +15,7 @@ import (
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -701,6 +702,8 @@ func createInferenceFinishedTransaction(id string, recorder cosmos_client.Infere
 	println("--TRANSACTIONID--" + transaction.Id)
 	// Submit to the block chain effectively AFTER we've served the request. Speed before certainty.
 	go func() {
+		// PRTODO: delete me and probably introduce retries if FinishInference returns not found
+		time.Sleep(10 * time.Second)
 		err := recorder.FinishInference(message)
 		if err != nil {
 			log.Printf("Failed to submit MsgFinishInference. %v", err)
