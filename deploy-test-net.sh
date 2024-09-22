@@ -120,7 +120,7 @@ echo "Add Executor"
 docker run --rm -it \
     -v ~/.inference:/root/.inference \
     "$IMAGE_NAME" \
-    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $EXECUTOR_ADDRESS "20000000$COIN_DENOM" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $EXECUTOR_ADDRESS "2500000000$COIN_DENOM" \
         --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
         --chain-id $CHAIN_ID --yes \
         --node tcp://10.128.0.21:26657
@@ -129,7 +129,7 @@ echo "Add Validator"
 docker run --rm -it \
     -v ~/.inference:/root/.inference \
     "$IMAGE_NAME" \
-    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $VALIDATOR_ADDRESS "20000000$COIN_DENOM" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $VALIDATOR_ADDRESS "2500000000$COIN_DENOM" \
         --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
         --chain-id $CHAIN_ID --yes \
         --node tcp://10.128.0.21:26657
