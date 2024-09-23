@@ -15,16 +15,16 @@ import (
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
 	"github.com/google/uuid"
 	"github.com/productscience/inference/x/inference/keeper"
+	"log"
+	"log/slog"
 	"math/rand"
 	"strconv"
 
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -57,7 +57,8 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/debug/chat/completions", debugWrapChat())
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
-	log.Printf("Starting the server on %s", addr)
+
+	slog.Info("Starting the server on %s", addr)
 	// Start the server
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
@@ -65,6 +66,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
+			slog.Warn("Invalid method. method = %s", request.Method)
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
@@ -78,6 +80,7 @@ func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 		Response: make(chan broker.InferenceNode, 2),
 	})
 	if err != nil {
+		slog.Error("Failed to load node to broker. %v", err)
 		panic(err)
 	}
 }
@@ -797,6 +800,7 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 	// Parse the request body into a SubmitNewParticipantDto
 	var body SubmitNewParticipantDto
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		slog.Error("Failed to decode request body. %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -807,9 +811,9 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 		ValidatorKey: body.ValidatorKey,
 	}
 
-	log.Printf("ValidatorKey in dapi: %s", body.ValidatorKey)
+	slog.Info("ValidatorKey in dapi: %s", body.ValidatorKey)
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
-		log.Printf("Failed to submit MsgSubmitNewParticipant. %v", err)
+		slog.Error("Failed to submit MsgSubmitNewParticipant. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -822,6 +826,7 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 
 	responseJson, err := json.Marshal(responseBody)
 	if err != nil {
+		slog.Error("Failed to marshal response. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
