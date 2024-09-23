@@ -6,6 +6,8 @@ services:
     image: inferenced
     volumes:
       - ./prod-sim/requester:/root/.inference
+    ports:
+      - "26657:26657"
     networks:
       - net-public
 
