@@ -15,6 +15,8 @@ import (
 	"fmt"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"time"
@@ -94,12 +96,18 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			return
 		}
 
-		/*		var activeParticipants types.ActiveParticipants
-				if err := proto.Unmarshal(result.Response.Value, activeParticipants); err != nil {
-					log.Printf("Failed to unmarshal active participant. err = %v", err)
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}*/
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		// Register interfaces used in your types
+		types.RegisterInterfaces(interfaceRegistry)
+		// Create the codec
+		cdc := codec.NewProtoCodec(interfaceRegistry)
+
+		var activeParticipants types.ActiveParticipants
+		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
+			log.Printf("Failed to unmarshal active participant. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		response := ActiveParticipantWithProof{
 			ActiveParticipants: types.ActiveParticipants{},
