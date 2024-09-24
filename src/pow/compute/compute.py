@@ -8,7 +8,7 @@ from abc import (
     abstractmethod,
 )
 from typing import Callable
-
+torch.use_deterministic_algorithms(True)
 
 
 # class BaseCompute(ABC):
