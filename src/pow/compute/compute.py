@@ -72,7 +72,7 @@ class Compute:
     def get_input_tensor(self, nonce: int) -> torch.Tensor:
         seed = (hash(self.public_key) + nonce) % (2**32)
         self.rng.manual_seed(seed)
-        Q = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
+        Q = torch.randn(size=(self.hid, self.hid), generator=self.rng, dtype=torch.float32).to(self.device)
         return Q
 
     def get_hash(self, tensor: torch.Tensor) -> bytes:
