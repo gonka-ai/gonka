@@ -57,7 +57,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
-	http.HandleFunc("/v1/active-participants", wrapGetActiveParticipants())
+	http.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 	log.Printf("Starting the server on %s", addr)
@@ -80,14 +80,14 @@ type ActiveParticipantWithProof struct {
 	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
 }
 
-func wrapGetActiveParticipants() func(http.ResponseWriter, *http.Request) {
+func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		result, err := merkleproof.QueryWithProof("inference", "ActiveParticipants/value/")
+		result, err := merkleproof.QueryWithProof(config.ChainNode.Url, "inference", "ActiveParticipants/value/")
 		if err != nil {
 			log.Printf("Failed to query active participants. err = %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
