@@ -84,11 +84,9 @@ class Compute:
         return result_hash
 
     def get_compute_function(self) -> Callable[[torch.Tensor], torch.Tensor]:
-        # numpy_rng = np.random.default_rng(seed)
-        # numbers = numpy_rng.random(size=(self.hid, self.hid))
-        K = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
-        V = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
-        return AttentionModel(K, V).to(self.device)
+        self.K = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
+        self.V = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
+        return AttentionModel(self.K, self.V).to(self.device)
 
     def __call__(self, nonce: int) -> bytes:
         input_tensor = self.get_input_tensor(nonce)
