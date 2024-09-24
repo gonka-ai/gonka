@@ -8,10 +8,12 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -55,7 +57,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
-	http.HandleFunc("/debug/chat/completions", debugWrapChat())
+	http.HandleFunc("/v1/active-participants", wrapGetActiveParticipants())
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 	log.Printf("Starting the server on %s", addr)
@@ -70,6 +72,33 @@ func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) f
 			return
 		}
 		processGetInferenceParticipantByAddress(w, request, recorder)
+	}
+}
+
+type ActiveParticipantWithProof struct {
+	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
+	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
+}
+
+func wrapGetActiveParticipants() func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		result, err := merkleproof.QueryWithProof("inference", "ActiveParticipants/value/")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		response := ActiveParticipantWithProof{
+			ActiveParticipants: types.ActiveParticipants{},
+			ProofOps:           *result.Response.ProofOps,
+		}
+
+		writeResponseBody(response, w)
 	}
 }
 
@@ -264,27 +293,6 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	proxyResponse(resp, w, false, nil)
 
 	return true
-}
-
-func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		chatRequest, err := readRequest(request)
-		req, err := http.NewRequest("POST", "http://34.171.235.205:8080/v1/chat/completions", bytes.NewReader(chatRequest.Body))
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			http.Error(w, "Failed to reach completion server", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		proxyResponse(resp, w, false, nil)
-	}
 }
 
 func proxyResponse(
@@ -575,6 +583,18 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 	w.Write(respBytes)
 
 	return
+}
+
+func writeResponseBody(body any, w http.ResponseWriter) {
+	respBytes, err := json.Marshal(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBytes)
 }
 
 func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.InferenceCosmosClient, accountName string, seed int32) (*ResponseWithBody, error) {

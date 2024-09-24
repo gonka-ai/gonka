@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/cometbft/cometbft/rpc/core/types"
+	"log"
 
 	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	"github.com/cometbft/cometbft/rpc/client/http"
 )
 
-func QueryWithProof(storeKey, dataKey string) *coretypes.ResultABCIQuery {
+func QueryWithProof(storeKey, dataKey string) (*coretypes.ResultABCIQuery, error) {
+	log.Printf("Querying store %s with key %s...\n", storeKey, dataKey)
 	// Create a new RPC client
 	rpcClient, err := http.New("http://localhost:26657", "/websocket")
 	if err != nil {
@@ -19,13 +21,7 @@ func QueryWithProof(storeKey, dataKey string) *coretypes.ResultABCIQuery {
 	key := []byte(dataKey)
 	path := fmt.Sprintf("store/%s/key", storeKey)
 
-	// Perform the ABCI query with proof enabled
-	result, err := rpcClient.ABCIQueryWithOptions(context.Background(), path, key, rpcclient.ABCIQueryOptions{Prove: true})
-	if err != nil {
-		panic(err)
-	}
-
-	return result
+	return rpcClient.ABCIQueryWithOptions(context.Background(), path, key, rpcclient.ABCIQueryOptions{Prove: true})
 }
 
 /*func VerifyProof(proofOps *cryptotypes.ProofOps, key, value, appHash []byte) error {
