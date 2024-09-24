@@ -86,8 +86,8 @@ class Compute:
     def get_compute_function(self) -> Callable[[torch.Tensor], torch.Tensor]:
         self.K = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
         self.V = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
-        print(self.K)
-        print(self.V)
+        print('K', self.K)
+        print('V', self.V)
         return AttentionModel(self.K, self.V).to(self.device)
 
     def __call__(self, nonce: int) -> bytes:
