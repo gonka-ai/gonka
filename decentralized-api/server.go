@@ -110,7 +110,7 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 		}
 
 		response := ActiveParticipantWithProof{
-			ActiveParticipants: types.ActiveParticipants{},
+			ActiveParticipants: activeParticipants,
 			ProofOps:           *result.Response.ProofOps,
 		}
 
