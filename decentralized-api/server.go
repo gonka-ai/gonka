@@ -89,6 +89,7 @@ func wrapGetActiveParticipants() func(http.ResponseWriter, *http.Request) {
 
 		result, err := merkleproof.QueryWithProof("inference", "ActiveParticipants/value/")
 		if err != nil {
+			log.Printf("Failed to query active participants. err = %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -588,6 +589,7 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 func writeResponseBody(body any, w http.ResponseWriter) {
 	respBytes, err := json.Marshal(body)
 	if err != nil {
+		log.Printf("Failed to marshal response. %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
