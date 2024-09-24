@@ -65,6 +65,7 @@ class Compute:
         self.device = device
         self.hid = hid
         self.rng = torch.Generator(device=device)
+        self.rng.manual_seed(42)
         self.model = self.get_compute_function()
         
 
@@ -83,6 +84,8 @@ class Compute:
         return result_hash
 
     def get_compute_function(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        # numpy_rng = np.random.default_rng(seed)
+        # numbers = numpy_rng.random(size=(self.hid, self.hid))
         K = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
         V = torch.randn(size=(self.hid, self.hid), generator=self.rng, device=self.device, dtype=torch.float32)
         return AttentionModel(K, V).to(self.device)
@@ -91,4 +94,7 @@ class Compute:
         input_tensor = self.get_input_tensor(nonce)
         output_tensor = self.model(input_tensor)
         hash_ = self.get_hash(output_tensor)
-        return hash_
+        return hash_, output_tensor
+    
+    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        return self.model(input_tensor)
