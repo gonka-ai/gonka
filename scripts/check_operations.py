@@ -11,7 +11,7 @@ from pow.compute.pipeline import Pipeline
 from pow.compute.compute import AttentionModel, Compute
 
 torch.set_printoptions(precision=10)
-torch.backends.cudnn.deterministic = True
+torch.use_deterministic_algorithms(True)
 torch.backends.cudnn.benchmark = False
 
 difficulty = 0
