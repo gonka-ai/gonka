@@ -94,6 +94,13 @@ func wrapGetActiveParticipants() func(http.ResponseWriter, *http.Request) {
 			return
 		}
 
+		/*		var activeParticipants types.ActiveParticipants
+				if err := proto.Unmarshal(result.Response.Value, activeParticipants); err != nil {
+					log.Printf("Failed to unmarshal active participant. err = %v", err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}*/
+
 		response := ActiveParticipantWithProof{
 			ActiveParticipants: types.ActiveParticipants{},
 			ProofOps:           *result.Response.ProofOps,
