@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+torch.set_printoptions(precision=10)
 seeds = [1, 42, 2024]
 print(f"numpy version = {np.version.version}")
 print(f"CUDA version = {torch.version.cuda}")
