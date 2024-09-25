@@ -13,8 +13,12 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.ParticipantsResponse
+import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.kotlin.Logger
-import java.io.*
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -32,8 +36,16 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
             .response()
         logResponse(response)
     }
-    
-    fun getInference(inferenceId: String):InferencePayload = wrapLog("getInference", true){
+
+    fun addUnfundedInferenceParticipant(inferenceParticipant: UnfundedInferenceParticipant) =
+        wrapLog("AddUnfundedInferenceParticipant", true) {
+            val response = Fuel.post("$url/v1/participants/unfunded")
+                .jsonBody(inferenceParticipant, gsonSnakeCase)
+                .response()
+            logResponse(response)
+        }
+
+    fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
             .responseObject<InferencePayload>(gsonDeserializer(gsonCamelCase))
         logResponse(response)

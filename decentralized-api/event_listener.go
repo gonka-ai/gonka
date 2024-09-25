@@ -64,7 +64,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 			slog.Debug("New block event received. type = %s", event.Result.Data.Type)
 			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
 		case "tendermint/event/Tx":
-			slog.Debug("New Tx event received. type = %s", event.Result.Data.Type)
+			slog.Debug("New Tx event received", "type", event.Result.Data.Type)
 			go func() {
 				SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
 			}()
