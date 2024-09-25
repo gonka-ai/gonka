@@ -8,6 +8,7 @@ import (
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
 	"log"
+	"log/slog"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -128,11 +129,15 @@ func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC)
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
 	if err != nil {
+		slog.Error("Failed to broadcast transaction. err = %s", err)
 		return err
 	}
 	// TODO: maybe check response for success?
 	_ = response
-	println(response.Data)
+	slog.Debug("Transaction broadcasted successfully. Response: %s", response.Data)
+	if response.Code != 0 {
+		slog.Error("Transaction failed. Response: %s", response)
+	}
 	return nil
 }
 
