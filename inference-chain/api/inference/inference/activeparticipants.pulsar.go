@@ -554,10 +554,58 @@ func (x *fastReflection_ActiveParticipants) ProtoMethods() *protoiface.Methods {
 	}
 }
 
+var _ protoreflect.List = (*_ActiveParticipant_4_list)(nil)
+
+type _ActiveParticipant_4_list struct {
+	list *[]string
+}
+
+func (x *_ActiveParticipant_4_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_ActiveParticipant_4_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfString((*x.list)[i])
+}
+
+func (x *_ActiveParticipant_4_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_ActiveParticipant_4_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_ActiveParticipant_4_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message ActiveParticipant at list field Models as it is not of Message kind"))
+}
+
+func (x *_ActiveParticipant_4_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_ActiveParticipant_4_list) NewElement() protoreflect.Value {
+	v := ""
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_ActiveParticipant_4_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_ActiveParticipant        protoreflect.MessageDescriptor
-	fd_ActiveParticipant_index  protoreflect.FieldDescriptor
-	fd_ActiveParticipant_weight protoreflect.FieldDescriptor
+	md_ActiveParticipant              protoreflect.MessageDescriptor
+	fd_ActiveParticipant_index        protoreflect.FieldDescriptor
+	fd_ActiveParticipant_weight       protoreflect.FieldDescriptor
+	fd_ActiveParticipant_inferenceUrl protoreflect.FieldDescriptor
+	fd_ActiveParticipant_models       protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -565,6 +613,8 @@ func init() {
 	md_ActiveParticipant = File_inference_inference_activeparticipants_proto.Messages().ByName("ActiveParticipant")
 	fd_ActiveParticipant_index = md_ActiveParticipant.Fields().ByName("index")
 	fd_ActiveParticipant_weight = md_ActiveParticipant.Fields().ByName("weight")
+	fd_ActiveParticipant_inferenceUrl = md_ActiveParticipant.Fields().ByName("inferenceUrl")
+	fd_ActiveParticipant_models = md_ActiveParticipant.Fields().ByName("models")
 }
 
 var _ protoreflect.Message = (*fastReflection_ActiveParticipant)(nil)
@@ -644,6 +694,18 @@ func (x *fastReflection_ActiveParticipant) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
+	if x.InferenceUrl != "" {
+		value := protoreflect.ValueOfString(x.InferenceUrl)
+		if !f(fd_ActiveParticipant_inferenceUrl, value) {
+			return
+		}
+	}
+	if len(x.Models) != 0 {
+		value := protoreflect.ValueOfList(&_ActiveParticipant_4_list{list: &x.Models})
+		if !f(fd_ActiveParticipant_models, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -663,6 +725,10 @@ func (x *fastReflection_ActiveParticipant) Has(fd protoreflect.FieldDescriptor) 
 		return x.Index != ""
 	case "inference.inference.ActiveParticipant.weight":
 		return x.Weight != int64(0)
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		return x.InferenceUrl != ""
+	case "inference.inference.ActiveParticipant.models":
+		return len(x.Models) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -683,6 +749,10 @@ func (x *fastReflection_ActiveParticipant) Clear(fd protoreflect.FieldDescriptor
 		x.Index = ""
 	case "inference.inference.ActiveParticipant.weight":
 		x.Weight = int64(0)
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		x.InferenceUrl = ""
+	case "inference.inference.ActiveParticipant.models":
+		x.Models = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -705,6 +775,15 @@ func (x *fastReflection_ActiveParticipant) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.ActiveParticipant.weight":
 		value := x.Weight
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		value := x.InferenceUrl
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.ActiveParticipant.models":
+		if len(x.Models) == 0 {
+			return protoreflect.ValueOfList(&_ActiveParticipant_4_list{})
+		}
+		listValue := &_ActiveParticipant_4_list{list: &x.Models}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -729,6 +808,12 @@ func (x *fastReflection_ActiveParticipant) Set(fd protoreflect.FieldDescriptor, 
 		x.Index = value.Interface().(string)
 	case "inference.inference.ActiveParticipant.weight":
 		x.Weight = value.Int()
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		x.InferenceUrl = value.Interface().(string)
+	case "inference.inference.ActiveParticipant.models":
+		lv := value.List()
+		clv := lv.(*_ActiveParticipant_4_list)
+		x.Models = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -749,10 +834,18 @@ func (x *fastReflection_ActiveParticipant) Set(fd protoreflect.FieldDescriptor, 
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ActiveParticipant) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.ActiveParticipant.models":
+		if x.Models == nil {
+			x.Models = []string{}
+		}
+		value := &_ActiveParticipant_4_list{list: &x.Models}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.ActiveParticipant.index":
 		panic(fmt.Errorf("field index of message inference.inference.ActiveParticipant is not mutable"))
 	case "inference.inference.ActiveParticipant.weight":
 		panic(fmt.Errorf("field weight of message inference.inference.ActiveParticipant is not mutable"))
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		panic(fmt.Errorf("field inferenceUrl of message inference.inference.ActiveParticipant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -770,6 +863,11 @@ func (x *fastReflection_ActiveParticipant) NewField(fd protoreflect.FieldDescrip
 		return protoreflect.ValueOfString("")
 	case "inference.inference.ActiveParticipant.weight":
 		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ActiveParticipant.inferenceUrl":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.ActiveParticipant.models":
+		list := []string{}
+		return protoreflect.ValueOfList(&_ActiveParticipant_4_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -846,6 +944,16 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 		if x.Weight != 0 {
 			n += 1 + runtime.Sov(uint64(x.Weight))
 		}
+		l = len(x.InferenceUrl)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if len(x.Models) > 0 {
+			for _, s := range x.Models {
+				l = len(s)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -874,6 +982,22 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Models) > 0 {
+			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
+				i -= len(x.Models[iNdEx])
+				copy(dAtA[i:], x.Models[iNdEx])
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Models[iNdEx])))
+				i--
+				dAtA[i] = 0x22
+			}
+		}
+		if len(x.InferenceUrl) > 0 {
+			i -= len(x.InferenceUrl)
+			copy(dAtA[i:], x.InferenceUrl)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.InferenceUrl)))
+			i--
+			dAtA[i] = 0x1a
 		}
 		if x.Weight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Weight))
@@ -987,6 +1111,70 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceUrl", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.InferenceUrl = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Models = append(x.Models, string(dAtA[iNdEx:postIndex]))
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1084,8 +1272,10 @@ type ActiveParticipant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index  string `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Weight int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	Index        string   `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Weight       int64    `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	InferenceUrl string   `protobuf:"bytes,3,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models       []string `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
 }
 
 func (x *ActiveParticipant) Reset() {
@@ -1122,6 +1312,20 @@ func (x *ActiveParticipant) GetWeight() int64 {
 	return 0
 }
 
+func (x *ActiveParticipant) GetInferenceUrl() string {
+	if x != nil {
+		return x.InferenceUrl
+	}
+	return ""
+}
+
+func (x *ActiveParticipant) GetModels() []string {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
 var File_inference_inference_activeparticipants_proto protoreflect.FileDescriptor
 
 var file_inference_inference_activeparticipants_proto_rawDesc = []byte{
@@ -1138,24 +1342,28 @@ var file_inference_inference_activeparticipants_proto_rawDesc = []byte{
 	0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x32, 0x0a, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65,
 	0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02,
 	0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x41, 0x0a, 0x11, 0x41, 0x63,
+	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x7d, 0x0a, 0x11, 0x41, 0x63,
 	0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12,
 	0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05,
 	0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xc5, 0x01,
-	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x17, 0x41, 0x63, 0x74, 0x69, 0x76,
-	0x65, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x50, 0x72, 0x6f,
-	0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e,
-	0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58,
-	0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x22, 0x0a,
+	0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x18, 0x03, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x55, 0x72,
+	0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28,
+	0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x42, 0xc5, 0x01, 0x0a, 0x17, 0x63, 0x6f,
+	0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x17, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x70, 0x61, 0x72,
+	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
+	0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
+	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47,
+	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

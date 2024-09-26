@@ -12,4 +12,6 @@ message ActiveParticipants {
 message ActiveParticipant {
   string index = 1;
   int64  weight = 2;
+  string inferenceUrl = 3;
+  repeated string models = 4;
 }
