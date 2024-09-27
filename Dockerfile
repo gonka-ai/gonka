@@ -1,5 +1,3 @@
-ARG USERNAME="pow"
-
 ################################################################################
 
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS builder
@@ -22,13 +20,11 @@ RUN poetry config virtualenvs.in-project true \
 ################################################################################
 
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
-ARG USERNAME
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
     USERNAME=$USERNAME
 
-RUN useradd -m -s /bin/bash $USERNAME
 RUN mkdir /app && \
     chmod -R 777 /app
 
@@ -44,6 +40,5 @@ ENV JUPYTER_DATA_DIR=/app/jupyter_data
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-USER $USERNAME
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]

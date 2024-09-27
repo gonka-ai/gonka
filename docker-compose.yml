@@ -16,6 +16,7 @@ services:
       --ip=0.0.0.0
       --port=8080
       --no-browser
+      --allow-root
       --notebook-dir /app/notebooks
       --NotebookApp.token=${JUPYTER_TOKEN}
     deploy:
