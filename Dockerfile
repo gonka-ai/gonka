@@ -29,7 +29,7 @@ ENV PYTHONUNBUFFERED=1 \
     USERNAME=$USERNAME
 
 RUN useradd -m -s /bin/bash $USERNAME
-RUN mkdir /app && chown -R $USERNAME:$USERNAME /app
+RUN mkdir /app && chmod -R 777 /app
 
 USER $USERNAME
 WORKDIR /app
@@ -38,4 +38,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY src /app/src
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+RUN mkdir /app/jupyter_data
+ENV JUPYTER_DATA_DIR=/app/jupyter_data
 
