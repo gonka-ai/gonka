@@ -1,0 +1,25 @@
+services:
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./notebooks:/notebooks
+      - ./scripts:/scripts
+    command: >
+      jupyter-lab 
+      --ip=0.0.0.0 
+      --port=8080 
+      --no-browser 
+      --NotebookApp.token=${JUPYTER_TOKEN}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart:
+      always
