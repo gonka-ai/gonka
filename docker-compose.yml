@@ -6,8 +6,8 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./notebooks:/app/notebooks
-      - ./scripts:/app/scripts
+      - ./notebooks:/app/notebooks:rw
+      - ./scripts:/app/scripts:r
     command: >
       jupyter-lab 
       --ip=0.0.0.0 
