@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "pow", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 jupyterlab = "^4.2.5"
 numpy = "^2.1.1"
 tqdm = "^4.66.5"
