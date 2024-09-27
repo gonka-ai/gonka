@@ -9,6 +9,17 @@ so you can edit the notebooks and scripts in your local machine and they will be
 The `src` folder is the source code of the project and it's copied into the container at the `build` step.  
 For development purposes you can also mount your `src` folder into the container:
 
+
+### User and Group
+For convenience, the user and group are created in the container with the same UID and GID as the host user.
+It allows the container to write to the `scripts` and `notebooks` folders without changing the permissions on your local machine.  
+
+To use the same UID and GID as your host user, run the following command:
+```bash
+echo "HOST_UID=$(id -u)" >> .env
+echo "HOST_GID=$(id -g)" >> .env
+```
+
 ### Jupyter
 
 ```yaml
@@ -41,3 +52,8 @@ gcloud compute start-iap-tunnel pow-test 8080 --project=<PROJECT_ID> --local-hos
 ```bash
 docker compose run --rm pow python scripts/check_operations.py
 ```
+
+
+## Production
+
+WIP

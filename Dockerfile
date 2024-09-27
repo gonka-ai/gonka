@@ -19,7 +19,7 @@ RUN poetry config virtualenvs.in-project true \
 
 ################################################################################
 
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime as dev
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
