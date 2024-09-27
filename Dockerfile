@@ -1,21 +1,21 @@
-FROM nvidia/cuda:12.6.1-base-ubuntu24.04 AS builder
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS builder
 
 ENV POETRY_VERSION=1.6.1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_NO_INTERACTION=1
+    POETRY_NO_INTERACTION=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-RUN pip install "poetry==$POETRY_VERSION"
+RUN pip install --upgrade pip && \
+    pip install "poetry==$POETRY_VERSION"
 
 WORKDIR /app
 
 COPY pyproject.toml poetry.lock /app/
 
 RUN poetry config virtualenvs.in-project true \
-    && poetry install --no-root --no-dev
+    && poetry install --no-root
 
-COPY src /app/src
-
-FROM nvidia/cuda:12.6.1-base-ubuntu24.04
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src
@@ -23,9 +23,9 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
-
-COPY --from=builder /app/src /app/src
+COPY src /app/src
+COPY scripts /app/scripts
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python", "-m", "pow"]
+CMD ["python3", "-m", "pow"]
