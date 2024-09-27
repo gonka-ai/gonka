@@ -29,7 +29,8 @@ ENV PYTHONUNBUFFERED=1 \
     USERNAME=$USERNAME
 
 RUN useradd -m -s /bin/bash $USERNAME
-RUN mkdir /app && chmod -R 777 /app
+RUN mkdir /app && \
+    chmod -R 777 /app
 
 USER $USERNAME
 WORKDIR /app
@@ -39,6 +40,10 @@ COPY src /app/src
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN mkdir /app/jupyter_data
+RUN mkdir /app/jupyter_data && \
+    chmod -R 777 /app/jupyter_data
 ENV JUPYTER_DATA_DIR=/app/jupyter_data
 
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
