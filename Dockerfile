@@ -32,9 +32,6 @@ RUN useradd -m -s /bin/bash $USERNAME
 RUN mkdir /app && \
     chmod -R 777 /app
 
-USER $USERNAME
-WORKDIR /app
-
 COPY --from=builder /app/.venv /app/.venv
 COPY src /app/src
 
@@ -46,4 +43,7 @@ ENV JUPYTER_DATA_DIR=/app/jupyter_data
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+USER $USERNAME
+WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]
