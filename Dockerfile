@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM nvidia/cuda:12.6.1-base-ubuntu24.04
 
 ENV POETRY_VERSION=1.6.1 \
     PYTHONUNBUFFERED=1 \
@@ -15,7 +15,7 @@ RUN poetry config virtualenvs.in-project true \
 
 COPY src /app/src
 
-FROM python:3.12-slim
+FROM nvidia/cuda:12.6.1-base-ubuntu24.04
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src
