@@ -60,6 +60,24 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
 	http.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
+	http.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
+		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
+		if err != nil {
+			log.Printf("Failed to parse height. err = %v", err)
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Verifying block signatures at height %s", height)
+		if err := merkleproof.VerifyBlockSignatures(config.ChainNode.Url, height); err != nil {
+			log.Printf("Failed to verify block signatures. err = %v", err)
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte("Block signatures verified"))
+	})
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 	log.Printf("Starting the server on %s", addr)
