@@ -9,6 +9,13 @@ so you can edit the notebooks and scripts in your local machine and they will be
 The `src` folder is the source code of the project and it's copied into the container at the `build` step.  
 For development purposes you can also mount your `src` folder into the container:
 
+```yaml
+...
+volumes:
+  - ./src:/app/src
+...
+```
+
 
 ### User and Group
 For convenience, the user and group are created in the container with the same UID and GID as the host user.
@@ -21,13 +28,6 @@ echo "HOST_GID=$(id -g)" >> .env
 ```
 
 ### Jupyter
-
-```yaml
-...
-volumes:
-  - ./src:/app/src
-...
-```
 
 ```bash
 docker compose up --build
