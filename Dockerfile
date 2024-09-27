@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.1-base-ubuntu24.04
+FROM nvidia/cuda:12.6.1-base-ubuntu24.04 AS builder
 
 ENV POETRY_VERSION=1.6.1 \
     PYTHONUNBUFFERED=1 \
