@@ -9,8 +9,8 @@ services:
       - ./notebooks:/app/notebooks:Z
       - ./scripts:/app/scripts:Z
     environment:
-      - HOST_UID=${UID}
-      - HOST_GID=${GID}
+      - HOST_UID=${HOST_UID}
+      - HOST_GID=${HOST_GID}
     command: >
       jupyter-lab
       --ip=0.0.0.0
@@ -28,4 +28,3 @@ services:
               capabilities: [gpu]
     restart:
       always
-    user: "${HOST_UID}:${HOST_GID}"
