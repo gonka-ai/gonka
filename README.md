@@ -22,7 +22,8 @@ volumes:
 docker compose up --build
 ```
 
-Then you can access the jupyter lab interface at http://localhost:8080/
+Then you can access the jupyter lab interface at http://localhost:8080/. 
+The password can be found under `JUPYTER_TOKEN` in the `.env` file.
 For sure you will need to forward the port to your local machine.
 
 ```bash
