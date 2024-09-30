@@ -41,7 +41,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun addUnfundedInferenceParticipant(inferenceParticipant: UnfundedInferenceParticipant) =
         wrapLog("AddUnfundedInferenceParticipant", true) {
-            val response = Fuel.post("$url/v1/participants/unfunded")
+            val response = Fuel.post("$url/v1/participants")
                 .jsonBody(inferenceParticipant, gsonSnakeCase)
                 .response()
             logResponse(response)

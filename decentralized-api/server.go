@@ -63,7 +63,6 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
-	mux.HandleFunc("/v1/participants/unfunded", wrapSubmitUnfundedNewParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
 	mux.HandleFunc("/debug/chat/completions", debugWrapChat())
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
@@ -796,18 +795,6 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 	}
 }
 
-func wrapSubmitUnfundedNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
-	slog.Debug("wrapSubmitUnfundedNewParticipant")
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method == "POST" {
-			submitNewUnfundedParticipant(recorder, w, request)
-		} else {
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-			return
-		}
-	}
-}
-
 func wrapSubmitNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == "POST" {
@@ -849,16 +836,7 @@ type ParticipantDto struct {
 	VotingPower int64    `json:"voting_power"`
 }
 
-func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	var body SubmitUnfundedNewParticipantDto
-	slog.SetLogLoggerLevel(slog.LevelDebug)
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	slog.Debug("SubmitNewUnfundedParticipantDto", "body", body)
-
+func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,
@@ -874,15 +852,19 @@ func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 }
 
 func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
 	// Parse the request body into a SubmitNewParticipantDto
-	var body SubmitNewParticipantDto
+	var body SubmitUnfundedNewParticipantDto
+
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 		slog.Error("Failed to decode request body", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Address != "" && body.PubKey != "" {
+		submitNewUnfundedParticipant(recorder, w, body)
 		return
 	}
 
