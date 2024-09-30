@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
@@ -8,7 +9,8 @@ import java.time.Instant
 
 val nameExtractor = "inference-ignite-(.+)-node-1".toRegex()
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
-    val dockerClient = DockerClientBuilder.getInstance().build()
+    val dockerClient = DockerClientBuilder.getInstance()
+        .build()
     val containers = dockerClient.listContainersCmd().exec()
     val nodes = containers.filter { it.image == config.nodeImageName }
     val apis = containers.filter { it.image == config.apiImageName }
@@ -16,16 +18,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val name = nameExtractor.find(it.names.first())!!.groupValues[1]
         val matchingApi = apis.find { it.names.any { it.contains(name) } }!!
         val configWithName = config.copy(pairName = name)
-        dockerClient.logContainerCmd(it.id)
-            .withTailAll()
-            .withSince(Instant.now().epochSecond.toInt())
-            .withStdErr(true)
-            .withStdOut(true)
-            .withFollowStream(true)
-            .exec(LogOutput(name, "node"))
-        dockerClient.logContainerCmd(matchingApi.id).withTailAll().withStdErr(true).withStdOut(true)
-            .withFollowStream(true)
-            .exec(LogOutput(name, "api"))
+        attachLogs(dockerClient, name, "node", it.id)
+        attachLogs(dockerClient, name, "api", matchingApi.id)
 
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
@@ -33,6 +27,22 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             name,
         )
     }
+}
+
+private fun attachLogs(
+    dockerClient: DockerClient,
+    name: String,
+    type: String,
+    id: String
+) {
+    dockerClient.logContainerCmd(id)
+        .withSince(Instant.now().epochSecond.toInt())
+        .withStdErr(true)
+        .withStdOut(true)
+        .withFollowStream(true)
+        // Timestamps allow LogOutput to detect multi-line messages
+        .withTimestamps(true)
+        .exec(LogOutput(name, type))
 }
 
 data class LocalInferencePair(

@@ -19,3 +19,11 @@ data class InferenceParticipant(
     val models: List<String>,
     val validatorKey: String,
 )
+
+data class UnfundedInferenceParticipant(
+    val url: String,
+    val models: List<String>,
+    val validatorKey: String,
+    val pubKey: String,
+    val address: String
+)

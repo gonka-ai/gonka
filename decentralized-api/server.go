@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
@@ -16,16 +15,15 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
+	"io"
 	"log"
 	"log/slog"
 	"math/rand"
-	"strconv"
-
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/types"
-	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -43,6 +41,8 @@ type InferenceTransaction struct {
 const testModel = "unsloth/llama-3-8b-Instruct"
 
 func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	slog.Debug("StartInferenceServerWrapper")
 	nodes := config.Nodes
 	for _, node := range nodes {
 		loadNodeToBroker(nodeBroker, &node)
@@ -53,6 +53,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
 	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
+	http.HandleFunc("/v1/participants/unfunded", wrapSubmitUnfundedNewParticipant(transactionRecorder))
 	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
 	http.HandleFunc("/debug/chat/completions", debugWrapChat())
 
@@ -118,6 +119,7 @@ type ChatRequest struct {
 func readRequest(request *http.Request) (*ChatRequest, error) {
 	body, err := ReadRequestBody(request)
 	if err != nil {
+		slog.Error("Unable to read request body", "error", err)
 		return nil, err
 	}
 
@@ -141,25 +143,29 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 
 func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		log.Printf("wrapChat. Received request. method = %s. path = %s", request.Method, request.URL.Path)
+		slog.Debug("wrapChat. Received request", "method", request.Method, "path", request.URL.Path)
 		chatRequest, err := readRequest(request)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if request.Method != http.MethodPost {
+			slog.Warn("Invalid method", "method", request.Method)
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 		if chatRequest.AuthKey == "" {
+			slog.Warn("Request without authorization", "path", request.URL.Path)
 			http.Error(w, "Authorization is required", http.StatusUnauthorized)
 			return
 		}
 		// Is this a Transfer request or an Executor call?
 		if chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "" {
+			slog.Info("Executor request", "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed, "pubKey", chatRequest.PubKey)
 			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, config)
 			return
 		} else if request.Header.Get("X-Requester-Address") != "" {
+			slog.Info("Transfer request", "requesterAddress", chatRequest.RequesterAddress)
 			handleTransferRequest(w, chatRequest, recorder)
 			return
 		} else {
@@ -196,16 +202,16 @@ func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*Execu
 
 func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.InferenceCosmosClient) bool {
 	queryClient := recorder.NewInferenceQueryClient()
-	log.Printf("GET inference participant for transfer. address = %s", request.RequesterAddress)
+	slog.Debug("GET inference participant for transfer", "address", request.RequesterAddress)
 	client, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
 	if err != nil {
-		log.Printf("Failed to get inference participant. address = %s. err = %v", request.RequesterAddress, err)
+		slog.Error("Failed to get inference participant", "address", request.RequesterAddress, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
 	executor, err := getExecutorForRequest(recorder)
 	if err != nil {
-		log.Printf("Failed to get executor. %v", err)
+		slog.Error("Failed to get executor", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
@@ -219,17 +225,22 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	inferenceUUID := uuid.New().String()
 	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor)
 	if err != nil {
+		slog.Error("Failed to create inference start request", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
 	go func() {
+		slog.Debug("Starting inference", "id", inferenceRequest.InferenceId)
 		err := recorder.StartInference(inferenceRequest)
 		if err != nil {
-			log.Printf("Failed to submit MsgStartInference. %v", err)
+			slog.Error("Failed to submit MsgStartInference", "id", inferenceRequest.InferenceId, "error", err)
+		} else {
+			slog.Debug("Submitted MsgStartInference", "id", inferenceRequest.InferenceId)
 		}
 	}()
 	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
 	// the same process to create the same final request body
+	slog.Debug("Sending request to executor", "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -243,6 +254,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		slog.Error("Failed to make http request to executor", "error", err, "url", executor.Url)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
@@ -411,12 +423,14 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	}
 	seed, err := strconv.Atoi(request.Seed)
 	if err != nil {
+		slog.Warn("Unable to parse seed", "seed", request.Seed)
 		http.Error(w, "Unable to parse seed", http.StatusBadRequest)
 		return true
 	}
 
 	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, int32(seed))
 	if err != nil {
+		slog.Warn("Unable to modify request body", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
@@ -429,6 +443,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		)
 	})
 	if err != nil {
+		slog.Error("Failed to get response from inference node", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
@@ -436,6 +451,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := getInferenceErrorMessage(resp)
+		slog.Warn("Inference node response with an error", "code", resp.StatusCode, "msg", msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return true
 	}
@@ -452,7 +468,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	err = sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, &recorder, config.ChainNode.AccountName)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
-		log.Printf("Failed to send inference transaction. %v", err)
+		slog.Error("Failed to send inference transaction", "error", err)
 		return true
 	}
 
@@ -470,7 +486,7 @@ func getInferenceErrorMessage(resp *http.Response) string {
 }
 
 func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
-	log.Printf("PubKey: %s", pubKey)
+	slog.Debug("Checking key for request", "pubkey", pubKey)
 
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
 	if err != nil {
@@ -479,12 +495,10 @@ func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
 	actualKey := secp256k1.PubKey{Key: pubKeyBytes}
 	// Not sure about decoding/encoding the actual key bytes
 	keyBytes, err := base64.StdEncoding.DecodeString(request.AuthKey)
-	shaOfBytes := sha256.Sum256(request.Body)
-	encoding := base64.StdEncoding.EncodeToString(shaOfBytes[:])
-	log.Print("SHA of bytes (verification):" + encoding)
 
 	valid := actualKey.VerifySignature(request.Body, keyBytes)
 	if !valid {
+		slog.Warn("Signature did not match pubkey")
 		return errors2.New("invalid signature")
 	}
 	return nil
@@ -635,13 +649,6 @@ func sendInferenceTransaction(inferenceId string, responseBodyBytes []byte, modi
 	if recorder != nil {
 		createInferenceFinishedTransaction(inferenceId, *recorder, transaction, accountName)
 	}
-
-	// print the json of the transaction:
-	transactionJson, err := json.Marshal(transaction)
-	if err == nil {
-		log.Println(string(transactionJson))
-	}
-
 	return nil
 }
 
@@ -684,12 +691,14 @@ func createInferenceFinishedTransaction(id string, recorder cosmos_client.Infere
 		ExecutedBy:           accountName,
 	}
 
-	println("--TRANSACTIONID--" + transaction.Id)
 	// Submit to the block chain effectively AFTER we've served the request. Speed before certainty.
 	go func() {
+		slog.Debug("Submitting MsgFinishInference", "inferenceId", id)
 		err := recorder.FinishInference(message)
 		if err != nil {
-			log.Printf("Failed to submit MsgFinishInference. %v", err)
+			slog.Error("Failed to submit MsgFinishInference", "inferenceId", id, "error", err)
+		} else {
+			slog.Debug("Submitted MsgFinishInference", "inferenceId", id)
 		}
 	}()
 }
@@ -763,6 +772,18 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 	}
 }
 
+func wrapSubmitUnfundedNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+	slog.Debug("wrapSubmitUnfundedNewParticipant")
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == "POST" {
+			submitNewUnfundedParticipant(recorder, w, request)
+		} else {
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+}
+
 func wrapSubmitNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == "POST" {
@@ -782,6 +803,14 @@ type SubmitNewParticipantDto struct {
 	ValidatorKey string   `json:"validator_key"`
 }
 
+type SubmitUnfundedNewParticipantDto struct {
+	Address      string   `json:"address"`
+	Url          string   `json:"url"`
+	Models       []string `json:"models"`
+	ValidatorKey string   `json:"validator_key"`
+	PubKey       string   `json:"pub_key"`
+}
+
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
 }
@@ -794,6 +823,34 @@ type ParticipantDto struct {
 	RefundsOwed uint64   `json:"refunds_owed"`
 	Balance     int64    `json:"balance"`
 	VotingPower int64    `json:"voting_power"`
+}
+
+func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	var body SubmitUnfundedNewParticipantDto
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		slog.Error("Failed to decode request body. %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Debug("SubmitNewUnfundedParticipantDto: %v", body)
+
+	msg := &inference.MsgSubmitNewUnfundedParticipant{
+		Address:      body.Address,
+		Url:          body.Url,
+		Models:       body.Models,
+		ValidatorKey: body.ValidatorKey,
+		PubKey:       body.PubKey,
+	}
+
+	slog.Debug("Message:", msg)
+
+	if err := recorder.SubmitNewUnfundedParticipant(msg); err != nil {
+		slog.Error("Failed to submit MsgSubmitNewUnfundedParticipant. %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 }
 
 func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
@@ -855,9 +912,9 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 		log.Printf("Name: %s", key.Name)
 		pubKey, err := key.GetPubKey()
 		if err != nil {
-			log.Printf("Failed to get pubkey for key %s: %v", key, err)
+			slog.Warn("Failed to get pubkey for key", "key", key, "error", err)
 		} else {
-			log.Printf("PubKey: %s", pubKey.Address().String())
+			slog.Info("PubKey", "pubkey", pubKey.Address().String(), "keyring", key.String())
 		}
 		log.Printf("Key: %s", key.PubKey.String())
 		log.Printf("Item: %s", key.Item)
@@ -929,12 +986,25 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 func getVotingPower(recorder cosmos_client.InferenceCosmosClient, address string, validatorMap map[string]types2.Validator) int64 {
 	addr, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
-		log.Printf("Failed to get account for participant %s: %v", address, err)
+		slog.Error("Address is invalid Bech32 format", "address", address, "error", err)
 	}
 	log.Printf("AccAddressFromBech32: %s", addr.String())
+	accounts, err := recorder.Client.AccountRegistry.List()
+	if err != nil {
+		slog.Error("Failed to get accounts", "error", err)
+		return 0
+	}
+	for _, acc := range accounts {
+		key, err2 := acc.PubKey()
+		if err2 != nil {
+			slog.Warn("Failed to get pubkey for account", "account", acc.Address, "error", err2)
+			continue
+		}
+		slog.Info("Account", "address", acc.Address, "pubKey", key, "name", acc.Name)
+	}
 	account, err := recorder.Client.Account(address)
 	if err != nil {
-		log.Printf("Failed to get account for participant %s: %v", address, err)
+		slog.Warn("Failed to get account for participant", "address", address, "error", err)
 		return 0
 	}
 	s, err := account.Address("")

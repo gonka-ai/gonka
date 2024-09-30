@@ -19,12 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName         = "/inference.inference.Msg/UpdateParams"
-	Msg_StartInference_FullMethodName       = "/inference.inference.Msg/StartInference"
-	Msg_FinishInference_FullMethodName      = "/inference.inference.Msg/FinishInference"
-	Msg_SubmitNewParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewParticipant"
-	Msg_Validation_FullMethodName           = "/inference.inference.Msg/Validation"
-	Msg_SubmitPoC_FullMethodName            = "/inference.inference.Msg/SubmitPoC"
+	Msg_UpdateParams_FullMethodName                 = "/inference.inference.Msg/UpdateParams"
+	Msg_StartInference_FullMethodName               = "/inference.inference.Msg/StartInference"
+	Msg_FinishInference_FullMethodName              = "/inference.inference.Msg/FinishInference"
+	Msg_SubmitNewParticipant_FullMethodName         = "/inference.inference.Msg/SubmitNewParticipant"
+	Msg_Validation_FullMethodName                   = "/inference.inference.Msg/Validation"
+	Msg_SubmitPoC_FullMethodName                    = "/inference.inference.Msg/SubmitPoC"
+	Msg_SubmitNewUnfundedParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
 )
 
 // MsgClient is the client API for Msg service.
@@ -39,6 +40,7 @@ type MsgClient interface {
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
 	SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error)
+	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
 }
 
 type msgClient struct {
@@ -103,6 +105,15 @@ func (c *msgClient) SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grp
 	return out, nil
 }
 
+func (c *msgClient) SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error) {
+	out := new(MsgSubmitNewUnfundedParticipantResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitNewUnfundedParticipant_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -115,6 +126,7 @@ type MsgServer interface {
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
 	SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error)
+	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -139,6 +151,9 @@ func (UnimplementedMsgServer) Validation(context.Context, *MsgValidation) (*MsgV
 }
 func (UnimplementedMsgServer) SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoC not implemented")
+}
+func (UnimplementedMsgServer) SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewUnfundedParticipant not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -261,6 +276,24 @@ func _Msg_SubmitPoC_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitNewUnfundedParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitNewUnfundedParticipant)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitNewUnfundedParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitNewUnfundedParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitNewUnfundedParticipant(ctx, req.(*MsgSubmitNewUnfundedParticipant))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -291,6 +324,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPoC",
 			Handler:    _Msg_SubmitPoC_Handler,
+		},
+		{
+			MethodName: "SubmitNewUnfundedParticipant",
+			Handler:    _Msg_SubmitNewUnfundedParticipant_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
