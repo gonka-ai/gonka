@@ -11,13 +11,12 @@ import (
 	"github.com/cometbft/cometbft/rpc/client/http"
 )
 
-func QueryWithProof(address string, storeKey, dataKey string) (*coretypes.ResultABCIQuery, error) {
+func NewRpcClient(address string) (*http.HTTP, error) {
+	return http.New(address, "/websocket")
+}
+
+func QueryWithProof(rpcClient *http.HTTP, storeKey, dataKey string) (*coretypes.ResultABCIQuery, error) {
 	log.Printf("Querying store %s with key %s...\n", storeKey, dataKey)
-	// Create a new RPC client
-	rpcClient, err := http.New(address, "/websocket")
-	if err != nil {
-		panic(err)
-	}
 
 	key := []byte(dataKey)
 	path := fmt.Sprintf("store/%s/key", storeKey)

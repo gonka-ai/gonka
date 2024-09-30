@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -98,6 +99,8 @@ func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) f
 type ActiveParticipantWithProof struct {
 	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
 	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
+	Validators         []*types2.Validator      `json:"validators"`
+	Block              *types2.Block            `json:"block"`
 }
 
 func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
@@ -107,7 +110,13 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			return
 		}
 
-		result, err := merkleproof.QueryWithProof(config.ChainNode.Url, "inference", "ActiveParticipants/value/")
+		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
+		if err != nil {
+			log.Printf("Failed to create rpc client. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
 		if err != nil {
 			log.Printf("Failed to query active participants. err = %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -127,9 +136,25 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			return
 		}
 
+		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
+		if err != nil {
+			log.Printf("Failed to get block. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
+		if err != nil {
+			log.Printf("Failed to get validators. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		response := ActiveParticipantWithProof{
 			ActiveParticipants: activeParticipants,
 			ProofOps:           *result.Response.ProofOps,
+			Validators:         vals.Validators,
+			Block:              block.Block,
 		}
 
 		writeResponseBody(response, w)
