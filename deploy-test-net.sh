@@ -112,15 +112,15 @@ CHAIN_ID="prod-sim"
 COIN_DENOM="icoin"
 STATE_DIR_NAME=".inference"
 
-VALIDATOR_ADDRESS="cosmos1x4c24exedfdy6czz5ck92ka9xw2pdd2eq76gh3"
-EXECUTOR_ADDRESS="cosmos1xql6r5dqqljs4j0me8s6ummadyvpwjwuga06sp"
-REQUESTER_ADDRESS="cosmos1yq6duhnjl6jr0dwxsjmv9ujfjscxzp2u6v6cw9"
+VALIDATOR_ADDRESS="cosmos1zx7sj79mlqe979sawe0jjm9tcady03jgwa3zkc"
+EXECUTOR_ADDRESS="cosmos1mrhpzuvp0zf0qgkdg8x8wktgejnrv2g9aja89q"
+REQUESTER_ADDRESS="cosmos1445galatfyketym8fjm0wv299zntpstw2s5yud"
 
 echo "Add Executor"
 docker run --rm -it \
     -v ~/.inference:/root/.inference \
     "$IMAGE_NAME" \
-    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $EXECUTOR_ADDRESS "100$COIN_DENOM" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $EXECUTOR_ADDRESS "2500000000$COIN_DENOM" \
         --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
         --chain-id $CHAIN_ID --yes \
         --node tcp://10.128.0.21:26657
@@ -129,10 +129,16 @@ echo "Add Validator"
 docker run --rm -it \
     -v ~/.inference:/root/.inference \
     "$IMAGE_NAME" \
-    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $VALIDATOR_ADDRESS "100$COIN_DENOM" \
+    "$APP_NAME" tx bank send $REQUESTER_ADDRESS $VALIDATOR_ADDRESS "2500000000$COIN_DENOM" \
         --keyring-backend test --keyring-dir /root/$STATE_DIR_NAME \
         --chain-id $CHAIN_ID --yes \
         --node tcp://10.128.0.21:26657
+
+# Get validator keys
+docker run --rm \
+  -v ~/.inference:/root/.inference \
+  "$IMAGE_NAME" \
+  "$APP_NAME" tendermint show-validator
 
 # Create participants
 # Requester
@@ -140,7 +146,8 @@ curl -X POST 'http://34.46.180.72:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://34.46.180.72:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "hjZiJ3ehIh25KXKZaGnLolgFs3Lw7gxWRceVV24KTMI="
 }'
 
 # Executor
@@ -148,18 +155,17 @@ curl -X POST 'http://35.232.251.227:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://35.232.251.227:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "K3L6LZSMTKJZPAlp7L7BESPlkRpB7SPBB5qevDUasK0="
 }'
-
-curl -X GET 'http://34.46.180.72:8080/v1/chat/completions/some-id' \
---header 'Content-Type: application/json'
 
 # Validator
 curl -X POST 'http://34.172.126.50:8080/v1/participants' \
 --header 'Content-Type: application/json' \
 --data '{
   "url": "http://34.172.126.50:8080",
-  "models": ["unsloth/llama-3-8b-Instruct"]
+  "models": ["unsloth/llama-3-8b-Instruct"],
+  "validator_key": "CiAwsLlv9XGQWwi04rD4DyEtzYF2Jiyvj+veWai9hhw="
 }'
 
 docker compose -f docker-compose-cloud.yml down
