@@ -22,7 +22,7 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 	actualKey := secp256k1.PubKey{Key: pubKeyBytes}
 	err = newAccount.SetPubKey(&actualKey)
 	if err != nil {
-		k.LogError("Error setting pubkey", err)
+		k.LogError("Error setting pubkey", "error", err)
 		return nil, err
 	}
 	k.LogInfo("added account with pubkey", "pubkey", newAccount.GetPubKey(), "address", newAccount.GetAddress())

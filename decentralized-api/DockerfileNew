@@ -1,0 +1,15 @@
+FROM alpine:edge
+
+WORKDIR /root
+
+# Copy over binaries from the build-env
+COPY ./build/dapi /usr/bin/decentralized-api
+COPY ./scripts/init-docker.sh /root/init-docker.sh
+ENV API_CONFIG_PATH /root/api-config.yaml
+COPY ./config-docker.yaml /root/api-config.yaml
+
+RUN chmod +x /root/init-docker.sh
+
+EXPOSE 8080
+
+CMD ["sh", "./init-docker.sh"]

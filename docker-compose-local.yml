@@ -1,0 +1,22 @@
+version: "3.7"
+
+services:
+  chain-node:
+    image: inferenced-node
+    environment:
+      - SEEDS=${SEEDS}
+      - KEY_NAME=${KEY_NAME}
+    networks:
+      - net-public
+
+  api:
+    image: decentralized-api
+    ports:
+      - "8080:8080"
+    environment:
+      - API_CONFIG_PATH=/root/.inference/api-config.yaml
+    networks:
+      net-public:
+
+networks:
+  net-public:

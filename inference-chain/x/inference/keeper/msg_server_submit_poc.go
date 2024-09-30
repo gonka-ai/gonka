@@ -12,7 +12,6 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
-	"log"
 	"net/http"
 )
 
@@ -44,7 +43,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		return nil, err
 	}
 
-	k.LogInfo("pubKey = %s. pubKey.String() = %s.", pubKey, pubKey.String())
+	k.LogInfo("POC Keys:", "pubKey", pubKey, "pubkeyString", pubKey.String())
 
 	// 3. Verify all nonces
 	// pubKey.String() yields something like: PubKeySecp256k1{<hex-key>}
@@ -59,7 +58,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 
 		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
 			k.LogWarn(
-				"Hash not accepted! input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), n, proof.Hash,
+				"Hash not accepted!", "input", hex.EncodeToString(input), "nonce", n, "hash", proof.Hash,
 			)
 			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
 		}
@@ -124,7 +123,7 @@ func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPoC, ctx sdk.Context) 
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Retrieveing addr for. msg.Creator = %s. addr = %s", msg.Creator, addr)
+	k.LogDebug("Retrieving addr for", "msg.Creator", msg.Creator, "addr", addr)
 
 	account := k.AccountKeeper.GetAccount(ctx, addr)
 	pubKey := account.GetPubKey()

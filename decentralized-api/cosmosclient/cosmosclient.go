@@ -139,9 +139,9 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	}
 	// TODO: maybe check response for success?
 	_ = response
-	slog.Debug("Transaction broadcasted successfully. Response: %s", response.Data)
+	slog.Debug("Transaction broadcasted successfully", "response", response.Data)
 	if response.Code != 0 {
-		slog.Error("Transaction failed. Response:", response)
+		slog.Error("Transaction failed", "response", response)
 	}
 	return nil
 }
