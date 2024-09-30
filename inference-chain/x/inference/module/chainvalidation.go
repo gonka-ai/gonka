@@ -45,6 +45,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 
 		activeParticipant := &types.ActiveParticipant{
 			Index:        p.ParticipantAddress,
+			ValidatorKey: participant.ValidatorKey,
 			Weight:       p.Power,
 			InferenceUrl: participant.InferenceUrl,
 			Models:       participant.Models,
