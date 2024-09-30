@@ -13,6 +13,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"math/rand"
 	"net/http"
@@ -21,23 +22,23 @@ import (
 
 func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
 	if ids == nil {
-		log.Printf("No inferences to validate")
+		slog.Debug("No inferences to validate")
 		return
 	}
 
-	log.Printf("Sampling inf transactions to validate")
+	slog.Debug("Sampling inf transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
 	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.Context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
-		log.Printf("Failed to query GetInferencesWithExecutors. %v", err)
+		slog.Warn("Failed to query GetInferencesWithExecutors.", "error", err)
 		return
 	}
 
 	logInferencesToSample(r.InferenceWithExecutor)
-	log.Printf("Inferences to sample: %v", r.InferenceWithExecutor)
+	slog.Debug("Inferences to sample", "inferences", r.InferenceWithExecutor)
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
@@ -78,7 +79,7 @@ func logInferencesToValidate(toValidate []types.Inference) {
 	for _, inf := range toValidate {
 		ids = append(ids, inf.InferenceId)
 	}
-	log.Printf("Inferences to validate: %v", ids)
+	slog.Info("Inferences to validate", "inferences", ids)
 }
 
 func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
@@ -121,22 +122,22 @@ func getReputationP(status types.ParticipantStatus) float64 {
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	valResult, err := lockNodeAndValidate(inf, nodeBroker)
 	if err != nil {
-		log.Printf("Failed to validate inf. id = %v. err = %v", inf.InferenceId, err)
+		slog.Error("Failed to validate inf.", "id", inf.InferenceId, "error", err)
 		return
 	}
 
 	msgValidation, err := ToMsgValidation(valResult)
 	if err != nil {
-		log.Printf("Failed to convert to MsgValidation. id = %v. err = %v", inf.InferenceId, err)
+		slog.Error("Failed to convert to MsgValidation.", "id", inf.InferenceId, "error", err)
 		return
 	}
 
 	if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
-		log.Printf("Failed to report validation. id = %v. err = %v", inf.InferenceId, err)
+		slog.Error("Failed to report validation.", "id", inf.InferenceId, "error", err)
 		return
 	}
 
-	log.Printf("Successfully validated inference. id = %v", inf.InferenceId)
+	slog.Info("Successfully validated inference. id = %v", inf.InferenceId)
 }
 
 func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.InferenceCosmosClient) (ValidationResult, error) {
@@ -157,18 +158,19 @@ func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {
 	if inference.Status != types.InferenceStatus_FINISHED {
+		slog.Error("Inference not finished", "status", inference.Status, "inference", inference)
 		return nil, errors.New("Inference is not finished. id = " + inference.InferenceId)
 	}
 
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
-		log.Printf("Failed to unmarshal inference.PromptPayload. id = %v. err = %v", inference.InferenceId, err)
+		slog.Error("Failed to unmarshal inference.PromptPayload.", "id", inference.InferenceId, "error", err)
 		return nil, err
 	}
 
 	originalResponse, err := unmarshalResponse(&inference)
 	if err != nil {
-		log.Printf("Failed to unmarshal inference.ResponsePayload. id = %v. err = %v", inference.InferenceId, err)
+		slog.Error("Failed to unmarshal inference.ResponsePayload.", "id", inference.InferenceId, "error", err)
 		return nil, err
 	}
 
@@ -200,7 +202,7 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
-	log.Printf("responseValidation = %v", string(respBodyBytes))
+	slog.Debug("responseValidation", "validation", string(respBodyBytes))
 	var responseValidation completionapi.Response
 	if err = json.Unmarshal(respBodyBytes, &responseValidation); err != nil {
 		return nil, err

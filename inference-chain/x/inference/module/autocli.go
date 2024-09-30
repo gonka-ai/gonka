@@ -101,6 +101,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submit-poc tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "nonce"}},
 				},
+				{
+					RpcMethod:      "SubmitNewUnfundedParticipant",
+					Use:            "submit-new-unfunded-participant [address] [url] [models] [pub-key] [validator-key]",
+					Short:          "Send a submitNewUnfundedParticipant tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "models"}, {ProtoField: "pubKey"}, {ProtoField: "validatorKey"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

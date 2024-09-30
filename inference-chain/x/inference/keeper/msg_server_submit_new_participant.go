@@ -8,26 +8,32 @@ import (
 
 func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSubmitNewParticipant) (*types.MsgSubmitNewParticipantResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	newParticipant := createNewParticipant(ctx, msg)
+	k.SetParticipant(ctx, newParticipant)
+
+	return &types.MsgSubmitNewParticipantResponse{}, nil
+}
+
+func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) types.Participant {
 	newParticipant := types.Participant{
-		Index:                msg.Creator,
-		Address:              msg.Creator,
+		Index:                msg.GetCreator(),
+		Address:              msg.GetCreator(),
 		Reputation:           1,
 		Weight:               -1,
 		JoinTime:             ctx.BlockTime().UnixMilli(),
 		JoinHeight:           ctx.BlockHeight(),
 		LastInferenceTime:    0,
-		InferenceUrl:         msg.Url,
-		Models:               msg.Models,
+		InferenceUrl:         msg.GetUrl(),
+		Models:               msg.GetModels(),
 		Status:               types.ParticipantStatus_RAMPING,
 		PromptTokenCount:     make(map[string]uint64),
 		CompletionTokenCount: make(map[string]uint64),
-		ValidatorKey:         msg.ValidatorKey,
+		ValidatorKey:         msg.GetValidatorKey(),
 	}
-	for _, model := range msg.Models {
+
+	for _, model := range msg.GetModels() {
 		newParticipant.PromptTokenCount[model] = 0
 		newParticipant.CompletionTokenCount[model] = 0
 	}
-	k.SetParticipant(ctx, newParticipant)
-
-	return &types.MsgSubmitNewParticipantResponse{}, nil
+	return newParticipant
 }

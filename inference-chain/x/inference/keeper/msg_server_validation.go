@@ -23,6 +23,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	if inference.Status != types.InferenceStatus_FINISHED {
+		k.LogError("Inference not finished", "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
 
