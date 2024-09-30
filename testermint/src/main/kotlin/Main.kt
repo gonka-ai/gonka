@@ -4,7 +4,12 @@ import com.google.gson.GsonBuilder
 import com.productscience.data.InferencePayload
 import com.productscience.data.InstantDeserializer
 import com.productscience.data.Participant
+import com.productscience.data.PubKey
+import com.productscience.data.Pubkey2
+import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.TxResponse
+import com.productscience.data.UnfundedInferenceParticipant
+import org.tinylog.kotlin.Logger
 import java.time.Instant
 
 fun main() {
@@ -108,7 +113,17 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
             pair.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
         }
     }
+    addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
+//    fundUnfunded(unfunded, highestFunded)
+
     highestFunded.node.waitForNextBlock()
+    return highestFunded
+}
+
+private fun fundUnfunded(
+    unfunded: List<LocalInferencePair>,
+    highestFunded: LocalInferencePair,
+) {
     for (pair in unfunded) {
         highestFunded.node.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
         highestFunded.node.waitForNextBlock()
@@ -119,7 +134,31 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.node.waitForMinimumBlock(fundingHeight + 1L)
         it.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
     }
-    return highestFunded
+}
+
+private fun addUnfundedDirectly(
+    unfunded: List<LocalInferencePair>,
+    currentParticipants: List<Participant>,
+    highestFunded: LocalInferencePair,
+) {
+    for (pair in unfunded) {
+        if (currentParticipants.none { it.id == pair.node.getAddress() }) {
+            val selfKey = pair.node.getKeys()[0]
+            val status = pair.node.getStatus()
+            val validatorInfo = status.validatorInfo
+            val valPubKey: PubKey = validatorInfo.pubKey
+            Logger.debug("PubKey value: ${selfKey.pubkey}")
+            highestFunded.api.addUnfundedInferenceParticipant(
+                UnfundedInferenceParticipant(
+                    url = "http://${pair.name}-api:8080",
+                    models = listOf("unsloth/llama-3-8b-Instruct"),
+                    validatorKey = valPubKey.value,
+                    pubKey = selfKey.pubkey.key,
+                    address = selfKey.address,
+                )
+            )
+        }
+    }
 }
 
 private fun TxResponse.assertSuccess() {
@@ -132,6 +171,7 @@ val defaultFunding = 20_000_000L
 val gsonSnakeCase = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+    .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
     .create()
 
 val gsonCamelCase = GsonBuilder()

@@ -14,6 +14,31 @@ import org.tinylog.kotlin.Logger
 import kotlin.math.pow
 
 class InferenceAccountingTests : TestermintTest() {
+
+    @Test
+    fun `test get participants`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val highestFunded = initialize(pairs)
+        highestFunded.node.waitForNextBlock()
+        val participants = highestFunded.api.getParticipants()
+        Logger.debug(participants)
+        assertThat(participants).hasSize(3)
+        val nextSettleBlock = getNextSettleBlock(highestFunded.node.getStatus().syncInfo.latestBlockHeight)
+        highestFunded.node.waitForMinimumBlock(nextSettleBlock)
+        val participantsAfterEach = highestFunded.api.getParticipants()
+        Logger.debug(participantsAfterEach)
+    }
+
+    @Test
+    fun `get participants no initialize`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val requesterPair = pairs.first { it.name == "requester" }
+        val executorPair = pairs.first { it.name == "executor" }
+        val participants = requesterPair.api.getParticipants()
+        val participants2 = executorPair.api.getParticipants()
+        Logger.debug(participants)
+        Logger.debug(participants2)
+    }
     @Test
     fun `test escrow and pre settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
