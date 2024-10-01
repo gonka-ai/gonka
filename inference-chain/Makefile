@@ -27,6 +27,10 @@ define DOCKER_BUILD
 	@docker build --platform $(PLATFORM) . -t inferenced
 endef
 
+define DOCKER_RELEASE_BUILD
+    @docker build -f DockerfileJoin . -t inferenced-join
+endef
+
 all:
 	install
 
@@ -47,6 +51,10 @@ build:
 build-docker:
 	$(eval PLATFORM=linux/arm64)
 	$(DOCKER_BUILD)
+
+release-docker:
+	$(eval PLATFORM=linux/arm64)
+	$(DOCKER_RELEASE_BUILD)
 
 build-docker-amd:
 	$(eval PLATFORM=linux/amd64)

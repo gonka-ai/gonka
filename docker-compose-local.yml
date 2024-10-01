@@ -2,7 +2,10 @@ version: "3.7"
 
 services:
   chain-node:
-    image: inferenced-node
+    container_name: ${KEY_NAME}-node
+    image: inferenced-join
+    volumes:
+      - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
       - SEEDS=${SEEDS}
       - KEY_NAME=${KEY_NAME}
@@ -10,11 +13,14 @@ services:
       - net-public
 
   api:
-    image: decentralized-api
+    container_name: ${KEY_NAME}-api
+    image: dapi-join
+    volumes:
+        - ./prod-local/${KEY_NAME}:/root/.inference
     ports:
-      - "8080:8080"
+      - "8089:8080"
     environment:
-      - API_CONFIG_PATH=/root/.inference/api-config.yaml
+      - KEY_NAME=${KEY_NAME}
     networks:
       net-public:
 

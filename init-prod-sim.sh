@@ -79,4 +79,9 @@ initialize_config requester
 initialize_config executor
 initialize_config validator
 
+# Create config.env for launching new chain nodes that connect to this chain
+echo "SEEDS=$SEEDS" > "./inference-chain/build/config.env"
+echo "ADD_ENDPOINT=\"http://requester-node:8080\"" >> "./inference-chain/build/config.env"
+cp "$MOUNT_PATH/requester/config/genesis.json" "./inference-chain/build/genesis.json"
+
 # inferenced query inference list-inference --node tcp://34.172.126.50:26657

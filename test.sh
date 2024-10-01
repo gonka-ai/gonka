@@ -3,6 +3,7 @@ set -e
 
 #In case previous run hasn't stopped:
 docker compose -f docker-compose-sim.yml down
+docker compose -f docker-compose-local.yml down -v
 # Build
 make node-build-docker
 make api-build-docker
@@ -21,3 +22,4 @@ if [ -d "chain-venv" ]; then
 fi
 
 #./fund_accounts.py
+make release-docker
