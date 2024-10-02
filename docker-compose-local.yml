@@ -1,5 +1,3 @@
-version: "3.7"
-
 services:
   chain-node:
     container_name: ${KEY_NAME}-node
@@ -10,7 +8,7 @@ services:
       - SEEDS=${SEEDS}
       - KEY_NAME=${KEY_NAME}
     networks:
-      - net-public
+      - chain-public
 
   api:
     container_name: ${KEY_NAME}-api
@@ -18,11 +16,12 @@ services:
     volumes:
         - ./prod-local/${KEY_NAME}:/root/.inference
     ports:
-      - "8089:8080"
+      - "${PORT}:8080"
     environment:
       - KEY_NAME=${KEY_NAME}
     networks:
-      net-public:
+      - chain-public
 
 networks:
-  net-public:
+  chain-public:
+    name: chain-public

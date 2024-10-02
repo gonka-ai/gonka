@@ -10,6 +10,9 @@ api-build-docker:
 node-build-docker:
 	@make -C inference-chain build-docker
 
+node-build-genesis:
+	@make -C inference-chain build-genesis
+
 api-release-docker:
 	@make -C decentralized-api release-docker
 

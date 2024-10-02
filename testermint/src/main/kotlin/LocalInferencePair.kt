@@ -11,16 +11,16 @@ import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
 import java.time.Instant
 
-val nameExtractor = "inference-ignite-(.+)-node-1".toRegex()
+val nameExtractor = "(.+)-node".toRegex()
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
     val containers = dockerClient.listContainersCmd().exec()
-    val nodes = containers.filter { it.image == config.nodeImageName }
+    val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     return nodes.map {
         val name = nameExtractor.find(it.names.first())!!.groupValues[1]
-        val matchingApi = apis.find { it.names.any { it.contains(name) } }!!
+        val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
         val configWithName = config.copy(pairName = name)
         attachLogs(dockerClient, name, "node", it.id)
         attachLogs(dockerClient, name, "api", matchingApi.id)
@@ -136,6 +136,7 @@ data class ApplicationConfig(
     val appName: String,
     val chainId: String,
     val nodeImageName: String,
+    val genesisNodeImage: String,
     val apiImageName: String,
     val denom: String,
     val stateDirName: String,

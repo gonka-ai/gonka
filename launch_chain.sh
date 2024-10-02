@@ -4,6 +4,7 @@ set -e
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
 # ADD_ENDPOINT - the endpoint to use for adding unfunded participant
+# PORT - the port to use for the API
 
 if [ -z "$KEY_NAME" ]; then
   echo "KEY_NAME is not set"
@@ -20,14 +21,19 @@ if [ -z "$ADD_ENDPOINT" ]; then
   exit 1
 fi
 
-docker compose -f docker-compose-local.yml down -v
-rm -r ./prod-local
+if [ -z "$PORT" ]; then
+  echo "PORT is not set"
+  exit 1
+fi
 
-docker compose -f docker-compose-local.yml up -d
+docker compose -p "$KEY_NAME" down -v
+rm -r ./prod-local/"$KEY_NAME" || true
+
+docker compose -p "$KEY_NAME" -f docker-compose-local.yml up -d
 # Some time to join chain
 sleep 20
 
-curl -X POST http://localhost:8089/v1/nodes/batch -H "Content-Type: application/json" -d @$NODE_CONFIG
+curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 # Now get info for adding self
 keys_output=$(docker exec "$KEY_NAME-node" inferenced keys show $KEY_NAME --output json)

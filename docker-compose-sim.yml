@@ -1,5 +1,3 @@
-version: "3.7"
-
 services:
   requester-node:
     command: inferenced start
@@ -7,7 +5,7 @@ services:
     volumes:
       - ./prod-sim/requester:/root/.inference
     networks:
-      - net-public
+      - chain-public
 
   requester-api:
     image: decentralized-api
@@ -18,7 +16,7 @@ services:
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
     networks:
-      net-public:
+      - chain-public
 
   executor-node:
     command: inferenced start
@@ -26,7 +24,7 @@ services:
     volumes:
       - ./prod-sim/executor:/root/.inference
     networks:
-      - net-public
+      - chain-public
 
   executor-api:
     image: decentralized-api
@@ -37,7 +35,7 @@ services:
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
     networks:
-      net-public:
+      - chain-public
 
   validator-node:
     command: inferenced start
@@ -45,7 +43,7 @@ services:
     volumes:
       - ./prod-sim/validator:/root/.inference
     networks:
-      - net-public
+      - chain-public
 
   validator-api:
     image: decentralized-api
@@ -56,7 +54,9 @@ services:
     environment:
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
     networks:
-      net-public:
+      - chain-public
 
 networks:
-  net-public:
+  chain-public:
+    # Gives a stable name across projects
+    name: chain-public

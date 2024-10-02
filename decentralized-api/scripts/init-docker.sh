@@ -12,5 +12,3 @@ sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
 exec decentralized-api
-# just a simple command to keep the container running
-#tail -f /dev/null
