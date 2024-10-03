@@ -65,9 +65,11 @@ make node-release-docker
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG
 export ADD_ENDPOINT="http://0.0.0.0:$PORT"
+export PUBLIC_URL="http://join1-api:8080"
 export PORT=8081
 ./launch_chain.sh
 export KEY_NAME=join2
 export PORT=8082
+export PUBLIC_URL="http://join2-api:8080"
 ./launch_chain.sh
 

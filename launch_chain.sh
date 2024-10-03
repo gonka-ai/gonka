@@ -5,6 +5,13 @@ set -e
 # NODE_CONFIG - name of a file with inference node configuration
 # ADD_ENDPOINT - the endpoint to use for adding unfunded participant
 # PORT - the port to use for the API
+# PUBLIC_URL - the access point for getting to your API node from the public
+
+# Much easier to manage the environment variables in a file
+# Check if /config.env exists, then source it
+if [ -f /config.env ]; then
+  . /config.env
+fi
 
 if [ -z "$KEY_NAME" ]; then
   echo "KEY_NAME is not set"
@@ -23,6 +30,11 @@ fi
 
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
+  exit 1
+fi
+
+if [ -z "$PUBLIC_URL" ]; then
+  echo "PUBLIC_URL is not set"
   exit 1
 fi
 
@@ -63,7 +75,7 @@ echo "Unique models: $unique_models"
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
   --arg address "$address" \
-  --arg url "http://$KEY_NAME-api:8080" \
+  --arg url "$PUBLIC_URL" \
   --argjson models "$unique_models" \
   --arg validator_key "$validator_key" \
   --arg pub_key "$raw_key" \
