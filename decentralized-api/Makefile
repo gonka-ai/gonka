@@ -53,7 +53,7 @@ build-docker:
 	$(eval PLATFORM=linux/arm64)
 	$(DOCKER_BUILD)
 
-release-docker:
+release-docker: build-docker
 	$(DOCKER_RELEASE_BUILD)
 
 build-docker-amd:
