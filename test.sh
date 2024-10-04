@@ -21,5 +21,12 @@ if [ -d "chain-venv" ]; then
     source chain-venv/bin/activate
 fi
 
-#./fund_accounts.py
 make release-docker
+# If FUND_ACCOUNTS env var is set
+if [ -n "$FUND_ACCOUNTS" ]; then
+    # Fund accounts
+    echo "FUND_ACCOUNTS is set. Funding!"
+    ./fund_accounts.py
+else
+    echo "FUND_ACCOUNTS is not set. Skipping funding accounts."
+fi

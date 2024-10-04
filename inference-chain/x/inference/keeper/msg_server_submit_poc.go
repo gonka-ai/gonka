@@ -15,6 +15,8 @@ import (
 	"net/http"
 )
 
+const PocFailureTag = "PoC [Failure] "
+
 func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*types.MsgSubmitPoCResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
@@ -22,11 +24,13 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	startBlockHeight := msg.BlockHeight
 
 	if !proofofcompute.IsStartOfPoCStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"start block height must be divisible by EpochLength", "EpochLength", proofofcompute.EpochLength, "msg.BlockHeight", startBlockHeight)
 		errMsg := fmt.Sprintf("start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
 	if !proofofcompute.IsPoCExchangeWindow(startBlockHeight, currentBlockHeight) {
+		k.LogError(PocFailureTag+"PoC exchange window is closed.", "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
@@ -34,16 +38,18 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	// 1. Get block hash from startBlockHeight
 	blockHash, err := k.getBlockHash(startBlockHeight)
 	if err != nil {
+		k.LogError(PocFailureTag+"Failed to get block hash", "startBlockHeight", startBlockHeight, "err", err)
 		return nil, err
 	}
 
 	// 2. Get signer public key
 	pubKey, err := k.getMsgSignerPubKey(msg, ctx)
 	if err != nil {
+		k.LogError(PocFailureTag+"Failed to get signer public key", "err", err)
 		return nil, err
 	}
 
-	k.LogInfo("POC Keys:", "pubKey", pubKey, "pubkeyString", pubKey.String())
+	k.LogInfo("PoC: Retrieved pub ket", "pubKey", pubKey, "pubKey.String()", pubKey.String())
 
 	// 3. Verify all nonces
 	// pubKey.String() yields something like: PubKeySecp256k1{<hex-key>}
@@ -52,19 +58,21 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	for _, n := range msg.Nonce {
 		nonce, err := hex.DecodeString(n)
 		if err != nil {
+			k.LogError(PocFailureTag+"Failed to decode nonce.", "nonce", n, "err", err)
 			return nil, err
 		}
 		proof := proofofcompute.ProofOfCompute(input, nonce)
 
 		if !proofofcompute.AcceptHash(proof.Hash, proofofcompute.DefaultDifficulty) {
 			k.LogWarn(
-				"Hash not accepted!", "input", hex.EncodeToString(input), "nonce", n, "hash", proof.Hash,
+				PocFailureTag+"Hash not accepted!", "input", hex.EncodeToString(input), "nonce", n, "hash", proof.Hash,
 			)
 			return nil, sdkerrors.Wrap(types.ErrPocNonceNotAccepted, "invalid nonce")
 		}
 	}
 
 	// 4. Store power
+	k.LogInfo("Storing power for participant", "participant", msg.Creator, "power", len(msg.Nonce))
 	power := len(msg.Nonce)
 	k.Keeper.SetPower(ctx, types.Power{
 		ParticipantAddress:       msg.Creator,
