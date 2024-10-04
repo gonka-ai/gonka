@@ -818,6 +818,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 
 func wrapSubmitNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
+		slog.Debug("SubmitNewParticipant received", "method", request.Method)
 		if request.Method == "POST" {
 			submitNewParticipant(recorder, w, request)
 		} else if request.Method == "GET" {
@@ -866,7 +867,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, 
 		PubKey:       body.PubKey,
 	}
 
-	slog.Debug("Message:", "message", msg)
+	slog.Debug("Submitting NewUnfundedParticipant", "message", msg)
 
 	if err := recorder.SubmitNewUnfundedParticipant(msg); err != nil {
 		slog.Error("Failed to submit MsgSubmitNewUnfundedParticipant", "error", err)
@@ -884,6 +885,7 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	slog.Debug("SubmitNewParticipantDto", "body", body)
 	if body.Address != "" && body.PubKey != "" {
 		submitNewUnfundedParticipant(recorder, w, body)
 		return
