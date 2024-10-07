@@ -1,0 +1,8 @@
+api:
+  port: 8080
+nodes:
+chain_node:
+  url: http://node:26657
+  account_name: "alice"
+  keyring_backend: "test"
+  keyring_dir: "/root/.inference"

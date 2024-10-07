@@ -1,0 +1,24 @@
+services:
+  genesis-node:
+    image: inferenced-genesis
+    container_name: genesis-node
+    volumes:
+      - ./prod-genesis:/root/.inference
+    networks:
+      - chain-public
+
+  genesis-api:
+    image: dapi-join
+    container_name: genesis-api
+    volumes:
+      - ./prod-genesis:/root/.inference
+    ports:
+      - "8080:8080"
+    environment:
+      - KEY_NAME=genesis
+    networks:
+      - chain-public
+
+networks:
+    chain-public:
+        name: chain-public

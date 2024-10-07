@@ -42,6 +42,14 @@ type InferenceTransaction struct {
 
 const testModel = "unsloth/llama-3-8b-Instruct"
 
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Received request", "method", r.Method, "path", r.URL.Path)
+		slog.Debug("Request headers", "headers", r.Header)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
@@ -50,26 +58,38 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 		loadNodeToBroker(nodeBroker, &node)
 	}
 
+	mux := http.NewServeMux()
+
 	// Create an HTTP server
-	http.HandleFunc("/v1/chat/completions/", wrapGetCompletion(transactionRecorder))
-	http.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
-	http.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
-	http.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
-	http.HandleFunc("/v1/participants/unfunded", wrapSubmitUnfundedNewParticipant(transactionRecorder))
-	http.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
-	http.HandleFunc("/debug/chat/completions", debugWrapChat())
+	mux.HandleFunc("/v1/chat/completions/", wrapGetCompletion(transactionRecorder))
+	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
+	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
+	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
+	mux.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
+	mux.HandleFunc("/debug/chat/completions", debugWrapChat())
+	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
+	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
+	mux.HandleFunc("/", logUnknownRequest())
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 
-	slog.Info("Starting the server on %s", addr)
+	slog.Info("Starting the server", "address", addr)
+	loggedMux := LoggingMiddleware(mux)
 	// Start the server
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Fatal(http.ListenAndServe(addr, loggedMux))
+}
+
+func logUnknownRequest() func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		slog.Warn("Unknown request", "path", request.URL.Path)
+		http.Error(w, "Unknown request", http.StatusNotFound)
+	}
 }
 
 func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
-			slog.Warn("Invalid method. method = %s", request.Method)
+			slog.Warn("Invalid method", "method", request.Method)
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
@@ -83,7 +103,7 @@ func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 		Response: make(chan broker.InferenceNode, 2),
 	})
 	if err != nil {
-		slog.Error("Failed to load node to broker. %v", err)
+		slog.Error("Failed to load node to broker", "error", err)
 		panic(err)
 	}
 }
@@ -95,13 +115,14 @@ type ResponseWithBody struct {
 
 func wrapGetCompletion(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		log.Printf("Received request. method = %s. path = %s", request.Method, request.URL.Path)
+		slog.Debug("GetCompletion received")
 
 		if request.Method == http.MethodGet {
 			processGetCompletionById(w, request, recorder)
 			return
 		}
 
+		slog.Error("Unrecognixed GetCompletion request")
 		http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 	}
 
@@ -546,6 +567,10 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 		return
 	}
 
+	respondWithJson(w, response)
+}
+
+func respondWithJson(w http.ResponseWriter, response interface{}) {
 	respBytes, err := json.Marshal(response)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -555,8 +580,6 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respBytes)
-
-	return
 }
 
 func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder cosmos_client.InferenceCosmosClient) {
@@ -793,20 +816,9 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 	}
 }
 
-func wrapSubmitUnfundedNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
-	slog.Debug("wrapSubmitUnfundedNewParticipant")
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method == "POST" {
-			submitNewUnfundedParticipant(recorder, w, request)
-		} else {
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-			return
-		}
-	}
-}
-
 func wrapSubmitNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
+		slog.Debug("SubmitNewParticipant received", "method", request.Method)
 		if request.Method == "POST" {
 			submitNewParticipant(recorder, w, request)
 		} else if request.Method == "GET" {
@@ -846,16 +858,7 @@ type ParticipantDto struct {
 	VotingPower int64    `json:"voting_power"`
 }
 
-func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	var body SubmitUnfundedNewParticipantDto
-	slog.SetLogLoggerLevel(slog.LevelDebug)
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body. %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	slog.Debug("SubmitNewUnfundedParticipantDto: %v", body)
-
+func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,
@@ -864,22 +867,27 @@ func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, 
 		PubKey:       body.PubKey,
 	}
 
-	slog.Debug("Message:", msg)
+	slog.Debug("Submitting NewUnfundedParticipant", "message", msg)
 
 	if err := recorder.SubmitNewUnfundedParticipant(msg); err != nil {
-		slog.Error("Failed to submit MsgSubmitNewUnfundedParticipant. %v", err)
+		slog.Error("Failed to submit MsgSubmitNewUnfundedParticipant", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 }
 
 func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
 	// Parse the request body into a SubmitNewParticipantDto
-	var body SubmitNewParticipantDto
+	var body SubmitUnfundedNewParticipantDto
+
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body. %v", err)
+		slog.Error("Failed to decode request body", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	slog.Debug("SubmitNewParticipantDto", "body", body)
+	if body.Address != "" && body.PubKey != "" {
+		submitNewUnfundedParticipant(recorder, w, body)
 		return
 	}
 
@@ -889,9 +897,9 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 		ValidatorKey: body.ValidatorKey,
 	}
 
-	slog.Info("ValidatorKey in dapi: %s", body.ValidatorKey)
+	slog.Info("ValidatorKey in dapi", "key", body.ValidatorKey)
 	if err := recorder.SubmitNewParticipant(msg); err != nil {
-		slog.Error("Failed to submit MsgSubmitNewParticipant. %v", err)
+		slog.Error("Failed to submit MsgSubmitNewParticipant", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -904,7 +912,7 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 
 	responseJson, err := json.Marshal(responseBody)
 	if err != nil {
-		slog.Error("Failed to marshal response. %v", err)
+		slog.Error("Failed to marshal response", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

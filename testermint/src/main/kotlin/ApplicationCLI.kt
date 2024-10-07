@@ -2,6 +2,7 @@ package com.productscience
 
 import com.github.dockerjava.api.async.ResultCallback
 import com.github.dockerjava.api.model.Frame
+import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.BalanceResponse
@@ -17,6 +18,16 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
 
+    fun createContainer() {
+        wrapLog("createContainer", false) {
+            Logger.info("Creating container with id $containerId")
+            dockerClient.createContainerCmd(config.nodeImageName)
+                .withName(containerId)
+                .withVolumes(Volume(config.mountDir))
+                .exec()
+            dockerClient.startContainerCmd(containerId).exec()
+        }
+    }
     fun waitForMinimumBlock(minBlockHeight: Long) {
         wrapLog("waitForMinimumBlock", false) {
             Logger.info("Waiting for block height to reach $minBlockHeight")
@@ -161,8 +172,9 @@ class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
     }
 }
 
+val timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z".toRegex()
+
 fun extractTimestamp(entireLine: String): Instant? {
-    val timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z".toRegex()
     val matchResult = timestampPattern.find(entireLine)
     return if (matchResult != null) {
         try {
@@ -190,14 +202,15 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
         val logEntry = String(frame.payload).trim()
         val timestamp = extractTimestamp(logEntry)
         if (timestamp != null) {
+            val entryWithoutTimestamp = logEntry.replaceFirst(timestampPattern, "").trim()
             if (currentMessage.isNotEmpty()) {
                 log(currentMessage.toString())
                 currentMessage.clear()
             }
             if (frame.payload.size < 1000) {
-                log(logEntry)
+                log(entryWithoutTimestamp)
             } else {
-                currentMessage.append(logEntry)
+                currentMessage.append(entryWithoutTimestamp)
             }
         } else {
             currentMessage.append(logEntry)

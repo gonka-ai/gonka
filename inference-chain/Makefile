@@ -27,6 +27,20 @@ define DOCKER_BUILD
 	@docker build --platform $(PLATFORM) . -t inferenced
 endef
 
+define DOCKER_GENESIS_BUILD
+    @echo "--> deleting old ./build/inferenced"
+	@rm -f ./build/inferenced
+	@echo "--> building inferenced binary locally, outside of docker"
+	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
+	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
+	@docker build -f DockerfileGenesis --platform $(PLATFORM) . -t inferenced-genesis
+endef
+
+
+define DOCKER_RELEASE_BUILD
+    @docker build -f DockerfileJoin . -t inferenced-join
+endef
+
 all:
 	install
 
@@ -47,6 +61,14 @@ build:
 build-docker:
 	$(eval PLATFORM=linux/arm64)
 	$(DOCKER_BUILD)
+
+build-genesis:
+	$(eval PLATFORM=linux/arm64)
+	$(DOCKER_GENESIS_BUILD)
+
+release-docker:
+	$(eval PLATFORM=linux/arm64)
+	$(DOCKER_RELEASE_BUILD)
 
 build-docker-amd:
 	$(eval PLATFORM=linux/amd64)

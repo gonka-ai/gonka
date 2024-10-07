@@ -18,4 +18,5 @@ var (
 	ErrPocWrongStartBlockHeight              = sdkerrors.Register(ModuleName, 1107, "start block height must be divisible by 240")
 	ErrPocTooLate                            = sdkerrors.Register(ModuleName, 1108, "POC submission is too late")
 	ErrPocNonceNotAccepted                   = sdkerrors.Register(ModuleName, 1109, "POC nonce not accepted")
+	ErrAccountAlreadyExists                  = sdkerrors.Register(ModuleName, 1110, "account already exists")
 )

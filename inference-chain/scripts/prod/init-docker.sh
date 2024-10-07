@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# run config to set environment variables
+. ./config.env
+
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
   echo "Error: KEY_NAME is required."
@@ -12,11 +15,17 @@ if [ -z "$KEYRING_BACKEND" ]; then
   KEYRING_BACKEND="test"
 fi
 
+if [ -z "$SEEDS" ]; then
+  echo "Seeds not specified, SEEDS are required."
+  # This needs to be set BEFORE the build to the actual seed values for the chain we want
+  # the dockerfile to point to
+  exit 1
+fi
+
 # Display the parsed values (for debugging)
 echo "Using the following arguments"
 echo "KEY_NAME: $KEY_NAME"
 echo "SEEDS: $SEEDS"
-echo "IS_GENESIS: $IS_GENESIS"
 echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 APP_NAME="inferenced"
@@ -31,6 +40,7 @@ echo "Current directory: $(pwd)"
 #   and icoin (intelligence coin) as the default denomination
 #   and my-node as a node moniker (it doesn't have to be unique)
 $APP_NAME init \
+  --overwrite \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
   my-node
@@ -48,11 +58,8 @@ $APP_NAME keys \
     --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
     add "$KEY_NAME"
 
-if [ "$IS_GENESIS" = true ]; then
-  echo "This is a genesis node setup."
-  $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
-  $APP_NAME genesis gentx "$KEY_NAME" "10000000$COIN_DENOM" --chain-id "$CHAIN_ID"
-  $APP_NAME genesis collect-gentxs
-else
-  echo "To complete your setup, you need to ask someone to send you some coins. You can find your address above: \"cosmos...\""
-fi
+# Need to join network? Or is that solely from the compose file?
+
+cp ./genesis.json $STATE_DIR/config/genesis.json
+
+$APP_NAME start

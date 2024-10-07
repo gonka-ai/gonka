@@ -2,7 +2,7 @@ package broker
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"reflect"
 )
 
@@ -13,9 +13,14 @@ type Broker struct {
 }
 
 type NodeState struct {
-	LockCount     int
-	Operational   bool
-	FailureReason string
+	LockCount     int    `json:"lock_count"`
+	Operational   bool   `json:"operational"`
+	FailureReason string `json:"failure_reason"`
+}
+
+type NodeResponse struct {
+	Node  *InferenceNode `json:"node"`
+	State *NodeState     `json:"state"`
 }
 
 func NewBroker() *Broker {
@@ -31,7 +36,7 @@ func NewBroker() *Broker {
 
 func (b *Broker) processCommands() {
 	for command := range b.commands {
-		println("processing command of type " + reflect.TypeOf(command).String())
+		slog.Debug("Processing command", "type", reflect.TypeOf(command).String())
 		switch command := command.(type) {
 		case LockAvailableNode:
 			b.lockAvailableNode(command)
@@ -41,10 +46,12 @@ func (b *Broker) processCommands() {
 			b.registerNode(command)
 		case RemoveNode:
 			b.removeNode(command)
+		case GetNodesCommand:
+			b.getNodes(command)
+		default:
+			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
 		}
 	}
-
-	println("Done?")
 }
 
 type InvalidCommandError struct {
@@ -55,10 +62,23 @@ func (b *Broker) QueueMessage(command Command) error {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
+		slog.Error("Message queued with unbuffered channel", "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
 	}
 	b.commands <- command
 	return nil
+}
+
+func (b *Broker) getNodes(command GetNodesCommand) {
+	var nodeResponses []NodeResponse
+	for _, node := range b.nodes {
+		nodeResponses = append(nodeResponses, NodeResponse{
+			Node:  &node,
+			State: b.nodeStates[node.Id],
+		})
+	}
+	slog.Debug("Got nodes", "size", len(nodeResponses))
+	command.Response <- nodeResponses
 }
 
 func (b *Broker) registerNode(command RegisterNode) {
@@ -68,6 +88,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 		Operational:   true,
 		FailureReason: "",
 	}
+	slog.Debug("Registered node", "node", command.Node)
 	command.Response <- command.Node
 }
 
@@ -78,6 +99,7 @@ func (b *Broker) removeNode(command RemoveNode) {
 	}
 	delete(b.nodes, command.NodeId)
 	delete(b.nodeStates, command.NodeId)
+	slog.Debug("Removed node", "node_id", command.NodeId)
 	command.Response <- true
 }
 
@@ -95,6 +117,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 		state := b.nodeStates[leastBusyNode.Id]
 		state.LockCount++
 	}
+	slog.Debug("Locked node", "node", leastBusyNode)
 	command.Response <- leastBusyNode
 }
 
@@ -118,11 +141,12 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	} else {
 		nodeState.LockCount--
 		if !command.Outcome.IsSuccess() {
+			slog.Error("Node failed", "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 			nodeState.Operational = false
 			nodeState.FailureReason = "Inference failed"
 		}
 	}
-
+	slog.Debug("Released node", "node_id", command.NodeId)
 	command.Response <- true
 }
 
@@ -155,9 +179,26 @@ func LockNode[T any](
 		})
 
 		if queueError != nil {
-			log.Printf("Error releasing node = %v", queueError)
+			slog.Error("Error releasing node", "error", queueError)
 		}
 	}()
 
 	return action(node)
+}
+
+func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
+	response := make(chan []NodeResponse, 2)
+	err := nodeBroker.QueueMessage(GetNodesCommand{
+		Response: response,
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes := <-response
+
+	if nodes == nil {
+		return nil, errors.New("Error getting nodes")
+	}
+	slog.Debug("Got nodes", "size", len(nodes))
+	return nodes, nil
 }
