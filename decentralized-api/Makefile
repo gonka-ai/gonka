@@ -28,7 +28,8 @@ define DOCKER_BUILD
 endef
 
 define DOCKER_RELEASE_BUILD
-    @docker build -f DockerfileJoin . -t dapi-join
+    @echo "--> building decentralized-api join docker image. platform: $(PLATFORM)"
+    @docker build --platform $(PLATFORM) -f DockerfileJoin . -t dapi-join
 endef
 
 
@@ -50,7 +51,7 @@ build:
 	@go build $(BUILD_FLAGS) -o ./build/dapi
 
 build-docker:
-	$(eval PLATFORM=linux/arm64)
+	$(eval PLATFORM=linux/amd64)
 	$(DOCKER_BUILD)
 
 release-docker: build-docker
@@ -64,5 +65,10 @@ docker-push:
 	@echo "--> pushing decentralized-api docker image"
 	@docker tag decentralized-api gcr.io/decentralized-ai/api
 	@docker push gcr.io/decentralized-ai/api
+
+docker-push-release:
+	@echo "--> pushing decentralized-api docker image"
+	@docker tag dapi-join gcr.io/decentralized-ai/api-join
+	@docker push gcr.io/decentralized-ai/api-join
 
 build-and-push-docker: build-docker-amd docker-push

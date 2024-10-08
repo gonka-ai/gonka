@@ -63,11 +63,11 @@ build-docker:
 	$(DOCKER_BUILD)
 
 build-genesis:
-	$(eval PLATFORM=linux/arm64)
+	$(eval PLATFORM=linux/amd64)
 	$(DOCKER_GENESIS_BUILD)
 
 release-docker:
-	$(eval PLATFORM=linux/arm64)
+	$(eval PLATFORM=linux/amd64)
 	$(DOCKER_RELEASE_BUILD)
 
 build-docker-amd:
@@ -89,5 +89,10 @@ docker-push:
 	@echo "--> pushing inferenced docker image"
 	@docker tag inferenced gcr.io/decentralized-ai/inferenced
 	@docker push gcr.io/decentralized-ai/inferenced
+
+docker-push-genesis:
+	@echo "--> pushing inferenced-genesis docker image"
+	@docker tag inferenced-genesis gcr.io/decentralized-ai/inferenced-genesis
+	@docker push gcr.io/decentralized-ai/inferenced-genesis
 
 build-and-push-docker: build-docker-amd docker-push
