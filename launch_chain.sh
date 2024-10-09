@@ -6,6 +6,7 @@ set -e
 # ADD_ENDPOINT - the endpoint to use for adding unfunded participant
 # PORT - the port to use for the API
 # PUBLIC_URL - the access point for getting to your API node from the public
+# SEEDS - the list of seed nodes to connect to
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -35,6 +36,11 @@ fi
 
 if [ -z "$PUBLIC_URL" ]; then
   echo "PUBLIC_URL is not set"
+  exit 1
+fi
+
+if [ -z "$SEEDS" ]; then
+  echo "SEEDS is not set"
   exit 1
 fi
 
