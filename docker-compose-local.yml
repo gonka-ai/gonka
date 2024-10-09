@@ -17,6 +17,7 @@ services:
         - ./prod-local/${KEY_NAME}:/root/.inference
     ports:
       - "${PORT}:8080"
+      - NODE_HOST=chain-node
     environment:
       - KEY_NAME=${KEY_NAME}
     networks:
