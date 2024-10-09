@@ -6,6 +6,8 @@ services:
     image: gcr.io/decentralized-ai/inferenced-genesis
     volumes:
       - .inference:/root/.inference
+    environment:
+      - KEY_NAME=${KEY_NAME}
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
@@ -14,8 +16,10 @@ services:
     image: gcr.io/decentralized-ai/api-join # Probably should be renamed, we don't need to have 2 different images for the api
     depends_on:
       - node
-    ports:
-      - "8080:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       - .inference:/root/.inference
+    environment:
+      - KEY_NAME=${KEY_NAME}
+    ports:
+      - "8080:8080"
