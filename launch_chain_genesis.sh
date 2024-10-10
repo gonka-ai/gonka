@@ -55,11 +55,6 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-if [ -z "$SEEDS" ]; then
-  echo "SEEDS is not set"
-  exit 1
-fi
-
 if [ "$mode" == "local" ]; then
   docker compose -p "$KEY_NAME" down -v
   rm -r ./prod-local/"$KEY_NAME" || true
