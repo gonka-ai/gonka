@@ -71,7 +71,6 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
-	mux.HandleFunc("/debug/chat/completions", debugWrapChat())
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
