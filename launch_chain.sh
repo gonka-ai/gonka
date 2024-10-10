@@ -73,8 +73,14 @@ sleep 20
 
 curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
+if [ "$mode" == "local" ]; then
+  node_container_name="$KEY_NAME-node"
+else
+  node_container_name="node"
+fi
+
 # Now get info for adding self
-keys_output=$(docker exec "$KEY_NAME-node" inferenced keys show $KEY_NAME --output json)
+keys_output=$(docker exec "$node_container_name" inferenced keys show $KEY_NAME --output json)
 
 pubkey=$(echo $keys_output | jq -r '.pubkey')
 address=$(echo $keys_output | jq -r '.address')
@@ -85,7 +91,7 @@ echo "pubkey=$pubkey"
 echo "raw_key=$raw_key"
 
 # Run the docker exec command and capture the validator_output
-validator_output=$(docker exec "$KEY_NAME-node" inferenced tendermint show-validator)
+validator_output=$(docker exec "$node_container_name" inferenced tendermint show-validator)
 
 # Use jq to parse the JSON and extract the "key" value
 validator_key=$(echo $validator_output | jq -r '.key')

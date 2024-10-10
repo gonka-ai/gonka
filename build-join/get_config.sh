@@ -1,6 +1,6 @@
 rm config.env
 echo "export KEY_NAME=alice" >> config.env
-echo 'export NODE_CONFIG=[{"id":"node1","url":"http://34.171.235.205:8080/","max_concurrent":500,"models":["unsloth/llama-3-8b-Instruct"]}]' >> config.env
+echo 'export NODE_CONFIG=node-config.json' >> config.env
 
 GENESIS_IP=$(gcloud compute instances describe node-genesis --zone=us-central1-a \
   --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
