@@ -3,15 +3,20 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"time"
@@ -66,10 +71,28 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
-	mux.HandleFunc("/debug/chat/completions", debugWrapChat())
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
+	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
 	mux.HandleFunc("/", logUnknownRequest())
+	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
+		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
+		if err != nil {
+			log.Printf("Failed to parse height. err = %v", err)
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Verifying block signatures at height %s", height)
+		if err := merkleproof.VerifyBlockSignatures(config.ChainNode.Url, height); err != nil {
+			log.Printf("Failed to verify block signatures. err = %v", err)
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte("Block signatures verified"))
+	})
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 
@@ -94,6 +117,71 @@ func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) f
 			return
 		}
 		processGetInferenceParticipantByAddress(w, request, recorder)
+	}
+}
+
+type ActiveParticipantWithProof struct {
+	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
+	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
+	Validators         []*types2.Validator      `json:"validators"`
+	Block              *types2.Block            `json:"block"`
+}
+
+func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
+		if err != nil {
+			log.Printf("Failed to create rpc client. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
+		if err != nil {
+			log.Printf("Failed to query active participants. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		// Register interfaces used in your types
+		types.RegisterInterfaces(interfaceRegistry)
+		// Create the codec
+		cdc := codec.NewProtoCodec(interfaceRegistry)
+
+		var activeParticipants types.ActiveParticipants
+		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
+			log.Printf("Failed to unmarshal active participant. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
+		if err != nil {
+			log.Printf("Failed to get block. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
+		if err != nil {
+			log.Printf("Failed to get validators. err = %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		response := ActiveParticipantWithProof{
+			ActiveParticipants: activeParticipants,
+			ProofOps:           *result.Response.ProofOps,
+			Validators:         vals.Validators,
+			Block:              block.Block,
+		}
+
+		writeResponseBody(response, w)
 	}
 }
 
@@ -301,27 +389,6 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 	proxyResponse(resp, w, false, nil)
 
 	return true
-}
-
-func debugWrapChat() func(w http.ResponseWriter, request *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		chatRequest, err := readRequest(request)
-		req, err := http.NewRequest("POST", "http://34.171.235.205:8080/v1/chat/completions", bytes.NewReader(chatRequest.Body))
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			http.Error(w, "Failed to reach completion server", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		proxyResponse(resp, w, false, nil)
-	}
 }
 
 func proxyResponse(
@@ -616,6 +683,19 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 	w.Write(respBytes)
 
 	return
+}
+
+func writeResponseBody(body any, w http.ResponseWriter) {
+	respBytes, err := json.Marshal(body)
+	if err != nil {
+		log.Printf("Failed to marshal response. %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBytes)
 }
 
 func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.InferenceCosmosClient, accountName string, seed int32) (*ResponseWithBody, error) {

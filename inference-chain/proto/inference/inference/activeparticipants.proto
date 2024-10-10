@@ -11,5 +11,8 @@ message ActiveParticipants {
 
 message ActiveParticipant {
   string index = 1;
-  int64  weight = 2;
+  string validatorKey = 2;
+  int64  weight = 3;
+  string inferenceUrl = 4;
+  repeated string models = 5;
 }

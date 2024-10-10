@@ -14,6 +14,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	allPower := am.keeper.AllPower(ctx)
 	am.LogInfo("Amount of power entries found.", "n", len(allPower))
 
+	var activeParticipants []*types.ActiveParticipant
 	var computeResults []keeper.ComputeResult
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
@@ -41,6 +42,15 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 		am.LogInfo("Setting compute validator.", "computeResult", r)
 		computeResults = append(computeResults, r)
+
+		activeParticipant := &types.ActiveParticipant{
+			Index:        p.ParticipantAddress,
+			ValidatorKey: participant.ValidatorKey,
+			Weight:       p.Power,
+			InferenceUrl: participant.InferenceUrl,
+			Models:       participant.Models,
+		}
+		activeParticipants = append(activeParticipants, activeParticipant)
 	}
 
 	am.keeper.RemoveAllPower(ctx)
@@ -55,14 +65,6 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		msg := fmt.Sprintf("Error setting compute validators: %v", err)
 		am.LogError("Error setting compute validators.", "err", err)
 		log.Fatalf(msg)
-	}
-
-	activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
-	for i, r := range computeResults {
-		activeParticipants[i] = &types.ActiveParticipant{
-			Index:  r.OperatorAddress,
-			Weight: r.Power,
-		}
 	}
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
