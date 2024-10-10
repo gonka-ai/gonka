@@ -12,7 +12,6 @@ echo "export ADD_ENDPOINT=http://$GENESIS_IP:8080" >> config.env
 NODE_ID=$(gcloud compute ssh --zone us-central1-a --quiet --tunnel-through-iap node-genesis \
   -- 'docker run -i --rm -v $HOME/.inference:/root/.inference \
   gcr.io/decentralized-ai/inferenced-genesis inferenced tendermint show-node-id' 2>/dev/null)
-NODE_ID="a8a56e5f04fd7009e73213b8aee339f210885ee7"
 
 echo "export SEEDS=$NODE_ID@$GENESIS_IP:26656" >> config.env
 
