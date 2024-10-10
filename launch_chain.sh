@@ -1,8 +1,17 @@
 set -e
 
-compose_file="$1"
-if [ -z "$compose_file" ]; then
+mode="$1"
+if [ -z "$mode" ]; then
+  mode="local"
+fi
+
+if [ "$mode" == "local" ]; then
   compose_file="docker-compose-local.yml"
+elif [ "$mode" == "cloud" ]; then
+  compose_file="docker-compose-cloud-join.yml"
+else
+  echo "Unknown mode: $mode"
+  exit 1
 fi
 
 # Verify parameters:
@@ -50,10 +59,15 @@ if [ -z "$SEEDS" ]; then
   exit 1
 fi
 
-docker compose -p "$KEY_NAME" down -v
-# rm -r ./prod-local/"$KEY_NAME" || true
+if [ "$mode" == "local" ]; then
+  docker compose -p "$KEY_NAME" down -v
+  rm -r ./prod-local/"$KEY_NAME" || true
 
-docker compose -p "$KEY_NAME" -f "$compose_file" up -d
+  docker compose -p "$KEY_NAME" -f "$compose_file" up -d
+else
+  docker compose -f "$compose_file" up -d
+fi
+
 # Some time to join chain
 sleep 20
 
