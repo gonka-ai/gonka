@@ -40,11 +40,6 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$ADD_ENDPOINT" ]; then
-  echo "ADD_ENDPOINT is not set"
-  exit 1
-fi
-
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1
@@ -103,6 +98,4 @@ post_data=$(jq -n \
 echo "POST request sent to http://localhost:$PORT with the following data:"
 echo "$post_data"
 
-# Make the final POST request to the ADD_ENDPOINT
 curl -X POST "http://localhost:$PORT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-
