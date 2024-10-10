@@ -76,8 +76,11 @@ func (m *ActiveParticipants) GetCreatedAtBlockHeight() int64 {
 }
 
 type ActiveParticipant struct {
-	Index  string `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Weight int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	Index        string   `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	ValidatorKey string   `protobuf:"bytes,2,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	Weight       int64    `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	InferenceUrl string   `protobuf:"bytes,4,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models       []string `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
 }
 
 func (m *ActiveParticipant) Reset()         { *m = ActiveParticipant{} }
@@ -120,11 +123,32 @@ func (m *ActiveParticipant) GetIndex() string {
 	return ""
 }
 
+func (m *ActiveParticipant) GetValidatorKey() string {
+	if m != nil {
+		return m.ValidatorKey
+	}
+	return ""
+}
+
 func (m *ActiveParticipant) GetWeight() int64 {
 	if m != nil {
 		return m.Weight
 	}
 	return 0
+}
+
+func (m *ActiveParticipant) GetInferenceUrl() string {
+	if m != nil {
+		return m.InferenceUrl
+	}
+	return ""
+}
+
+func (m *ActiveParticipant) GetModels() []string {
+	if m != nil {
+		return m.Models
+	}
+	return nil
 }
 
 func init() {
@@ -137,7 +161,7 @@ func init() {
 }
 
 var fileDescriptor_cd4d0434f36692fa = []byte{
-	// 236 bytes of a gzipped FileDescriptorProto
+	// 292 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xd2, 0xc9, 0xcc, 0x4b, 0x4b,
 	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x12, 0x93, 0x4b, 0x32, 0xcb, 0x52, 0x0b, 0x12,
 	0x8b, 0x4a, 0x32, 0x93, 0x33, 0x0b, 0x12, 0xf3, 0x4a, 0x8a, 0xf5, 0x0a, 0x8a, 0xf2, 0x4b, 0xf2,
@@ -145,14 +169,18 @@ var fileDescriptor_cd4d0434f36692fa = []byte{
 	0x48, 0x3a, 0x84, 0xbc, 0xb8, 0x78, 0x90, 0x4d, 0x90, 0x60, 0x54, 0x60, 0xd6, 0xe0, 0x36, 0x52,
 	0xd3, 0xc3, 0x62, 0x84, 0x1e, 0x86, 0xf6, 0x20, 0x14, 0xbd, 0x42, 0x46, 0x5c, 0x22, 0xc9, 0x45,
 	0xa9, 0x89, 0x25, 0xa9, 0x29, 0x8e, 0x25, 0x4e, 0x39, 0xf9, 0xc9, 0xd9, 0x1e, 0xa9, 0x99, 0xe9,
-	0x19, 0x25, 0x12, 0x4c, 0x0a, 0x8c, 0x1a, 0xcc, 0x41, 0x58, 0xe5, 0x94, 0x1c, 0xb9, 0x04, 0x31,
-	0x8c, 0x15, 0x12, 0xe1, 0x62, 0xcd, 0xcc, 0x4b, 0x49, 0xad, 0x90, 0x60, 0x54, 0x60, 0xd4, 0xe0,
-	0x0c, 0x82, 0x70, 0x84, 0xc4, 0xb8, 0xd8, 0xca, 0x91, 0x0d, 0x84, 0xf2, 0x9c, 0xfc, 0x4f, 0x3c,
-	0x92, 0x63, 0xbc, 0xf0, 0x48, 0x8e, 0xf1, 0xc1, 0x23, 0x39, 0xc6, 0x09, 0x8f, 0xe5, 0x18, 0x2e,
-	0x3c, 0x96, 0x63, 0xb8, 0xf1, 0x58, 0x8e, 0x21, 0xca, 0x34, 0x3d, 0xb3, 0x24, 0xa3, 0x34, 0x49,
-	0x2f, 0x39, 0x3f, 0x57, 0xbf, 0xa0, 0x28, 0x3f, 0xa5, 0x34, 0xb9, 0xa4, 0x38, 0x39, 0x13, 0x2d,
-	0x18, 0x2b, 0x90, 0xd8, 0x25, 0x95, 0x05, 0xa9, 0xc5, 0x49, 0x6c, 0xe0, 0x60, 0x34, 0x06, 0x04,
-	0x00, 0x00, 0xff, 0xff, 0x39, 0x01, 0x2f, 0x9e, 0x76, 0x01, 0x00, 0x00,
+	0x19, 0x25, 0x12, 0x4c, 0x0a, 0x8c, 0x1a, 0xcc, 0x41, 0x58, 0xe5, 0x94, 0x16, 0x32, 0x72, 0x09,
+	0x62, 0x98, 0x2b, 0x24, 0xc2, 0xc5, 0x9a, 0x99, 0x97, 0x92, 0x5a, 0x21, 0xc1, 0xa8, 0xc0, 0xa8,
+	0xc1, 0x19, 0x04, 0xe1, 0x08, 0x29, 0x71, 0xf1, 0x94, 0x25, 0xe6, 0x64, 0xa6, 0x24, 0x96, 0xe4,
+	0x17, 0x79, 0xa7, 0x56, 0x82, 0xcd, 0xe5, 0x0c, 0x42, 0x11, 0x13, 0x12, 0xe3, 0x62, 0x2b, 0x87,
+	0xd8, 0xca, 0x0c, 0xb6, 0x15, 0xca, 0x03, 0xe9, 0x85, 0x7b, 0x24, 0xb4, 0x28, 0x47, 0x82, 0x05,
+	0xa2, 0x17, 0x59, 0x0c, 0xa4, 0x37, 0x37, 0x3f, 0x25, 0x35, 0xa7, 0x58, 0x82, 0x55, 0x81, 0x59,
+	0x83, 0x33, 0x08, 0xca, 0x73, 0xf2, 0x3f, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23, 0x39, 0xc6, 0x07,
+	0x8f, 0xe4, 0x18, 0x27, 0x3c, 0x96, 0x63, 0xb8, 0xf0, 0x58, 0x8e, 0xe1, 0xc6, 0x63, 0x39, 0x86,
+	0x28, 0xd3, 0xf4, 0xcc, 0x92, 0x8c, 0xd2, 0x24, 0xbd, 0xe4, 0xfc, 0x5c, 0xfd, 0x82, 0xa2, 0xfc,
+	0x94, 0xd2, 0xe4, 0x92, 0xe2, 0xe4, 0x4c, 0xb4, 0x78, 0xaa, 0x40, 0x62, 0x97, 0x54, 0x16, 0xa4,
+	0x16, 0x27, 0xb1, 0x81, 0xe3, 0xc9, 0x18, 0x10, 0x00, 0x00, 0xff, 0xff, 0xa7, 0x4c, 0x72, 0xbe,
+	0xd7, 0x01, 0x00, 0x00,
 }
 
 func (m *ActiveParticipants) Marshal() (dAtA []byte, err error) {
@@ -217,10 +245,33 @@ func (m *ActiveParticipant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Models) > 0 {
+		for iNdEx := len(m.Models) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Models[iNdEx])
+			copy(dAtA[i:], m.Models[iNdEx])
+			i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.Models[iNdEx])))
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if len(m.InferenceUrl) > 0 {
+		i -= len(m.InferenceUrl)
+		copy(dAtA[i:], m.InferenceUrl)
+		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.InferenceUrl)))
+		i--
+		dAtA[i] = 0x22
+	}
 	if m.Weight != 0 {
 		i = encodeVarintActiveparticipants(dAtA, i, uint64(m.Weight))
 		i--
-		dAtA[i] = 0x10
+		dAtA[i] = 0x18
+	}
+	if len(m.ValidatorKey) > 0 {
+		i -= len(m.ValidatorKey)
+		copy(dAtA[i:], m.ValidatorKey)
+		i = encodeVarintActiveparticipants(dAtA, i, uint64(len(m.ValidatorKey)))
+		i--
+		dAtA[i] = 0x12
 	}
 	if len(m.Index) > 0 {
 		i -= len(m.Index)
@@ -271,8 +322,22 @@ func (m *ActiveParticipant) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovActiveparticipants(uint64(l))
 	}
+	l = len(m.ValidatorKey)
+	if l > 0 {
+		n += 1 + l + sovActiveparticipants(uint64(l))
+	}
 	if m.Weight != 0 {
 		n += 1 + sovActiveparticipants(uint64(m.Weight))
+	}
+	l = len(m.InferenceUrl)
+	if l > 0 {
+		n += 1 + l + sovActiveparticipants(uint64(l))
+	}
+	if len(m.Models) > 0 {
+		for _, s := range m.Models {
+			l = len(s)
+			n += 1 + l + sovActiveparticipants(uint64(l))
+		}
 	}
 	return n
 }
@@ -448,6 +513,38 @@ func (m *ActiveParticipant) Unmarshal(dAtA []byte) error {
 			m.Index = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorKey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowActiveparticipants
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ValidatorKey = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
 			}
@@ -466,6 +563,70 @@ func (m *ActiveParticipant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InferenceUrl", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowActiveparticipants
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.InferenceUrl = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowActiveparticipants
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthActiveparticipants
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Models = append(m.Models, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipActiveparticipants(dAtA[iNdEx:])

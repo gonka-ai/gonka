@@ -1,11 +1,11 @@
 package proofofcompute
 
 const (
-	Multiplier            = 3
+	Multiplier            = 1
 	EpochLength           = 10 * Multiplier
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 3 * Multiplier
-	pocExchangeDeadline   = endOfPocStage + 5
+	pocExchangeDeadline   = endOfPocStage + 2
 	setNewValidatorsStage = pocExchangeDeadline + 1
 )
 
