@@ -10,6 +10,9 @@ echo "Getting config.env"
 # TODO: pass INSTANCE_NAME + ZONE arguments
 ./get_config.sh
 
+cp config.env ../inference-chain/build/.
+cp genesis.json ../inference-chain/build/.
+
 make -C ../. node-release-docker
 make -C ../inference-chain docker-push-join
 
