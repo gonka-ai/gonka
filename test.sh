@@ -3,6 +3,7 @@ set -e
 
 #In case previous run hasn't stopped:
 docker compose -f docker-compose-sim.yml down
+docker compose -f docker-compose-local.yml down -v
 # Build
 make node-build-docker
 make api-build-docker
@@ -20,6 +21,7 @@ if [ -d "chain-venv" ]; then
     source chain-venv/bin/activate
 fi
 
+make release-docker
 # If FUND_ACCOUNTS env var is set
 if [ -n "$FUND_ACCOUNTS" ]; then
     # Fund accounts

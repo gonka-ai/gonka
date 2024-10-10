@@ -1,0 +1,20 @@
+FROM alpine:edge
+
+# Install ca-certificates
+RUN apk add --update ca-certificates
+WORKDIR /root
+
+# Copy over binaries from the build-env
+COPY ./build/inferenced /usr/bin/inferenced
+COPY ./scripts/prod/init-docker.sh /root/init-docker.sh
+# Genesis file already created
+COPY ./build/genesis.json /root/genesis.json
+# config which should contain the SEEDS for the chain,
+# and any other settings needed by init-docker.sh
+COPY ./build/config.env /root/config.env
+
+RUN chmod +x /root/init-docker.sh
+
+EXPOSE 26656 26657 1317 9090
+
+CMD ["sh", "./init-docker.sh"]

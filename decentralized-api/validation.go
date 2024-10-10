@@ -137,14 +137,14 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 		return
 	}
 
-	slog.Info("Successfully validated inference. id = %v", inf.InferenceId)
+	slog.Info("Successfully validated inference", "id", inf.InferenceId)
 }
 
 func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.InferenceCosmosClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
-		log.Printf("Failed get inference by id query. id = %s. err = %v", id, err)
+		slog.Error("Failed get inference by id query", "id", id, "error", err)
 	}
 
 	return validate(r.Inference, node)

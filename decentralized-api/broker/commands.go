@@ -32,6 +32,14 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 	return cap(r.Response)
 }
 
+type GetNodesCommand struct {
+	Response chan []NodeResponse
+}
+
+func (g GetNodesCommand) GetResponseChannelCapacity() int {
+	return cap(g.Response)
+}
+
 type RemoveNode struct {
 	NodeId   string
 	Response chan bool
@@ -43,6 +51,7 @@ func (r RemoveNode) GetResponseChannelCapacity() int {
 
 type InferenceResult interface {
 	IsSuccess() bool
+	GetMessage() string
 }
 
 type InferenceSuccess struct {
@@ -58,6 +67,14 @@ func (i InferenceSuccess) IsSuccess() bool {
 	return true
 }
 
+func (i InferenceSuccess) GetMessage() string {
+	return "Success"
+}
+
 func (i InferenceError) IsSuccess() bool {
 	return false
+}
+
+func (i InferenceError) GetMessage() string {
+	return i.Message
 }

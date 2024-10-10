@@ -8,8 +8,10 @@ import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
 import com.github.kittinunf.result.Result
+import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.InferencePayload
+import com.productscience.data.NodeResponse
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.ParticipantsResponse
@@ -39,7 +41,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun addUnfundedInferenceParticipant(inferenceParticipant: UnfundedInferenceParticipant) =
         wrapLog("AddUnfundedInferenceParticipant", true) {
-            val response = Fuel.post("$url/v1/participants/unfunded")
+            val response = Fuel.post("$url/v1/participants")
                 .jsonBody(inferenceParticipant, gsonSnakeCase)
                 .response()
             logResponse(response)
@@ -80,6 +82,36 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         val response = Fuel.get("$url/v1/validation")
             .jsonBody("{\"inference_id\": \"$inferenceId\"}")
             .response()
+        logResponse(response)
+    }
+
+    fun getNodes(): List<NodeResponse> =
+        wrapLog("GetNodes", false) {
+            val response = Fuel.get("$url/v1/nodes")
+                .responseObject<List<NodeResponse>>(gsonDeserializer(gsonSnakeCase))
+            logResponse(response)
+            response.third.get()
+        }
+
+    fun addNode(node: InferenceNode): InferenceNode = wrapLog("AddNode", true) {
+        val response = Fuel.post("$url/v1/nodes")
+            .jsonBody(node, gsonSnakeCase)
+            .responseObject<InferenceNode>(gsonDeserializer(gsonSnakeCase))
+        logResponse(response)
+        response.third.get()
+    }
+
+    fun addNodes(nodes: List<InferenceNode>): List<InferenceNode> = wrapLog("AddNodes", true) {
+        val response = Fuel.post("$url/v1/nodes/batch")
+            .jsonBody(nodes, gsonSnakeCase)
+            .responseObject<List<InferenceNode>>(gsonDeserializer(gsonSnakeCase))
+        logResponse(response)
+        response.third.get()
+    }
+
+    fun removeNode(nodeId: String) = wrapLog("RemoveNode", true) {
+        val response = Fuel.delete("$url/v1/nodes/$nodeId")
+            .responseString()
         logResponse(response)
     }
 }

@@ -27,6 +27,11 @@ define DOCKER_BUILD
 	@docker build --platform $(PLATFORM) . -t decentralized-api
 endef
 
+define DOCKER_RELEASE_BUILD
+    @docker build -f DockerfileJoin . -t dapi-join
+endef
+
+
 all:
 	install
 
@@ -47,6 +52,9 @@ build:
 build-docker:
 	$(eval PLATFORM=linux/arm64)
 	$(DOCKER_BUILD)
+
+release-docker: build-docker
+	$(DOCKER_RELEASE_BUILD)
 
 build-docker-amd:
 	$(eval PLATFORM=linux/amd64)

@@ -182,8 +182,9 @@ val gsonCamelCase = GsonBuilder()
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
     chainId = "prod-sim",
-    nodeImageName = "inferenced",
-    apiImageName = "decentralized-api",
+    nodeImageName = "inferenced-join",
+    genesisNodeImage = "inferenced-genesis",
+    apiImageName = "dapi-join",
     denom = "icoin",
     stateDirName = ".inference",
 )

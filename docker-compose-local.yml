@@ -1,0 +1,27 @@
+services:
+  chain-node:
+    container_name: ${KEY_NAME}-node
+    image: inferenced-join
+    volumes:
+      - ./prod-local/${KEY_NAME}:/root/.inference
+    environment:
+      - SEEDS=${SEEDS}
+      - KEY_NAME=${KEY_NAME}
+    networks:
+      - chain-public
+
+  api:
+    container_name: ${KEY_NAME}-api
+    image: dapi-join
+    volumes:
+        - ./prod-local/${KEY_NAME}:/root/.inference
+    ports:
+      - "${PORT}:8080"
+    environment:
+      - KEY_NAME=${KEY_NAME}
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    name: chain-public

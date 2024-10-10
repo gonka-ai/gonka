@@ -12,7 +12,6 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
-	"log"
 	"net/http"
 )
 
@@ -132,7 +131,7 @@ func (k msgServer) getMsgSignerPubKey(msg *types.MsgSubmitPoC, ctx sdk.Context) 
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Retrieveing addr for. msg.Creator = %s. addr = %s", msg.Creator, addr)
+	k.LogDebug("Retrieving addr for", "msg.Creator", msg.Creator, "addr", addr)
 
 	account := k.AccountKeeper.GetAccount(ctx, addr)
 	pubKey := account.GetPubKey()

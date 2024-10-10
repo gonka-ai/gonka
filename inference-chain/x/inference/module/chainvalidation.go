@@ -19,7 +19,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	for _, p := range allPower {
 		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
 		if !ok {
-			am.LogError("Error getting participant.", "participant", p.ParticipantAddress)
+			am.LogError("Error getting participant", "address", p.ParticipantAddress)
 			continue
 		}
 
@@ -29,7 +29,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			am.LogError("Error decoding pubkey.", "err", err)
+			am.LogError("Error decoding pubkey", "error", err)
 			continue
 		}
 
