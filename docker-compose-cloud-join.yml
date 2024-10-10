@@ -2,11 +2,13 @@ version: "3.7"
 
 services:
   node:
-    command: inferenced start
     container_name: node
-    image: gcr.io/decentralized-ai/inferenced
+    image: gcr.io/decentralized-ai/inferenced-join
     volumes:
       - .inference:/root/.inference
+    environment:
+      - SEEDS=${SEEDS}
+      - KEY_NAME=${KEY_NAME}
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
@@ -16,6 +18,7 @@ services:
     depends_on:
       - node
     environment:
+      - KEY_NAME=${KEY_NAME}
       - API_CONFIG_PATH=/root/.inference/api-config.yaml
     ports:
       - "8080:8080"

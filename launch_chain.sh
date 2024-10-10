@@ -1,5 +1,10 @@
 set -e
 
+compose_file="$1"
+if [ -z "$compose_file" ]; then
+  compose_file="docker-compose-local.yml"
+fi
+
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
@@ -10,8 +15,9 @@ set -e
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
-if [ -f /config.env ]; then
-  . /config.env
+if [ -f config.env ]; then
+  echo "Souring config.env file..."
+  source config.env
 fi
 
 if [ -z "$KEY_NAME" ]; then
@@ -45,9 +51,9 @@ if [ -z "$SEEDS" ]; then
 fi
 
 docker compose -p "$KEY_NAME" down -v
-rm -r ./prod-local/"$KEY_NAME" || true
+# rm -r ./prod-local/"$KEY_NAME" || true
 
-docker compose -p "$KEY_NAME" -f docker-compose-local.yml up -d
+docker compose -p "$KEY_NAME" -f "$compose_file" up -d
 # Some time to join chain
 sleep 20
 

@@ -38,7 +38,7 @@ endef
 
 
 define DOCKER_RELEASE_BUILD
-    @docker build -f DockerfileJoin . -t inferenced-join
+    @docker build -f DockerfileJoin --platform $(PLATFORM) . -t inferenced-join
 endef
 
 all:
@@ -94,5 +94,10 @@ docker-push-genesis:
 	@echo "--> pushing inferenced-genesis docker image"
 	@docker tag inferenced-genesis gcr.io/decentralized-ai/inferenced-genesis
 	@docker push gcr.io/decentralized-ai/inferenced-genesis
+
+docker-push-join:
+	@echo "--> pushing inferenced-genesis docker image"
+	@docker tag inferenced-join gcr.io/decentralized-ai/inferenced-join
+	@docker push gcr.io/decentralized-ai/inferenced-join
 
 build-and-push-docker: build-docker-amd docker-push
