@@ -12,7 +12,7 @@ echo "Getting config.env"
 
 gcloud compute scp --zone "$ZONE" \
   config.env \
+  node-config.json \
   ../launch_chain.sh \
   ../docker-compose-cloud-join.yml \
-  ../node-config.json \
   "$INSTANCE_NAME":~/.
