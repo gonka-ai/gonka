@@ -24,7 +24,7 @@ curl -X POST http://34.72.225.168:8080/v1/participants \
     }'
 
 # 5. Verify participant
-curl -X GET http://34.72.225.168:8080/v1/participant/cosmos1667wh0cgezjed2nxw6lrpfccsf3lf0rd2frga4 \
+curl -X GET http://34.72.225.168:8080/v1/participants/cosmos1667wh0cgezjed2nxw6lrpfccsf3lf0rd2frga4 \
 -H "Content-Type: application/json"
 
 # 6. Sign a request
