@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,7 +70,7 @@ func getRegisterClientDto(context client.Context, accountName string) (*Register
 	}
 
 	result := RegisterClientDto{
-		PubKey:  string(pk.Bytes()),
+		PubKey:  base64.StdEncoding.EncodeToString(pk.Bytes()),
 		Address: addr.String(),
 	}
 
