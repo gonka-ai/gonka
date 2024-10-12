@@ -16,19 +16,10 @@ docker run -it --rm \
   sh
 
 # 3. Create a key
-inferenced keys add client-4
+inferenced create-client client-3 --node-address http://34.72.225.168:8080
 
-# 4. Add participant
-curl -X POST http://34.72.225.168:8080/v1/participants \
--H "Content-Type: application/json" \
--d '{
-      "pub_key": "Ajnjnh3n2Lpp8cHFrfGcF8eDfM0Da8f4MF1jkDn6el6F",
-      "address": "cosmos1dud7jewvepaxjk6rlunmhgljrg69ma37znywqj"
-    }'
 
-# 5. Verify participant
-curl -X GET http://34.72.225.168:8080/v1/participant/cosmos1dud7jewvepaxjk6rlunmhgljrg69ma37znywqj \
--H "Content-Type: application/json"
+
 
 # 6. Send signed request:
 inferenced signature send-request --account-address cosmos1dud7jewvepaxjk6rlunmhgljrg69ma37znywqj --node-address http://34.72.225.168:8080 --file /root/inference-requests/request_payload-2.json

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +74,7 @@ func getRegisterClientDto(context client.Context, accountName string) (*Register
 	}
 
 	result := RegisterClientDto{
-		PubKey:  hex.EncodeToString(pk.Bytes()),
+		PubKey:  pk.String(),
 		Address: addr.String(),
 	}
 	return &result, nil
