@@ -111,7 +111,7 @@ Now that you have signed your payload, you’re ready to submit the inference re
    -H "Content-Type: application/json" \
    -H "Authorization: {{your_signature}}" \
    -H "X-Requester-Address: {{your_account_address}}" \
-   -d @request_payload.json
+   --data-binary @request_payload.json
    ```
 
     - Replace `{{your_signature}}` with the signature you generated in Step 4.

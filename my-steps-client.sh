@@ -41,11 +41,11 @@ docker run -it --rm \
   inferenced signature create --account-address cosmos155dh0vt8mlgrncjxatl0dktlwvv05uttw3t330 --file /root/inference-requests/request_payload.json
 
 # 7. Post inference
-cat request_payload.json | curl -X POST http://34.72.225.168:8080/v1/chat/completions \
+curl -X POST http://34.72.225.168:8080/v1/chat/completions \
 -H "Content-Type: application/json" \
 -H 'Authorization: 4dEv9kNesXWKAgZl7oRyzcGpHdI19lJEzZH5GNOPIKc1dy6ysFqdWa66docFTzmAZw/bg1wMB8L8J7lhVhyiBQ==' \
 -H "X-Requester-Address: cosmos155dh0vt8mlgrncjxatl0dktlwvv05uttw3t330" \
---data-binary @-
+--data-binary @request_payload.json
 
 # Or send inference without signature
 # "X-Funded-By-Transfer-Node"
