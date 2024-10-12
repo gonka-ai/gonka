@@ -53,30 +53,21 @@ type RegisterClientDto struct {
 }
 
 func getRegisterClientDto(context client.Context, accountName string) (*RegisterClientDto, error) {
-	kr := context.Keyring
-
-	// Retrieve the key info
-	keyInfo, err := kr.Key(accountName)
+	keyRecord, err := context.Keyring.Key(accountName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get the address
-	addr, err := keyInfo.GetAddress()
-	if err != nil {
-		return nil, err
-	}
-
-	// Get the public key
-	pk, err := keyInfo.GetPubKey()
+	output, err := keys.MkAccKeyOutput(keyRecord)
 	if err != nil {
 		return nil, err
 	}
 
 	result := RegisterClientDto{
-		PubKey:  pk.String(),
-		Address: addr.String(),
+		PubKey:  output.PubKey,
+		Address: output.Address,
 	}
+
 	return &result, nil
 }
 
