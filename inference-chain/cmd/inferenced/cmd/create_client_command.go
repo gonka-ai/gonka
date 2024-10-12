@@ -115,5 +115,7 @@ func sendRegisterParticipantRequest(cmd *cobra.Command, nodeAddress string, body
 		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	cmd.Printf("You can check your participant at %s/v1/participants/%s\n", nodeAddress, body.Address)
+
 	return nil
 }
