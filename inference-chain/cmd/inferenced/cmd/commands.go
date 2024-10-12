@@ -49,6 +49,7 @@ func initRootCmd(
 		txCommand(),
 		keys.Commands(),
 		SignatureCommands(),
+		CreateClientCommand(),
 	)
 }
 
