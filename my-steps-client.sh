@@ -16,7 +16,7 @@ docker run -it --rm \
   sh
 
 # 3. Create a key
-inferenced create-client client-7 --node-address http://34.72.225.168:8080
+inferenced create-client --node-address http://34.72.225.168:8080 dima
 
 # 4. Send signed request:
-inferenced signature send-request --account-address cosmos1jpsf5rnnfxl9yjmm9yemz7l2nkupeq67kgd53n --node-address http://34.72.225.168:8080 --file /root/inference-requests/request_payload-2.json
+inferenced signature send-request --account-address cosmos1gwyvmgvgdrjk8s7axd6au5dq6z93jqnzuyuzls --node-address http://34.72.225.168:8080 --file /root/inference-requests/request_payload.json
