@@ -258,7 +258,7 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
-		cmd.Print(line)
+		cmd.Println(line)
 	}
 
 	if err := scanner.Err(); err != nil {
