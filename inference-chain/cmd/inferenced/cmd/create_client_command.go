@@ -58,14 +58,19 @@ func getRegisterClientDto(context client.Context, accountName string) (*Register
 		return nil, err
 	}
 
-	output, err := keys.MkAccKeyOutput(keyRecord)
+	addr, err := keyRecord.GetAddress()
+	if err != nil {
+		return nil, err
+	}
+
+	pk, err := keyRecord.GetPubKey()
 	if err != nil {
 		return nil, err
 	}
 
 	result := RegisterClientDto{
-		PubKey:  output.PubKey,
-		Address: output.Address,
+		PubKey:  string(pk.Bytes()),
+		Address: addr.String(),
 	}
 
 	return &result, nil
