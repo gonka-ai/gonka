@@ -10,9 +10,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/cobra"
 	"io"
-	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 const (
@@ -223,18 +223,16 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 
 	cmd.Printf("Signature: %s\n", signatureString)
 
-	sendSignedRequest(cmd, nodeAddress, inputBytes, signatureString, addr)
-
-	return nil
+	return sendSignedRequest(cmd, nodeAddress, inputBytes, signatureString, addr)
 }
 
-func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) {
+func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) error {
 	url := nodeAddress + "/v1/chat/completions"
 
 	// Create a new request
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
-		log.Fatalf("Failed to create request: %v", err)
+		return err
 	}
 
 	// Set the required headers
@@ -250,18 +248,31 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Fatalf("Failed to send the request: %v", err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	cmd.Println("Response:")
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		cmd.Println(line)
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "text/event-stream") {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			cmd.Println(line)
+		}
+
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+	} else {
+		var bodyBytes, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		cmd.Println(string(bodyBytes))
 	}
 
-	if err := scanner.Err(); err != nil {
-		cmd.Printf("Error while streaming response: %v", err)
-	}
+	return nil
 }
