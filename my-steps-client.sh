@@ -16,14 +16,7 @@ docker run -it --rm \
   sh
 
 # 3. Create a key
-inferenced create-client client-6 --node-address http://34.72.225.168:8080
+inferenced create-client client-7 --node-address http://34.72.225.168:8080
 
-# 6. Send signed request:
-inferenced signature send-request --account-address cosmos1dud7jewvepaxjk6rlunmhgljrg69ma37znywqj --node-address http://34.72.225.168:8080 --file /root/inference-requests/request_payload-2.json
-
-# Or send inference without signature
-# "X-Funded-By-Transfer-Node"
-curl -X POST http://34.72.225.168:8080/v1/chat/completions \
--H "Content-Type: application/json" \
--H 'X-Funded-By-Transfer-Node: true' \
--d @request_payload.json
+# 4. Send signed request:
+inferenced signature send-request --account-address cosmos1jpsf5rnnfxl9yjmm9yemz7l2nkupeq67kgd53n --node-address http://34.72.225.168:8080 --file /root/inference-requests/request_payload-2.json

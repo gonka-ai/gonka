@@ -40,7 +40,7 @@ func CreateClientCommand() *cobra.Command {
 			return err
 		}
 
-		command.Printf("Sending a request. nodeAddress = %s. body = %v", nodeAddress, body)
+		command.Printf("Sending a request. nodeAddress = %s. body = %v\n", nodeAddress, body)
 
 		return sendRegisterParticipantRequest(cmd, nodeAddress, body)
 	}
