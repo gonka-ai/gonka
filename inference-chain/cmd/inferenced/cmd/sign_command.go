@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -8,6 +10,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/cobra"
 	"io"
+	"log"
+	"net/http"
 	"os"
 )
 
@@ -15,6 +19,7 @@ const (
 	AccountAddress = "account-address"
 	File           = "file"
 	Signature      = "signature"
+	NodeAddress    = "node-address"
 )
 
 func SignatureCommands() *cobra.Command {
@@ -27,6 +32,7 @@ func SignatureCommands() *cobra.Command {
 	cmd.AddCommand(
 		GetPayloadSignCommand(),
 		GetPayloadVerifyCommand(),
+		PostSignedRequest(),
 	)
 	return cmd
 }
@@ -102,16 +108,25 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 	if err2 != nil {
 		return err2
 	}
-	outputBytes, _, err := context.Keyring.SignByAddress(addr, bytes, signing.SignMode_SIGN_MODE_DIRECT)
+
+	signatureString, err := getSignature(bytes, addr, context)
 	if err != nil {
 		return err
 	}
-	// Hash the bytes to readable string
-	signatureString := base64.StdEncoding.EncodeToString(outputBytes)
+
 	cmd.Printf("Signature: %s\n", signatureString)
 	// Get the account address from the account name
 	// Sign the payload
 	return nil
+}
+
+func getSignature(inputBytes []byte, addr sdk.AccAddress, context client.Context) (string, error) {
+	outputBytes, _, err := context.Keyring.SignByAddress(addr, inputBytes, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return "", err
+	}
+	// Hash the bytes to readable string
+	return base64.StdEncoding.EncodeToString(outputBytes), nil
 }
 
 func getAddress(cmd *cobra.Command, context client.Context) (sdk.AccAddress, error) {
@@ -168,4 +183,85 @@ func getInputBytes(cmd *cobra.Command, args []string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes, nil
+}
+
+func PostSignedRequest() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                        "send-request [text]",
+		Short:                      "Sign and send a completion request",
+		DisableFlagParsing:         false,
+		SuggestionsMinimumDistance: 2,
+		RunE:                       postSignedRequest,
+	}
+	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
+	cmd.Flags().String(NodeAddress, "", "Address of the node to send the request to. Example: http://<ip>:<port>")
+	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
+	return cmd
+}
+
+func postSignedRequest(cmd *cobra.Command, args []string) error {
+	nodeAddress, err := cmd.Flags().GetString(NodeAddress)
+	if err != nil {
+		return err
+	}
+
+	inputBytes, err := getInputBytes(cmd, args)
+	if err != nil {
+		return err
+	}
+
+	context := client.GetClientContextFromCmd(cmd)
+	addr, err2 := getAddress(cmd, context)
+	if err2 != nil {
+		return err2
+	}
+
+	signatureString, err := getSignature(inputBytes, addr, context)
+	if err != nil {
+		return err
+	}
+
+	cmd.Printf("Signature: %s\n", signatureString)
+
+	sendSignedRequest(cmd, nodeAddress, inputBytes, signatureString, addr)
+
+	return nil
+}
+
+func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) {
+	url := nodeAddress + "/v1/chat/completions"
+
+	// Create a new request
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Set the required headers
+	cmd.Printf("Sending POST request to %s\n", url)
+	cmd.Printf("Authorization: %s\n", signature)
+	cmd.Printf("X-Requester-Address: %s\n", requesterAddress.String())
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", signature)
+	req.Header.Set("X-Requester-Address", requesterAddress.String())
+
+	// Send the request
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to send the request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	cmd.Println("Response:")
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		cmd.Print(line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		cmd.Printf("Error while streaming response: %v", err)
+	}
 }
