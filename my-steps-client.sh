@@ -4,22 +4,16 @@ ignite chain build
 # 2. Reset the local state
 rm -rf ~/.inference
 
+IMAGE_NAME="inferenced-join"
+
 docker run -it --rm \
  -v $HOME/.inference:/root/.inference \
  -v $HOME/inference-requests:/root/inference-requests \
-  gcr.io/decentralized-ai/inferenced-join \
+  "$IMAGE_NAME" \
   sh
 
 # 3. Create a key
-docker run -it --rm \
- -v $HOME/.inference:/root/.inference \
-  gcr.io/decentralized-ai/inferenced-join \
-  sh -c "inferenced config set client chain-id demo; inferenced config set client keyring-backend test"
-
-docker run -it --rm \
- -v $HOME/.inference:/root/.inference \
-  gcr.io/decentralized-ai/inferenced-join \
-  inferenced keys add client-2
+inferenced keys add client-3
 
 # 4. Add participant
 curl -X POST http://34.72.225.168:8080/v1/participants \
@@ -53,3 +47,6 @@ curl -X POST http://34.72.225.168:8080/v1/chat/completions \
 -H "Content-Type: application/json" \
 -H 'X-Funded-By-Transfer-Node: true' \
 -d @request_payload.json
+
+# A command to sing + send a request
+inferenced signature send-request --account-address cosmos155dh0vt8mlgrncjxatl0dktlwvv05uttw3t330 --node-address http://34.72.225.168:8080 --file /Users/dima/inference-requests/request_payload.json
