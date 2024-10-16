@@ -158,7 +158,7 @@ func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
-func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return
@@ -184,12 +184,18 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		log.Printf("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
 		pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		orchestrator.StartProcessing(pocEvent)
+
+		nodePoCOrchestrator.Start(blockHeight, blockHash)
+
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
 		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
 		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
+
+		nodePoCOrchestrator.Stop()
+
 		return
 	}
 }

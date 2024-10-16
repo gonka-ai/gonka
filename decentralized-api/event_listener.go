@@ -48,6 +48,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		"address", transactionRecorder.Address,
 		"pubkey", pubKey)
 	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKey, nodeBroker)
 	go pocOrchestrator.Run()
 
 	// Listen for events
@@ -65,7 +66,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
-			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
+			poc.ProcessNewBlockEvent(pocOrchestrator, nodePocOrchestrator, &event, transactionRecorder)
 		case "tendermint/event/Tx":
 			slog.Debug("New Tx event received", "type", event.Result.Data.Type)
 			go func() {
