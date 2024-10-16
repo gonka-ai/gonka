@@ -24,12 +24,11 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker) *NodePoCOr
 	}
 }
 
-// Payload represents the main JSON structure
 type InitDto struct {
 	ChainHash string  `json:"chain_hash"`
 	PublicKey string  `json:"public_key"`
 	BatchSize int     `json:"batch_size"`
-	RTarget   int     `json:"r_target"`
+	RTarget   float64 `json:"r_target"`
 	Params    *Params `json:"params"`
 	URL       string  `json:"url"`
 }
@@ -46,6 +45,25 @@ type Params struct {
 	RopeTheta        int     `json:"rope_theta"`
 	UseScaledRope    bool    `json:"use_scaled_rope"`
 	SeqLen           int     `json:"seq_len"`
+}
+
+const (
+	DefaultRTarget   = 1.390051443
+	DefaultBatchSize = 8000
+)
+
+var DefaultParams = Params{
+	Dim:              512,
+	NLayers:          64,
+	NHeads:           128,
+	NKVHeads:         128,
+	VocabSize:        8192,
+	FFNDimMultiplier: 16.0,
+	MultipleOf:       1024,
+	NormEps:          1e-05,
+	RopeTheta:        500000.0,
+	UseScaledRope:    true,
+	SeqLen:           4,
 }
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
@@ -108,10 +126,10 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode
 	initDto := InitDto{
 		ChainHash: blockHash,
 		PublicKey: o.pubKey,
-		BatchSize: 1,                           // PRTODO: what value are we providing here?
-		RTarget:   1,                           // PROTOD: what value are we providing here?
+		BatchSize: DefaultBatchSize,
+		RTarget:   DefaultRTarget,
 		URL:       "http://hello/v1/generated", // PRTODO:
-		Params:    nil,                         // PRTODO: are they necessary
+		Params:    &DefaultParams,
 	}
 
 	url := node.Url + "/api/v1/init-validate"
