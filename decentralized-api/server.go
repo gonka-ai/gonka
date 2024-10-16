@@ -1139,9 +1139,26 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 	return defaultValue
 }
 
+type ProofBatch struct {
+	PublicKey   string    `json:"public_key"`
+	ChainHash   string    `json:"chain_hash"`
+	BlockHeight string    `json:"block_height"`
+	Nonces      []int     `json:"nonces"`
+	Dist        []float64 `json:"dist"`
+}
+
 func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
-	// PRTODO: implement
 	return func(w http.ResponseWriter, request *http.Request) {
+		var body ProofBatch
+
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			slog.Error("Failed to decode request body of type ProofBatch", "error", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Save to blockchain?
+
 		w.WriteHeader(http.StatusOK)
 	}
 }
