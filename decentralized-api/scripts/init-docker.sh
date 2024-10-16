@@ -7,7 +7,12 @@ if [ -z "$KEY_NAME" ]; then
 fi
 
 yaml_file="/root/api-config.yaml"
-sed -i "s/url: .*:26657/url: http:\/\/$KEY_NAME-node:26657/" "$yaml_file"
+
+if [ -n "$NODE_HOST" ]; then
+  echo "Setting node address to http://$NODE_HOST:26657 in $yaml_file"
+  sed -i "s/url: .*:26657/url: http:\/\/$NODE_HOST:26657/" "$yaml_file"
+fi
+
 sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 

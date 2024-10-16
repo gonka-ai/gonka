@@ -19,6 +19,7 @@ services:
       - "${PORT}:8080"
     environment:
       - KEY_NAME=${KEY_NAME}
+      - NODE_HOST=chain-node
     networks:
       - chain-public
 

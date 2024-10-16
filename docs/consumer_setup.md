@@ -65,7 +65,7 @@ Now that you have your account address and public key, you'll need to submit the
 2. You can verify you have been added and the amount of coin available by another request
 
 ```bash
-curl -X GET https://api.yourchain.com/v1/participant/{{your_account_address}}
+curl -X GET https://api.yourchain.com/v1/participants/{{your_account_address}}
 ```
 
 
@@ -90,7 +90,7 @@ Once your account is set up and funded, you can prepare an inference request, si
 
 2. **Sign the payload** using your private key:
    ```bash
-   inferenced signature sign --account-address {{your_account_address}} --file request_payload.json
+   inferenced signature create --account-address {{your_account_address}} --file request_payload.json
    ```
 
     - Replace `{{your_account_address}}` with the address generated in Step 2.
@@ -107,11 +107,11 @@ Now that you have signed your payload, you’re ready to submit the inference re
 
 1. Use the following `curl` command to submit your signed inference request:
    ```bash
-   curl -X POST https://api.yourchain.com/inference \
+   curl -X POST https://api.yourchain.com/v1/chat/completions \
    -H "Content-Type: application/json" \
    -H "Authorization: {{your_signature}}" \
    -H "X-Requester-Address: {{your_account_address}}" \
-   -d @request_payload.json
+   --data-binary @request_payload.json
    ```
 
     - Replace `{{your_signature}}` with the signature you generated in Step 4.

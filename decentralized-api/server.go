@@ -70,7 +70,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
-	mux.HandleFunc("/v1/participant/", wrapGetInferenceParticipant(transactionRecorder))
+	mux.HandleFunc("/v1/participants/", wrapGetInferenceParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
@@ -613,7 +613,7 @@ func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
 
 func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *http.Request, recorder cosmos_client.InferenceCosmosClient) {
 	// Manually extract the {id} from the URL path
-	address := strings.TrimPrefix(request.URL.Path, "/v1/participant/")
+	address := strings.TrimPrefix(request.URL.Path, "/v1/participants/")
 	if address == "" {
 		http.Error(w, "Address is required", http.StatusBadRequest)
 		return

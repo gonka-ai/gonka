@@ -1,0 +1,10 @@
+[
+  {
+    "id": "node1",
+    "url": "http://34.171.235.205:8080/",
+    "max_concurrent": 500,
+    "models": [
+      "unsloth/llama-3-8b-Instruct"
+    ]
+  }
+]
