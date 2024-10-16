@@ -2,6 +2,7 @@ package poc
 
 import (
 	"bytes"
+	"decentralized-api/broker"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 type NodePoCOrchestrator struct {
 	pubKey     string
 	HTTPClient *http.Client
+	nodeBroker *broker.Broker
 }
 
 func NewNodePoCOrchestrator(pubKey string) *NodePoCOrchestrator {
@@ -46,6 +48,24 @@ type Params struct {
 }
 
 func (o *NodePoCOrchestrator) start(blockHeight int64, blockHash string) {
+	nodes, err := o.nodeBroker.GetNodes()
+	if err != nil {
+		// PRTODO: log error
+		return
+	}
+
+	for _, n := range nodes {
+		resp, err := o.sendInitGenerateRequest(n.Node, blockHash)
+		if err != nil {
+			// PRTODO: log error
+			continue
+		}
+		// PRTODO: analyze response somehow?
+		_ = resp
+	}
+}
+
+func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHash string) (*http.Response, error) {
 	initDto := InitDto{
 		ChainHash: blockHash,
 		PublicKey: o.pubKey,
@@ -55,25 +75,32 @@ func (o *NodePoCOrchestrator) start(blockHeight int64, blockHash string) {
 		Params:    nil,                         // PRTODO: are they necessary
 	}
 
-	// PRTODO: use node url
-	resp, err := sendPostRequest(o.HTTPClient, "http://localhost:8080/api/v1/init-generate", initDto)
-	if err != nil {
-		// PRTODO: log error
-		return
-	}
+	url := node.Url + "/api/v1/init-generate"
 
-	_ = resp
+	return sendPostRequest(o.HTTPClient, url, initDto)
 }
 
 func (o *NodePoCOrchestrator) stop() {
-	resp, err := sendPostRequest(o.HTTPClient, "http://localhost:8080/api/v1/stop", nil)
-
+	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
 		// PRTODO: log error
 		return
 	}
 
-	_ = resp
+	for _, n := range nodes {
+		resp, err := o.sendStopRequest(n.Node)
+		if err != nil {
+			// PRTODO: log error
+			continue
+		}
+		_ = resp
+	}
+}
+
+func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
+	url := node.Url + "/api/v1/stop"
+
+	return sendPostRequest(o.HTTPClient, url, nil)
 }
 
 func sendPostRequest(client *http.Client, url string, payload any) (*http.Response, error) {
