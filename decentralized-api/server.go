@@ -74,6 +74,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
+	mux.HandleFunc("/v1/poc-batches", wrapSubmitPocBatches())
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
@@ -1136,4 +1137,11 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 		return value
 	}
 	return defaultValue
+}
+
+func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
+	// PRTODO: implement
+	return func(w http.ResponseWriter, request *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}
 }
