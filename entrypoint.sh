@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+HOST_UID=${HOST_UID:-1000}
+HOST_GID=${HOST_GID:-1001}
+
 if ! getent group appgroup >/dev/null; then
   echo "Creating group 'appgroup'"
   groupadd -g "$HOST_GID" appgroup

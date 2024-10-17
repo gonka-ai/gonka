@@ -1,13 +1,36 @@
 services:
-  pow:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
     volumes:
+      - ./resources:/app/resources:r
+    environment:
+      - MODEL_PARAMS_PATH=/app/resources/params.json
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      uvicorn pow.app:app
+      --host=0.0.0.0
+      --port=8080
+
+  pow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5555:8080"
+    volumes:
       - ./notebooks:/app/notebooks:Z
       - ./scripts:/app/scripts:Z
+      - ./src:/app/src:Z
     environment:
       - HOST_UID=${HOST_UID}
       - HOST_GID=${HOST_GID}

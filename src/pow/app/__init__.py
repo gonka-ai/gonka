@@ -1,0 +1,1 @@
+from pow.app.app import app as app

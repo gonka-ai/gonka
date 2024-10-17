@@ -1,100 +1,223 @@
-import hashlib
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from abc import (
     ABC,
     abstractmethod,
 )
-from typing import Callable
-torch.use_deterministic_algorithms(True)
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import (
+    List,
+)
+
+import numpy as np
+import torch
+
+from pow.compute.utils import Stats
+from pow.data import ProofBatch
+from pow.compute.model_init import ModelWrapper
+from pow.models.utils import Params
+from pow.random import (
+    get_inputs,
+    get_permutations,
+    get_target,
+)
 
 
-# class BaseCompute(ABC):
-#     def __init__(
-#         self,
-#         public_key: str,
-#         device,
-#     ):
-#         self.public_key = public_key
-#         self.device = device
+class BaseCompute(ABC):
+    def __init__(
+        self,
+        public_key: str,
+        devices,
+    ):
+        self.public_key = public_key
+        self.devices = devices
 
+    @abstractmethod
+    def __call__(
+        self, 
+        nonces: List[int]
+    ) -> List[float]:
+        pass
 
-#     def __call__(self, nonce: int) -> bytes:
-#         input_tensor = self.get_input_tensor(nonce)
-#         output_tensor = self.model(input_tensor)
-#         hash_ = self.get_hash(output_tensor)
-#         return hash_
-
-
-#     @abstractmethod
-#     def get_input_tensor(
-#         self,
-#         nonce: int,
-#     ) -> torch.Tensor:
-#         pass
-
-
-#     @abstractmethod
-#     def get_hash(self, tensor: torch.Tensor) -> bytes:
-#         pass
-
-
-#     @abstractmethod
-#     def get_compute_function(self) -> Callable[[torch.Tensor], torch.Tensor]:
-#         pass
-
-
-class AttentionModel(torch.nn.Module):
-    def __init__(self, K, V):
-        super(AttentionModel, self).__init__()
-        self.K = K
-        self.V = V
-
-    def forward(self, Q: torch.Tensor) -> torch.Tensor:
-        scores = torch.matmul(Q, self.K.transpose(-2, -1)) / torch.sqrt(torch.tensor(Q.shape[1], dtype=torch.float32))
-        weights = F.softmax(scores, dim=-1)
-        R = torch.matmul(weights, self.V)
-        return R
+    @abstractmethod
+    def validate(
+        self,
+        nonces: List[int],
+        public_key_to_validate: str
+    ) -> List[float]:
+        pass
 
 
 class Compute:
-    def __init__(self, public_key: str, device, hid):
+    def __init__(
+        self,
+        params: Params,
+        chain_hash: str,
+        public_key: str,
+        r_target: float,
+        devices: str,
+    ):
         self.public_key = public_key
-        self.device = device
-        self.hid = hid
-        self.rng = torch.Generator(device='cpu')
-        self.rng.manual_seed(42)
-        self.model = self.get_compute_function()
+        self.chain_hash = chain_hash
+        self.r_target = r_target
+        self.params = params
+        self.stats = Stats()
+        self.devices = devices
+        self.model = ModelWrapper.build(
+            hash_=self.chain_hash,
+            params=params,
+            stats=self.stats.time_stats,
+            devices=self.devices,
+        )
+        self.target = get_target(
+            self.chain_hash,
+            self.params.vocab_size
+        )
         
+        self.executor = ThreadPoolExecutor(max_workers=24)
+        self.next_batch_future: Future = None
+        self.next_public_key: str = None
 
-    def get_input_tensor(self, nonce: int) -> torch.Tensor:
-        seed = (hash(self.public_key) + nonce) % (2**32)
-        self.rng.manual_seed(seed)
-        Q = torch.randn(size=(self.hid, self.hid), generator=self.rng, dtype=torch.float32).to(self.device)
-        return Q
+        self.device = torch.device(self.devices[0])
 
-    def get_hash(self, tensor: torch.Tensor) -> bytes:
-        if self.device.type == 'cuda':
-            values = tensor.cpu().numpy()
-        else:
-            values = tensor.numpy()
-        result_hash = hashlib.sha256(values.tobytes()).digest()
-        return result_hash
+    def prepare_batch(
+        self,
+        nonces: List[int],
+        public_key: str,
+        thread_batch_size: int = 256,
+    ):
+        nonce_batches = [
+            nonces[i : i + thread_batch_size]
+            for i in range(0, len(nonces), thread_batch_size)
+        ]
 
-    def get_compute_function(self) -> Callable[[torch.Tensor], torch.Tensor]:
-        self.K = torch.randn(size=(self.hid, self.hid), generator=self.rng, dtype=torch.float32).to(self.device)
-        self.V = torch.randn(size=(self.hid, self.hid), generator=self.rng, dtype=torch.float32).to(self.device)
-        print('K', self.K)
-        print('V', self.V)
-        return AttentionModel(self.K, self.V).to(self.device)
+        def get_inputs_batch(nonce_batch):
+            return get_inputs(
+                self.chain_hash,
+                public_key,
+                nonce_batch,
+                dim=self.params.dim,
+                seq_len=self.params.seq_len,
+            )
 
-    def __call__(self, nonce: int) -> bytes:
-        input_tensor = self.get_input_tensor(nonce)
-        output_tensor = self.model(input_tensor)
-        hash_ = self.get_hash(output_tensor)
-        return hash_, output_tensor
-    
-    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
-        return self.model(input_tensor)
+        def get_permutations_batch(nonce_batch):
+            return get_permutations(
+                self.chain_hash,
+                public_key,
+                nonce_batch,
+                dim=self.params.vocab_size
+            )
+
+        with self.stats.time_stats.time_gen_inputs():
+            inputs = self.executor.map(
+                get_inputs_batch,
+                nonce_batches
+            )
+            inputs = torch.cat(
+                list(inputs),
+                dim=0
+            )
+
+        with self.stats.time_stats.time_gen_perms():
+            permutations = self.executor.map(
+                get_permutations_batch,
+                nonce_batches
+            )
+            permutations = np.concatenate(
+                list(permutations),
+                axis=0
+            )
+ 
+        return inputs, permutations
+
+    def process_batch(
+        self,
+        inputs: torch.Tensor,
+        permutations: np.ndarray,
+        target: np.ndarray,
+        nonces: List[int],
+        public_key: str = None,
+    ) -> Future[ProofBatch]:
+        if public_key is None:
+            public_key = self.public_key
+
+        self.stats.time_stats.next_iter()
+        outputs = self.model(inputs, start_pos=0)
+        with self.stats.time_stats.time_infer():
+            if self.device.type == "cuda":
+                with self.stats.time_stats.time_sync():
+                    torch.cuda.synchronize(device=self.device)
+            with self.stats.time_stats.time_numpy():
+                outputs = outputs[:, -1, :].cpu().numpy()
+        del inputs
+
+        def get_batch(outputs):
+            with self.stats.time_stats.time_perm():
+                batch_indices = np.arange(outputs.shape[0])[:, None]
+                outputs = outputs[batch_indices, permutations]
+
+            with self.stats.time_stats.time_process():
+                outputs = outputs / np.linalg.norm(outputs, axis=1, keepdims=True)
+                distances = np.linalg.norm(
+                    outputs - target,
+                    axis=1
+                )
+                batch = ProofBatch(
+                    public_key=public_key,
+                    chain_hash=self.chain_hash,
+                    nonces=nonces,
+                    dist=distances,
+                )
+
+            return batch
+
+        return self.executor.submit(
+            get_batch,
+            outputs
+        )
+
+    def __call__(
+        self,
+        nonces: List[int],
+        public_key: str,
+        target: np.ndarray,
+        next_nonces: List[int] = None,
+        use_cache: bool = False,
+    ) -> Future[ProofBatch]:
+        with self.stats.time_stats.time_total_gen():
+            if (
+                use_cache
+                and self.next_batch_future is not None
+                and self.next_public_key == public_key
+            ):
+                inputs, permutations = self.next_batch_future.result()
+            else:
+                inputs, permutations = self.prepare_batch(nonces, public_key)
+
+            if next_nonces is not None:
+                self.next_batch_future = self.executor.submit(
+                    self.prepare_batch, next_nonces, public_key
+                )
+                self.next_public_key = public_key
+            else:
+                self.next_batch_future = None
+                self.next_public_key = None
+
+        return self.process_batch(inputs, permutations, target, nonces, public_key)
+
+    def validate(
+        self,
+        proof_batch: ProofBatch,
+    ) -> ProofBatch:
+        nonces = proof_batch.nonces
+
+        assert (
+            proof_batch.chain_hash == self.chain_hash
+        ), "Chain hash must be the same as the one used to create the model"
+
+        target_to_validate = get_target(proof_batch.chain_hash, self.params.vocab_size)
+        proof_batch = self(
+            nonces=nonces,
+            public_key=proof_batch.public_key,
+            target=target_to_validate,
+            next_nonces=None,
+        ).result()
+        return proof_batch

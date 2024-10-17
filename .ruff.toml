@@ -1,0 +1,21 @@
+# Disabling isort for now bacause ruff doesn't suppot multiline import
+lint.extend-select = ["I"]
+
+src = ["src", "tests"]
+exclude = ["external/*", "external_mil/*", "demo/*"]
+
+line-length = 100
+indent-width = 4
+respect-gitignore = true
+
+[format]
+skip-magic-trailing-comma = false
+
+[lint.isort]
+split-on-trailing-comma = true
+detect-same-package = true
+force-single-line = false
+force-sort-within-sections = false
+known-local-folder = ["src", "compressa"]
+lines-after-imports = 2
+combine-as-imports = false
