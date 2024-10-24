@@ -9,7 +9,7 @@ data class InferencePayload(
     val responsePayload: String,
     val promptTokenCount: Int,
     val completionTokenCount: Int,
-    val requestedBy: String,
+    val receivedBy: String,
     val executedBy: String?,
     val status: Int,
     val startBlockHeight: Long,

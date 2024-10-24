@@ -16,6 +16,7 @@ services:
       - "8080:8080"
     environment:
       - KEY_NAME=genesis
+      - NODE_HOST=genesis-node
     networks:
       - chain-public
 

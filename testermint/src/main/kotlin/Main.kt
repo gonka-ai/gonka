@@ -17,7 +17,7 @@ fun main() {
     val highestFunded = initialize(pairs)
     val inference = generateSequence {
         getInferenceResult(highestFunded)
-    }.first { it.inference.executedBy != it.inference.requestedBy }
+    }.first { it.inference.executedBy != it.inference.receivedBy }
 
     println("ERC:" + inference.executorRefundChange)
     println("RRC:" + inference.requesterRefundChange)
@@ -40,7 +40,7 @@ fun createInferenceResult(
     afterInference: List<Participant>,
     beforeInferenceParticipants: List<Participant>,
 ): InferenceResult {
-    val requester = inference.requestedBy
+    val requester = inference.receivedBy
     val executor = inference.executedBy
     val requesterParticipantAfter = afterInference.find { it.id == requester }
     val executorParticipantAfter = afterInference.find { it.id == executor }

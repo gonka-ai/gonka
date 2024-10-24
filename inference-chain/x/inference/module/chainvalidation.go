@@ -69,7 +69,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		log.Fatalf(msg)
 	}
 
-	activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
+	//activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
 	groupMembers := make([]group.MemberRequest, len(computeResults))
 	for i, r := range computeResults {
 		activeParticipants[i] = &types.ActiveParticipant{

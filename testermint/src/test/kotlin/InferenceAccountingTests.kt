@@ -15,6 +15,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import kotlin.math.pow
+import kotlin.test.assertNotNull
 
 class InferenceAccountingTests : TestermintTest() {
 
@@ -38,7 +39,7 @@ class InferenceAccountingTests : TestermintTest() {
         val highestFunded = initialize(pairs)
         val inferenceResult = generateSequence {
             getInferenceResult(highestFunded)
-        }.first { it.inference.executedBy != it.inference.requestedBy }
+        }.first { it.inference.executedBy != it.inference.receivedBy }
 
         val inferenceCost = inferenceResult.inference.actualCost
         val escrowHeld = inferenceResult.inference.escrowAmount
@@ -123,13 +124,14 @@ class InferenceAccountingTests : TestermintTest() {
             assertThat(consumerParticipant.balance).isGreaterThan(100_000_000)
             val consumerPair = LocalInferencePair(consumer, genesis.api, consumerKey)
             val result = consumerPair.makeInferenceRequest(inferenceRequest, newKey.address)
-            Logger.debug(result)
             assertThat(result).isNotNull
-            genesis.node.waitForNextBlock(3)
-            val inference = genesis.api.getInference(result.id)
-            Logger.debug(inference)
+            val inference = generateSequence {
+                genesis.node.waitForNextBlock()
+                genesis.api.getInference(result.id)
+            }.take(5).firstOrNull { it.executedBy != null }
+            assertNotNull(inference, "Inference never finished")
             assertThat(inference.executedBy).isNotNull()
-            assertThat(inference.requestedBy).isEqualTo(newKey.address)
+            assertThat(inference.receivedBy).isEqualTo(newKey.address)
             val participantsAfter = genesis.api.getParticipants()
             assertThat(participantsAfter).anyMatch { it.id == newKey.address }.`as`("Consumer listed in participants")
             val consumerAfter = participantsAfter.first { it.id == newKey.address }
@@ -137,7 +139,7 @@ class InferenceAccountingTests : TestermintTest() {
             assertThat(participantsAfter).anyMatch { it.id == inference.executedBy }
                 .`as`("Executor listed in participants")
             val executor = participantsAfter.first { it.id == inference.executedBy }
-            assertThat(consumerAfter.balance).isEqualTo(consumerParticipant.balance - inference.actualCost)
+            assertThat(consumerAfter.balance).isEqualTo(consumerParticipant.balance - inference.escrowAmount)
                 .`as`("Balance matches expectation")
             assertThat(executor.coinsOwed).isEqualTo(inference.actualCost).`as`("Coins owed does not match cost")
         }

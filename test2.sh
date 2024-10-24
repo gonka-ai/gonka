@@ -55,6 +55,7 @@ genesis_node_id=$(docker exec genesis-node inferenced tendermint show-node-id)
 echo "genesis_node_id=$genesis_node_id"
 cp $BASE_DIR/config/genesis.json ./inference-chain/build/genesis.json
 echo "Genesis file copied"
+export SEEDS="$genesis_node_id@genesis-node:26656"
 echo SEEDS="$genesis_node_id@genesis-node:26656" > ./inference-chain/build/config.env
 echo "Genesis node id added to config.env"
 echo "ADD_ENDPOINT=\"http://genesis-node:$PORT\"" >> ./inference-chain/build/config.env

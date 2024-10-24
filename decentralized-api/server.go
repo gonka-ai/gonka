@@ -485,7 +485,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		InferenceId:   inferenceId,
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
-		RequestedBy:   request.RequesterAddress,
+		ReceivedBy:    request.RequesterAddress,
 		Model:         testModel,
 	}
 	return transaction, nil

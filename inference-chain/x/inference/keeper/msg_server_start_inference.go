@@ -11,7 +11,7 @@ const DefaultMaxTokens = 2048
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	k.LogInfo("StartInference", "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	k.LogInfo("StartInference", "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.ReceivedBy, "model", msg.Model)
 
 	_, found := k.GetInference(ctx, msg.InferenceId)
 	if found {
@@ -23,9 +23,9 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.Creator)
 	}
 
-	_, found = k.GetParticipant(ctx, msg.RequestedBy)
+	_, found = k.GetParticipant(ctx, msg.ReceivedBy)
 	if !found {
-		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ReceivedBy)
 	}
 
 	inference := types.Inference{
@@ -33,7 +33,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		InferenceId:         msg.InferenceId,
 		PromptHash:          msg.PromptHash,
 		PromptPayload:       msg.PromptPayload,
-		RequestedBy:         msg.RequestedBy,
+		RequestedBy:         msg.ReceivedBy,
 		Status:              types.InferenceStatus_STARTED,
 		Model:               msg.Model,
 		StartBlockHeight:    ctx.BlockHeight(),
