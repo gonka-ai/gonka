@@ -6,9 +6,10 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  compose_file="docker-compose-local.yml"
+  # TODO: there's no such file yet
+  compose_file="docker-compose-local-genesis.yml"
 elif [ "$mode" == "cloud" ]; then
-  compose_file="docker-compose-cloud-join.yml"
+  compose_file="docker-compose-cloud-genesis.yml"
 else
   echo "Unknown mode: $mode"
   exit 1
@@ -39,11 +40,6 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$ADD_ENDPOINT" ]; then
-  echo "ADD_ENDPOINT is not set"
-  exit 1
-fi
-
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1
@@ -51,11 +47,6 @@ fi
 
 if [ -z "$PUBLIC_URL" ]; then
   echo "PUBLIC_URL is not set"
-  exit 1
-fi
-
-if [ -z "$SEEDS" ]; then
-  echo "SEEDS is not set"
   exit 1
 fi
 
@@ -79,17 +70,6 @@ else
   node_container_name="node"
 fi
 
-# Now get info for adding self
-keys_output=$(docker exec "$node_container_name" inferenced keys show $KEY_NAME --output json)
-
-pubkey=$(echo $keys_output | jq -r '.pubkey')
-address=$(echo $keys_output | jq -r '.address')
-raw_key=$(echo $pubkey | jq -r '.key')
-
-echo "address=$address"
-echo "pubkey=$pubkey"
-echo "raw_key=$raw_key"
-
 # Run the docker exec command and capture the validator_output
 validator_output=$(docker exec "$node_container_name" inferenced tendermint show-validator)
 
@@ -106,22 +86,16 @@ echo "Unique models: $unique_models"
 
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
-  --arg address "$address" \
   --arg url "$PUBLIC_URL" \
   --argjson models "$unique_models" \
   --arg validator_key "$validator_key" \
-  --arg pub_key "$raw_key" \
   '{
-    address: $address,
     url: $url,
     models: $models,
     validator_key: $validator_key,
-    pub_key: $pub_key
   }')
 
-echo "POST request sent to $ADD_ENDPOINT with the following data:"
+echo "POST request sent to http://localhost:$PORT with the following data:"
 echo "$post_data"
 
-# Make the final POST request to the ADD_ENDPOINT
-curl -X POST "$ADD_ENDPOINT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-
+curl -X POST "http://localhost:$PORT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
