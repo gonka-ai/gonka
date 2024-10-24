@@ -12,17 +12,18 @@ const inferenceDenom = "icoin"
 
 func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (uint64, error) {
 	cost := CalculateCost(*inference)
-	payeeAddress, err := sdk.AccAddressFromBech32(inference.ReceivedBy)
+	payeeAddress, err := sdk.AccAddressFromBech32(inference.RequestedBy)
 	if err != nil {
 		return 0, err
 	}
+	k.LogDebug("Sending coins to escrow", "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	err = k.bank.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, getCoins(cost))
 	if err != nil {
 		k.LogError("Error sending coins to escrow", "error", err)
 		return 0,
 			sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
 	}
-	k.LogInfo("Sent coins to escrow", "inference", inference.InferenceId, "coins", cost)
+	k.LogInfo("Sent coins to escrow", "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	return cost, nil
 }
 

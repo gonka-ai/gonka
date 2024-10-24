@@ -1,11 +1,15 @@
 package keeper
 
 import (
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 type msgServer struct {
 	Keeper
+}
+
+func (k msgServer) startValidationVote(ctx sdk.Context, inference types.Inference) {
 }
 
 // NewMsgServerImpl returns an implementation of the MsgServer interface

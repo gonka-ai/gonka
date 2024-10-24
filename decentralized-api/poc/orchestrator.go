@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
 	"sync"
@@ -168,27 +169,27 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 
 	blockHeight, err := getBlockHeight(data)
 	if err != nil {
-		log.Printf("Failed to get blockHeight from event data. %v", err)
+		slog.Error("Failed to get blockHeight from event data", "error", err)
 		return
 	}
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
-		log.Printf("Failed to get BlockHash from event data. %v", err)
+		slog.Error("Failed to get blockHash from event data", "error", err)
 		return
 	}
 
-	log.Printf("New block event received. blockHeight = %d, BlockHash = %s", blockHeight, blockHash)
+	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
-		log.Printf("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
+		slog.Info("IsStartOfPoCStage: sending StartPoCEvent to the PoC orchestrator")
 		pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		orchestrator.StartProcessing(pocEvent)
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
-		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
+		slog.Info("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
 		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 		return
 	}

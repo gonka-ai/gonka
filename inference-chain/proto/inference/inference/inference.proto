@@ -19,7 +19,7 @@ message Inference {
   string responsePayload = 6;
   uint64 promptTokenCount = 7;
   uint64 completionTokenCount = 8;
-  string receivedBy = 9;
+  string requestedBy = 9;
   string executedBy = 10;
   InferenceStatus status = 11;
   int64 startBlockHeight = 12;

@@ -119,18 +119,18 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
 fun logResponse(reqData: Triple<Request, Response, Result<*, FuelError>>) {
     val (request, response, result) = reqData
-    Logger.debug("Request: ${request.method} ${request.url}")
-    Logger.trace("Request headers: ${request.headers}")
-    Logger.trace("Request data: ${request.body.asString("application/json")}")
-    Logger.debug("Response: ${response.statusCode} ${response.responseMessage}")
-    Logger.trace("Response headers: ${response.headers}")
+    Logger.debug("Request: {} {}", request.method, request.url)
+    Logger.trace("Request headers: {}", request.headers)
+    Logger.trace("Request data: {}", request.body.asString("application/json"))
+    Logger.debug("Response: {} {}", response.statusCode, response.responseMessage)
+    Logger.trace("Response headers: {}", response.headers)
     if (result is Result.Failure) {
-        Logger.error(result.getException(), "Error making request to ${request.url}")
-        Logger.error("Response Data: ${response.data.decodeToString()}")
+        Logger.error(result.getException(), "Error making request: url={}", request.url)
+        Logger.error("Response Data: {}", response.data.decodeToString())
         return
     }
 
-    Logger.trace("Response Data: ${result.get()}")
+    Logger.trace("Response Data: {}", result.get())
 }
 
 fun stream(url: String, address: String, signature: String, jsonBody: String): List<String> {
@@ -167,7 +167,7 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
 
         reader.close()
     } else {
-        Logger.error("Failed to connect: HTTP $responseCode")
+        Logger.error("Failed to connect to API: ResponseCode={}", responseCode)
     }
 
     connection.disconnect()

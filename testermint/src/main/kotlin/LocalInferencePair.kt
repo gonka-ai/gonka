@@ -1,7 +1,6 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.command.CreateContainerResponse
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
@@ -9,6 +8,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
+import org.tinylog.kotlin.Logger
 import java.time.Instant
 
 val nameExtractor = "(.+)-node".toRegex()
@@ -18,8 +18,13 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val containers = dockerClient.listContainersCmd().exec()
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
-    return nodes.map {
-        val name = nameExtractor.find(it.names.first())!!.groupValues[1]
+    return nodes.mapNotNull {
+        val nameMatch = nameExtractor.find(it.names.first())
+        if (nameMatch == null) {
+            Logger.warn("Container does not match expected name format: ${it.names.first()}")
+            return@mapNotNull null
+        }
+        val name = nameMatch.groupValues[1]
         val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
         val configWithName = config.copy(pairName = name)
         attachLogs(dockerClient, name, "node", it.id)
@@ -34,12 +39,13 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 }
 
 fun createLocalGenesisPair(config: ApplicationConfig): LocalInferencePair {
-    val containerName = "${config.appName}-${config.pairName}-node-1"
+    val containerName = "genesis-node"
     val cli = ApplicationCLI(containerName, config)
     cli.createContainer()
 
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
+
 
     // Use the docker image to create the setup files in the volume mount
     dockerClient.initNode(config)
@@ -121,8 +127,8 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
-    fun makeInferenceRequest(request: String): OpenAIResponse {
-        val signature = node.signPayload(request)
+    fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
+        val signature = node.signPayload(request, account)
         val address = node.getAddress()
         return api.makeInferenceRequest(request, address, signature)
     }
@@ -143,4 +149,5 @@ data class ApplicationConfig(
     val pairName: String = "",
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
+    val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
 }

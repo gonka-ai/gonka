@@ -96,9 +96,10 @@ func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *r
 type AppModule struct {
 	AppModuleBasic
 
-	keeper        keeper.Keeper
-	accountKeeper types.AccountKeeper
-	bankKeeper    types.BankKeeper
+	keeper         keeper.Keeper
+	accountKeeper  types.AccountKeeper
+	bankKeeper     types.BankKeeper
+	groupMsgServer types.GroupMessageServer
 }
 
 func NewAppModule(
@@ -106,12 +107,14 @@ func NewAppModule(
 	keeper keeper.Keeper,
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
+	groupMsgServer types.GroupMessageServer,
 ) AppModule {
 	return AppModule{
 		AppModuleBasic: NewAppModuleBasic(cdc),
 		keeper:         keeper,
 		accountKeeper:  accountKeeper,
 		bankKeeper:     bankKeeper,
+		groupMsgServer: groupMsgServer,
 	}
 }
 
@@ -198,6 +201,7 @@ type ModuleInputs struct {
 	BankEscrowKeeper types.BankEscrowKeeper
 	ValidatorSet     types.ValidatorSet
 	StakingKeeper    types.StakingKeeper
+	GroupServer      types.GroupMessageServer
 }
 
 type ModuleOutputs struct {
@@ -221,6 +225,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority.String(),
 		in.BankEscrowKeeper,
 		in.BankKeeper,
+		in.GroupServer,
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
@@ -230,6 +235,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		k,
 		in.AccountKeeper,
 		in.BankKeeper,
+		in.GroupServer,
 	)
 
 	return ModuleOutputs{

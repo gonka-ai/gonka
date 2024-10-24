@@ -101,7 +101,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.Address
-	transaction.ReceivedBy = icc.Address
 	return icc.sendTransaction(transaction)
 }
 

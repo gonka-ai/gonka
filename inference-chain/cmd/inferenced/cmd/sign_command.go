@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/flags"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/cobra"
@@ -28,6 +29,7 @@ func SignatureCommands() *cobra.Command {
 		GetPayloadSignCommand(),
 		GetPayloadVerifyCommand(),
 	)
+
 	return cmd
 }
 
@@ -42,6 +44,7 @@ func GetPayloadVerifyCommand() *cobra.Command {
 	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
 	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
 	cmd.Flags().String(Signature, "", "Signature to verify")
+	flags.AddKeyringFlags(cmd.PersistentFlags())
 	return cmd
 }
 
@@ -54,7 +57,10 @@ func verifyPayload(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	context := client.GetClientContextFromCmd(cmd)
+	context, err := client.GetClientQueryContext(cmd)
+	if err != nil {
+		return err
+	}
 	address, err := getAddress(cmd, context)
 	if err != nil {
 		return err
@@ -89,6 +95,8 @@ func GetPayloadSignCommand() *cobra.Command {
 	}
 	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
 	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
+	flags.AddKeyringFlags(cmd.PersistentFlags())
+
 	return cmd
 }
 
@@ -97,7 +105,10 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	context := client.GetClientContextFromCmd(cmd)
+	context, err := client.GetClientQueryContext(cmd)
+	if err != nil {
+		return err
+	}
 	addr, err2 := getAddress(cmd, context)
 	if err2 != nil {
 		return err2

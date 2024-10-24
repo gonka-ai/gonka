@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"log"
+	"strconv"
 )
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
@@ -58,10 +60,16 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	}
 
 	activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
+	groupMembers := make([]group.MemberRequest, len(computeResults))
 	for i, r := range computeResults {
 		activeParticipants[i] = &types.ActiveParticipant{
 			Index:  r.OperatorAddress,
 			Weight: r.Power,
+		}
+		groupMembers[i] = group.MemberRequest{
+			Address:  r.OperatorAddress,
+			Weight:   strconv.FormatInt(r.Power, 10),
+			Metadata: "",
 		}
 	}
 
@@ -69,4 +77,28 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		Participants:         activeParticipants,
 		CreatedAtBlockHeight: blockHeight,
 	})
+	moduleAddress := am.accountKeeper.GetModuleAddress(types.ModuleName)
+	result, err := am.groupMsgServer.CreateGroup(ctx, &group.MsgCreateGroup{
+		Admin:    moduleAddress.String(),
+		Members:  groupMembers,
+		Metadata: "",
+	})
+	if err != nil {
+		am.LogError("Error creating group", "error", err)
+		return
+	}
+
+	am.LogInfo("Created group", "groupID", result.GroupId)
+}
+
+func ParticipantsToGroupMembers(ctx context.Context, participants types.ActiveParticipants) ([]group.MemberRequest, error) {
+	var members []group.MemberRequest
+	for _, p := range participants.Participants {
+		member := group.MemberRequest{
+			Address: p.Index,
+			Weight:  strconv.FormatInt(p.Weight, 10),
+		}
+		members = append(members, member)
+	}
+	return members, nil
 }

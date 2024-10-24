@@ -49,7 +49,7 @@ message MsgStartInference {
   string inferenceId   = 2;
   string promptHash    = 3;
   string promptPayload = 4;
-  string receivedBy    = 5;
+  string requestedBy   = 5;
   string model         = 6;
 }
 

@@ -1,11 +1,14 @@
+import com.productscience.ApplicationCLI
 import com.productscience.COIN_HALVING_HEIGHT
 import com.productscience.EPOCH_NEW_COIN
 import com.productscience.EpochLength
 import com.productscience.LocalInferencePair
 import com.productscience.data.Participant
+import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
+import com.productscience.inferenceRequest
 import com.productscience.initialize
 import com.productscience.setNewValidatorsStage
 import org.assertj.core.api.Assertions.assertThat
@@ -35,7 +38,7 @@ class InferenceAccountingTests : TestermintTest() {
         val highestFunded = initialize(pairs)
         val inferenceResult = generateSequence {
             getInferenceResult(highestFunded)
-        }.first { it.inference.executedBy != it.inference.receivedBy }
+        }.first { it.inference.executedBy != it.inference.requestedBy }
 
         val inferenceCost = inferenceResult.inference.actualCost
         val escrowHeld = inferenceResult.inference.escrowAmount
@@ -93,6 +96,51 @@ class InferenceAccountingTests : TestermintTest() {
             highestFunded.node.waitForMinimumBlock(COIN_HALVING_HEIGHT.toLong())
         }
         verifySettledInferences(highestFunded, 4)
+    }
+
+    @Test
+    fun `test consumer only participant`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val genesis = initialize(pairs)
+        // Spin up an ephemeral node to manage consumer keys and auth
+        val consumerKey = "consumer1"
+        ApplicationCLI(consumerKey, inferenceConfig).use { consumer ->
+            consumer.createContainer(doNotStartChain = true)
+            val newKey = consumer.createKey(consumerKey)
+            Logger.warn("New key: ${newKey.address}")
+            genesis.api.addUnfundedInferenceParticipant(
+                UnfundedInferenceParticipant(
+                    "",
+                    listOf(),
+                    "",
+                    newKey.pubkey.key,
+                    newKey.address
+                )
+            )
+            genesis.node.waitForNextBlock()
+            val participants = genesis.api.getParticipants()
+            val consumerParticipant = participants.first { it.id == newKey.address }
+            assertThat(consumerParticipant.balance).isGreaterThan(100_000_000)
+            val consumerPair = LocalInferencePair(consumer, genesis.api, consumerKey)
+            val result = consumerPair.makeInferenceRequest(inferenceRequest, newKey.address)
+            Logger.debug(result)
+            assertThat(result).isNotNull
+            genesis.node.waitForNextBlock(3)
+            val inference = genesis.api.getInference(result.id)
+            Logger.debug(inference)
+            assertThat(inference.executedBy).isNotNull()
+            assertThat(inference.requestedBy).isEqualTo(newKey.address)
+            val participantsAfter = genesis.api.getParticipants()
+            assertThat(participantsAfter).anyMatch { it.id == newKey.address }.`as`("Consumer listed in participants")
+            val consumerAfter = participantsAfter.first { it.id == newKey.address }
+            Logger.info("Executed by: ${inference.executedBy}")
+            assertThat(participantsAfter).anyMatch { it.id == inference.executedBy }
+                .`as`("Executor listed in participants")
+            val executor = participantsAfter.first { it.id == inference.executedBy }
+            assertThat(consumerAfter.balance).isEqualTo(consumerParticipant.balance - inference.actualCost)
+                .`as`("Balance matches expectation")
+            assertThat(executor.coinsOwed).isEqualTo(inference.actualCost).`as`("Coins owed does not match cost")
+        }
     }
 
     private fun calculateCoinRewards(

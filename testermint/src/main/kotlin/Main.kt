@@ -17,7 +17,7 @@ fun main() {
     val highestFunded = initialize(pairs)
     val inference = generateSequence {
         getInferenceResult(highestFunded)
-    }.first { it.inference.executedBy != it.inference.receivedBy }
+    }.first { it.inference.executedBy != it.inference.requestedBy }
 
     println("ERC:" + inference.executorRefundChange)
     println("RRC:" + inference.requesterRefundChange)
@@ -40,7 +40,7 @@ fun createInferenceResult(
     afterInference: List<Participant>,
     beforeInferenceParticipants: List<Participant>,
 ): InferenceResult {
-    val requester = inference.receivedBy
+    val requester = inference.requestedBy
     val executor = inference.executedBy
     val requesterParticipantAfter = afterInference.find { it.id == requester }
     val executorParticipantAfter = afterInference.find { it.id == executor }
@@ -147,7 +147,7 @@ private fun addUnfundedDirectly(
             val status = pair.node.getStatus()
             val validatorInfo = status.validatorInfo
             val valPubKey: PubKey = validatorInfo.pubKey
-            Logger.debug("PubKey value: ${selfKey.pubkey}")
+            Logger.debug("PubKey extracted pubkey={}", selfKey.pubkey)
             highestFunded.api.addUnfundedInferenceParticipant(
                 UnfundedInferenceParticipant(
                     url = "http://${pair.name}-api:8080",

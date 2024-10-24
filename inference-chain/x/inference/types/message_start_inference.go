@@ -8,13 +8,13 @@ import (
 
 var _ sdk.Msg = &MsgStartInference{}
 
-func NewMsgStartInference(creator string, inferenceId string, promptHash string, promptPayload string, receivedBy string) *MsgStartInference {
+func NewMsgStartInference(creator string, inferenceId string, promptHash string, promptPayload string, requestedBy string) *MsgStartInference {
 	return &MsgStartInference{
 		Creator:       creator,
 		InferenceId:   inferenceId,
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
-		ReceivedBy:    receivedBy,
+		RequestedBy:   requestedBy,
 	}
 }
 

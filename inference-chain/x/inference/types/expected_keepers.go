@@ -4,6 +4,7 @@ import (
 	"context"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
@@ -29,6 +30,10 @@ type BankEscrowKeeper interface {
 	SendCoinsFromModuleToModule(ctx context.Context, senderModule, recipientModule string, amt sdk.Coins) error
 	SendCoinsFromAccountToModule(ctx context.Context, senderAddr sdk.AccAddress, recipientModule string, amt sdk.Coins) error
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
+}
+
+type GroupMessageServer interface {
+	CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error)
 }
 
 // ParamSubspace defines the expected Subspace interface for parameters.

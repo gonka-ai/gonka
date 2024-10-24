@@ -28,6 +28,7 @@ $APP_NAME init \
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
+
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 # no seeds for genesis node

@@ -22,7 +22,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrInferenceNotFound
 	}
 
-	if inference.Status != types.InferenceStatus_FINISHED {
+	if inference.Status != types.InferenceStatus_FINISHED && inference.Status != types.InferenceStatus_VALIDATED {
 		k.LogError("Inference not finished", "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
@@ -46,7 +46,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		executor.InvalidatedInferences++
 		executor.CoinBalance -= inference.ActualCost
 		// We need to refund the cost, so we have to lookup the person who paid
-		payer, found := k.GetParticipant(ctx, inference.ReceivedBy)
+		payer, found := k.GetParticipant(ctx, inference.RequestedBy)
 		if !found {
 			return nil, types.ErrParticipantNotFound
 		}
@@ -58,6 +58,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			payer.RefundBalance += inference.ActualCost
 			k.SetParticipant(ctx, payer)
 		}
+		k.startValidationVote(ctx, inference)
 	}
 	// Where will we get this number? How much does it vary by model?
 
