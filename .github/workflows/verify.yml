@@ -19,11 +19,11 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Clone cosmos-sdk repo
-        run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
+        run: git clone https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Build cosmos-sdk
         run: |
-          cd ../ps-fork/cosmos-sdk
+          cd ../../ps-fork/cosmos-sdk
           make build  # Adjust this command if cosmos-sdk uses something different
         shell: bash
 
@@ -59,11 +59,11 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Clone cosmos-sdk repo
-        run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
+        run: git clone https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Build cosmos-sdk
         run: |
-          cd ../ps-fork/cosmos-sdk
+          cd ../../ps-fork/cosmos-sdk
           make build  # Adjust this command if cosmos-sdk uses something different
         shell: bash
 
