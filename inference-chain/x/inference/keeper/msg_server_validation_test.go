@@ -66,7 +66,7 @@ func TestMsgServer_NotFinished(t *testing.T) {
 		InferenceId:   INFERENCE_ID,
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    testutil.Requester,
+		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
 		Model:         "model1",
 	})
@@ -106,7 +106,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    testutil.Requester,
+		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
 		Model:         "model1",
 	})

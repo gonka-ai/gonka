@@ -23,7 +23,7 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 		Index:             "creator",
 		Address:           "creator",
 		Reputation:        1,
-		Weight:            1,
+		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
