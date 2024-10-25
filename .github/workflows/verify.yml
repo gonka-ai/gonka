@@ -18,11 +18,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Checkout cosmos-sdk repo
-        uses: actions/checkout@v2
-        with:
-          repository: product-science/cosmos-sdk
-          path: ../ps-fork/cosmos-sdk  # Clones the repo to the required directory
+      - name: Clone cosmos-sdk repo
+        run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
 
       - name: Set up Go
         uses: actions/setup-go@v2
@@ -55,11 +52,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Checkout cosmos-sdk repo
-        uses: actions/checkout@v2
-        with:
-          repository: product-science/cosmos-sdk
-          path: ../ps-fork/cosmos-sdk  # Clones the repo to the required directory
+      - name: Clone cosmos-sdk repo
+        run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
 
       - name: Set up Go
         uses: actions/setup-go@v2
