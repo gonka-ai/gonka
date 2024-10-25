@@ -21,6 +21,12 @@ jobs:
       - name: Clone cosmos-sdk repo
         run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
 
+      - name: Build cosmos-sdk
+        run: |
+          cd ../ps-fork/cosmos-sdk
+          make build  # Adjust this command if cosmos-sdk uses something different
+        shell: bash
+
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
@@ -54,6 +60,12 @@ jobs:
 
       - name: Clone cosmos-sdk repo
         run: git clone https://github.com/product-science/cosmos-sdk.git ../ps-fork/cosmos-sdk
+
+      - name: Build cosmos-sdk
+        run: |
+          cd ../ps-fork/cosmos-sdk
+          make build  # Adjust this command if cosmos-sdk uses something different
+        shell: bash
 
       - name: Set up Go
         uses: actions/setup-go@v2
