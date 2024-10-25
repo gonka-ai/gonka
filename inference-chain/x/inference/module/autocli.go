@@ -75,7 +75,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "StartInference",
 					Use:            "start-inference [inference-id] [prompt-hash] [prompt-payload] [received-by]",
 					Short:          "Send a startInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "promptHash"}, {ProtoField: "promptPayload"}, {ProtoField: "receivedBy"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "promptHash"}, {ProtoField: "promptPayload"}, {ProtoField: "requestedBy"}},
 				},
 				{
 					RpcMethod:      "FinishInference",
