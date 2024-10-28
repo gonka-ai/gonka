@@ -185,6 +185,9 @@ class ParallelController:
     def get_phase(self) -> int:
         return self.phase.value
 
+    def is_running(self) -> bool:
+        return any(controller.process.is_alive() for controller in self.controllers)
+
     def start_generate(self):
         self.set_phase(Phase.GENERATE)
 

@@ -15,7 +15,7 @@ from pow.app.sender import Sender
 logger = create_logger(__name__)
 
 
-class AppState(Enum):
+class PowState(Enum):
     IDLE = "IDLE"
     NO_CONTROLLER = "NOT_LOADED"
     LOADING = "LOADING"
@@ -25,7 +25,7 @@ class AppState(Enum):
     MIXED = "MIXED"
 
 
-class InitRequest(BaseModel):
+class PowInitRequest(BaseModel):
     chain_hash: str
     public_key: str
     batch_size: int
@@ -33,8 +33,14 @@ class InitRequest(BaseModel):
     params: Params = Params()
 
 
-class InitRequestWithUrl(InitRequest):
+class PowInitRequestUrl(PowInitRequest):
     url: str
+
+
+class InferenceInitRequest(BaseModel):
+    model: str
+    dtype: str
+    additional_args: List[str] = []
 
 
 def create_sender(
@@ -54,7 +60,7 @@ def create_sender(
 
 def _initiate(
     app,
-    init_request: InitRequest
+    init_request: PowInitRequest
 ):
     if app.state.controller is not None:
         raise HTTPException(
@@ -79,7 +85,7 @@ def _initiate(
 
     app.state.init_request = init_request
     return {
-        "status": AppState.LOADING
+        "status": PowState.LOADING
     }
 
 def _stop(app):
@@ -101,7 +107,7 @@ def _stop(app):
     app.state.controller = None
     app.state.sender = None
     return {
-        "status": AppState.STOPPED
+        "status": PowState.STOPPED
     }
 
 def _start_generation(app):
@@ -113,7 +119,7 @@ def _start_generation(app):
         )
     controller.start_generate()
     response = {
-        "status": AppState.GENERATING
+        "status": PowState.GENERATING
     }
 
     if not controller.is_model_initialized():
@@ -131,7 +137,7 @@ def _start_validation(app):
         )
     controller.start_validate()
     response = {
-        "status": AppState.VALIDATING
+        "status": PowState.VALIDATING
     }
     if not controller.is_model_initialized():
         response["is_model_initialized"] = False
@@ -143,16 +149,16 @@ def _status(app):
     state = None
     controller = app.state.controller
     if controller is None:
-        return {"status": AppState.NO_CONTROLLER}
+        return {"status": PowState.NO_CONTROLLER}
 
     response = {}
     phase = controller.phase.value
     if phase == Phase.IDLE:
-        state = AppState.IDLE
+        state = PowState.IDLE
     elif phase == Phase.GENERATE:
-        state = AppState.GENERATING
+        state = PowState.GENERATING
     elif phase == Phase.VALIDATE:
-        state = AppState.VALIDATING
+        state = PowState.VALIDATING
     response = {"status": state}
     if controller is not None and not controller.is_model_initialized():
         response["is_model_initialized"] = False

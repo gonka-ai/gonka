@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from pow.app.api.v0 import router as v0_router
 from pow.app.api.v1 import router as v1_router
 from pow.utils import setup_logger
 
@@ -29,11 +28,6 @@ app = FastAPI(lifespan=lifespan)
 app.state.controller = None
 app.state.model_params_path = os.environ.get(
     "MODEL_PARAMS_PATH", "/app/resources/params.json"
-)
-
-app.include_router(
-    v0_router,
-    prefix="/api/v0"
 )
 
 app.include_router(

@@ -1,6 +1,6 @@
 ################################################################################
 
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime AS builder
+FROM vllm/vllm-openai AS builder
 
 ENV POETRY_VERSION=1.6.1 \
     PYTHONUNBUFFERED=1 \
@@ -20,26 +20,30 @@ RUN poetry config virtualenvs.in-project true \
 ################################################################################
 
 ARG USERNAME=pow
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime as dev
+FROM vllm/vllm-openai AS app
 
+ARG USERNAME
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
     USERNAME=$USERNAME
 
-RUN mkdir /app && \
-    chmod -R 777 /app
-
 COPY --from=builder /app/.venv /app/.venv
 COPY src /app/src
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
+WORKDIR /app
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+################################################################################
+
+ARG USERNAME=pow
+FROM app AS dev
 
 RUN mkdir /app/jupyter_data && \
     chmod -R 777 /app/jupyter_data
 ENV JUPYTER_DATA_DIR=/app/jupyter_data
-
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
 
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]
