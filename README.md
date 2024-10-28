@@ -29,6 +29,9 @@ Then you need to update the `VLLM_VERSION` in the `Dockerfile` to the new versio
 
 `<VLLM_VERSION>` is the version of the vLLM's fork image. *It should be aligned with the original vLLM version.*
 
+Current vLLM version is `0.5.0.post1`.  
+Current latest version of vLLM's fork can be found in `productscience/dev` branch.
+
 ### Build the Proof of Work image
 
 ```bash
