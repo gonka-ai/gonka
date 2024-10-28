@@ -1,5 +1,50 @@
 # Proof of Work v2
 
+## Build
+
+The image is built on top of vLLM's fork image, which is available on GCP as `decentralized-ai/vllm:<VLLM_VERSION>`. 
+Changes in the current repository don't require rebuilding the vLLM's fork image.
+
+
+### Build vLLM's fork
+
+If you need to build the vLLM's fork image, you can do it with the following command:
+
+```bash
+DOCKER_BUILDKIT=1 \
+docker build . --target vllm-openai \
+--tag gcr.io/decentralized-ai/vllm:<VLLM_VERSION>  \
+--build-arg max_jobs=24 \
+--build-arg nvcc_threads=12 \
+--build-arg CUDA_VERSION=12.1.0
+```
+
+And push it to GCP:
+
+```bash
+docker push gcr.io/decentralized-ai/vllm:<VLLM_VERSION>  
+```
+
+Then you need to update the `VLLM_VERSION` in the `Dockerfile` to the new version.
+
+`<VLLM_VERSION>` is the version of the vLLM's fork image. *It should be aligned with the original vLLM version.*
+
+### Build the Proof of Work image
+
+```bash
+DOCKER_BUILDKIT=1 \
+docker build . --target app --tag gcr.io/decentralized-ai/inference-runner:<VERSION>
+```
+
+And push it to GCP:
+
+```bash
+docker push gcr.io/decentralized-ai/inference-runner:<VERSION>
+```
+
+`<VERSION>` is the version of the Proof of Work image.
+
+
 ## Development
 
 Everything is dockerized, so you can run the development environment from container.  
@@ -52,8 +97,3 @@ gcloud compute start-iap-tunnel pow-test 8080 --project=<PROJECT_ID> --local-hos
 ```bash
 docker compose run --rm pow python scripts/check_operations.py
 ```
-
-
-## Production
-
-WIP

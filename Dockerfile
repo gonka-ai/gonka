@@ -1,6 +1,6 @@
 ################################################################################
 
-FROM vllm/vllm-openai AS builder
+FROM gcr.io/decentralized-ai/vllm:0.5.0.post1 AS builder
 
 ENV POETRY_VERSION=1.6.1 \
     PYTHONUNBUFFERED=1 \
@@ -20,7 +20,7 @@ RUN poetry config virtualenvs.in-project true \
 ################################################################################
 
 ARG USERNAME=pow
-FROM vllm/vllm-openai AS app
+FROM gcr.io/decentralized-ai/vllm:0.5.0.post1 AS app
 
 ARG USERNAME
 ENV PYTHONUNBUFFERED=1 \
