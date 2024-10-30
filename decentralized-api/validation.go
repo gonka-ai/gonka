@@ -38,7 +38,6 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 	}
 
 	logInferencesToSample(r.InferenceWithExecutor)
-	slog.Debug("Inferences to sample", "inferences", r.InferenceWithExecutor)
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
@@ -71,7 +70,7 @@ func logInferencesToSample(inferences []types.InferenceWithExecutor) {
 		})
 	}
 
-	log.Printf("Inferences to sample. %v", ids)
+	slog.Debug("Inferences to sample", "ids", ids)
 }
 
 func logInferencesToValidate(toValidate []types.Inference) {

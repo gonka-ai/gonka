@@ -36,6 +36,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 type InferenceMocks struct {
 	BankKeeper    *MockBankEscrowKeeper
 	AccountKeeper *MockAccountKeeper
+	GroupKeeper   *MockGroupMessageServer
 }
 
 func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
@@ -48,6 +49,7 @@ func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, Inf
 	mocks := InferenceMocks{
 		BankKeeper:    escrowKeeper,
 		AccountKeeper: accountKeeperMock,
+		GroupKeeper:   groupMock,
 	}
 	return keep, context, mocks
 }
