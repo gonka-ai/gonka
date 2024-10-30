@@ -77,14 +77,14 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
 		if err != nil {
-			log.Printf("Failed to parse height. err = %v", err)
+			slog.Error("Failed to parse height", "error", err)
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("Verifying block signatures at height %s", height)
+		slog.Debug("Verifying block signatures", "height", height)
 		if err := merkleproof.VerifyBlockSignatures(config.ChainNode.Url, height); err != nil {
-			log.Printf("Failed to verify block signatures. err = %v", err)
+			slog.Error("Failed to verify block signatures", "error", err)
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -135,13 +135,13 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 
 		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
 		if err != nil {
-			log.Printf("Failed to create rpc client. err = %v", err)
+			slog.Error("Failed to create rpc client", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
 		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
 		if err != nil {
-			log.Printf("Failed to query active participants. err = %v", err)
+			slog.Error("Failed to query active participants", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -154,21 +154,21 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 
 		var activeParticipants types.ActiveParticipants
 		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			log.Printf("Failed to unmarshal active participant. err = %v", err)
+			slog.Error("Failed to unmarshal active participant", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
 		if err != nil {
-			log.Printf("Failed to get block. err = %v", err)
+			slog.Error("Failed to get block", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 		if err != nil {
-			log.Printf("Failed to get validators. err = %v", err)
+			slog.Error("Failed to get validators", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -244,8 +244,8 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 	if err != nil {
 		fundedByTransferNode = false
 	}
-	log.Printf("fundedByTransferNode = %t", fundedByTransferNode)
 
+	slog.Debug("fundedByTransferNode", "node", fundedByTransferNode)
 	return &ChatRequest{
 		Body:                 body,
 		Request:              request,
@@ -311,7 +311,7 @@ func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*Execu
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("LB Executor:" + executor.InferenceUrl)
+	slog.Info("Executor selected", "address", executor.Address, "url", executor.InferenceUrl)
 	return &ExecutorDestination{
 		Url:     executor.InferenceUrl,
 		Address: executor.Address,
@@ -425,7 +425,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		line := scanner.Text()
 
 		// DEBUG LOG
-		log.Printf("Chunk: %s", line)
+		slog.Debug("Chunk", "line", line)
 
 		var lineToProxy = line
 		if responseProcessor != nil {
@@ -437,19 +437,19 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			}
 		}
 
-		log.Printf("Chunk to proxy: %s", lineToProxy)
+		slog.Debug("Chunk to proxy", "line", lineToProxy)
 
 		// Forward the line to the client
 		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
-			log.Printf("Error while streaming response: %v", err)
+			slog.Error("Error while streaming response", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("Error while streaming response: %v", err)
+		slog.Error("Error while streaming response", "error", err)
 	}
 }
 
@@ -493,13 +493,14 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 
 func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.QueryInferenceParticipantResponse) bool {
 	if client == nil {
-		log.Printf("Inference participant not found. address = %s", request.RequesterAddress)
+		slog.Error("Inference participant not found", "address", request.RequesterAddress)
 		http.Error(w, "Inference participant not found", http.StatusNotFound)
 		return true
 	}
 
 	err := validateRequestAgainstPubKey(request, client.Pubkey)
 	if err != nil {
+		slog.Error("Unable to validate request against PubKey", "error", err)
 		http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
 		return true
 	}
@@ -507,8 +508,8 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
 	escrowNeeded := request.OpenAiRequest.MaxTokens * keeper.PerTokenCost
-	log.Printf("Escrow needed: %d", escrowNeeded)
-	log.Printf("Client balance: %d", client.Balance)
+	slog.Debug("Escrow needed", "escrowNeeded", escrowNeeded)
+	slog.Debug("Client balance", "balance", client.Balance)
 	if client.Balance < int64(escrowNeeded) {
 		http.Error(w, "Insufficient balance", http.StatusPaymentRequired)
 		return true
@@ -616,17 +617,17 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 		return
 	}
 
-	log.Printf("GET inference participant. address = %s", address)
+	slog.Debug("GET inference participant", "address", address)
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: address})
 	if err != nil {
-		log.Printf("Failed to get inference participant. address = %s. err = %v", address, err)
+		slog.Error("Failed to get inference participant", "address", address, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if response == nil {
-		log.Printf("Inference participant not found. address = %s", address)
+		slog.Error("Inference participant not found", "address", address)
 		http.Error(w, "Inference participant not found", http.StatusNotFound)
 		return
 	}
@@ -654,17 +655,17 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 		return
 	}
 
-	log.Printf("GET inference. id = %s", id)
+	slog.Debug("GET inference", "id", id)
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(recorder.Context, &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
-		log.Printf("Failed to get inference. id = %s. err = %v", id, err)
+		slog.Error("Failed to get inference", "id", id, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if response == nil {
-		log.Printf("Inference not found. id = %s", id)
+		slog.Error("Inference not found", "id", id)
 		http.Error(w, "Inference not found", http.StatusNotFound)
 		return
 	}
@@ -685,7 +686,7 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 func writeResponseBody(body any, w http.ResponseWriter) {
 	respBytes, err := json.Marshal(body)
 	if err != nil {
-		log.Printf("Failed to marshal response. %v", err)
+		slog.Error("Failed to marshal response", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -871,7 +872,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 		})
 
 		if err != nil {
-			log.Printf("Failed to validate inference. id = %s. err = %v", validationRequest.Id, err)
+			slog.Error("Failed to validate inference", "id", validationRequest.Id, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -883,7 +884,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {
-			log.Printf("Failed to submit MsgValidation. %v", err)
+			slog.Error("Failed to submit MsgValidation", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
