@@ -9,9 +9,6 @@ COPY ./build/inferenced /usr/bin/inferenced
 COPY ./scripts/prod/init-docker.sh /root/init-docker.sh
 # Genesis file already created
 COPY ./build/genesis.json /root/genesis.json
-# config which should contain the SEEDS for the chain,
-# and any other settings needed by init-docker.sh
-COPY ./build/config.env /root/config.env
 
 RUN chmod +x /root/init-docker.sh
 
