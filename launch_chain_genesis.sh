@@ -51,24 +51,25 @@ if [ -z "$PUBLIC_URL" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  docker compose -p "$KEY_NAME" down -v
-  rm -r ./prod-local/"$KEY_NAME" || true
+  project_name="$KEY_NAME"
 
-  docker compose -p "$KEY_NAME" -f "$compose_file" up -d
+  docker compose -p "$project_name" down -v
+  rm -r ./prod-local/"$project_name" || true
 else
-  docker compose -f "$compose_file" up -d
+  project_name="inferenced"
 fi
+
+echo "project_name=$project_name"
+
+docker compose -p "$project_name" -f "$compose_file" up -d
 
 # Some time to join chain
 sleep 20
 
 curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
-if [ "$mode" == "local" ]; then
-  node_container_name="$KEY_NAME-node"
-else
-  node_container_name="node"
-fi
+node_container_name="$project_name-node"
+echo "node_container_name=$node_container_name"
 
 # Run the docker exec command and capture the validator_output
 validator_output=$(docker exec "$node_container_name" inferenced tendermint show-validator)
