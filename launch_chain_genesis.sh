@@ -68,7 +68,11 @@ sleep 20
 
 curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
-node_container_name="$project_name-node"
+if [ "$mode" == "local" ]; then
+  node_container_name="$KEY_NAME-node"
+else
+  node_container_name="node"
+fi
 echo "node_container_name=$node_container_name"
 
 # Run the docker exec command and capture the validator_output
