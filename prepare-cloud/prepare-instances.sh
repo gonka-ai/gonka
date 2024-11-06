@@ -11,6 +11,7 @@ gcloud compute scp --zone "$ZONE" config-genesis.env "$INSTANCE_NAME_GENESIS":~/
 gcloud compute scp --zone "$ZONE" \
   node-config.json \
   ../launch_chain_genesis.sh \
+  ../relaunch_chain.sh \
   ../docker-compose-cloud-genesis.yml \
   ../docker-compose-cloud-restart.yml \
   "$INSTANCE_NAME_GENESIS":~/.
@@ -19,6 +20,7 @@ gcloud compute scp --zone "$ZONE" \
   config.env \
   node-config.json \
   ../launch_chain.sh \
+  ../relaunch_chain.sh \
   ../docker-compose-cloud-join.yml \
   ../docker-compose-cloud-restart.yml \
   "$INSTANCE_NAME_JOIN":~/.
