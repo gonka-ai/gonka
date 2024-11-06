@@ -17,10 +17,9 @@ fi
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
-# ADD_ENDPOINT - the endpoint to use for adding unfunded participant
+# SEED_IP - the ip of the seed node
 # PORT - the port to use for the API
 # PUBLIC_URL - the access point for getting to your API node from the public
-# SEEDS - the list of seed nodes to connect to
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -39,8 +38,8 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$ADD_ENDPOINT" ]; then
-  echo "ADD_ENDPOINT is not set"
+if [ -z "$SEED_IP" ]; then
+  echo "SEED_IP is not set"
   exit 1
 fi
 
@@ -54,24 +53,17 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-if [ -z "$SEEDS" ]; then
-  echo "SEEDS is not set"
-  exit 1
-fi
-
-if [ -z "$GENESIS_URL" ]; then
-  echo "GENESIS_URL is not specified"
-  exit 1
-fi
-
-echo "Downloading the genesis file..."
+GENESIS_URL="http://$SEED_IP:26657/genesis"
 export GENESIS_FILE="genesis.json"
-if [ ! -f "$GENESIS_FILE" ]; then
-  echo "Downloading genesis.json..."
-  wget -O "$GENESIS_FILE" "$GENESIS_URL"
-else
-  echo "genesis.json already exists. Skipping download."
-fi
+
+echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
+wget -O "$GENESIS_FILE" "$GENESIS_URL"
+
+SEED_STATUS_URL="http://$SEED_IP:26657/status"
+SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
+echo "SEED_ID=$SEED_ID"
+export SEEDS="$SEED_ID@$SEED_IP:26656"
+echo "SEEDS=$SEEDS"
 
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
@@ -89,6 +81,7 @@ docker compose -p "$project_name" -f "$compose_file" up -d
 # Some time to join chain
 sleep 20
 
+# Set node config
 curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
@@ -138,6 +131,7 @@ post_data=$(jq -n \
     pub_key: $pub_key
   }')
 
+ADD_ENDPOINT="http://$SEED_IP:8080"
 echo "POST request sent to $ADD_ENDPOINT with the following data:"
 echo "$post_data"
 
