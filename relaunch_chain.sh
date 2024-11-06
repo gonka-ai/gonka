@@ -9,17 +9,12 @@ if [ "$mode" == "local" ]; then
   compose_file="docker-compose-local.yml"
 elif [ "$mode" == "cloud" ]; then
   compose_file="docker-compose-cloud-join.yml"
+elif [ "$mode" == "cloud-genesis" ]; then
+  compose_file="docker-compose-cloud-genesis.yml"
 else
   echo "Unknown mode: $mode"
   exit 1
 fi
-
-# Verify parameters:
-# KEY_NAME - name of the key pair to use
-# NODE_CONFIG - name of a file with inference node configuration
-# SEED_IP - the ip of the seed node
-# PORT - the port to use for the API
-# PUBLIC_URL - the access point for getting to your API node from the public
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -36,14 +31,6 @@ fi
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1
-fi
-
-if [ -v "$SEED_IP" ]; then
-   SEED_STATUS_URL="http://$SEED_IP:26657/status"
-   SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
-   echo "SEED_ID=$SEED_ID"
-   export SEEDS="$SEED_ID@$SEED_IP:26656"
-   echo "SEEDS=$SEEDS"
 fi
 
 if [ "$mode" == "local" ]; then
