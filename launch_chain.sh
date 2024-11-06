@@ -59,6 +59,20 @@ if [ -z "$SEEDS" ]; then
   exit 1
 fi
 
+if [ -z "$GENESIS_URL" ]; then
+  echo "GENESIS_URL is not specified"
+  exit 1
+fi
+
+echo "Downloading the genesis file..."
+export GENESIS_FILE="genesis.json"
+if [ ! -f "$GENESIS_FILE" ]; then
+  echo "Downloading genesis.json..."
+  wget -O "$GENESIS_FILE" "$GENESIS_URL"
+else
+  echo "genesis.json already exists. Skipping download."
+fi
+
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
 
@@ -129,4 +143,3 @@ echo "$post_data"
 
 # Make the final POST request to the ADD_ENDPOINT
 curl -X POST "$ADD_ENDPOINT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-

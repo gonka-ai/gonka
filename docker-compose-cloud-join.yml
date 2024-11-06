@@ -6,6 +6,7 @@ services:
     image: gcr.io/decentralized-ai/inferenced-join
     volumes:
       - .inference:/root/.inference
+      - ${GENESIS_FILE}:/root/genesis.json
     environment:
       - SEEDS=${SEEDS}
       - KEY_NAME=${KEY_NAME}

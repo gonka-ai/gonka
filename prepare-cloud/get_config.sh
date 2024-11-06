@@ -22,3 +22,4 @@ NODE_JOIN_IP=$(gcloud compute instances describe node-join-1 --zone=us-central1-
   --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
 echo "export PORT=8080" >> config.env
 echo "export PUBLIC_URL=http://$NODE_JOIN_IP:8080" >> config.env
+echo "export GENESIS_URL=http://$GENESIS_IP:26657/genesis.json" >> config.env
