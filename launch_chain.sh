@@ -57,7 +57,7 @@ GENESIS_URL="http://$SEED_IP:26657/genesis"
 export GENESIS_FILE="genesis.json"
 
 echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
-wget -O "$GENESIS_FILE" "$GENESIS_URL"
+wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
 
 SEED_STATUS_URL="http://$SEED_IP:26657/status"
 SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
