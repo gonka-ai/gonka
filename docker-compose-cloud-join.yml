@@ -24,7 +24,7 @@ services:
       - PUBLIC_IP=${PUBLIC_IP}
       - PORT=${PORT}
     ports:
-      - "${PORT}:${PORT}"
+      - "${PORT}:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       - .inference:/root/.inference

@@ -17,7 +17,8 @@ type Config struct {
 }
 
 type ApiConfig struct {
-	Port int `koanf:"port"`
+	Port int    `koanf:"port"`
+	Host string `koanf:"host"`
 }
 
 type ChainNodeConfig struct {

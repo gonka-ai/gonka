@@ -18,10 +18,8 @@ fi
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
-# ADD_ENDPOINT - the endpoint to use for adding unfunded participant
 # PORT - the port to use for the API
 # PUBLIC_IP - the access point for getting to your API node from the public
-# SEEDS - the list of seed nodes to connect to
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it

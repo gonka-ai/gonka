@@ -11,11 +11,6 @@ if [ -z "$PUBLIC_IP" ]; then
   exit 1
 fi
 
-if [ -z "$PORT" ]; then
-  echo "Error: PORT is required."
-  exit 1
-fi
-
 yaml_file="/root/api-config.yaml"
 
 if [ -n "$NODE_HOST" ]; then
@@ -26,8 +21,7 @@ fi
 sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
-sed -i "s/ip: .*/ip: \"$PUBLIC_IP\"/" "$yaml_file"
-sed -i "s/port: .*/port: \"$PORT\"/" "$yaml_file"
+sed -i "s/host: .*/host: \"$PUBLIC_IP\"/" "$yaml_file"
 
 echo "The final api config:"
 cat "$yaml_file"

@@ -25,4 +25,4 @@ services:
       - PUBLIC_IP=${PUBLIC_IP}
       - PORT=${PORT}
     ports:
-      - "${PORT}:${PORT}"
+      - "${PORT}:8080"

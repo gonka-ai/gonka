@@ -1,6 +1,6 @@
 api:
   port: 8080
-  ip: localhost
+  host: localhost
 nodes:
   - id: node1
     url: http://localhost:2020/
