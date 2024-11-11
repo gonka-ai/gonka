@@ -20,7 +20,7 @@ fi
 # NODE_CONFIG - name of a file with inference node configuration
 # ADD_ENDPOINT - the endpoint to use for adding unfunded participant
 # PORT - the port to use for the API
-# PUBLIC_URL - the access point for getting to your API node from the public
+# PUBLIC_IP - the access point for getting to your API node from the public
 # SEEDS - the list of seed nodes to connect to
 
 # Much easier to manage the environment variables in a file
@@ -45,8 +45,8 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-if [ -z "$PUBLIC_URL" ]; then
-  echo "PUBLIC_URL is not set"
+if [ -z "$PUBLIC_IP" ]; then
+  echo "PUBLIC_IP is not set"
   exit 1
 fi
 
@@ -89,6 +89,7 @@ unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
 # Print the unique models
 echo "Unique models: $unique_models"
 
+PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
   --arg url "$PUBLIC_URL" \

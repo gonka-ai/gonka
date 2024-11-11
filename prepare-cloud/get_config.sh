@@ -27,4 +27,4 @@ echo "export SEED_IP=$GENESIS_IP" >> config.env
 NODE_JOIN_IP=$(gcloud compute instances describe "$INSTANCE_NAME_JOIN" --zone=us-central1-a \
   --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
 echo "export PORT=8080" >> config.env
-echo "export PUBLIC_URL=http://$NODE_JOIN_IP:8080" >> config.env
+echo "export PUBLIC_IP=$NODE_JOIN_IP" >> config.env
