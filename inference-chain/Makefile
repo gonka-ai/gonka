@@ -24,16 +24,7 @@ define DOCKER_BUILD
 	@echo "--> building inferenced binary locally, outside of docker"
 	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
-	@docker build --platform $(PLATFORM) . -t inferenced
-endef
-
-define DOCKER_RELEASE_BUILD
-    @echo "--> deleting old ./build/inferenced"
-	@rm -f ./build/inferenced
-	@echo "--> building inferenced binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
-	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
-    @docker build -f DockerfileJoin --platform $(PLATFORM) . -t inferenced-join
+	@docker build -f $(DOCKER_FILE) --platform $(PLATFORM) . -t $(DOCKER_TAG)
 endef
 
 all:
@@ -55,18 +46,14 @@ build:
 
 build-docker:
 	$(eval PLATFORM=linux/arm64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(eval DOCKER_TAG=inferenced)
 	$(DOCKER_BUILD)
-
-build-genesis:
-	$(eval PLATFORM=linux/amd64)
-	$(DOCKER_GENESIS_BUILD)
 
 release-docker:
 	$(eval PLATFORM=linux/amd64)
-	$(DOCKER_RELEASE_BUILD)
-
-build-docker-amd:
-	$(eval PLATFORM=linux/amd64)
+	$(eval DOCKER_FILE=DockerfileJoin)
+	$(eval DOCKER_TAG=inferenced-join)
 	$(DOCKER_BUILD)
 
 init:
@@ -85,14 +72,7 @@ docker-push:
 	@docker tag inferenced gcr.io/decentralized-ai/inferenced
 	@docker push gcr.io/decentralized-ai/inferenced
 
-docker-push-genesis:
-	@echo "--> pushing inferenced-genesis docker image"
-	@docker tag inferenced-genesis gcr.io/decentralized-ai/inferenced-genesis
-	@docker push gcr.io/decentralized-ai/inferenced-genesis
-
 docker-push-join:
 	@echo "--> pushing inferenced-genesis docker image"
 	@docker tag inferenced-join gcr.io/decentralized-ai/inferenced-join
 	@docker push gcr.io/decentralized-ai/inferenced-join
-
-build-and-push-docker: build-docker-amd docker-push
