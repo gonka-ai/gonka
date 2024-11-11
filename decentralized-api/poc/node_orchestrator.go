@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -25,12 +26,13 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker) *NodePoCOr
 }
 
 type InitDto struct {
-	ChainHash string  `json:"chain_hash"`
-	PublicKey string  `json:"public_key"`
-	BatchSize int     `json:"batch_size"`
-	RTarget   float64 `json:"r_target"`
-	Params    *Params `json:"params"`
-	URL       string  `json:"url"`
+	BlockHeight int64   `json:"block_height"`
+	ChainHash   string  `json:"chain_hash"`
+	PublicKey   string  `json:"public_key"`
+	BatchSize   int     `json:"batch_size"`
+	RTarget     float64 `json:"r_target"`
+	Params      *Params `json:"params"`
+	URL         string  `json:"url"`
 }
 
 type Params struct {
@@ -74,7 +76,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	}
 
 	for _, n := range nodes {
-		resp, err := o.sendInitGenerateRequest(n.Node, blockHash)
+		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
 		if err != nil {
 			// PRTODO: log error
 			continue
@@ -84,19 +86,23 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	}
 }
 
-func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHash string) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := InitDto{
-		ChainHash: blockHash,
-		PublicKey: o.pubKey,
-		BatchSize: 1,                           // PRTODO: what value are we providing here?
-		RTarget:   1,                           // PROTOD: what value are we providing here?
-		URL:       "http://hello/v1/generated", // PRTODO:
-		Params:    nil,                         // PRTODO: are they necessary
+		BlockHeight: blockHeight,
+		ChainHash:   blockHash,
+		PublicKey:   o.pubKey,
+		BatchSize:   DefaultBatchSize,
+		RTarget:     DefaultRTarget,
+		URL:         "http://hello/v1/poc-batches", // PRTODO:
+		Params:      &DefaultParams,
 	}
 
-	url := node.Url + "/api/v1/init-generate"
+	initUrl, err := url.JoinPath(node.Url, "/api/v1/init-generate")
+	if err != nil {
+		return nil, err
+	}
 
-	return sendPostRequest(o.HTTPClient, url, initDto)
+	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
 
 func (o *NodePoCOrchestrator) Stop() {
@@ -117,9 +123,12 @@ func (o *NodePoCOrchestrator) Stop() {
 }
 
 func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
-	url := node.Url + "/api/v1/stop"
+	stopUrl, err := url.JoinPath(node.Url, "/api/v1/stop")
+	if err != nil {
+		return nil, err
+	}
 
-	return sendPostRequest(o.HTTPClient, url, nil)
+	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHash string) (*http.Response, error) {
@@ -132,9 +141,12 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode
 		Params:    &DefaultParams,
 	}
 
-	url := node.Url + "/api/v1/init-validate"
+	initUrl, err := url.JoinPath(node.Url, "/api/v1/init-validate")
+	if err != nil {
+		return nil, err
+	}
 
-	return sendPostRequest(o.HTTPClient, url, initDto)
+	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
 
 func sendPostRequest(client *http.Client, url string, payload any) (*http.Response, error) {
