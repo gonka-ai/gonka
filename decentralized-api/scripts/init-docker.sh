@@ -29,4 +29,7 @@ sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 sed -i "s/ip: .*/ip: \"$PUBLIC_IP\"/" "$yaml_file"
 sed -i "s/port: .*/port: \"$PORT\"/" "$yaml_file"
 
+echo "The final api config:"
+cat "$yaml_file"
+
 exec decentralized-api
