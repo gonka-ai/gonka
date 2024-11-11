@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"decentralized-api/broker"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -69,6 +70,7 @@ var DefaultParams = Params{
 }
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
+	slog.Info("Starting PoC on nodes")
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
 		// PRTODO: log error
@@ -102,6 +104,8 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 		return nil, err
 	}
 
+	slog.Info("Sending init-generate request to node. url = %s. initDto = %v", node.Url, initDto)
+
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
 
@@ -127,6 +131,8 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 	if err != nil {
 		return nil, err
 	}
+
+	slog.Info("Sending stop request to node. url = %s", node.Url)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
