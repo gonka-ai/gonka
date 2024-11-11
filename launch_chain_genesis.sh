@@ -6,7 +6,6 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  # TODO: there's no such file yet
   compose_file="docker-compose-local-genesis.yml"
 elif [ "$mode" == "cloud" ]; then
   compose_file="docker-compose-cloud-genesis.yml"
@@ -58,7 +57,7 @@ else
 fi
 
 echo "project_name=$project_name"
-
+echo "compose_file=$compose_file"
 docker compose -p "$project_name" -f "$compose_file" up -d
 
 # Some time to join chain
