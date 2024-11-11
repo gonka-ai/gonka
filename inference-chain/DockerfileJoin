@@ -6,14 +6,11 @@ WORKDIR /root
 
 # Copy over binaries from the build-env
 COPY ./build/inferenced /usr/bin/inferenced
+COPY ./scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY ./scripts/prod/init-docker.sh /root/init-docker.sh
-# Genesis file already created
-COPY ./build/genesis.json /root/genesis.json
-# config which should contain the SEEDS for the chain,
-# and any other settings needed by init-docker.sh
-COPY ./build/config.env /root/config.env
 
 RUN chmod +x /root/init-docker.sh
+RUN chmod +x /root/init-docker-genesis.sh
 
 EXPOSE 26656 26657 1317 9090
 

@@ -1,0 +1,7 @@
+version: "3.7"
+
+services:
+  node:
+    command: ["inferenced", "start"]
+  api:
+    command: ["decentralized-api"]

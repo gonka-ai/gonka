@@ -6,4 +6,5 @@ gcloud compute scp --zone "$ZONE" \
   node-config.json \
   ../launch_chain_genesis.sh \
   ../docker-compose-cloud-genesis.yml \
+  ../docker-compose-cloud-restart.yml \
   "$INSTANCE_NAME":~/.

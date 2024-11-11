@@ -4,8 +4,10 @@ services:
   node:
     container_name: node
     image: gcr.io/decentralized-ai/inferenced-join
+    command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
+      - ./${GENESIS_FILE}:/root/genesis.json
     environment:
       - SEEDS=${SEEDS}
       - KEY_NAME=${KEY_NAME}

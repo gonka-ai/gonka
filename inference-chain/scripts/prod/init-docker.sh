@@ -1,9 +1,6 @@
 #!/bin/sh
 set -e
 
-# run config to set environment variables
-. ./config.env
-
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
   echo "Error: KEY_NAME is required."
@@ -60,6 +57,13 @@ $APP_NAME keys \
 
 # Need to join network? Or is that solely from the compose file?
 
-cp ./genesis.json $STATE_DIR/config/genesis.json
+GENESIS_FILE="./genesis.json"
+if [ ! -f "$GENESIS_FILE" ]; then
+  echo "Genesis file not found at $GENESIS_FILE"
+  exit 1
+fi
+
+echo "Using genesis file: $GENESIS_FILE"
+cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
 
 $APP_NAME start
