@@ -7,7 +7,6 @@ docker compose -p join2 down
 
 make node-build-genesis
 make api-build-docker
-make api-release-docker
 
 PORT=8080
 KEY_NAME=genesis
@@ -60,7 +59,7 @@ echo "Genesis node id added to config.env"
 echo "ADD_ENDPOINT=\"http://genesis-node:$PORT\"" >> ./inference-chain/build/config.env
 echo "Genesis node endpoint added to config.env"
 
-make node-release-docker
+make node-build-docker
 #
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG

@@ -7,7 +7,7 @@ echo "Getting config.env"
 # TODO: pass INSTANCE_NAME + ZONE arguments
 ./get_config.sh
 
-make -C ../. node-release-docker
+make -C ../. node-build-docker
 make -C ../inference-chain docker-push-join
 
 gcloud compute scp --zone "$ZONE" \

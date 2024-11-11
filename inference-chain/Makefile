@@ -44,13 +44,13 @@ build:
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 
-build-docker:
+build-docker-old:
 	$(eval PLATFORM=linux/arm64)
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=inferenced)
 	$(DOCKER_BUILD)
 
-release-docker:
+build-docker:
 	$(eval PLATFORM=linux/amd64)
 	$(eval DOCKER_FILE=DockerfileJoin)
 	$(eval DOCKER_TAG=inferenced-join)
