@@ -1157,7 +1157,7 @@ func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 
-		log.Printf("ProofBatch received: %v", body)
+		slog.Info("ProofBatch received: %v", body)
 		// TODO: save to BC
 
 		w.WriteHeader(http.StatusOK)
