@@ -17,10 +17,9 @@ fi
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
-# ADD_ENDPOINT - the endpoint to use for adding unfunded participant
+# SEED_IP - the ip of the seed node
 # PORT - the port to use for the API
 # PUBLIC_URL - the access point for getting to your API node from the public
-# SEEDS - the list of seed nodes to connect to
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -39,8 +38,8 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$ADD_ENDPOINT" ]; then
-  echo "ADD_ENDPOINT is not set"
+if [ -z "$SEED_IP" ]; then
+  echo "SEED_IP is not set"
   exit 1
 fi
 
@@ -54,23 +53,35 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-if [ -z "$SEEDS" ]; then
-  echo "SEEDS is not set"
-  exit 1
-fi
+GENESIS_URL="http://$SEED_IP:26657/genesis"
+export GENESIS_FILE="genesis.json"
+
+echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
+wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
+
+SEED_STATUS_URL="http://$SEED_IP:26657/status"
+SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
+echo "SEED_ID=$SEED_ID"
+export SEEDS="$SEED_ID@$SEED_IP:26656"
+echo "SEEDS=$SEEDS"
 
 if [ "$mode" == "local" ]; then
-  docker compose -p "$KEY_NAME" down -v
-  rm -r ./prod-local/"$KEY_NAME" || true
+  project_name="$KEY_NAME"
 
-  docker compose -p "$KEY_NAME" -f "$compose_file" up -d
+  docker compose -p "$project_name" down -v
+  rm -r ./prod-local/"$project_name" || true
 else
-  docker compose -f "$compose_file" up -d
+  project_name="inferenced"
 fi
+
+echo "project_name=$project_name"
+
+docker compose -p "$project_name" -f "$compose_file" up -d
 
 # Some time to join chain
 sleep 20
 
+# Set node config
 curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
@@ -78,6 +89,7 @@ if [ "$mode" == "local" ]; then
 else
   node_container_name="node"
 fi
+echo "node_container_name=$node_container_name"
 
 # Now get info for adding self
 keys_output=$(docker exec "$node_container_name" inferenced keys show $KEY_NAME --output json)
@@ -119,9 +131,9 @@ post_data=$(jq -n \
     pub_key: $pub_key
   }')
 
+ADD_ENDPOINT="http://$SEED_IP:8080"
 echo "POST request sent to $ADD_ENDPOINT with the following data:"
 echo "$post_data"
 
 # Make the final POST request to the ADD_ENDPOINT
 curl -X POST "$ADD_ENDPOINT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-

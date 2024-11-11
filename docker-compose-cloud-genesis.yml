@@ -3,7 +3,8 @@ version: "3.7"
 services:
   node:
     container_name: node
-    image: gcr.io/decentralized-ai/inferenced-genesis
+    image: gcr.io/decentralized-ai/inferenced-join
+    command: ["sh", "./init-docker-genesis.sh"]
     volumes:
       - .inference:/root/.inference
     environment:
