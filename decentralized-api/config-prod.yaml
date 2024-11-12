@@ -1,5 +1,6 @@
 api:
   port: 8080
+  host: localhost
 nodes:
 chain_node:
   url: http://node:26657

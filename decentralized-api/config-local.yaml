@@ -1,5 +1,6 @@
 api:
   port: 8080
+  host: localhost
 nodes:
   - id: node1
     url:  http://34.171.235.205:8080/ # Deployed inference node
