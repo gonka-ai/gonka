@@ -94,6 +94,10 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte("Block signatures verified"))
 	})
+	mux.HandleFunc("/v1/status", func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte("{\"status\": \"ok\"}"))
+	})
 
 	addr := fmt.Sprintf(":%d", config.Api.Port)
 
