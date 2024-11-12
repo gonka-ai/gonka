@@ -5,7 +5,6 @@ import (
 	"decentralized-api/broker"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -93,7 +92,6 @@ var DefaultParams = Params{
 }
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
-	log.Printf("Starting PoC on nodes")
 	slog.Info("Starting PoC on nodes")
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
@@ -104,9 +102,10 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	for _, n := range nodes {
 		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
 		if err != nil {
-			// PRTODO: log error
+			slog.Error("Failed to send init-generate request to node", "node", n.Node.Url, "error", err)
 			continue
 		}
+
 		// PRTODO: analyze response somehow?
 		_ = resp
 	}
@@ -129,7 +128,7 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 		return nil, err
 	}
 
-	slog.Info("Sending init-generate request to node.", "url", node.Url, "initDto", initDto)
+	slog.Info("Sending init-generate request to node.", "url", initUrl, "initDto", initDto)
 
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
@@ -144,7 +143,7 @@ func (o *NodePoCOrchestrator) Stop() {
 	for _, n := range nodes {
 		resp, err := o.sendStopRequest(n.Node)
 		if err != nil {
-			// PRTODO: log error
+			slog.Error("Failed to send stop request to node", "node", n.Node.Url, "error", err)
 			continue
 		}
 		_ = resp
@@ -157,8 +156,7 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 		return nil, err
 	}
 
-	log.Printf("Sending stop request to node. url = %s", node.Url)
-	slog.Info("Sending stop request to node. url = %s", node.Url)
+	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
