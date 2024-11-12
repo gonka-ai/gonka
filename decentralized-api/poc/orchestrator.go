@@ -182,8 +182,8 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
 		log.Printf("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
-		pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
-		orchestrator.StartProcessing(pocEvent)
+		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
+		//orchestrator.StartProcessing(pocEvent)
 
 		nodePoCOrchestrator.Start(blockHeight, blockHash)
 
@@ -192,7 +192,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
 		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
-		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
+		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.Stop()
 
