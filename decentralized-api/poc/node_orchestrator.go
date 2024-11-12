@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"decentralized-api/broker"
 	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -11,20 +12,39 @@ import (
 	"time"
 )
 
+const (
+	InitGeneratePath = "/api/v1/pow/init/generate"
+	InitValidatePath = "/api/v1/pow/init/validate"
+	StopPath         = "/api/v1/pow/stop"
+)
+
 type NodePoCOrchestrator struct {
-	pubKey     string
-	HTTPClient *http.Client
-	nodeBroker *broker.Broker
+	pubKey       string
+	HTTPClient   *http.Client
+	nodeBroker   *broker.Broker
+	callbackHost string
+	callbackPort int
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, callbackPort int) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		nodeBroker: nodeBroker,
+		nodeBroker:   nodeBroker,
+		callbackHost: callbackHost,
+		callbackPort: callbackPort,
 	}
+}
+
+func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
+	return fmt.Sprintf("http://%s:%d/v1/poc-batches", o.callbackHost, o.callbackPort)
+}
+
+func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
+	// PRTODO: This is a placeholder. Replace with actual URL.
+	return fmt.Sprintf("http://%s:%d/v1/poc-validate-results", o.callbackHost, o.callbackPort)
 }
 
 type InitDto struct {
@@ -97,11 +117,11 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 		PublicKey:   o.pubKey,
 		BatchSize:   DefaultBatchSize,
 		RTarget:     DefaultRTarget,
-		URL:         "http://hello/v1/poc-batches", // PRTODO:
+		URL:         o.getPocBatchesCallbackUrl(),
 		Params:      &DefaultParams,
 	}
 
-	initUrl, err := url.JoinPath(node.Url, "/api/v1/init-generate")
+	initUrl, err := url.JoinPath(node.Url, InitGeneratePath)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +150,7 @@ func (o *NodePoCOrchestrator) Stop() {
 }
 
 func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.Url, "/api/v1/stop")
+	stopUrl, err := url.JoinPath(node.Url, StopPath)
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +167,11 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode
 		PublicKey: o.pubKey,
 		BatchSize: DefaultBatchSize,
 		RTarget:   DefaultRTarget,
-		URL:       "http://hello/v1/generated", // PRTODO:
+		URL:       o.getPocValidateCallbackUrl(),
 		Params:    &DefaultParams,
 	}
 
-	initUrl, err := url.JoinPath(node.Url, "/api/v1/init-validate")
+	initUrl, err := url.JoinPath(node.Url, InitValidatePath)
 	if err != nil {
 		return nil, err
 	}
