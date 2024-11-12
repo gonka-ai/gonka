@@ -39,12 +39,12 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("http://%s:%d/v1/poc-batches", o.callbackHost, o.callbackPort)
+	return fmt.Sprintf("https://%s:%d/v1/poc-batches", o.callbackHost, o.callbackPort)
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// PRTODO: This is a placeholder. Replace with actual URL.
-	return fmt.Sprintf("http://%s:%d/v1/poc-validate-results", o.callbackHost, o.callbackPort)
+	return fmt.Sprintf("https://%s:%d/v1/poc-validate-results", o.callbackHost, o.callbackPort)
 }
 
 type InitDto struct {
