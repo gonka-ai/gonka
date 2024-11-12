@@ -48,13 +48,14 @@ func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 }
 
 type InitDto struct {
-	BlockHeight int64   `json:"block_height"`
-	ChainHash   string  `json:"chain_hash"`
-	PublicKey   string  `json:"public_key"`
-	BatchSize   int     `json:"batch_size"`
-	RTarget     float64 `json:"r_target"`
-	Params      *Params `json:"params"`
-	URL         string  `json:"url"`
+	ChainHash      string  `json:"chain_hash"`
+	BlockHeight    int64   `json:"chain_height"`
+	PublicKey      string  `json:"public_key"`
+	BatchSize      int     `json:"batch_size"`
+	RTarget        float64 `json:"r_target"`
+	FraudThreshold int     `json:"fraud_threshold"`
+	Params         *Params `json:"params"`
+	URL            string  `json:"url"`
 }
 
 type Params struct {
@@ -72,8 +73,9 @@ type Params struct {
 }
 
 const (
-	DefaultRTarget   = 1.390051443
-	DefaultBatchSize = 8000
+	DefaultRTarget        = 1.390051443
+	DefaultBatchSize      = 8000
+	DefaultFraudThreshold = 3
 )
 
 var DefaultParams = Params{
@@ -112,13 +114,14 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 
 func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := InitDto{
-		BlockHeight: blockHeight,
-		ChainHash:   blockHash,
-		PublicKey:   o.pubKey,
-		BatchSize:   DefaultBatchSize,
-		RTarget:     DefaultRTarget,
-		URL:         o.getPocBatchesCallbackUrl(),
-		Params:      &DefaultParams,
+		BlockHeight:    blockHeight,
+		ChainHash:      blockHash,
+		PublicKey:      o.pubKey,
+		BatchSize:      DefaultBatchSize,
+		RTarget:        DefaultRTarget,
+		FraudThreshold: DefaultFraudThreshold,
+		Params:         &DefaultParams,
+		URL:            o.getPocBatchesCallbackUrl(),
 	}
 
 	initUrl, err := url.JoinPath(node.Url, InitGeneratePath)
