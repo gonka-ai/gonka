@@ -1142,8 +1142,8 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 type ProofBatch struct {
 	PublicKey   string    `json:"public_key"`
 	ChainHash   string    `json:"chain_hash"`
-	BlockHeight string    `json:"block_height"`
-	Nonces      []int     `json:"nonces"`
+	ChainHeight int64     `json:"chain_height"`
+	Nonces      []int64   `json:"nonces"`
 	Dist        []float64 `json:"dist"`
 }
 

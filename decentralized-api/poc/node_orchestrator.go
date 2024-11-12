@@ -49,7 +49,7 @@ func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 
 type InitDto struct {
 	ChainHash      string  `json:"chain_hash"`
-	BlockHeight    int64   `json:"chain_height"`
+	ChainHeight    int64   `json:"chain_height"`
 	PublicKey      string  `json:"public_key"`
 	BatchSize      int     `json:"batch_size"`
 	RTarget        float64 `json:"r_target"`
@@ -114,7 +114,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 
 func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := InitDto{
-		BlockHeight:    blockHeight,
+		ChainHeight:    blockHeight,
 		ChainHash:      blockHash,
 		PublicKey:      o.pubKey,
 		BatchSize:      DefaultBatchSize,
