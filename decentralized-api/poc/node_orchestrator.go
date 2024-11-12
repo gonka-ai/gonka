@@ -22,10 +22,9 @@ type NodePoCOrchestrator struct {
 	HTTPClient   *http.Client
 	nodeBroker   *broker.Broker
 	callbackHost string
-	callbackPort int
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, callbackPort int) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
@@ -33,17 +32,16 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 		},
 		nodeBroker:   nodeBroker,
 		callbackHost: callbackHost,
-		callbackPort: callbackPort,
 	}
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("https://%s:%d/v1/poc-batches", o.callbackHost, o.callbackPort)
+	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// PRTODO: This is a placeholder. Replace with actual URL.
-	return fmt.Sprintf("https://%s:%d/v1/poc-validate-results", o.callbackHost, o.callbackPort)
+	return fmt.Sprintf("https://%s/v1/poc-validate-results", o.callbackHost)
 }
 
 type InitDto struct {

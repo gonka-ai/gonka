@@ -49,7 +49,8 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		"pubkey", pubKey)
 
 	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKey, nodeBroker, config.Api.Host, config.Api.Port)
+	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKey, nodeBroker, config.Api.Host)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
