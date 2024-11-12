@@ -129,8 +129,7 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 		return nil, err
 	}
 
-	log.Printf("Sending init-generate request to node. url = %s. initDto = %v", node.Url, initDto)
-	slog.Info("Sending init-generate request to node. url = %s. initDto = %v", node.Url, initDto)
+	slog.Info("Sending init-generate request to node.", "url", node.Url, "initDto", initDto)
 
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }

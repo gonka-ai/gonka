@@ -50,6 +50,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 
 	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKey, nodeBroker, config.Api.Host, config.Api.Port)
+	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
 	// Listen for events
