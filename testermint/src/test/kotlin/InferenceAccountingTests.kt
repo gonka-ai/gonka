@@ -39,7 +39,7 @@ class InferenceAccountingTests : TestermintTest() {
         val highestFunded = initialize(pairs)
         val inferenceResult = generateSequence {
             getInferenceResult(highestFunded)
-        }.first { it.inference.executedBy != it.inference.receivedBy }
+        }.first { it.inference.executedBy != it.inference.requestedBy }
 
         val inferenceCost = inferenceResult.inference.actualCost
         val escrowHeld = inferenceResult.inference.escrowAmount
@@ -131,7 +131,7 @@ class InferenceAccountingTests : TestermintTest() {
             }.take(5).firstOrNull { it.executedBy != null }
             assertNotNull(inference, "Inference never finished")
             assertThat(inference.executedBy).isNotNull()
-            assertThat(inference.receivedBy).isEqualTo(newKey.address)
+            assertThat(inference.requestedBy).isEqualTo(newKey.address)
             val participantsAfter = genesis.api.getParticipants()
             assertThat(participantsAfter).anyMatch { it.id == newKey.address }.`as`("Consumer listed in participants")
             val consumerAfter = participantsAfter.first { it.id == newKey.address }

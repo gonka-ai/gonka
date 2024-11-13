@@ -1,9 +1,6 @@
 #!/bin/sh
 set -e
 
-# run config to set environment variables
-. ./config.env
-
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
   echo "Error: KEY_NAME is required."

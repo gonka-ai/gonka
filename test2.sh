@@ -75,3 +75,4 @@ export PORT=8082
 export PUBLIC_URL="http://join2-api:8080"
 ./launch_chain.sh
 
+curl -X POST "https://maker.ifttt.com/trigger/pushover_alert/with/key/bSVa981BFD2BtZZhn3DnTe?value1=TestRead&value2=Inference-ignite"

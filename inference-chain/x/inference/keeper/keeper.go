@@ -19,7 +19,7 @@ type (
 		bank         types.BankEscrowKeeper
 		bankView     types.BankKeeper
 		validatorSet types.ValidatorSet
-		group        types.GroupMessageServer
+		group        types.GroupMessageKeeper
 		Staking      types.StakingKeeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
@@ -35,7 +35,7 @@ func NewKeeper(
 	authority string,
 	bank types.BankEscrowKeeper,
 	bankView types.BankKeeper,
-	group types.GroupMessageServer,
+	group types.GroupMessageKeeper,
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,

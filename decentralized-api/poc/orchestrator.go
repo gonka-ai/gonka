@@ -159,6 +159,8 @@ func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
+var CurrentHeight = int64(0)
+
 func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
@@ -172,6 +174,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		slog.Error("Failed to get blockHeight from event data", "error", err)
 		return
 	}
+	CurrentHeight = blockHeight
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {

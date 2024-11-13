@@ -24,6 +24,9 @@ open class TestermintTest {
         @JvmStatic
         @BeforeAll
         fun initLogging(): Unit {
+            if (loggingStarted) {
+                return
+            }
             Assertions.setDescriptionConsumer {
                 logContext(
                     mapOf(
@@ -34,7 +37,10 @@ open class TestermintTest {
                     Logger.info("Test assertion={}", it)
                 }
             }
+            loggingStarted = true
         }
     }
 
 }
+
+var loggingStarted = false

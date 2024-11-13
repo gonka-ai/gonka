@@ -27,7 +27,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSetMock := NewMockValidatorSet(ctrl)
-	groupMock := NewMockGroupMessageServer(ctrl)
+	groupMock := NewMockGroupMessageKeeper(ctrl)
 	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
@@ -36,7 +36,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 type InferenceMocks struct {
 	BankKeeper    *MockBankEscrowKeeper
 	AccountKeeper *MockAccountKeeper
-	GroupKeeper   *MockGroupMessageServer
+	GroupKeeper   *MockGroupMessageKeeper
 }
 
 func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
@@ -44,7 +44,7 @@ func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, Inf
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSet := NewMockValidatorSet(ctrl)
-	groupMock := NewMockGroupMessageServer(ctrl)
+	groupMock := NewMockGroupMessageKeeper(ctrl)
 	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock)
 	mocks := InferenceMocks{
 		BankKeeper:    escrowKeeper,
@@ -59,7 +59,7 @@ func InferenceKeeperWithMock(
 	bankMock *MockBankEscrowKeeper,
 	accountKeeper types.AccountKeeper,
 	validatorSet types.ValidatorSet,
-	groupMock types.GroupMessageServer,
+	groupMock types.GroupMessageKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 

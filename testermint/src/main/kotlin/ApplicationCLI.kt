@@ -240,7 +240,8 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
         mapOf(
             "operation" to type,
             "pair" to name,
-            "source" to "container"
+            "source" to "container",
+            "blockHeight" to currentHeight.toString()
         )
     ) {
         val logEntry = String(frame.payload).trim()

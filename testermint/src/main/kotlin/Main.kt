@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.google.gson.GsonBuilder
+import com.productscience.data.InferenceNode
 import com.productscience.data.InferencePayload
 import com.productscience.data.InstantDeserializer
 import com.productscience.data.Participant
@@ -17,7 +18,7 @@ fun main() {
     val highestFunded = initialize(pairs)
     val inference = generateSequence {
         getInferenceResult(highestFunded)
-    }.first { it.inference.executedBy != it.inference.receivedBy }
+    }.first { it.inference.executedBy != it.inference.requestedBy }
 
     println("ERC:" + inference.executorRefundChange)
     println("RRC:" + inference.requesterRefundChange)
@@ -25,7 +26,6 @@ fun main() {
     println("ROW:" + inference.requesterOwedChange)
     println("EBC:" + inference.executorBalanceChange)
     println("RBC:" + inference.requesterBalanceChange)
-
 }
 
 fun getInferenceResult(highestFunded: LocalInferencePair): InferenceResult {
@@ -40,7 +40,7 @@ fun createInferenceResult(
     afterInference: List<Participant>,
     beforeInferenceParticipants: List<Participant>,
 ): InferenceResult {
-    val requester = inference.receivedBy
+    val requester = inference.requestedBy
     val executor = inference.executedBy
     val requesterParticipantAfter = afterInference.find { it.id == requester }
     val executorParticipantAfter = afterInference.find { it.id == executor }
@@ -95,6 +95,7 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
+        it.api.setNodesTo(validNode)
         it.node.waitForMinimumBlock(1)
     }
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance("icoin") })
@@ -179,7 +180,7 @@ val gsonCamelCase = GsonBuilder()
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .create()
 
-val inferenceConfig = ApplicationConfig(
+    val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
     chainId = "prod-sim",
     nodeImageName = "inferenced-join",
@@ -223,3 +224,20 @@ val inferenceRequestStream = """
       "stream" : true
     }
 """.trimIndent()
+
+const val defaultModel = "unsloth/llama-3-8b-Instruct"
+
+val validNode = InferenceNode(
+    url = "http://36.189.234.237:19009/",
+    models = listOf(defaultModel),
+    id = "validnode",
+    maxConcurrent = 10
+)
+
+val invalidNode = InferenceNode(
+    url = "http://36.189.234.237:19011/",
+    models = listOf(defaultModel),
+    id = "invalidnode",
+    maxConcurrent = 10
+
+)

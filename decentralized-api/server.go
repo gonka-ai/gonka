@@ -924,14 +924,15 @@ type SubmitUnfundedNewParticipantDto struct {
 
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
+	BlockHeight  int64            `json:"block_height"`
 }
 
 type ParticipantDto struct {
 	Id          string   `json:"id"`
 	Url         string   `json:"url"`
 	Models      []string `json:"models"`
-	CoinsOwed   uint64   `json:"coins_owed"`
-	RefundsOwed uint64   `json:"refunds_owed"`
+	CoinsOwed   int64    `json:"coins_owed"`
+	RefundsOwed int64    `json:"refunds_owed"`
 	Balance     int64    `json:"balance"`
 	VotingPower int64    `json:"voting_power"`
 }
@@ -1031,11 +1032,13 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 			CoinsOwed:   p.CoinBalance,
 			RefundsOwed: p.RefundBalance,
 			Balance:     pBalance,
+			VotingPower: int64(p.Weight),
 		}
 	}
 
 	responseBody := ParticipantsDto{
 		Participants: participants,
+		BlockHeight:  r.BlockHeight,
 	}
 
 	responseJson, err := json.Marshal(responseBody)

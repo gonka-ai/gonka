@@ -6,9 +6,8 @@ services:
     image: gcr.io/decentralized-ai/inferenced-join
     volumes:
       - .inference:/root/.inference
-    environment:
-      - SEEDS=${SEEDS}
-      - KEY_NAME=${KEY_NAME}
+    env_file:
+      - config.env
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc

@@ -10,7 +10,7 @@ import (
 
 const inferenceDenom = "icoin"
 
-func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (uint64, error) {
+func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (int64, error) {
 	cost := CalculateCost(*inference)
 	payeeAddress, err := sdk.AccAddressFromBech32(inference.RequestedBy)
 	if err != nil {
@@ -27,7 +27,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 	return cost, nil
 }
 
-func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins uint64) error {
+func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
 	return k.bank.MintCoins(ctx, types.ModuleName, getCoins(newCoins))
 }
 
@@ -37,6 +37,12 @@ func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Parti
 	if err != nil {
 		k.LogError("Error converting participant address", "error", err)
 		return err
+	}
+	if participant.CoinBalance < 0 {
+		k.LogWarn("Participant has negative coin balance", "participant", participant)
+	}
+	if participant.RefundBalance < 0 {
+		k.LogWarn("Participant has negative refund balance", "participant", participant)
 	}
 	if participant.CoinBalance > 0 {
 		bonusCoinsInt := k.calculateBonusCoins(participant, totalWork, newCoin)
@@ -65,12 +71,12 @@ func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Parti
 	return nil
 }
 
-func (k *Keeper) calculateBonusCoins(participant *types.Participant, totalWork uint64, newCoin uint64) uint64 {
+func (k *Keeper) calculateBonusCoins(participant *types.Participant, totalWork uint64, newCoin uint64) int64 {
 	bonusCoins := float64(participant.CoinBalance) / float64(totalWork) * float64(newCoin)
-	bonusCoinsInt := uint64(bonusCoins)
+	bonusCoinsInt := int64(bonusCoins)
 	return bonusCoinsInt
 }
 
-func getCoins(coins uint64) sdk.Coins {
-	return sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, int64(coins)))
+func getCoins(coins int64) sdk.Coins {
+	return sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, coins))
 }

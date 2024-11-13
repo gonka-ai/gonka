@@ -4,7 +4,9 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"errors"
+	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
@@ -76,6 +79,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		cosmosclient.WithGasPrices("0icoin"),
 		cosmosclient.WithFees("0icoin"),
 		cosmosclient.WithGas("auto"),
+		cosmosclient.WithGasAdjustment(5),
 	)
 	if err != nil {
 		return nil, err
@@ -112,6 +116,7 @@ func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFini
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.Address
+	slog.Info("Validation: Reporting validation", "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
 	return icc.sendTransaction(transaction)
 }
 
@@ -130,15 +135,23 @@ func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC)
 	return icc.sendTransaction(transaction)
 }
 
+var sendTransactionMutex sync.Mutex = sync.Mutex{}
+
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
+	// create a guid
+	id := uuid.New().String()
+	sendTransactionMutex.Lock()
+	slog.Debug("Start Broadcast", "id", id)
 	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
+	slog.Debug("Finish broadcast", "id", id)
+	sendTransactionMutex.Unlock()
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
 		return err
 	}
 	// TODO: maybe check response for success?
 	_ = response
-	slog.Debug("Transaction broadcasted successfully", "response", response.Data)
+	slog.Debug("Transaction broadcast successfully", "response", response.Data)
 	if response.Code != 0 {
 		slog.Error("Transaction failed", "response", response)
 	}

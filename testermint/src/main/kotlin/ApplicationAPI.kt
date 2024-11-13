@@ -27,6 +27,7 @@ import java.net.URL
 data class ApplicationAPI(val url: String, override val config: ApplicationConfig) : HasConfig {
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val resp = Fuel.get("$url/v1/participants")
+            .timeoutRead(1000*60)
             .responseObject<ParticipantsResponse>(gsonDeserializer(gsonSnakeCase))
         logResponse(resp)
         resp.third.get().participants
@@ -64,6 +65,8 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
                 .header("Authorization", signature)
+                .timeout(1000*60)
+                .timeoutRead(1000*60)
                 .responseObject<OpenAIResponse>(gsonDeserializer(gsonSnakeCase))
             logResponse(response)
             response.third.get()
@@ -83,6 +86,13 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
             .jsonBody("{\"inference_id\": \"$inferenceId\"}")
             .response()
         logResponse(response)
+    }
+
+    fun setNodesTo(node: InferenceNode) {
+        val nodes = getNodes()
+        if (nodes.all { it.node.id == node.id }) return
+        nodes.forEach { removeNode(it.node.id) }
+        addNode(node)
     }
 
     fun getNodes(): List<NodeResponse> =

@@ -32,8 +32,13 @@ type BankEscrowKeeper interface {
 	MintCoins(ctx context.Context, moduleName string, amt sdk.Coins) error
 }
 
-type GroupMessageServer interface {
+type GroupMessageKeeper interface {
 	CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error)
+	CreateGroupWithPolicy(ctx context.Context, msg *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error)
+	SubmitProposal(goCtx context.Context, msg *group.MsgSubmitProposal) (*group.MsgSubmitProposalResponse, error)
+	Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error)
+	GroupInfo(goCtx context.Context, request *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error)
+	GroupMembers(goCtx context.Context, request *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error)
 }
 
 // ParamSubspace defines the expected Subspace interface for parameters.

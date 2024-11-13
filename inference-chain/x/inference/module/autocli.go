@@ -107,6 +107,24 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submitNewUnfundedParticipant tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "models"}, {ProtoField: "pubKey"}, {ProtoField: "validatorKey"}},
 				},
+				{
+					RpcMethod:      "InvalidateInference",
+					Use:            "invalidate-inference [inference-id]",
+					Short:          "Send a invalidateInference tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "ReValidation",
+					Use:            "re-validation [inference-id] [response-payload] [response-hash] [value]",
+					Short:          "Send a reValidation tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "responsePayload"}, {ProtoField: "responseHash"}, {ProtoField: "value"}},
+				},
+				{
+					RpcMethod:      "RevalidateInference",
+					Use:            "revalidate-inference [inference-id]",
+					Short:          "Send a revalidateInference tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

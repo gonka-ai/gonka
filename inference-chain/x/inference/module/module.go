@@ -99,7 +99,7 @@ type AppModule struct {
 	keeper         keeper.Keeper
 	accountKeeper  types.AccountKeeper
 	bankKeeper     types.BankKeeper
-	groupMsgServer types.GroupMessageServer
+	groupMsgServer types.GroupMessageKeeper
 }
 
 func NewAppModule(
@@ -107,7 +107,7 @@ func NewAppModule(
 	keeper keeper.Keeper,
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
-	groupMsgServer types.GroupMessageServer,
+	groupMsgServer types.GroupMessageKeeper,
 ) AppModule {
 	return AppModule{
 		AppModuleBasic: NewAppModuleBasic(cdc),
@@ -201,7 +201,7 @@ type ModuleInputs struct {
 	BankEscrowKeeper types.BankEscrowKeeper
 	ValidatorSet     types.ValidatorSet
 	StakingKeeper    types.StakingKeeper
-	GroupServer      types.GroupMessageServer
+	GroupServer      types.GroupMessageKeeper
 }
 
 type ModuleOutputs struct {

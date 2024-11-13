@@ -228,31 +228,31 @@ func (mr *MockBankEscrowKeeperMockRecorder) SendCoinsFromModuleToModule(ctx, sen
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendCoinsFromModuleToModule", reflect.TypeOf((*MockBankEscrowKeeper)(nil).SendCoinsFromModuleToModule), ctx, senderModule, recipientModule, amt)
 }
 
-// MockGroupMessageServer is a mock of GroupMessageServer interface.
-type MockGroupMessageServer struct {
+// MockGroupMessageKeeper is a mock of GroupMessageKeeper interface.
+type MockGroupMessageKeeper struct {
 	ctrl     *gomock.Controller
-	recorder *MockGroupMessageServerMockRecorder
+	recorder *MockGroupMessageKeeperMockRecorder
 }
 
-// MockGroupMessageServerMockRecorder is the mock recorder for MockGroupMessageServer.
-type MockGroupMessageServerMockRecorder struct {
-	mock *MockGroupMessageServer
+// MockGroupMessageKeeperMockRecorder is the mock recorder for MockGroupMessageKeeper.
+type MockGroupMessageKeeperMockRecorder struct {
+	mock *MockGroupMessageKeeper
 }
 
-// NewMockGroupMessageServer creates a new mock instance.
-func NewMockGroupMessageServer(ctrl *gomock.Controller) *MockGroupMessageServer {
-	mock := &MockGroupMessageServer{ctrl: ctrl}
-	mock.recorder = &MockGroupMessageServerMockRecorder{mock}
+// NewMockGroupMessageKeeper creates a new mock instance.
+func NewMockGroupMessageKeeper(ctrl *gomock.Controller) *MockGroupMessageKeeper {
+	mock := &MockGroupMessageKeeper{ctrl: ctrl}
+	mock.recorder = &MockGroupMessageKeeperMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockGroupMessageServer) EXPECT() *MockGroupMessageServerMockRecorder {
+func (m *MockGroupMessageKeeper) EXPECT() *MockGroupMessageKeeperMockRecorder {
 	return m.recorder
 }
 
 // CreateGroup mocks base method.
-func (m *MockGroupMessageServer) CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error) {
+func (m *MockGroupMessageKeeper) CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateGroup", goCtx, msg)
 	ret0, _ := ret[0].(*group.MsgCreateGroupResponse)
@@ -261,9 +261,84 @@ func (m *MockGroupMessageServer) CreateGroup(goCtx context.Context, msg *group.M
 }
 
 // CreateGroup indicates an expected call of CreateGroup.
-func (mr *MockGroupMessageServerMockRecorder) CreateGroup(goCtx, msg any) *gomock.Call {
+func (mr *MockGroupMessageKeeperMockRecorder) CreateGroup(goCtx, msg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateGroup", reflect.TypeOf((*MockGroupMessageServer)(nil).CreateGroup), goCtx, msg)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateGroup", reflect.TypeOf((*MockGroupMessageKeeper)(nil).CreateGroup), goCtx, msg)
+}
+
+// CreateGroupWithPolicy mocks base method.
+func (m *MockGroupMessageKeeper) CreateGroupWithPolicy(ctx context.Context, msg *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateGroupWithPolicy", ctx, msg)
+	ret0, _ := ret[0].(*group.MsgCreateGroupWithPolicyResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateGroupWithPolicy indicates an expected call of CreateGroupWithPolicy.
+func (mr *MockGroupMessageKeeperMockRecorder) CreateGroupWithPolicy(ctx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateGroupWithPolicy", reflect.TypeOf((*MockGroupMessageKeeper)(nil).CreateGroupWithPolicy), ctx, msg)
+}
+
+// GroupInfo mocks base method.
+func (m *MockGroupMessageKeeper) GroupInfo(goCtx context.Context, request *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GroupInfo", goCtx, request)
+	ret0, _ := ret[0].(*group.QueryGroupInfoResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GroupInfo indicates an expected call of GroupInfo.
+func (mr *MockGroupMessageKeeperMockRecorder) GroupInfo(goCtx, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GroupInfo", reflect.TypeOf((*MockGroupMessageKeeper)(nil).GroupInfo), goCtx, request)
+}
+
+// GroupMembers mocks base method.
+func (m *MockGroupMessageKeeper) GroupMembers(goCtx context.Context, request *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GroupMembers", goCtx, request)
+	ret0, _ := ret[0].(*group.QueryGroupMembersResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GroupMembers indicates an expected call of GroupMembers.
+func (mr *MockGroupMessageKeeperMockRecorder) GroupMembers(goCtx, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GroupMembers", reflect.TypeOf((*MockGroupMessageKeeper)(nil).GroupMembers), goCtx, request)
+}
+
+// SubmitProposal mocks base method.
+func (m *MockGroupMessageKeeper) SubmitProposal(goCtx context.Context, msg *group.MsgSubmitProposal) (*group.MsgSubmitProposalResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SubmitProposal", goCtx, msg)
+	ret0, _ := ret[0].(*group.MsgSubmitProposalResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SubmitProposal indicates an expected call of SubmitProposal.
+func (mr *MockGroupMessageKeeperMockRecorder) SubmitProposal(goCtx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitProposal", reflect.TypeOf((*MockGroupMessageKeeper)(nil).SubmitProposal), goCtx, msg)
+}
+
+// Vote mocks base method.
+func (m *MockGroupMessageKeeper) Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Vote", goCtx, msg)
+	ret0, _ := ret[0].(*group.MsgVoteResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Vote indicates an expected call of Vote.
+func (mr *MockGroupMessageKeeperMockRecorder) Vote(goCtx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Vote", reflect.TypeOf((*MockGroupMessageKeeper)(nil).Vote), goCtx, msg)
 }
 
 // MockParamSubspace is a mock of ParamSubspace interface.

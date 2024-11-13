@@ -9,7 +9,7 @@ data class InferencePayload(
     val responsePayload: String,
     val promptTokenCount: Int,
     val completionTokenCount: Int,
-    val receivedBy: String,
+    val requestedBy: String,
     val executedBy: String?,
     val status: Int,
     val startBlockHeight: Long,
@@ -21,3 +21,11 @@ data class InferencePayload(
     val actualCost: Long,
     val escrowAmount: Long
 )
+
+enum class InferenceStatus(val value: Int) {
+    STARTED(0),
+    FINISHED(1),
+    VALIDATED(2),
+    INVALIDATED(3),
+    VOTING(4)
+}

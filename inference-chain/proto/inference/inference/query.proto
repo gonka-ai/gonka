@@ -102,6 +102,7 @@ message QueryAllParticipantRequest {
 message QueryAllParticipantResponse {
   repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination  = 2;
+           int64                                 block_height = 3;
 }
 
 message QueryGetInferencesWithExecutorsRequest {
