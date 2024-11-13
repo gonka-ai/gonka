@@ -18,13 +18,21 @@ class ValidationTests : TestermintTest() {
         val highestFunded = initialize(pairs)
 
         runBlocking {
+            // Launch coroutines with async and collect the deferred results
             val requests = List(5) { i ->
-                launch(Dispatchers.Default) { // specify a dispatcher for parallelism
+                async(Dispatchers.Default) { // specify a dispatcher for parallelism
                     Logger.warn("Starting request $i")
                     highestFunded.makeInferenceRequest(inferenceRequest)
                 }
             }
-            requests.forEach { it.join() } // ensures all coroutines complete before finishing
+
+            // Wait for all requests to complete and collect their results
+            val results = requests.map { it.await() }
+
+            // Do something with the results outside runBlocking, if needed
+            results.forEach { result ->
+                println("Received result: $result")  // Replace with whatever processing you need
+            }
         }
 
         Thread.sleep(10000)
@@ -38,7 +46,12 @@ class ValidationTests : TestermintTest() {
         oddPair.api.setNodesTo(invalidNode)
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
-                .first { it.executorBefore.id == oddPair.node.addresss }
+                .first {
+                    Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
+                    it.executorBefore.id == oddPair.node.addresss
+                }
+
+        Logger.warn("Got invalid result, waiting for invalidation.")
 
         highestFunded.node.waitForNextBlock(10)
         val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)

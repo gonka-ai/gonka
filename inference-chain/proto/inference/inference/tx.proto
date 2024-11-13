@@ -25,7 +25,6 @@ service Msg {
   rpc SubmitPoC                    (MsgSubmitPoC                   ) returns (MsgSubmitPoCResponse                   );
   rpc SubmitNewUnfundedParticipant (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
   rpc InvalidateInference          (MsgInvalidateInference         ) returns (MsgInvalidateInferenceResponse         );
-  rpc ReValidation                 (MsgReValidation                ) returns (MsgReValidationResponse                );
   rpc RevalidateInference          (MsgRevalidateInference         ) returns (MsgRevalidateInferenceResponse         );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -129,17 +128,6 @@ message MsgInvalidateInference {
 }
 
 message MsgInvalidateInferenceResponse {}
-
-message MsgReValidation {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator         = 1;
-  string inferenceId     = 2;
-  string responsePayload = 3;
-  string responseHash    = 4;
-  string value           = 5;
-}
-
-message MsgReValidationResponse {}
 
 message MsgRevalidateInference {
   option (cosmos.msg.v1.signer) = "creator";

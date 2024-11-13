@@ -18,11 +18,8 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"strconv"
 	"strings"
 )
-
-var revalidated = make(map[string]int)
 
 func VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
 	inferenceIds, ok := events["inference_validation.inference_id"]
@@ -31,10 +28,6 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 		return
 	}
 	inferenceId := inferenceIds[0]
-	if _, ok := revalidated[inferenceId]; ok {
-		slog.Debug("Validation: Already revalidated", "inference_id", inferenceId)
-		return
-	}
 
 	slog.Debug("Validation: Verifying invalidation", "inference_id", inferenceId)
 
@@ -52,20 +45,12 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 	}
 
 	logInferencesToValidate(toValidate)
-	height, err := strconv.Atoi(events["tx.height"][0])
-	if err != nil {
-		slog.Error("Validation: Failed to parse tx.height", "error", err)
-		return
-	}
 
 	for _, inf := range toValidate {
 		go func() {
 			validateInferenceAndSendValMessage(inf, nodeBroker, recorder, true)
-			revalidated[inferenceId] = height
 		}()
 	}
-	// TODO: Need to remove old revalidations (maybe height-20?)
-
 }
 
 func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {

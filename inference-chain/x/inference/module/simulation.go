@@ -165,10 +165,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 			weightMsgReValidation = defaultWeightMsgReValidation
 		},
 	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgReValidation,
-		inferencesimulation.SimulateMsgReValidation(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
 
 	var weightMsgRevalidateInference int
 	simState.AppParams.GetOrGenerate(opWeightMsgRevalidateInference, &weightMsgRevalidateInference, nil,
@@ -242,14 +238,6 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgInvalidateInference,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgInvalidateInference(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgReValidation,
-			defaultWeightMsgReValidation,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgReValidation(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

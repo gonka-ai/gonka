@@ -27,7 +27,6 @@ const (
 	Msg_SubmitPoC_FullMethodName                    = "/inference.inference.Msg/SubmitPoC"
 	Msg_SubmitNewUnfundedParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
 	Msg_InvalidateInference_FullMethodName          = "/inference.inference.Msg/InvalidateInference"
-	Msg_ReValidation_FullMethodName                 = "/inference.inference.Msg/ReValidation"
 	Msg_RevalidateInference_FullMethodName          = "/inference.inference.Msg/RevalidateInference"
 )
 
@@ -45,7 +44,6 @@ type MsgClient interface {
 	SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
-	ReValidation(ctx context.Context, in *MsgReValidation, opts ...grpc.CallOption) (*MsgReValidationResponse, error)
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 }
 
@@ -129,15 +127,6 @@ func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateIn
 	return out, nil
 }
 
-func (c *msgClient) ReValidation(ctx context.Context, in *MsgReValidation, opts ...grpc.CallOption) (*MsgReValidationResponse, error) {
-	out := new(MsgReValidationResponse)
-	err := c.cc.Invoke(ctx, Msg_ReValidation_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error) {
 	out := new(MsgRevalidateInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_RevalidateInference_FullMethodName, in, out, opts...)
@@ -161,7 +150,6 @@ type MsgServer interface {
 	SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
-	ReValidation(context.Context, *MsgReValidation) (*MsgReValidationResponse, error)
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
@@ -193,9 +181,6 @@ func (UnimplementedMsgServer) SubmitNewUnfundedParticipant(context.Context, *Msg
 }
 func (UnimplementedMsgServer) InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InvalidateInference not implemented")
-}
-func (UnimplementedMsgServer) ReValidation(context.Context, *MsgReValidation) (*MsgReValidationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReValidation not implemented")
 }
 func (UnimplementedMsgServer) RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RevalidateInference not implemented")
@@ -357,24 +342,6 @@ func _Msg_InvalidateInference_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_ReValidation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgReValidation)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).ReValidation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_ReValidation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).ReValidation(ctx, req.(*MsgReValidation))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Msg_RevalidateInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgRevalidateInference)
 	if err := dec(in); err != nil {
@@ -431,10 +398,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InvalidateInference",
 			Handler:    _Msg_InvalidateInference_Handler,
-		},
-		{
-			MethodName: "ReValidation",
-			Handler:    _Msg_ReValidation_Handler,
 		},
 		{
 			MethodName: "RevalidateInference",
