@@ -50,7 +50,7 @@ type InitDto struct {
 	PublicKey      string  `json:"public_key"`
 	BatchSize      int     `json:"batch_size"`
 	RTarget        float64 `json:"r_target"`
-	FraudThreshold int     `json:"fraud_threshold"`
+	FraudThreshold float64 `json:"fraud_threshold"`
 	Params         *Params `json:"params"`
 	URL            string  `json:"url"`
 }
@@ -72,7 +72,7 @@ type Params struct {
 const (
 	DefaultRTarget        = 1.390051443
 	DefaultBatchSize      = 8000
-	DefaultFraudThreshold = 3
+	DefaultFraudThreshold = 0.01
 )
 
 var DefaultParams = Params{
