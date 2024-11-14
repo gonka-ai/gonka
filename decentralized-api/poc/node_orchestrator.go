@@ -15,6 +15,10 @@ const (
 	InitGeneratePath = "/api/v1/pow/init/generate"
 	InitValidatePath = "/api/v1/pow/init/validate"
 	StopPath         = "/api/v1/pow/stop"
+
+	DefaultRTarget        = 1.390051443
+	DefaultBatchSize      = 8000
+	DefaultFraudThreshold = 0.01
 )
 
 type NodePoCOrchestrator struct {
@@ -68,12 +72,6 @@ type Params struct {
 	UseScaledRope    bool    `json:"use_scaled_rope"`
 	SeqLen           int     `json:"seq_len"`
 }
-
-const (
-	DefaultRTarget        = 1.390051443
-	DefaultBatchSize      = 8000
-	DefaultFraudThreshold = 0.01
-)
 
 var DefaultParams = Params{
 	Dim:              512,
