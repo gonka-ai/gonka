@@ -1,0 +1,12 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message PoCBatch {
+  string participantAddress = 1;
+  int64 pocStageStartBlockHeight = 2;
+  int64 receivedAtBlockHeight = 3;
+  repeated int64 nonces = 4;
+  repeated double dist = 5;
+}
