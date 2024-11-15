@@ -8,7 +8,7 @@ WORKDIR /root
 COPY ./build/inferenced /usr/bin/inferenced
 COPY ./scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 
-RUN chmod +x /root/init-docker.sh
+RUN chmod +x /root/init-docker-genesis.sh
 
 EXPOSE 26656 26657 1317 9090
 

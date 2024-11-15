@@ -51,10 +51,6 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgInvalidateInference int = 100
 
-	opWeightMsgReValidation = "op_weight_msg_re_validation"
-	// TODO: Determine the simulation weight value
-	defaultWeightMsgReValidation int = 100
-
 	opWeightMsgRevalidateInference = "op_weight_msg_revalidate_inference"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgRevalidateInference int = 100
@@ -158,13 +154,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		weightMsgInvalidateInference,
 		inferencesimulation.SimulateMsgInvalidateInference(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
-
-	var weightMsgReValidation int
-	simState.AppParams.GetOrGenerate(opWeightMsgReValidation, &weightMsgReValidation, nil,
-		func(_ *rand.Rand) {
-			weightMsgReValidation = defaultWeightMsgReValidation
-		},
-	)
 
 	var weightMsgRevalidateInference int
 	simState.AppParams.GetOrGenerate(opWeightMsgRevalidateInference, &weightMsgRevalidateInference, nil,

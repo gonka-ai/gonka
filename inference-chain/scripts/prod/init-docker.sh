@@ -57,7 +57,7 @@ $APP_NAME keys \
 
 # Need to join network? Or is that solely from the compose file?
 
-GENESIS_FILE="./genesis.json"
+GENESIS_FILE="./.inference/genesis.json"
 if [ ! -f "$GENESIS_FILE" ]; then
   echo "Genesis file not found at $GENESIS_FILE"
   exit 1

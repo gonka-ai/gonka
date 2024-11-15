@@ -6,6 +6,9 @@ services:
       - ./prod-genesis:/root/.inference
     networks:
       - chain-public
+    ports:
+      - "26656:26656" #p2p
+      - "26657:26657" #rpc
 
   genesis-api:
     image: dapi-join

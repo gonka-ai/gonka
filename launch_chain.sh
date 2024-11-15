@@ -43,6 +43,11 @@ if [ -z "$SEED_IP" ]; then
   exit 1
 fi
 
+if [ -z "$EXTERNAL_SEED_IP" ]; then
+  echo "EXTERNAL_SEED_IP is not set, using SEED_IP"
+  export EXTERNAL_SEED_IP="$SEED_IP"
+fi
+
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1
@@ -53,13 +58,7 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-GENESIS_URL="http://$SEED_IP:26657/genesis"
-export GENESIS_FILE="genesis.json"
-
-echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
-wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
-
-SEED_STATUS_URL="http://$SEED_IP:26657/status"
+SEED_STATUS_URL="http://$EXTERNAL_SEED_IP:26657/status"
 SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
 echo "SEED_ID=$SEED_ID"
 export SEEDS="$SEED_ID@$SEED_IP:26656"
@@ -74,6 +73,14 @@ else
   project_name="inferenced"
 fi
 
+GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
+export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
+
+mkdir -p "$(dirname "$GENESIS_FILE")"
+
+echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
+wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
+
 echo "project_name=$project_name"
 
 docker compose -p "$project_name" -f "$compose_file" up -d
@@ -81,8 +88,9 @@ docker compose -p "$project_name" -f "$compose_file" up -d
 # Some time to join chain
 sleep 20
 
+echo "setting node config"
 # Set node config
-curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
+curl -X POST "http://0.0.0.0:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
   node_container_name="$KEY_NAME-node"
@@ -131,7 +139,7 @@ post_data=$(jq -n \
     pub_key: $pub_key
   }')
 
-ADD_ENDPOINT="http://$SEED_IP:8080"
+ADD_ENDPOINT="http://$EXTERNAL_SEED_IP:$PORT"
 echo "POST request sent to $ADD_ENDPOINT with the following data:"
 echo "$post_data"
 

@@ -29,10 +29,14 @@ class ValidationTests : TestermintTest() {
             // Wait for all requests to complete and collect their results
             val results = requests.map { it.await() }
 
+            highestFunded.node.waitForNextBlock(20)
             // Do something with the results outside runBlocking, if needed
-            results.forEach { result ->
-                println("Received result: $result")  // Replace with whatever processing you need
+            val statuses = results.map { result ->
+                val inference = highestFunded.api.getInference(result.id)
+                inference.status
             }
+            // at present, this nearly always fails with at least one in the STARTED phase
+            assertThat(statuses).allMatch { it == InferenceStatus.VALIDATED.value }
         }
 
         Thread.sleep(10000)
