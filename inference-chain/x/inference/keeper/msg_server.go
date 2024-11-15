@@ -11,7 +11,7 @@ type msgServer struct {
 }
 
 func (k msgServer) startValidationVote(ctx sdk.Context, inference *types.Inference, invalidator string) (*types.ProposalDetails, error) {
-	proposalDetails, err := k.submitValidationProposals(ctx, inference.InferenceId, invalidator)
+	proposalDetails, err := k.submitValidationProposals(ctx, inference.InferenceId, invalidator, inference.ExecutedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -19,7 +19,7 @@ func (k msgServer) startValidationVote(ctx sdk.Context, inference *types.Inferen
 	return proposalDetails, nil
 }
 
-func (k msgServer) submitValidationProposals(ctx sdk.Context, inferenceId string, invalidator string) (*types.ProposalDetails, error) {
+func (k msgServer) submitValidationProposals(ctx sdk.Context, inferenceId string, invalidator string, executor string) (*types.ProposalDetails, error) {
 	policyAddress := k.GetEpochPolicy(ctx)
 	invalidateMessage := &types.MsgInvalidateInference{
 		InferenceId: inferenceId,
@@ -36,7 +36,7 @@ func (k msgServer) submitValidationProposals(ctx sdk.Context, inferenceId string
 	}
 	revalidateProposal := group.MsgSubmitProposal{
 		GroupPolicyAddress: policyAddress,
-		Proposers:          []string{invalidator},
+		Proposers:          []string{executor},
 		Metadata:           "Revalidation of inference " + inferenceId,
 	}
 	err := invalidateProposal.SetMsgs([]sdk.Msg{invalidateMessage})

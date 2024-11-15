@@ -121,7 +121,7 @@ func (am AppModule) createEpochGroup(ctx context.Context, groupMembers []group.M
 		Members: groupMembers,
 	}
 	policy := group.NewPercentageDecisionPolicy(
-		"0.51",
+		"0.50",
 		votingPeriod,
 		minExecutionPeriod,
 	)
