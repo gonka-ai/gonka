@@ -139,7 +139,7 @@ post_data=$(jq -n \
     pub_key: $pub_key
   }')
 
-ADD_ENDPOINT="http://$EXTERNAL_SEED_IP:$PORT"
+ADD_ENDPOINT="http://$EXTERNAL_SEED_IP:8080"
 echo "POST request sent to $ADD_ENDPOINT with the following data:"
 echo "$post_data"
 
