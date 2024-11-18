@@ -29,6 +29,7 @@ const (
 	InferenceStatus_FINISHED    InferenceStatus = 1
 	InferenceStatus_VALIDATED   InferenceStatus = 2
 	InferenceStatus_INVALIDATED InferenceStatus = 3
+	InferenceStatus_VOTING      InferenceStatus = 4
 )
 
 var InferenceStatus_name = map[int32]string{
@@ -36,6 +37,7 @@ var InferenceStatus_name = map[int32]string{
 	1: "FINISHED",
 	2: "VALIDATED",
 	3: "INVALIDATED",
+	4: "VOTING",
 }
 
 var InferenceStatus_value = map[string]int32{
@@ -43,6 +45,7 @@ var InferenceStatus_value = map[string]int32{
 	"FINISHED":    1,
 	"VALIDATED":   2,
 	"INVALIDATED": 3,
+	"VOTING":      4,
 }
 
 func (x InferenceStatus) String() string {
@@ -53,33 +56,94 @@ func (InferenceStatus) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_ce060d6da7916311, []int{0}
 }
 
+type ProposalDetails struct {
+	ReValidatePolicyId uint64 `protobuf:"varint,1,opt,name=reValidatePolicyId,proto3" json:"reValidatePolicyId,omitempty"`
+	InvalidatePolicyId uint64 `protobuf:"varint,2,opt,name=invalidatePolicyId,proto3" json:"invalidatePolicyId,omitempty"`
+	PolicyAddress      string `protobuf:"bytes,3,opt,name=policyAddress,proto3" json:"policyAddress,omitempty"`
+}
+
+func (m *ProposalDetails) Reset()         { *m = ProposalDetails{} }
+func (m *ProposalDetails) String() string { return proto.CompactTextString(m) }
+func (*ProposalDetails) ProtoMessage()    {}
+func (*ProposalDetails) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ce060d6da7916311, []int{0}
+}
+func (m *ProposalDetails) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ProposalDetails) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ProposalDetails.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ProposalDetails) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ProposalDetails.Merge(m, src)
+}
+func (m *ProposalDetails) XXX_Size() int {
+	return m.Size()
+}
+func (m *ProposalDetails) XXX_DiscardUnknown() {
+	xxx_messageInfo_ProposalDetails.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ProposalDetails proto.InternalMessageInfo
+
+func (m *ProposalDetails) GetReValidatePolicyId() uint64 {
+	if m != nil {
+		return m.ReValidatePolicyId
+	}
+	return 0
+}
+
+func (m *ProposalDetails) GetInvalidatePolicyId() uint64 {
+	if m != nil {
+		return m.InvalidatePolicyId
+	}
+	return 0
+}
+
+func (m *ProposalDetails) GetPolicyAddress() string {
+	if m != nil {
+		return m.PolicyAddress
+	}
+	return ""
+}
+
 type Inference struct {
-	Index                string          `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	InferenceId          string          `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	PromptHash           string          `protobuf:"bytes,3,opt,name=promptHash,proto3" json:"promptHash,omitempty"`
-	PromptPayload        string          `protobuf:"bytes,4,opt,name=promptPayload,proto3" json:"promptPayload,omitempty"`
-	ResponseHash         string          `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
-	ResponsePayload      string          `protobuf:"bytes,6,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	PromptTokenCount     uint64          `protobuf:"varint,7,opt,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty"`
-	CompletionTokenCount uint64          `protobuf:"varint,8,opt,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty"`
-	ReceivedBy           string          `protobuf:"bytes,9,opt,name=receivedBy,proto3" json:"receivedBy,omitempty"`
-	ExecutedBy           string          `protobuf:"bytes,10,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
-	Status               InferenceStatus `protobuf:"varint,11,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
-	StartBlockHeight     int64           `protobuf:"varint,12,opt,name=startBlockHeight,proto3" json:"startBlockHeight,omitempty"`
-	EndBlockHeight       int64           `protobuf:"varint,13,opt,name=endBlockHeight,proto3" json:"endBlockHeight,omitempty"`
-	StartBlockTimestamp  int64           `protobuf:"varint,14,opt,name=startBlockTimestamp,proto3" json:"startBlockTimestamp,omitempty"`
-	EndBlockTimestamp    int64           `protobuf:"varint,15,opt,name=endBlockTimestamp,proto3" json:"endBlockTimestamp,omitempty"`
-	Model                string          `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
-	MaxTokens            uint64          `protobuf:"varint,17,opt,name=maxTokens,proto3" json:"maxTokens,omitempty"`
-	ActualCost           uint64          `protobuf:"varint,18,opt,name=actualCost,proto3" json:"actualCost,omitempty"`
-	EscrowAmount         uint64          `protobuf:"varint,19,opt,name=escrowAmount,proto3" json:"escrowAmount,omitempty"`
+	Index                string           `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	InferenceId          string           `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	PromptHash           string           `protobuf:"bytes,3,opt,name=promptHash,proto3" json:"promptHash,omitempty"`
+	PromptPayload        string           `protobuf:"bytes,4,opt,name=promptPayload,proto3" json:"promptPayload,omitempty"`
+	ResponseHash         string           `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
+	ResponsePayload      string           `protobuf:"bytes,6,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
+	PromptTokenCount     uint64           `protobuf:"varint,7,opt,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty"`
+	CompletionTokenCount uint64           `protobuf:"varint,8,opt,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty"`
+	RequestedBy          string           `protobuf:"bytes,9,opt,name=requestedBy,proto3" json:"requestedBy,omitempty"`
+	ExecutedBy           string           `protobuf:"bytes,10,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
+	Status               InferenceStatus  `protobuf:"varint,11,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
+	StartBlockHeight     int64            `protobuf:"varint,12,opt,name=startBlockHeight,proto3" json:"startBlockHeight,omitempty"`
+	EndBlockHeight       int64            `protobuf:"varint,13,opt,name=endBlockHeight,proto3" json:"endBlockHeight,omitempty"`
+	StartBlockTimestamp  int64            `protobuf:"varint,14,opt,name=startBlockTimestamp,proto3" json:"startBlockTimestamp,omitempty"`
+	EndBlockTimestamp    int64            `protobuf:"varint,15,opt,name=endBlockTimestamp,proto3" json:"endBlockTimestamp,omitempty"`
+	Model                string           `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
+	MaxTokens            uint64           `protobuf:"varint,17,opt,name=maxTokens,proto3" json:"maxTokens,omitempty"`
+	ActualCost           int64            `protobuf:"varint,18,opt,name=actualCost,proto3" json:"actualCost,omitempty"`
+	EscrowAmount         int64            `protobuf:"varint,19,opt,name=escrowAmount,proto3" json:"escrowAmount,omitempty"`
+	ProposalDetails      *ProposalDetails `protobuf:"bytes,20,opt,name=proposalDetails,proto3" json:"proposalDetails,omitempty"`
 }
 
 func (m *Inference) Reset()         { *m = Inference{} }
 func (m *Inference) String() string { return proto.CompactTextString(m) }
 func (*Inference) ProtoMessage()    {}
 func (*Inference) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ce060d6da7916311, []int{0}
+	return fileDescriptor_ce060d6da7916311, []int{1}
 }
 func (m *Inference) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -164,9 +228,9 @@ func (m *Inference) GetCompletionTokenCount() uint64 {
 	return 0
 }
 
-func (m *Inference) GetReceivedBy() string {
+func (m *Inference) GetRequestedBy() string {
 	if m != nil {
-		return m.ReceivedBy
+		return m.RequestedBy
 	}
 	return ""
 }
@@ -227,22 +291,30 @@ func (m *Inference) GetMaxTokens() uint64 {
 	return 0
 }
 
-func (m *Inference) GetActualCost() uint64 {
+func (m *Inference) GetActualCost() int64 {
 	if m != nil {
 		return m.ActualCost
 	}
 	return 0
 }
 
-func (m *Inference) GetEscrowAmount() uint64 {
+func (m *Inference) GetEscrowAmount() int64 {
 	if m != nil {
 		return m.EscrowAmount
 	}
 	return 0
 }
 
+func (m *Inference) GetProposalDetails() *ProposalDetails {
+	if m != nil {
+		return m.ProposalDetails
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterEnum("inference.inference.InferenceStatus", InferenceStatus_name, InferenceStatus_value)
+	proto.RegisterType((*ProposalDetails)(nil), "inference.inference.ProposalDetails")
 	proto.RegisterType((*Inference)(nil), "inference.inference.Inference")
 }
 
@@ -251,38 +323,85 @@ func init() {
 }
 
 var fileDescriptor_ce060d6da7916311 = []byte{
-	// 496 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x93, 0xbd, 0x6e, 0xdb, 0x3c,
-	0x14, 0x86, 0xad, 0x38, 0x76, 0xa2, 0xe3, 0xdf, 0xd0, 0x19, 0x38, 0x7c, 0x10, 0x84, 0x7c, 0x41,
-	0x21, 0x04, 0x85, 0x53, 0xa4, 0xe8, 0xd6, 0xc5, 0x8e, 0x53, 0x58, 0x40, 0x90, 0x16, 0xb2, 0xd1,
-	0xa1, 0x9b, 0x42, 0xb1, 0xb1, 0x10, 0x49, 0x14, 0x44, 0xaa, 0xb5, 0xef, 0xa2, 0x97, 0xd5, 0x31,
-	0x63, 0xc7, 0xd6, 0xbe, 0x91, 0x42, 0x47, 0xb5, 0x25, 0xff, 0x6c, 0x3c, 0xcf, 0xfb, 0xf0, 0x00,
-	0x3c, 0x24, 0xe1, 0x7f, 0x3f, 0xfa, 0xca, 0x13, 0x1e, 0x31, 0x7e, 0x7d, 0x60, 0xd5, 0x8f, 0x13,
-	0xa1, 0x04, 0xe9, 0x15, 0x60, 0xb3, 0xba, 0xf8, 0x53, 0x03, 0xdd, 0x5e, 0x57, 0xe4, 0x1c, 0x6a,
-	0x7e, 0xe4, 0xf1, 0x39, 0xd5, 0x4c, 0xcd, 0xd2, 0x9d, 0xbc, 0x20, 0x26, 0x34, 0x36, 0x1b, 0x6c,
-	0x8f, 0x1e, 0x61, 0x56, 0x46, 0xc4, 0x00, 0x88, 0x13, 0x11, 0xc6, 0x6a, 0xec, 0xca, 0x19, 0xad,
-	0xa2, 0x50, 0x22, 0xe4, 0x12, 0x5a, 0x79, 0xf5, 0xc9, 0x5d, 0x04, 0xc2, 0xf5, 0xe8, 0x31, 0x2a,
-	0xdb, 0x90, 0x5c, 0x40, 0x33, 0xe1, 0x32, 0x16, 0x91, 0xe4, 0xd8, 0xa7, 0x86, 0xd2, 0x16, 0x23,
-	0x16, 0x74, 0xd6, 0xf5, 0xba, 0x57, 0x1d, 0xb5, 0x5d, 0x4c, 0xae, 0xa0, 0x9b, 0xb7, 0x9f, 0x8a,
-	0x67, 0x1e, 0xdd, 0x8a, 0x34, 0x52, 0xf4, 0xc4, 0xd4, 0xac, 0x63, 0x67, 0x8f, 0x93, 0x1b, 0x38,
-	0x67, 0x22, 0x8c, 0x03, 0xae, 0x7c, 0x11, 0x95, 0xfc, 0x53, 0xf4, 0x0f, 0x66, 0xd9, 0x99, 0x13,
-	0xce, 0xb8, 0xff, 0x8d, 0x7b, 0xc3, 0x05, 0xd5, 0xf3, 0x33, 0x17, 0x24, 0xcb, 0xf9, 0x9c, 0xb3,
-	0x54, 0x61, 0x0e, 0x79, 0x5e, 0x10, 0xf2, 0x1e, 0xea, 0x52, 0xb9, 0x2a, 0x95, 0xb4, 0x61, 0x6a,
-	0x56, 0xfb, 0xe6, 0xb2, 0x7f, 0xe0, 0x7e, 0xfa, 0x9b, 0xbb, 0x99, 0xa0, 0xeb, 0xfc, 0xdb, 0x93,
-	0x9d, 0x4e, 0x2a, 0x37, 0x51, 0xc3, 0x40, 0xb0, 0xe7, 0x31, 0xf7, 0x9f, 0x66, 0x8a, 0x36, 0x4d,
-	0xcd, 0xaa, 0x3a, 0x7b, 0x9c, 0xbc, 0x82, 0x36, 0x8f, 0xbc, 0xb2, 0xd9, 0x42, 0x73, 0x87, 0x92,
-	0x37, 0xd0, 0x2b, 0xf6, 0x4e, 0xfd, 0x90, 0x4b, 0xe5, 0x86, 0x31, 0x6d, 0xa3, 0x7c, 0x28, 0x22,
-	0xaf, 0xe1, 0x6c, 0xdd, 0xa3, 0xf0, 0x3b, 0xe8, 0xef, 0x07, 0xd9, 0xeb, 0x0a, 0x85, 0xc7, 0x03,
-	0xda, 0xcd, 0x5f, 0x17, 0x16, 0xe4, 0x3f, 0xd0, 0x43, 0x77, 0x8e, 0x83, 0x95, 0xf4, 0x0c, 0x07,
-	0x5e, 0x80, 0x6c, 0x8a, 0x2e, 0x53, 0xa9, 0x1b, 0xdc, 0x0a, 0xa9, 0x28, 0xc1, 0xb8, 0x44, 0xb2,
-	0x37, 0xc3, 0x25, 0x4b, 0xc4, 0xf7, 0x41, 0x88, 0x37, 0xd6, 0x43, 0x63, 0x8b, 0x5d, 0xdd, 0x43,
-	0x67, 0x67, 0x8c, 0xa4, 0x01, 0x27, 0x93, 0xe9, 0xc0, 0x99, 0xde, 0x8d, 0xba, 0x15, 0xd2, 0x84,
-	0xd3, 0x0f, 0xf6, 0x83, 0x3d, 0x19, 0xdf, 0x8d, 0xba, 0x1a, 0x69, 0x81, 0xfe, 0x79, 0x70, 0x6f,
-	0x8f, 0x06, 0x59, 0x78, 0x44, 0x3a, 0xd0, 0xb0, 0x1f, 0x0a, 0x50, 0x1d, 0x7e, 0xfc, 0xb9, 0x34,
-	0xb4, 0x97, 0xa5, 0xa1, 0xfd, 0x5e, 0x1a, 0xda, 0x8f, 0x95, 0x51, 0x79, 0x59, 0x19, 0x95, 0x5f,
-	0x2b, 0xa3, 0xf2, 0xe5, 0xdd, 0x93, 0xaf, 0x66, 0xe9, 0x63, 0x9f, 0x89, 0xf0, 0x3a, 0x4e, 0x84,
-	0x97, 0x32, 0x25, 0x99, 0xbf, 0xf3, 0x2b, 0xe7, 0xa5, 0xb5, 0x5a, 0xc4, 0x5c, 0x3e, 0xd6, 0xf1,
-	0x7b, 0xbe, 0xfd, 0x1b, 0x00, 0x00, 0xff, 0xff, 0x0b, 0xec, 0x46, 0x2c, 0xc5, 0x03, 0x00, 0x00,
+	// 595 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x94, 0xcf, 0x6e, 0xda, 0x4e,
+	0x10, 0xc7, 0x71, 0xfe, 0x90, 0x78, 0x48, 0x62, 0xb2, 0xe1, 0xb0, 0x87, 0x9f, 0x2c, 0x8b, 0x5f,
+	0x54, 0x59, 0x51, 0x45, 0xaa, 0x54, 0xbd, 0xf5, 0x02, 0x21, 0x2d, 0x96, 0x2a, 0x82, 0x0c, 0x42,
+	0x55, 0x6f, 0x1b, 0x7b, 0x1b, 0xac, 0xd8, 0x5e, 0xd7, 0xbb, 0x6e, 0xe1, 0x2d, 0x7a, 0xeb, 0x83,
+	0xf4, 0x25, 0x7a, 0xcc, 0xb1, 0xc7, 0x0a, 0x5e, 0xa4, 0xf2, 0x1a, 0xb0, 0x31, 0xf4, 0x36, 0xf3,
+	0x99, 0xef, 0x8e, 0xc7, 0xdf, 0x1d, 0x1b, 0xfe, 0xf7, 0xc2, 0xcf, 0x34, 0xa6, 0xa1, 0x43, 0xaf,
+	0x77, 0x44, 0xad, 0x28, 0x66, 0x82, 0xa1, 0x8b, 0x1c, 0xac, 0xa3, 0xe6, 0x0f, 0x05, 0xb4, 0x41,
+	0xcc, 0x22, 0xc6, 0x89, 0xdf, 0xa5, 0x82, 0x78, 0x3e, 0x47, 0x2d, 0x40, 0x31, 0x1d, 0x13, 0xdf,
+	0x73, 0x89, 0xa0, 0x03, 0xe6, 0x7b, 0xce, 0xcc, 0x72, 0xb1, 0x62, 0x28, 0xe6, 0x81, 0xbd, 0xa3,
+	0x92, 0xea, 0xbd, 0xf0, 0x6b, 0x59, 0xbf, 0x97, 0xe9, 0xb7, 0x2b, 0xe8, 0x12, 0x4e, 0x23, 0x19,
+	0xb7, 0x5d, 0x37, 0xa6, 0x9c, 0xe3, 0x7d, 0x43, 0x31, 0x55, 0x7b, 0x13, 0x36, 0x7f, 0x56, 0x41,
+	0xb5, 0x56, 0x73, 0xa2, 0x06, 0x1c, 0x7a, 0xa1, 0x4b, 0xa7, 0x72, 0x0c, 0xd5, 0xce, 0x12, 0x64,
+	0x40, 0x6d, 0xfd, 0x2a, 0xcb, 0x47, 0xaa, 0x76, 0x11, 0x21, 0x1d, 0x20, 0x8a, 0x59, 0x10, 0x89,
+	0x1e, 0xe1, 0x93, 0xe5, 0x83, 0x0a, 0x44, 0xce, 0x22, 0xb3, 0x01, 0x99, 0xf9, 0x8c, 0xb8, 0xf8,
+	0x60, 0x39, 0x4b, 0x11, 0xa2, 0x26, 0x9c, 0xc4, 0x94, 0x47, 0x2c, 0xe4, 0x54, 0xf6, 0x39, 0x94,
+	0xa2, 0x0d, 0x86, 0x4c, 0xd0, 0x56, 0xf9, 0xaa, 0x57, 0x55, 0xca, 0xca, 0x18, 0x5d, 0x41, 0x3d,
+	0x6b, 0x3f, 0x62, 0x4f, 0x34, 0xbc, 0x65, 0x49, 0x28, 0xf0, 0x91, 0x74, 0x6b, 0x8b, 0xa3, 0x1b,
+	0x68, 0x38, 0x2c, 0x88, 0x7c, 0x2a, 0x3c, 0x16, 0x16, 0xf4, 0xc7, 0x52, 0xbf, 0xb3, 0x96, 0xba,
+	0x12, 0xd3, 0x2f, 0x09, 0xe5, 0x82, 0xba, 0x9d, 0x19, 0x56, 0x33, 0x57, 0x0a, 0x28, 0x75, 0x85,
+	0x4e, 0xa9, 0x93, 0x64, 0x02, 0xc8, 0x5c, 0xc9, 0x09, 0x7a, 0x0b, 0x55, 0x2e, 0x88, 0x48, 0x38,
+	0xae, 0x19, 0x8a, 0x79, 0x76, 0x73, 0xd9, 0xda, 0xb1, 0x3b, 0xad, 0xf5, 0xed, 0x0c, 0xa5, 0xd6,
+	0x5e, 0x9e, 0x49, 0xdf, 0x8f, 0x0b, 0x12, 0x8b, 0x8e, 0xcf, 0x9c, 0xa7, 0x1e, 0xf5, 0x1e, 0x27,
+	0x02, 0x9f, 0x18, 0x8a, 0xb9, 0x6f, 0x6f, 0x71, 0xf4, 0x02, 0xce, 0x68, 0xe8, 0x16, 0x95, 0xa7,
+	0x52, 0x59, 0xa2, 0xe8, 0x15, 0x5c, 0xe4, 0x67, 0x47, 0x5e, 0x40, 0xb9, 0x20, 0x41, 0x84, 0xcf,
+	0xa4, 0x78, 0x57, 0x09, 0xbd, 0x84, 0xf3, 0x55, 0x8f, 0x5c, 0xaf, 0x49, 0xfd, 0x76, 0x21, 0xdd,
+	0xaf, 0x80, 0xb9, 0xd4, 0xc7, 0xf5, 0x6c, 0xbf, 0x64, 0x82, 0xfe, 0x03, 0x35, 0x20, 0x53, 0x69,
+	0x2d, 0xc7, 0xe7, 0xd2, 0xf2, 0x1c, 0xa4, 0x2e, 0x12, 0x47, 0x24, 0xc4, 0xbf, 0x65, 0x5c, 0x60,
+	0x24, 0x5b, 0x17, 0x48, 0xba, 0x35, 0x94, 0x3b, 0x31, 0xfb, 0xd6, 0x0e, 0xe4, 0x9d, 0x5d, 0x48,
+	0xc5, 0x06, 0x43, 0x7d, 0xd0, 0xa2, 0xcd, 0xcf, 0x0f, 0x37, 0x0c, 0xc5, 0xac, 0xfd, 0xc3, 0xf2,
+	0xd2, 0xa7, 0x6a, 0x97, 0x0f, 0x5f, 0x7d, 0x04, 0xad, 0x74, 0x2d, 0xa8, 0x06, 0x47, 0xc3, 0x51,
+	0xdb, 0x1e, 0xdd, 0x75, 0xeb, 0x15, 0x74, 0x02, 0xc7, 0xef, 0xac, 0xbe, 0x35, 0xec, 0xdd, 0x75,
+	0xeb, 0x0a, 0x3a, 0x05, 0x75, 0xdc, 0xfe, 0x60, 0x75, 0xdb, 0x69, 0x71, 0x0f, 0x69, 0x50, 0xb3,
+	0xfa, 0x39, 0xd8, 0x47, 0x00, 0xd5, 0xf1, 0xfd, 0xc8, 0xea, 0xbf, 0xaf, 0x1f, 0x74, 0xee, 0x7f,
+	0xcd, 0x75, 0xe5, 0x79, 0xae, 0x2b, 0x7f, 0xe6, 0xba, 0xf2, 0x7d, 0xa1, 0x57, 0x9e, 0x17, 0x7a,
+	0xe5, 0xf7, 0x42, 0xaf, 0x7c, 0x7a, 0xf3, 0xe8, 0x89, 0x49, 0xf2, 0xd0, 0x72, 0x58, 0x70, 0x1d,
+	0xc5, 0xcc, 0x4d, 0x1c, 0xc1, 0x1d, 0xaf, 0xf4, 0x37, 0x9a, 0x16, 0x62, 0x31, 0x8b, 0x28, 0x7f,
+	0xa8, 0xca, 0xdf, 0xd2, 0xeb, 0xbf, 0x01, 0x00, 0x00, 0xff, 0xff, 0x9a, 0x72, 0xc3, 0xc6, 0xbd,
+	0x04, 0x00, 0x00,
+}
+
+func (m *ProposalDetails) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ProposalDetails) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ProposalDetails) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.PolicyAddress) > 0 {
+		i -= len(m.PolicyAddress)
+		copy(dAtA[i:], m.PolicyAddress)
+		i = encodeVarintInference(dAtA, i, uint64(len(m.PolicyAddress)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.InvalidatePolicyId != 0 {
+		i = encodeVarintInference(dAtA, i, uint64(m.InvalidatePolicyId))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.ReValidatePolicyId != 0 {
+		i = encodeVarintInference(dAtA, i, uint64(m.ReValidatePolicyId))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
 }
 
 func (m *Inference) Marshal() (dAtA []byte, err error) {
@@ -305,6 +424,20 @@ func (m *Inference) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ProposalDetails != nil {
+		{
+			size, err := m.ProposalDetails.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintInference(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0xa2
+	}
 	if m.EscrowAmount != 0 {
 		i = encodeVarintInference(dAtA, i, uint64(m.EscrowAmount))
 		i--
@@ -367,10 +500,10 @@ func (m *Inference) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x52
 	}
-	if len(m.ReceivedBy) > 0 {
-		i -= len(m.ReceivedBy)
-		copy(dAtA[i:], m.ReceivedBy)
-		i = encodeVarintInference(dAtA, i, uint64(len(m.ReceivedBy)))
+	if len(m.RequestedBy) > 0 {
+		i -= len(m.RequestedBy)
+		copy(dAtA[i:], m.RequestedBy)
+		i = encodeVarintInference(dAtA, i, uint64(len(m.RequestedBy)))
 		i--
 		dAtA[i] = 0x4a
 	}
@@ -440,6 +573,25 @@ func encodeVarintInference(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+func (m *ProposalDetails) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.ReValidatePolicyId != 0 {
+		n += 1 + sovInference(uint64(m.ReValidatePolicyId))
+	}
+	if m.InvalidatePolicyId != 0 {
+		n += 1 + sovInference(uint64(m.InvalidatePolicyId))
+	}
+	l = len(m.PolicyAddress)
+	if l > 0 {
+		n += 1 + l + sovInference(uint64(l))
+	}
+	return n
+}
+
 func (m *Inference) Size() (n int) {
 	if m == nil {
 		return 0
@@ -476,7 +628,7 @@ func (m *Inference) Size() (n int) {
 	if m.CompletionTokenCount != 0 {
 		n += 1 + sovInference(uint64(m.CompletionTokenCount))
 	}
-	l = len(m.ReceivedBy)
+	l = len(m.RequestedBy)
 	if l > 0 {
 		n += 1 + l + sovInference(uint64(l))
 	}
@@ -512,6 +664,10 @@ func (m *Inference) Size() (n int) {
 	if m.EscrowAmount != 0 {
 		n += 2 + sovInference(uint64(m.EscrowAmount))
 	}
+	if m.ProposalDetails != nil {
+		l = m.ProposalDetails.Size()
+		n += 2 + l + sovInference(uint64(l))
+	}
 	return n
 }
 
@@ -520,6 +676,126 @@ func sovInference(x uint64) (n int) {
 }
 func sozInference(x uint64) (n int) {
 	return sovInference(uint64((x << 1) ^ uint64((int64(x) >> 63))))
+}
+func (m *ProposalDetails) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowInference
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ProposalDetails: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ProposalDetails: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ReValidatePolicyId", wireType)
+			}
+			m.ReValidatePolicyId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowInference
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ReValidatePolicyId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InvalidatePolicyId", wireType)
+			}
+			m.InvalidatePolicyId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowInference
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.InvalidatePolicyId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PolicyAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowInference
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthInference
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthInference
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.PolicyAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipInference(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthInference
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
 }
 func (m *Inference) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
@@ -782,7 +1058,7 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 			}
 		case 9:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ReceivedBy", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field RequestedBy", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -810,7 +1086,7 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ReceivedBy = string(dAtA[iNdEx:postIndex])
+			m.RequestedBy = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -1004,7 +1280,7 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.ActualCost |= uint64(b&0x7F) << shift
+				m.ActualCost |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1023,11 +1299,47 @@ func (m *Inference) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EscrowAmount |= uint64(b&0x7F) << shift
+				m.EscrowAmount |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+		case 20:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ProposalDetails", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowInference
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthInference
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthInference
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ProposalDetails == nil {
+				m.ProposalDetails = &ProposalDetails{}
+			}
+			if err := m.ProposalDetails.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipInference(dAtA[iNdEx:])

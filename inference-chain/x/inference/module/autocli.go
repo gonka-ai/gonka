@@ -75,7 +75,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "StartInference",
 					Use:            "start-inference [inference-id] [prompt-hash] [prompt-payload] [received-by]",
 					Short:          "Send a startInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "promptHash"}, {ProtoField: "promptPayload"}, {ProtoField: "receivedBy"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}, {ProtoField: "promptHash"}, {ProtoField: "promptPayload"}, {ProtoField: "requestedBy"}},
 				},
 				{
 					RpcMethod:      "FinishInference",
@@ -106,6 +106,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "submit-new-unfunded-participant [address] [url] [models] [pub-key] [validator-key]",
 					Short:          "Send a submitNewUnfundedParticipant tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "models"}, {ProtoField: "pubKey"}, {ProtoField: "validatorKey"}},
+				},
+				{
+					RpcMethod:      "InvalidateInference",
+					Use:            "invalidate-inference [inference-id]",
+					Short:          "Send a invalidateInference tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "RevalidateInference",
+					Use:            "revalidate-inference [inference-id]",
+					Short:          "Send a revalidateInference tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

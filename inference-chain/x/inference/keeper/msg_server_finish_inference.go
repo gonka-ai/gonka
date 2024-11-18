@@ -11,6 +11,8 @@ import (
 func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishInference) (*types.MsgFinishInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	k.LogInfo("FinishInference", "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
+
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceNotFound, msg.InferenceId)
@@ -19,9 +21,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
 	}
-	requester, found := k.GetParticipant(ctx, existingInference.ReceivedBy)
+	requester, found := k.GetParticipant(ctx, existingInference.RequestedBy)
 	if !found {
-		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.ReceivedBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.RequestedBy)
 	}
 
 	existingInference.Status = types.InferenceStatus_FINISHED

@@ -8,6 +8,13 @@ enum InferenceStatus {
   FINISHED = 1;
   VALIDATED = 2;
   INVALIDATED = 3;
+  VOTING = 4;
+}
+
+message ProposalDetails {
+  uint64 reValidatePolicyId = 1;
+  uint64 invalidatePolicyId = 2;
+  string policyAddress = 3;
 }
 
 message Inference {
@@ -19,7 +26,7 @@ message Inference {
   string responsePayload = 6;
   uint64 promptTokenCount = 7;
   uint64 completionTokenCount = 8;
-  string receivedBy = 9;
+  string requestedBy = 9;
   string executedBy = 10;
   InferenceStatus status = 11;
   int64 startBlockHeight = 12;
@@ -28,7 +35,8 @@ message Inference {
   int64 endBlockTimestamp = 15;
   string model = 16;
   uint64 maxTokens = 17;
-  uint64 actualCost = 18;
-  uint64 escrowAmount = 19;
+  int64 actualCost = 18;
+  int64 escrowAmount = 19;
+  ProposalDetails proposalDetails = 20;
 }
 

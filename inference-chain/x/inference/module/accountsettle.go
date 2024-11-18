@@ -24,7 +24,7 @@ func (am AppModule) SettleAccounts(ctx context.Context) error {
 		return err
 	}
 
-	totalWork := uint64(0)
+	totalWork := int64(0)
 
 	// We are iterating twice over this list, which might get expensive?
 	// We could instead keep a running total of work done in the state?
@@ -33,7 +33,7 @@ func (am AppModule) SettleAccounts(ctx context.Context) error {
 	}
 
 	if totalWork != 0 {
-		err = am.keeper.MintRewardCoins(ctx, uint64(finalCoin))
+		err = am.keeper.MintRewardCoins(ctx, int64(finalCoin))
 		if err != nil {
 			am.LogError("Unable to mint new coins!", "error", err)
 			return err
@@ -43,7 +43,7 @@ func (am AppModule) SettleAccounts(ctx context.Context) error {
 		if p.CoinBalance == 0 && p.RefundBalance == 0 {
 			continue
 		}
-		err = am.keeper.SettleParticipant(ctx, &p, totalWork, uint64(finalCoin))
+		err = am.keeper.SettleParticipant(ctx, &p, uint64(totalWork), uint64(finalCoin))
 		am.keeper.SetParticipant(ctx, p)
 		if err != nil {
 			return err

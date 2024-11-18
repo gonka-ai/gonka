@@ -18,7 +18,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,14 +77,14 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
 		if err != nil {
-			log.Printf("Failed to parse height. err = %v", err)
+			slog.Error("Failed to parse height", "error", err)
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("Verifying block signatures at height %s", height)
+		slog.Debug("Verifying block signatures", "height", height)
 		if err := merkleproof.VerifyBlockSignatures(config.ChainNode.Url, height); err != nil {
-			log.Printf("Failed to verify block signatures. err = %v", err)
+			slog.Error("Failed to verify block signatures", "error", err)
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -136,13 +135,13 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 
 		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
 		if err != nil {
-			log.Printf("Failed to create rpc client. err = %v", err)
+			slog.Error("Failed to create rpc client", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
 		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
 		if err != nil {
-			log.Printf("Failed to query active participants. err = %v", err)
+			slog.Error("Failed to query active participants", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -155,21 +154,21 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 
 		var activeParticipants types.ActiveParticipants
 		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			log.Printf("Failed to unmarshal active participant. err = %v", err)
+			slog.Error("Failed to unmarshal active participant", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
 		if err != nil {
-			log.Printf("Failed to get block. err = %v", err)
+			slog.Error("Failed to get block", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 		if err != nil {
-			log.Printf("Failed to get validators. err = %v", err)
+			slog.Error("Failed to get validators", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -245,8 +244,8 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 	if err != nil {
 		fundedByTransferNode = false
 	}
-	log.Printf("fundedByTransferNode = %t", fundedByTransferNode)
 
+	slog.Debug("fundedByTransferNode", "node", fundedByTransferNode)
 	return &ChatRequest{
 		Body:                 body,
 		Request:              request,
@@ -312,7 +311,7 @@ func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*Execu
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("LB Executor:" + executor.InferenceUrl)
+	slog.Info("Executor selected", "address", executor.Address, "url", executor.InferenceUrl)
 	return &ExecutorDestination{
 		Url:     executor.InferenceUrl,
 		Address: executor.Address,
@@ -426,7 +425,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		line := scanner.Text()
 
 		// DEBUG LOG
-		log.Printf("Chunk: %s", line)
+		slog.Debug("Chunk", "line", line)
 
 		var lineToProxy = line
 		if responseProcessor != nil {
@@ -438,19 +437,19 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			}
 		}
 
-		log.Printf("Chunk to proxy: %s", lineToProxy)
+		slog.Debug("Chunk to proxy", "line", lineToProxy)
 
 		// Forward the line to the client
 		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
-			log.Printf("Error while streaming response: %v", err)
+			slog.Error("Error while streaming response", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("Error while streaming response: %v", err)
+		slog.Error("Error while streaming response", "error", err)
 	}
 }
 
@@ -483,26 +482,25 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		return nil, err
 	}
 	transaction := &inference.MsgStartInference{
-		Creator:       request.RequesterAddress,
 		InferenceId:   inferenceId,
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
-		// TODO: This should actually be the Executor selected by the address
-		ReceivedBy: executor.Address,
-		Model:      testModel,
+		RequestedBy:   request.RequesterAddress,
+		Model:         testModel,
 	}
 	return transaction, nil
 }
 
 func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.QueryInferenceParticipantResponse) bool {
 	if client == nil {
-		log.Printf("Inference participant not found. address = %s", request.RequesterAddress)
+		slog.Error("Inference participant not found", "address", request.RequesterAddress)
 		http.Error(w, "Inference participant not found", http.StatusNotFound)
 		return true
 	}
 
 	err := validateRequestAgainstPubKey(request, client.Pubkey)
 	if err != nil {
+		slog.Error("Unable to validate request against PubKey", "error", err)
 		http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
 		return true
 	}
@@ -510,8 +508,8 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
 	escrowNeeded := request.OpenAiRequest.MaxTokens * keeper.PerTokenCost
-	log.Printf("Escrow needed: %d", escrowNeeded)
-	log.Printf("Client balance: %d", client.Balance)
+	slog.Debug("Escrow needed", "escrowNeeded", escrowNeeded)
+	slog.Debug("Client balance", "balance", client.Balance)
 	if client.Balance < int64(escrowNeeded) {
 		http.Error(w, "Insufficient balance", http.StatusPaymentRequired)
 		return true
@@ -619,17 +617,17 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 		return
 	}
 
-	log.Printf("GET inference participant. address = %s", address)
+	slog.Debug("GET inference participant", "address", address)
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: address})
 	if err != nil {
-		log.Printf("Failed to get inference participant. address = %s. err = %v", address, err)
+		slog.Error("Failed to get inference participant", "address", address, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if response == nil {
-		log.Printf("Inference participant not found. address = %s", address)
+		slog.Error("Inference participant not found", "address", address)
 		http.Error(w, "Inference participant not found", http.StatusNotFound)
 		return
 	}
@@ -657,17 +655,17 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 		return
 	}
 
-	log.Printf("GET inference. id = %s", id)
+	slog.Debug("GET inference", "id", id)
 	queryClient := recorder.NewInferenceQueryClient()
 	response, err := queryClient.Inference(recorder.Context, &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
-		log.Printf("Failed to get inference. id = %s. err = %v", id, err)
+		slog.Error("Failed to get inference", "id", id, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if response == nil {
-		log.Printf("Inference not found. id = %s", id)
+		slog.Error("Inference not found", "id", id)
 		http.Error(w, "Inference not found", http.StatusNotFound)
 		return
 	}
@@ -688,7 +686,7 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 func writeResponseBody(body any, w http.ResponseWriter) {
 	respBytes, err := json.Marshal(body)
 	if err != nil {
-		log.Printf("Failed to marshal response. %v", err)
+		slog.Error("Failed to marshal response", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -874,7 +872,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 		})
 
 		if err != nil {
-			log.Printf("Failed to validate inference. id = %s. err = %v", validationRequest.Id, err)
+			slog.Error("Failed to validate inference", "id", validationRequest.Id, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -886,7 +884,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 		}
 
 		if err = recorder.ReportValidation(msgVal); err != nil {
-			log.Printf("Failed to submit MsgValidation. %v", err)
+			slog.Error("Failed to submit MsgValidation", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -926,14 +924,15 @@ type SubmitUnfundedNewParticipantDto struct {
 
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
+	BlockHeight  int64            `json:"block_height"`
 }
 
 type ParticipantDto struct {
 	Id          string   `json:"id"`
 	Url         string   `json:"url"`
 	Models      []string `json:"models"`
-	CoinsOwed   uint64   `json:"coins_owed"`
-	RefundsOwed uint64   `json:"refunds_owed"`
+	CoinsOwed   int64    `json:"coins_owed"`
+	RefundsOwed int64    `json:"refunds_owed"`
 	Balance     int64    `json:"balance"`
 	VotingPower int64    `json:"voting_power"`
 }
@@ -1008,45 +1007,6 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	validators, err := recorder.Client.Context().Client.Validators(recorder.Context, nil, nil, nil)
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	list, err := recorder.Client.Context().Keyring.List()
-	for _, key := range list {
-		log.Printf("KeyRecord: %s", key.String())
-		log.Printf("Name: %s", key.Name)
-		pubKey, err := key.GetPubKey()
-		if err != nil {
-			slog.Warn("Failed to get pubkey for key", "key", key, "error", err)
-		} else {
-			slog.Info("PubKey", "pubkey", pubKey.Address().String(), "keyring", key.String())
-		}
-		log.Printf("Key: %s", key.PubKey.String())
-		log.Printf("Item: %s", key.Item)
-	}
-
-	// Index validators by address
-	validatorMap := make(map[string]types2.Validator)
-	for _, v := range validators.Validators {
-		log.Printf("-Validator info:")
-		log.Printf("Validator: %s", v.Address)
-		// Use public key... account is based on this anyhow
-		s := v.PubKey.Address().String()
-		log.Printf("PubKey: %s", s)
-		log.Printf("VotingPower: %d", v.VotingPower)
-		accAddress := sdk.AccAddress(v.PubKey.Address()).String()
-		valAddress := sdk.ValAddress(v.PubKey.Address()).String()
-		consAdress := sdk.ConsAddress(v.PubKey.Address()).String()
-		log.Printf("AccAddress: %s", accAddress)
-		log.Printf("ValAddress: %s", valAddress)
-		log.Printf("ConsAddress: %s", consAdress)
-		log.Printf("-----")
-		validatorMap[s] = *v
-	}
 
 	participants := make([]ParticipantDto, len(r.Participant))
 	for i, p := range r.Participant {
@@ -1060,12 +1020,11 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 				}
 			}
 			if pBalance == 0 {
-				log.Printf("Participant %s has no balance", p.Address)
+				slog.Debug("Participant has no balance", "address", p.Address)
 			}
 		} else {
-			log.Printf("Failed to get balance for participant %s: %v", p.Address, err)
+			slog.Warn("Failed to get balance for participant", "address", p.Address, "error", err)
 		}
-		power := getVotingPower(recorder, p.Address, validatorMap)
 		participants[i] = ParticipantDto{
 			Id:          p.Address,
 			Url:         p.InferenceUrl,
@@ -1073,12 +1032,13 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 			CoinsOwed:   p.CoinBalance,
 			RefundsOwed: p.RefundBalance,
 			Balance:     pBalance,
-			VotingPower: power,
+			VotingPower: int64(p.Weight),
 		}
 	}
 
 	responseBody := ParticipantsDto{
 		Participants: participants,
+		BlockHeight:  r.BlockHeight,
 	}
 
 	responseJson, err := json.Marshal(responseBody)
@@ -1090,44 +1050,6 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseJson)
-}
-
-func getVotingPower(recorder cosmos_client.InferenceCosmosClient, address string, validatorMap map[string]types2.Validator) int64 {
-	addr, err := sdk.AccAddressFromBech32(address)
-	if err != nil {
-		slog.Error("Address is invalid Bech32 format", "address", address, "error", err)
-	}
-	log.Printf("AccAddressFromBech32: %s", addr.String())
-	accounts, err := recorder.Client.AccountRegistry.List()
-	if err != nil {
-		slog.Error("Failed to get accounts", "error", err)
-		return 0
-	}
-	for _, acc := range accounts {
-		key, err2 := acc.PubKey()
-		if err2 != nil {
-			slog.Warn("Failed to get pubkey for account", "account", acc.Address, "error", err2)
-			continue
-		}
-		slog.Info("Account", "address", acc.Address, "pubKey", key, "name", acc.Name)
-	}
-	account, err := recorder.Client.Account(address)
-	if err != nil {
-		slog.Warn("Failed to get account for participant", "address", address, "error", err)
-		return 0
-	}
-	s, err := account.Address("")
-	log.Printf("Address: %s", s)
-	pubKey, err := account.PubKey()
-	log.Printf("PubKey: %s", pubKey)
-	log.Printf("Name: %s", account.Name)
-	log.Printf("Record: %s", account.Record.String())
-	if err != nil {
-		log.Printf("Failed to get pubkey for participant %s: %v", address, err)
-		return 0
-	}
-	power := getValueOrDefault(validatorMap, pubKey, types2.Validator{}).VotingPower
-	return power
 }
 
 // Why u no have this in std lib????

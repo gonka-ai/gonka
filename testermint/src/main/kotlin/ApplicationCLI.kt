@@ -10,35 +10,52 @@ import com.productscience.data.NodeInfoResponse
 import com.productscience.data.TxResponse
 import com.productscience.data.Validator
 import org.tinylog.kotlin.Logger
+import java.io.Closeable
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
 // Usage
-data class ApplicationCLI(val containerId: String, override val config: ApplicationConfig) : HasConfig {
+data class ApplicationCLI(val containerId: String, override val config: ApplicationConfig) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
 
-    fun createContainer() {
+    fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {
-            Logger.info("Creating container with id $containerId")
-            dockerClient.createContainerCmd(config.nodeImageName)
+            Logger.info("Creating container,  id={}", containerId)
+            var createCmd = dockerClient.createContainerCmd(config.nodeImageName)
                 .withName(containerId)
                 .withVolumes(Volume(config.mountDir))
-                .exec()
+            if (doNotStartChain) {
+                createCmd = createCmd.withCmd("tail", "-f", "/dev/null")
+            }
+            createCmd.exec()
             dockerClient.startContainerCmd(containerId).exec()
         }
     }
+
+    override fun close() {
+        this.killContainer()
+    }
+
+    fun killContainer() {
+        wrapLog("killContainer", false) {
+            Logger.info("Killing container, id={}", containerId)
+            dockerClient.killContainerCmd(containerId).exec()
+            dockerClient.removeContainerCmd(containerId).exec()
+        }
+    }
+
     fun waitForMinimumBlock(minBlockHeight: Long) {
         wrapLog("waitForMinimumBlock", false) {
-            Logger.info("Waiting for block height to reach $minBlockHeight")
+            Logger.info("Waiting for block height to reach {}", minBlockHeight)
             while (true) {
                 val currentState = getStatus()
                 val currentBlock = currentState.syncInfo.latestBlockHeight
                 if (currentBlock >= minBlockHeight) {
-                    Logger.info("Block height reached $currentBlock")
+                    Logger.info("Block height reached {}", currentBlock)
                     break
                 }
-                Logger.debug("Current block height is $currentBlock, waiting...")
+                Logger.debug("Current block height is {}, waiting...", currentBlock)
                 Thread.sleep(1000)
             }
         }
@@ -48,15 +65,15 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
             val currentBlock = currentState.syncInfo.latestBlockHeight
-            Logger.info("Waiting for block + $blocksToWait after $currentBlock")
+            Logger.info("Waiting for block {} after {}", blocksToWait, currentBlock)
             while (true) {
                 val newState = getStatus()
                 val newBlock = newState.syncInfo.latestBlockHeight
                 if (newBlock >= currentBlock + blocksToWait) {
-                    Logger.info("Block height reached $newBlock")
+                    Logger.info("Block height reached {}", newBlock)
                     break
                 }
-                Logger.debug("Current block height is $newBlock, waiting...")
+                Logger.debug("Current block height is {}, waiting...", newBlock)
                 Thread.sleep(1000)
             }
         }
@@ -76,7 +93,17 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     fun getKeys(): List<Validator> = wrapLog("getKeys", false) {
         execAndParseWithType(
             object : TypeToken<List<Validator>>() {},
-            listOf("keys", "list")
+            listOf("keys", "list") + config.keychainParams
+        )
+    }
+
+    fun createKey(keyName: String): Validator = wrapLog("createKey", false) {
+        execAndParse(
+            listOf(
+                "keys",
+                "add",
+                keyName
+            ) + config.keychainParams
         )
     }
 
@@ -93,20 +120,20 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     // Reified type parameter to abstract out exec and then json to a particular type
     private inline fun <reified T> execAndParse(args: List<String>): T {
         val argsWithJson = listOf(config.appName) + args + "--output" + "json"
-        Logger.debug("Executing command: ${argsWithJson.joinToString(" ")}")
+        Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
-        Logger.debug("Output:$output")
+        Logger.debug("Output: {}", output)
         return gsonSnakeCase.fromJson(output, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
     private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>): T {
         val argsWithJson = (listOf(config.appName) + args + "--output" + "json")
-        Logger.debug("Executing command: ${argsWithJson.joinToString(" ")}")
+        Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
-        Logger.debug("Output:$output")
+        Logger.debug("Output: {}", output)
         return gsonSnakeCase.fromJson(output, typeToken.type)
     }
 
@@ -120,24 +147,41 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
             .exec()
 
         val output = ExecCaptureOutput()
+        Logger.trace("Executing command: {}", args.joinToString(" "))
         val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
         execResponse.awaitCompletion()
+        Logger.trace("Command complete: output={}", output.output)
+        if (output.output.first().startsWith("Usage:")) {
+            val error = output.output.last().lines().last()
+            Logger.error(
+                "Invalid usage of command: command='{}' error='{}'",
+                args.joinToString(" "), error
+            )
+            throw IllegalArgumentException("Invalid usage of command: $error")
+        }
         return output.output
     }
 
-    fun signPayload(payload: String): String = wrapLog("signPayload", true) {
-        val response = this.exec(
-            listOf(
-                config.appName,
-                "signature",
-                "create",
-                // Do we need single quotes here?
-                payload
+    fun signPayload(payload: String, accountAddress: String? = null): String {
+        val parameters = listOfNotNull(
+            config.appName,
+            "signature",
+            "create",
+            // Do we need single quotes here?
+            payload,
+            accountAddress?.let { "--account-address" },
+            accountAddress,
+        ) + config.keychainParams
+        return wrapLog("signPayload", true) {
+            val response = this.exec(
+                parameters
             )
-        )
 
-        // so hacky
-        response[1].dropWhile { it != ' ' }.drop(1)
+            // so hacky
+            response[1].dropWhile { it != ' ' }.drop(1).also {
+                Logger.info("Signature created, signature={}", it)
+            }
+        }
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -196,7 +240,8 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
         mapOf(
             "operation" to type,
             "pair" to name,
-            "source" to "container"
+            "source" to "container",
+            "blockHeight" to currentHeight.toString()
         )
     ) {
         val logEntry = String(frame.payload).trim()
@@ -229,7 +274,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
             "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
                 val height = it.groupValues[1].toLong()
                 if (height > currentHeight) {
-                    Logger.info("Block height:$height")
+                    Logger.info("New block, height={}", height)
                     currentHeight = height
                 }
             }

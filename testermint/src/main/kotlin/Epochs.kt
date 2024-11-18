@@ -1,10 +1,12 @@
 package com.productscience
 
-const val EpochLength = 10L
-const val startOfPocStage = 0L
-const val endOfPocStage = 3L
-const val pocExchangeDeadline = 5L
-const val setNewValidatorsStage = 7L
+
+const val Multiplier = 1L
+const val EpochLength = 10 * Multiplier
+const val startOfPocStage = 0 * Multiplier
+const val endOfPocStage = 3 * Multiplier
+const val pocExchangeDeadline = endOfPocStage + 5
+const val setNewValidatorsStage = pocExchangeDeadline + 1
 
 const val EPOCH_NEW_COIN = 1_048_576L
 const val COIN_HALVING_HEIGHT = 100

@@ -8,6 +8,7 @@ import (
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
@@ -20,25 +21,56 @@ import (
 	"strings"
 )
 
+func VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+	inferenceIds, ok := events["inference_validation.inference_id"]
+	if !ok || len(inferenceIds) == 0 {
+		slog.Error("Validation: No inference_id found in events")
+		return
+	}
+	inferenceId := inferenceIds[0]
+
+	slog.Debug("Validation: Verifying invalidation", "inference_id", inferenceId)
+
+	queryClient := recorder.NewInferenceQueryClient()
+
+	r, err := queryClient.GetInferencesWithExecutors(recorder.Context, &types.QueryGetInferencesWithExecutorsRequest{Ids: []string{inferenceId}})
+	if err != nil {
+		// FIXME: what should we do with validating the transaction?
+		slog.Warn("Validation: Failed to query GetInferencesWithExecutors for revalidation.", "error", err)
+		return
+	}
+	var toValidate []types.Inference
+	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
+		toValidate = append(toValidate, inferenceWithExecutor.Inference)
+	}
+
+	logInferencesToValidate(toValidate)
+
+	for _, inf := range toValidate {
+		go func() {
+			validateInferenceAndSendValMessage(inf, nodeBroker, recorder, true)
+		}()
+	}
+}
+
 func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
 	if ids == nil {
-		slog.Debug("No inferences to validate")
+		slog.Debug("Validation: No inferences to validate")
 		return
 	}
 
-	slog.Debug("Sampling inf transactions to validate")
+	slog.Debug("Validation: Sampling inf transactions to validate")
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
 	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.Context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
-		slog.Warn("Failed to query GetInferencesWithExecutors.", "error", err)
+		slog.Warn("Validation: Failed to query GetInferencesWithExecutors.", "error", err)
 		return
 	}
 
 	logInferencesToSample(r.InferenceWithExecutor)
-	slog.Debug("Inferences to sample", "inferences", r.InferenceWithExecutor)
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
@@ -50,7 +82,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 	logInferencesToValidate(toValidate)
 	for _, inf := range toValidate {
 		go func() {
-			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder)
+			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder, false)
 		}()
 	}
 }
@@ -71,7 +103,7 @@ func logInferencesToSample(inferences []types.InferenceWithExecutor) {
 		})
 	}
 
-	log.Printf("Inferences to sample. %v", ids)
+	slog.Debug("Validation: Inferences to sample", "ids", ids)
 }
 
 func logInferencesToValidate(toValidate []types.Inference) {
@@ -79,7 +111,7 @@ func logInferencesToValidate(toValidate []types.Inference) {
 	for _, inf := range toValidate {
 		ids = append(ids, inf.InferenceId)
 	}
-	slog.Info("Inferences to validate", "inferences", ids)
+	slog.Info("Validation: Inferences to validate", "inferences", ids)
 }
 
 func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
@@ -119,32 +151,33 @@ func getReputationP(status types.ParticipantStatus) float64 {
 	}
 }
 
-func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
 	valResult, err := lockNodeAndValidate(inf, nodeBroker)
 	if err != nil {
-		slog.Error("Failed to validate inf.", "id", inf.InferenceId, "error", err)
+		slog.Error("Validation: Failed to validate inf.", "id", inf.InferenceId, "error", err)
 		return
 	}
 
 	msgValidation, err := ToMsgValidation(valResult)
 	if err != nil {
-		slog.Error("Failed to convert to MsgValidation.", "id", inf.InferenceId, "error", err)
+		slog.Error("Validation: Failed to convert to MsgValidation.", "id", inf.InferenceId, "error", err)
 		return
 	}
+	msgValidation.Revalidation = revalidation
 
 	if err = transactionRecorder.ReportValidation(msgValidation); err != nil {
-		slog.Error("Failed to report validation.", "id", inf.InferenceId, "error", err)
+		slog.Error("Validation: Failed to report validation.", "id", inf.InferenceId, "error", err)
 		return
 	}
 
-	slog.Info("Successfully validated inference", "id", inf.InferenceId)
+	slog.Info("Validation: Successfully validated inference", "id", inf.InferenceId)
 }
 
 func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.InferenceCosmosClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
-		slog.Error("Failed get inference by id query", "id", id, "error", err)
+		slog.Error("Validation: Failed get inference by id query", "id", id, "error", err)
 	}
 
 	return validate(r.Inference, node)
@@ -157,20 +190,22 @@ func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (
 }
 
 func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (ValidationResult, error) {
-	if inference.Status != types.InferenceStatus_FINISHED {
-		slog.Error("Inference not finished", "status", inference.Status, "inference", inference)
+	slog.Debug("Validation: Validating inference", "id", inference.InferenceId)
+
+	if inference.Status == types.InferenceStatus_STARTED {
+		slog.Error("Validation: Inference not finished", "status", inference.Status, "inference", inference)
 		return nil, errors.New("Inference is not finished. id = " + inference.InferenceId)
 	}
 
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.PromptPayload), &requestMap); err != nil {
-		slog.Error("Failed to unmarshal inference.PromptPayload.", "id", inference.InferenceId, "error", err)
+		slog.Error("Validation: Failed to unmarshal inference.PromptPayload.", "id", inference.InferenceId, "error", err)
 		return nil, err
 	}
 
 	originalResponse, err := unmarshalResponse(&inference)
 	if err != nil {
-		slog.Error("Failed to unmarshal inference.ResponsePayload.", "id", inference.InferenceId, "error", err)
+		slog.Error("Validation: Failed to unmarshal inference.ResponsePayload.", "id", inference.InferenceId, "error", err)
 		return nil, err
 	}
 
@@ -367,7 +402,7 @@ func compareLogits(
 	baseComparisonResult BaseValidationResult,
 ) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {
-		return DifferentLengthValidationResult{baseComparisonResult}
+		return &DifferentLengthValidationResult{baseComparisonResult}
 	}
 
 	var originalLogprobs, validationLogprobs []float64
@@ -375,7 +410,7 @@ func compareLogits(
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
-			return DifferentTokensValidationResult{baseComparisonResult}
+			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 
 		originalLogprobs = append(originalLogprobs, o.Logprob)
@@ -412,6 +447,7 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
 		log.Printf("Cosine similarity validation result. value = %v", cosineSimVal)
 	default:
+		slog.Error("Unknown validation result type", "type", fmt.Sprintf("%T", result), "result", result)
 		return nil, errors.New("unknown validation result type")
 	}
 

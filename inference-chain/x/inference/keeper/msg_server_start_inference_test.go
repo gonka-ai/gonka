@@ -18,7 +18,7 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    testutil.Requester,
+		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
 	})
 	require.Error(t, err)
@@ -44,7 +44,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
-		ReceivedBy:    testutil.Requester,
+		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
 	})
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		InferenceId:         "inferenceId",
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
-		ReceivedBy:          testutil.Requester,
+		RequestedBy:         testutil.Requester,
 		Status:              types.InferenceStatus_STARTED,
 		StartBlockHeight:    0,
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),

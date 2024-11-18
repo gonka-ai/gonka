@@ -11,12 +11,12 @@ open class TestermintTest {
     @BeforeEach
     fun beforeEach(testInfo: TestInfo) {
         ThreadContext.put("test", testInfo.displayName)
-        Logger.warn("Starting test:" + testInfo.displayName)
+        Logger.warn("Starting test:{}", testInfo.displayName)
     }
 
     @AfterEach
     fun afterEach(testInfo: TestInfo) {
-        Logger.warn("Finished test:" + testInfo.displayName)
+        Logger.warn("Finished test:{}", testInfo.displayName)
         ThreadContext.remove("test")
     }
 
@@ -24,6 +24,9 @@ open class TestermintTest {
         @JvmStatic
         @BeforeAll
         fun initLogging(): Unit {
+            if (loggingStarted) {
+                return
+            }
             Assertions.setDescriptionConsumer {
                 logContext(
                     mapOf(
@@ -31,10 +34,13 @@ open class TestermintTest {
                         "source" to "testermint"
                     )
                 ) {
-                    Logger.info("Asserting: $it")
+                    Logger.info("Test assertion={}", it)
                 }
             }
+            loggingStarted = true
         }
     }
 
 }
+
+var loggingStarted = false

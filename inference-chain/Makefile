@@ -59,6 +59,7 @@ install:
 build:
 	@echo "--> ensure dependencies have not been modified"
 	@go mod verify
+	@go mod tidy
 	@echo "--> building inferenced"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
