@@ -29,15 +29,15 @@ interface HasConfig {
             )
         ) {
             if (infoLevel) {
-                Logger.info("Start $operation")
+                Logger.info("Start operation={}", operation)
             } else {
-                Logger.debug("Start $operation")
+                Logger.debug("Start operation={}", operation)
             }
             val result = block()
             if (infoLevel) {
-                Logger.info("End $operation")
+                Logger.info("End operation={}", operation)
             } else {
-                Logger.debug("End $operation")
+                Logger.debug("End operation={}", operation)
             }
             result
         }

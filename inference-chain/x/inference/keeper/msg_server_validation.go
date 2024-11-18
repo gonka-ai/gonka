@@ -3,8 +3,10 @@ package keeper
 import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"math"
+	"strconv"
 )
 
 const (
@@ -22,8 +24,12 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrInferenceNotFound
 	}
 
-	if inference.Status != types.InferenceStatus_FINISHED {
-		k.LogError("Inference not finished", "status", inference.Status, "inference", inference)
+	if inference.Status == types.InferenceStatus_INVALIDATED {
+		k.LogInfo("Validation: Inference already invalidated", "inference", inference)
+		return &types.MsgValidationResponse{}, nil
+	}
+	if inference.Status == types.InferenceStatus_STARTED {
+		k.LogError("Validation: Inference not finished", "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
 
@@ -32,41 +38,87 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantNotFound
 	}
 
-	if executor.Address == msg.Creator {
+	if executor.Address == msg.Creator && !msg.Revalidation {
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
 	passed := msg.Value > PassValue
+	needsRevalidation := false
 
-	if passed {
+	k.LogInfo("Validation: Validating inner loop", "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
+	if msg.Revalidation {
+		return k.revalidate(passed, inference, msg, ctx)
+	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
 		executor.ValidatedInferences++
 	} else {
-		inference.Status = types.InferenceStatus_INVALIDATED
-		executor.InvalidatedInferences++
-		executor.CoinBalance -= inference.ActualCost
-		// We need to refund the cost, so we have to lookup the person who paid
-		payer, found := k.GetParticipant(ctx, inference.ReceivedBy)
-		if !found {
-			return nil, types.ErrParticipantNotFound
+		inference.Status = types.InferenceStatus_VOTING
+		proposalDetails, err := k.startValidationVote(ctx, &inference, msg.Creator)
+		if err != nil {
+			return nil, err
 		}
-		if payer.Address == executor.Address {
-			// It is possible that a participant returns an invalid
-			// inference for it's own self-inference
-			executor.RefundBalance += inference.ActualCost
-		} else {
-			payer.RefundBalance += inference.ActualCost
-			k.SetParticipant(ctx, payer)
-		}
+		inference.ProposalDetails = proposalDetails
+		needsRevalidation = true
 	}
 	// Where will we get this number? How much does it vary by model?
 
 	executor.Status = calculateStatus(FalsePositiveRate, executor)
 	k.SetParticipant(ctx, executor)
 
+	k.LogInfo("Validation: Saving inference", "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
 	k.SetInference(ctx, inference)
 
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"inference_validation",
+			sdk.NewAttribute("inference_id", msg.InferenceId),
+			sdk.NewAttribute("validator", msg.Creator),
+			sdk.NewAttribute("needs_revalidation", strconv.FormatBool(needsRevalidation)),
+			sdk.NewAttribute("passed", strconv.FormatBool(passed)),
+		))
 	return &types.MsgValidationResponse{}, nil
+}
+
+func (k msgServer) revalidate(passed bool, inference types.Inference, msg *types.MsgValidation, ctx sdk.Context) (*types.MsgValidationResponse, error) {
+	invalidateOption := group.VOTE_OPTION_YES
+	revalidationOption := group.VOTE_OPTION_NO
+	if passed {
+		invalidateOption = group.VOTE_OPTION_NO
+		revalidationOption = group.VOTE_OPTION_YES
+	}
+	voteMsg := &group.MsgVote{
+		ProposalId: inference.ProposalDetails.InvalidatePolicyId,
+		Voter:      msg.Creator,
+		Option:     invalidateOption,
+		Metadata:   "Invalidate inference " + inference.InferenceId,
+		Exec:       group.Exec_EXEC_TRY,
+	}
+	err := k.vote2(ctx, voteMsg)
+	if err != nil {
+		return nil, err
+	}
+	voteMsg.ProposalId = inference.ProposalDetails.ReValidatePolicyId
+	voteMsg.Option = revalidationOption
+	voteMsg.Metadata = "Revalidate inference " + inference.InferenceId
+	err = k.vote2(ctx, voteMsg)
+	if err != nil {
+		return nil, err
+	}
+	return &types.MsgValidationResponse{}, nil
+}
+func (k msgServer) vote2(ctx sdk.Context, vote *group.MsgVote) error {
+	k.LogInfo("Validation: Voting", "vote", vote)
+	_, err := k.group.Vote(ctx, vote)
+	if err != nil {
+		if err.Error() == "proposal not open for voting: invalid value" {
+			k.LogInfo("Validation: Proposal already decided", "vote", vote)
+			return nil
+		}
+		k.LogError("Validation: Error voting", "error", err, "vote", vote)
+		return err
+	}
+	k.LogInfo("Validation: Voted on validation", "vote", vote)
+	return nil
 }
 
 func calculateStatus(falsePositiveRate float64, participant types.Participant) (status types.ParticipantStatus) {

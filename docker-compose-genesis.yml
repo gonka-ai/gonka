@@ -6,6 +6,9 @@ services:
       - ./prod-genesis:/root/.inference
     networks:
       - chain-public
+    ports:
+      - "26656:26656" #p2p
+      - "26657:26657" #rpc
 
   genesis-api:
     image: dapi-join
@@ -16,6 +19,7 @@ services:
       - "8080:8080"
     environment:
       - KEY_NAME=genesis
+      - NODE_HOST=genesis-node
     networks:
       - chain-public
 

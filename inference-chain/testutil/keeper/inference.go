@@ -1,7 +1,7 @@
 package keeper
 
 import (
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -27,7 +27,8 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSetMock := NewMockValidatorSet(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock)
+	groupMock := NewMockGroupMessageKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
@@ -35,6 +36,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 type InferenceMocks struct {
 	BankKeeper    *MockBankEscrowKeeper
 	AccountKeeper *MockAccountKeeper
+	GroupKeeper   *MockGroupMessageKeeper
 }
 
 func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
@@ -42,10 +44,12 @@ func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, Inf
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSet := NewMockValidatorSet(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet)
+	groupMock := NewMockGroupMessageKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock)
 	mocks := InferenceMocks{
 		BankKeeper:    escrowKeeper,
 		AccountKeeper: accountKeeperMock,
+		GroupKeeper:   groupMock,
 	}
 	return keep, context, mocks
 }
@@ -55,6 +59,7 @@ func InferenceKeeperWithMock(
 	bankMock *MockBankEscrowKeeper,
 	accountKeeper types.AccountKeeper,
 	validatorSet types.ValidatorSet,
+	groupMock types.GroupMessageKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -74,6 +79,7 @@ func InferenceKeeperWithMock(
 		authority.String(),
 		bankMock,
 		nil,
+		groupMock,
 		validatorSet,
 		nil,
 		accountKeeper,

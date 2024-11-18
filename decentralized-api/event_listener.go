@@ -7,11 +7,19 @@ import (
 	cosmosclient "decentralized-api/cosmosclient"
 	"decentralized-api/poc"
 	"encoding/json"
+	fmt "fmt"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"log"
 	"log/slog"
 	"net/url"
+	"strconv"
+	"time"
+)
+
+const (
+	finishInferenceAction = "/inference.inference.MsgFinishInference"
+	validationAction      = "/inference.inference.MsgValidation"
 )
 
 func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, config apiconfig.Config) {
@@ -25,17 +33,9 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 	defer ws.Close()
 
 	// Subscribe to custom events
-	subscribeMsg := `{"jsonrpc": "2.0", "method": "subscribe", "id": "1", "params": ["tm.event='Tx' AND message.action='/inference.inference.MsgFinishInference'"]}`
-	if err = ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
-		slog.Error("Failed to subscribe to a websocket", "error", err)
-		log.Fatalf("Failed to subscribe to a websocket. %v", err)
-	}
-
-	subscribeMsg2 := `{"jsonrpc": "2.0", "method": "subscribe", "id": "2", "params": ["tm.event='NewBlock'"]}`
-	if err = ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg2)); err != nil {
-		slog.Error("Failed to subscribe to a websocket", "error", err)
-		log.Fatalf("Failed to subscribe to a websocket. %v", err)
-	}
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(ws, "tm.event='NewBlock'")
+	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 
 	pubKey, err := transactionRecorder.Account.PubKey()
 	if err != nil {
@@ -71,13 +71,55 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
 			poc.ProcessNewBlockEvent(pocOrchestrator, nodePocOrchestrator, &event, transactionRecorder)
 		case "tendermint/event/Tx":
-			slog.Debug("New Tx event received", "type", event.Result.Data.Type)
 			go func() {
-				SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
+				handleMessage(nodeBroker, transactionRecorder, event)
 			}()
 		default:
 			slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
 		}
+	}
+}
+
+func handleMessage(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, event chainevents.JSONRPCResponse) {
+	if waitForEventHeight(event) {
+		return
+	}
+
+	var action = event.Result.Events["message.action"][0]
+	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
+	// Get the keys of the map event.Result.Events:
+	for key := range event.Result.Events {
+		for i, attr := range event.Result.Events[key] {
+			slog.Debug("EventValue", "key", key, "attr", attr, "index", i)
+		}
+	}
+	switch action {
+	case finishInferenceAction:
+		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
+	case validationAction:
+		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	}
+}
+
+func waitForEventHeight(event chainevents.JSONRPCResponse) bool {
+	heightString := event.Result.Events["tx.height"][0]
+	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
+	if err != nil {
+		slog.Error("Failed to parse height", "error", err)
+		return true
+	}
+	for poc.CurrentHeight < expectedHeight {
+		slog.Info("Height race condition! Waiting for height to catch up", "currentHeight", poc.CurrentHeight, "expectedHeight", expectedHeight)
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+func subscribeToEvents(ws *websocket.Conn, query string) {
+	subscribeMsg := fmt.Sprintf(`{"jsonrpc": "2.0", "method": "subscribe", "id": "1", "params": ["%s"]}`, query)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
+		slog.Error("Failed to subscribe to a websocket", "error", err)
+		log.Fatalf("Failed to subscribe to a websocket. %v", err)
 	}
 }
 

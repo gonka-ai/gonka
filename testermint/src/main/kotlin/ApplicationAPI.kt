@@ -27,6 +27,7 @@ import java.net.URL
 data class ApplicationAPI(val url: String, override val config: ApplicationConfig) : HasConfig {
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val resp = Fuel.get("$url/v1/participants")
+            .timeoutRead(1000*60)
             .responseObject<ParticipantsResponse>(gsonDeserializer(gsonSnakeCase))
         logResponse(resp)
         resp.third.get().participants
@@ -64,6 +65,8 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
                 .header("Authorization", signature)
+                .timeout(1000*60)
+                .timeoutRead(1000*60)
                 .responseObject<OpenAIResponse>(gsonDeserializer(gsonSnakeCase))
             logResponse(response)
             response.third.get()
@@ -83,6 +86,13 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
             .jsonBody("{\"inference_id\": \"$inferenceId\"}")
             .response()
         logResponse(response)
+    }
+
+    fun setNodesTo(node: InferenceNode) {
+        val nodes = getNodes()
+        if (nodes.all { it.node.id == node.id }) return
+        nodes.forEach { removeNode(it.node.id) }
+        addNode(node)
     }
 
     fun getNodes(): List<NodeResponse> =
@@ -119,18 +129,18 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
 fun logResponse(reqData: Triple<Request, Response, Result<*, FuelError>>) {
     val (request, response, result) = reqData
-    Logger.debug("Request: ${request.method} ${request.url}")
-    Logger.trace("Request headers: ${request.headers}")
-    Logger.trace("Request data: ${request.body.asString("application/json")}")
-    Logger.debug("Response: ${response.statusCode} ${response.responseMessage}")
-    Logger.trace("Response headers: ${response.headers}")
+    Logger.debug("Request: {} {}", request.method, request.url)
+    Logger.trace("Request headers: {}", request.headers)
+    Logger.trace("Request data: {}", request.body.asString("application/json"))
+    Logger.debug("Response: {} {}", response.statusCode, response.responseMessage)
+    Logger.trace("Response headers: {}", response.headers)
     if (result is Result.Failure) {
-        Logger.error(result.getException(), "Error making request to ${request.url}")
-        Logger.error("Response Data: ${response.data.decodeToString()}")
+        Logger.error(result.getException(), "Error making request: url={}", request.url)
+        Logger.error("Response Data: {}", response.data.decodeToString())
         return
     }
 
-    Logger.trace("Response Data: ${result.get()}")
+    Logger.trace("Response Data: {}", result.get())
 }
 
 fun stream(url: String, address: String, signature: String, jsonBody: String): List<String> {
@@ -167,7 +177,7 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
 
         reader.close()
     } else {
-        Logger.error("Failed to connect: HTTP $responseCode")
+        Logger.error("Failed to connect to API: ResponseCode={}", responseCode)
     }
 
     connection.disconnect()

@@ -15,13 +15,17 @@ jobs:
       run:
         working-directory: ./inference-chain
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
           go-version: '^1.22.2' # Replace with your Go version
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Clone cosmos-sdk repo with specific branch
+        run: |
+          git clone --branch release/v0.50.x https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Cache Go modules
         uses: actions/cache@v2
@@ -31,11 +35,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install dependencies
-        run: go mod download
+      - name: Go Mod Verify
+        run: go mod verify
+
+      - name: Go Mod Tidy
+        run: go mod tidy
 
       - name: Build
-        run: go build ./...
+        run: go build -o ./build/inferenced ./cmd/inferenced/main.go
 
       - name: Test
         run: go test ./... -v
@@ -48,6 +55,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Clone cosmos-sdk repo with specific branch
+        run: |
+          git clone --branch release/v0.50.x https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Set up Go
         uses: actions/setup-go@v2

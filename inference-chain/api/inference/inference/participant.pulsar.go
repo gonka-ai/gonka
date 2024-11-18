@@ -423,8 +423,8 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.CoinBalance != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.CoinBalance)
+	if x.CoinBalance != int64(0) {
+		value := protoreflect.ValueOfInt64(x.CoinBalance)
 		if !f(fd_Participant_coinBalance, value) {
 			return
 		}
@@ -435,8 +435,8 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.RefundBalance != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.RefundBalance)
+	if x.RefundBalance != int64(0) {
+		value := protoreflect.ValueOfInt64(x.RefundBalance)
 		if !f(fd_Participant_refundBalance, value) {
 			return
 		}
@@ -487,11 +487,11 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.Participant.invalidatedInferences":
 		return x.InvalidatedInferences != uint64(0)
 	case "inference.inference.Participant.coinBalance":
-		return x.CoinBalance != uint64(0)
+		return x.CoinBalance != int64(0)
 	case "inference.inference.Participant.validatorKey":
 		return x.ValidatorKey != ""
 	case "inference.inference.Participant.refundBalance":
-		return x.RefundBalance != uint64(0)
+		return x.RefundBalance != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -539,11 +539,11 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.Participant.invalidatedInferences":
 		x.InvalidatedInferences = uint64(0)
 	case "inference.inference.Participant.coinBalance":
-		x.CoinBalance = uint64(0)
+		x.CoinBalance = int64(0)
 	case "inference.inference.Participant.validatorKey":
 		x.ValidatorKey = ""
 	case "inference.inference.Participant.refundBalance":
-		x.RefundBalance = uint64(0)
+		x.RefundBalance = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -616,13 +616,13 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.Participant.coinBalance":
 		value := x.CoinBalance
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Participant.validatorKey":
 		value := x.ValidatorKey
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.Participant.refundBalance":
 		value := x.RefundBalance
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -680,11 +680,11 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 	case "inference.inference.Participant.invalidatedInferences":
 		x.InvalidatedInferences = value.Uint()
 	case "inference.inference.Participant.coinBalance":
-		x.CoinBalance = value.Uint()
+		x.CoinBalance = value.Int()
 	case "inference.inference.Participant.validatorKey":
 		x.ValidatorKey = value.Interface().(string)
 	case "inference.inference.Participant.refundBalance":
-		x.RefundBalance = value.Uint()
+		x.RefundBalance = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -800,11 +800,11 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 	case "inference.inference.Participant.invalidatedInferences":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.Participant.coinBalance":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Participant.validatorKey":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Participant.refundBalance":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -1768,7 +1768,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.CoinBalance |= uint64(b&0x7F) << shift
+					x.CoinBalance |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1819,7 +1819,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.RefundBalance |= uint64(b&0x7F) << shift
+					x.RefundBalance |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1948,9 +1948,9 @@ type Participant struct {
 	ValidatedInferences   uint64            `protobuf:"varint,14,opt,name=validatedInferences,proto3" json:"validatedInferences,omitempty"`
 	InvalidatedInferences uint64            `protobuf:"varint,15,opt,name=invalidatedInferences,proto3" json:"invalidatedInferences,omitempty"`
 	// I don't see how a negative balance makes sense
-	CoinBalance   uint64 `protobuf:"varint,16,opt,name=coinBalance,proto3" json:"coinBalance,omitempty"`
+	CoinBalance   int64  `protobuf:"varint,16,opt,name=coinBalance,proto3" json:"coinBalance,omitempty"`
 	ValidatorKey  string `protobuf:"bytes,17,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
-	RefundBalance uint64 `protobuf:"varint,18,opt,name=refundBalance,proto3" json:"refundBalance,omitempty"`
+	RefundBalance int64  `protobuf:"varint,18,opt,name=refundBalance,proto3" json:"refundBalance,omitempty"`
 }
 
 func (x *Participant) Reset() {
@@ -2078,7 +2078,7 @@ func (x *Participant) GetInvalidatedInferences() uint64 {
 	return 0
 }
 
-func (x *Participant) GetCoinBalance() uint64 {
+func (x *Participant) GetCoinBalance() int64 {
 	if x != nil {
 		return x.CoinBalance
 	}
@@ -2092,7 +2092,7 @@ func (x *Participant) GetValidatorKey() string {
 	return ""
 }
 
-func (x *Participant) GetRefundBalance() uint64 {
+func (x *Participant) GetRefundBalance() int64 {
 	if x != nil {
 		return x.RefundBalance
 	}
@@ -2151,11 +2151,11 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x73, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64,
 	0x61, 0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x20,
 	0x0a, 0x0b, 0x63, 0x6f, 0x69, 0x6e, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x10, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x0b, 0x63, 0x6f, 0x69, 0x6e, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65,
+	0x01, 0x28, 0x03, 0x52, 0x0b, 0x63, 0x6f, 0x69, 0x6e, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65,
 	0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79,
 	0x18, 0x11, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f,
 	0x72, 0x4b, 0x65, 0x79, 0x12, 0x24, 0x0a, 0x0d, 0x72, 0x65, 0x66, 0x75, 0x6e, 0x64, 0x42, 0x61,
-	0x6c, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x12, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x72, 0x65, 0x66,
+	0x6c, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x12, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0d, 0x72, 0x65, 0x66,
 	0x75, 0x6e, 0x64, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x1a, 0x43, 0x0a, 0x15, 0x50, 0x72,
 	0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x45, 0x6e,
 	0x74, 0x72, 0x79, 0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,

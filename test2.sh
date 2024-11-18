@@ -54,6 +54,7 @@ genesis_node_id=$(docker exec genesis-node inferenced tendermint show-node-id)
 echo "genesis_node_id=$genesis_node_id"
 cp $BASE_DIR/config/genesis.json ./inference-chain/build/genesis.json
 echo "Genesis file copied"
+export SEEDS="$genesis_node_id@genesis-node:26656"
 echo SEEDS="$genesis_node_id@genesis-node:26656" > ./inference-chain/build/config.env
 echo "Genesis node id added to config.env"
 echo "ADD_ENDPOINT=\"http://genesis-node:$PORT\"" >> ./inference-chain/build/config.env
@@ -66,9 +67,15 @@ export NODE_CONFIG=$NODE_CONFIG
 export ADD_ENDPOINT="http://0.0.0.0:$PORT"
 export PUBLIC_URL="http://join1-api:8080"
 export PORT=8081
+export SEED_IP="genesis-node"
+export EXTERNAL_SEED_IP="0.0.0.0"
 ./launch_chain.sh
 export KEY_NAME=join2
 export PORT=8082
 export PUBLIC_URL="http://join2-api:8080"
 ./launch_chain.sh
 
+
+if [ "$(whoami)" = "johnlong" ]; then
+  curl -X POST "https://maker.ifttt.com/trigger/pushover_alert/with/key/bSVa981BFD2BtZZhn3DnTe?value1=TestRead&value2=Inference-ignite"
+fi

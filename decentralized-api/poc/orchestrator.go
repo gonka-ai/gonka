@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
 	"sync"
@@ -158,6 +159,8 @@ func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
+var CurrentHeight = int64(0)
+
 func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
@@ -168,30 +171,32 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 	blockHeight, err := getBlockHeight(data)
 	if err != nil {
-		log.Printf("Failed to get blockHeight from event data. %v", err)
+		slog.Error("Failed to get blockHeight from event data", "error", err)
 		return
 	}
+	CurrentHeight = blockHeight
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
-		log.Printf("Failed to get BlockHash from event data. %v", err)
+		slog.Error("Failed to get blockHash from event data", "error", err)
 		return
 	}
 
-	log.Printf("New block event received. blockHeight = %d, BlockHash = %s", blockHeight, blockHash)
+	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
-		log.Printf("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
+		slog.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
 		nodePoCOrchestrator.Start(blockHeight, blockHash)
 
+
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
-		log.Printf("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
+		slog.Info("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.Stop()

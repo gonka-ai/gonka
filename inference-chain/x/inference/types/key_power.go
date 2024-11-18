@@ -6,7 +6,8 @@ var _ binary.ByteOrder
 
 const (
 	// PowerKeyPrefix is the prefix to retrieve all Participant
-	PowerKeyPrefix = "Power/value/"
+	PowerKeyPrefix   = "Power/value/"
+	EpochGroupPrefix = "Epoch/group/"
 )
 
 // PowerKey returns the store key to retrieve a Power from the index fields

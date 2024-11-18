@@ -47,6 +47,14 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgSubmitNewUnfundedParticipant int = 100
 
+	opWeightMsgInvalidateInference = "op_weight_msg_invalidate_inference"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgInvalidateInference int = 100
+
+	opWeightMsgRevalidateInference = "op_weight_msg_revalidate_inference"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgRevalidateInference int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -136,6 +144,28 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgSubmitNewUnfundedParticipant(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgInvalidateInference int
+	simState.AppParams.GetOrGenerate(opWeightMsgInvalidateInference, &weightMsgInvalidateInference, nil,
+		func(_ *rand.Rand) {
+			weightMsgInvalidateInference = defaultWeightMsgInvalidateInference
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgInvalidateInference,
+		inferencesimulation.SimulateMsgInvalidateInference(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgRevalidateInference int
+	simState.AppParams.GetOrGenerate(opWeightMsgRevalidateInference, &weightMsgRevalidateInference, nil,
+		func(_ *rand.Rand) {
+			weightMsgRevalidateInference = defaultWeightMsgRevalidateInference
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgRevalidateInference,
+		inferencesimulation.SimulateMsgRevalidateInference(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -189,6 +219,22 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgSubmitNewUnfundedParticipant,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgSubmitNewUnfundedParticipant(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgInvalidateInference,
+			defaultWeightMsgInvalidateInference,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgInvalidateInference(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgRevalidateInference,
+			defaultWeightMsgRevalidateInference,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgRevalidateInference(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

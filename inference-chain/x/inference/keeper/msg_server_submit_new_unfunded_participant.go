@@ -48,9 +48,9 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 	if newParticipant.GetInferenceUrl() == "" {
 		// Consumer only!
 		k.LogInfo("Funding new consumer", "consumer", newParticipant)
-		starterAmount := DefaultMaxTokens * TokenCost * FaucetRequests
-		starterCoins := sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, int64(starterAmount)))
-		err := k.MintRewardCoins(ctx, uint64(starterAmount))
+		starterAmount := int64(DefaultMaxTokens * TokenCost * FaucetRequests)
+		starterCoins := sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, starterAmount))
+		err := k.MintRewardCoins(ctx, starterAmount)
 		if err != nil {
 			k.LogError("Error minting coins", "error", err)
 			return nil, err
