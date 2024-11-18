@@ -1,6 +1,9 @@
 package types
 
-import "strconv"
+import (
+	"github.com/google/uuid"
+	"strconv"
+)
 
 const PocBatchKeyPrefix = "PoCBatch/value/"
 
@@ -15,4 +18,8 @@ func PoCBatchKey(pocStageStartBlockHeight int64, participantIndex string, batchI
 	key = append(key, []byte("/")...)
 
 	return key
+}
+
+func GenerateBatchID() string {
+	return uuid.New().String()
 }
