@@ -74,6 +74,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
 	mux.HandleFunc("/v1/poc-batches/generated", wrapSubmitPocBatches())
+	mux.HandleFunc("/v1/poc-batches/validated", wrapSubmitValidatedBatch())
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
@@ -1079,6 +1080,35 @@ func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
 
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			slog.Error("Failed to decode request body of type ProofBatch", "error", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		slog.Info("ProofBatch received: %v", body)
+		// TODO: save to BC
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+type ValidatedBatch struct {
+	ProofBatch // Inherits from ProofBatch
+
+	// New fields
+	ReceivedDist      []float64 `json:"received_dist"`
+	RTarget           float64   `json:"r_target"`
+	FraudThreshold    float64   `json:"fraud_threshold"`
+	NInvalid          int64     `json:"n_invalid"`
+	ProbabilityHonest float64   `json:"probability_honest"`
+	FraudDetected     bool      `json:"fraud_detected"`
+}
+
+func wrapSubmitValidatedBatch() func(w http.ResponseWriter, request *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		var body ValidatedBatch
+
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			slog.Error("Failed to decode request body of type ValidatedBatch", "error", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
