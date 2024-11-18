@@ -119,6 +119,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a revalidateInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
 				},
+				{
+					RpcMethod:      "SubmitPocBatch",
+					Use:            "submit-poc-batch [poc-stage-start-block-height] [nonces] [dist]",
+					Short:          "Send a SubmitPocBatch tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStageStartBlockHeight"}, {ProtoField: "nonces"}, {ProtoField: "dist"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
