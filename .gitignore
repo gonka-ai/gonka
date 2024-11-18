@@ -11,6 +11,7 @@ prod-sim/
 gcp-prod-sim/
 decentralized-api/build/
 decentralized-api/dist/
+decentralized-api/responses/
 inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api
