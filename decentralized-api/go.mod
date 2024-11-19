@@ -5,6 +5,7 @@ go 1.22.2
 require (
 	github.com/cometbft/cometbft v0.38.11
 	github.com/cosmos/cosmos-sdk v0.50.8
+	github.com/go-errors/errors v1.4.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/ignite/cli/v28 v28.5.0
