@@ -7,7 +7,7 @@ import (
 )
 
 func TestSubmitPoC(t *testing.T) {
-	k, ctx, mocks := keepertest.InferenceKeeperReturningMock(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 	_ = mocks
 	ms := setupMsgServerWithKeeper(k)
 
