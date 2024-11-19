@@ -51,6 +51,7 @@ func (eg *EpochGroup) submitValidationProposals(ctx sdk.Context, inferenceId str
 	return &types.ProposalDetails{
 		InvalidatePolicyId: invalidateResponse.ProposalId,
 		ReValidatePolicyId: revalidateResponse.ProposalId,
+		PolicyAddress:      eg.GroupData.EpochPolicy,
 	}, nil
 }
 

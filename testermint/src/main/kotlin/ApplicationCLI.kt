@@ -282,14 +282,14 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
 
         if (logEntry.contains("INFO+")) {
             Logger.info(logEntry)
-        } else if (logEntry.contains("INF") || logEntry.contains(" INFO ")) {
+        } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
             // We map this to debug as there is a LOT of info level logs
             Logger.debug(logEntry)
-        } else if (logEntry.contains("ERR") || logEntry.contains(" ERROR ")) {
+        } else if (logEntry.contains("ERR ") || logEntry.contains(" ERROR ")) {
             Logger.error(logEntry)
-        } else if (logEntry.contains("DBG") || logEntry.contains(" DEBUG ")) {
+        } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
             Logger.debug(logEntry)
-        } else if (logEntry.contains("WRN") || logEntry.contains(" WARN ")) {
+        } else if (logEntry.contains("WRN ") || logEntry.contains(" WARN ")) {
             Logger.warn(logEntry)
         } else {
             Logger.trace(logEntry)
