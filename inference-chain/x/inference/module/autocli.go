@@ -60,6 +60,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
 				},
 
+				{
+					RpcMethod:      "PocBatchesForStage",
+					Use:            "poc-batches-for-stage [block-height]",
+					Short:          "Query pocBatchesForStage",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

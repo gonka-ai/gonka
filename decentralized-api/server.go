@@ -1207,7 +1207,8 @@ func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Response
 	slog.Debug("Requesting PoC batches.", "epoch", value)
 
 	queryClient := recorder.NewInferenceQueryClient()
-	response, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: address})
+	// ignite scaffold query pocBatchesForStage blockHeight:int
+	response, err := queryClient.PocBatchesForStage(recorder.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: value})
 	if err != nil {
 		slog.Error("Failed to get PoC batches.", "epoch", value)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
