@@ -149,6 +149,6 @@ message QueryPocBatchesForStageResponse {
 }
 
 message PoCBatchesWithParticipants {
-  string participant = 1 [(gogoproto.nullable) = false];
+  string participant = 1;
   repeated PoCBatch pocBatch = 2 [(gogoproto.nullable) = false];
 }

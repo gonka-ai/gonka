@@ -22,5 +22,15 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 		return nil, status.Error(codes.Internal, "failed to get PoC batches")
 	}
 
-	return &types.QueryPocBatchesForStageResponse{}, nil
+	pocBatchesWithParticipants := make([]types.PoCBatchesWithParticipants, 0, len(pocBatches))
+	for participantIndex, batches := range pocBatches {
+		pocBatchesWithParticipants = append(pocBatchesWithParticipants, types.PoCBatchesWithParticipants{
+			Participant: participantIndex,
+			PocBatch:    batches,
+		})
+	}
+
+	return &types.QueryPocBatchesForStageResponse{
+		PocBatch: pocBatchesWithParticipants,
+	}, nil
 }
