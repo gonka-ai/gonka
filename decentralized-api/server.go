@@ -1194,7 +1194,7 @@ func parseValidatedUrl(input string) (string, error) {
 func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
 	// Get what's after /v1/poc/batches/
 	epoch := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	slog.Debug("postPoCBatches", "epoch", epoch)
+	slog.Debug("getPoCBatches", "epoch", epoch)
 
 	// Parse int64 from epoch:
 	value, err := strconv.ParseInt(epoch, 10, 64)

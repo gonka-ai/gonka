@@ -16,8 +16,11 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	pocBatches, err := k.GetBatchesByPoCStage(ctx, req.BlockHeight)
+	if err != nil {
+		k.LogError("failed to get PoC batches", "err", err)
+		return nil, status.Error(codes.Internal, "failed to get PoC batches")
+	}
 
 	return &types.QueryPocBatchesForStageResponse{}, nil
 }
