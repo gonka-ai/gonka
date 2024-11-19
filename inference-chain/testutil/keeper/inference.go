@@ -39,7 +39,7 @@ type InferenceMocks struct {
 	GroupKeeper   *MockGroupMessageKeeper
 }
 
-func InferenceKeeperReturningMock(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
+func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
 	ctrl := gomock.NewController(t)
 	escrowKeeper := NewMockBankEscrowKeeper(ctrl)
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
