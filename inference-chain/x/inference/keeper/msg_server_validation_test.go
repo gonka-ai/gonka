@@ -60,14 +60,14 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
 		ProposalId: 1,
 		Voter:      testutil.Requester,
-		Option:     group.VOTE_OPTION_NO,
+		Option:     group.VOTE_OPTION_YES,
 		Metadata:   "Invalidate inference " + INFERENCE_ID,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
 	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
 		ProposalId: 2,
 		Voter:      testutil.Requester,
-		Option:     group.VOTE_OPTION_YES,
+		Option:     group.VOTE_OPTION_NO,
 		Metadata:   "Revalidate inference " + INFERENCE_ID,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
@@ -81,7 +81,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	inference, found = k.GetInference(ctx, INFERENCE_ID)
 
 	require.True(t, found)
-	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
 }
 
 func TestMsgServer_NoInference(t *testing.T) {
