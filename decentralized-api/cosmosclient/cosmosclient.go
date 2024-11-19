@@ -135,16 +135,28 @@ func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC)
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+// PRTODO: MsgSubmitPocBatch > MsgSubmitValidatedPoCBatch
+func (icc *InferenceCosmosClient) SubmitValidatedPoCBatch(transaction *inference.MsgSubmitPocBatch) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
+	defer sendTransactionMutex.Unlock()
+
 	slog.Debug("Start Broadcast", "id", id)
 	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
 	slog.Debug("Finish broadcast", "id", id)
-	sendTransactionMutex.Unlock()
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
 		return err

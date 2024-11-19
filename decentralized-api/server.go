@@ -73,8 +73,8 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
-	mux.HandleFunc("/v1/poc-batches/generated", wrapSubmitPocBatches())
-	mux.HandleFunc("/v1/poc-batches/validated", wrapSubmitValidatedBatch())
+	mux.HandleFunc("/v1/poc-batches/generated", wrapSubmitPocBatches(transactionRecorder))
+	mux.HandleFunc("/v1/poc-batches/validated", wrapSubmitValidatedBatch(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
@@ -1074,7 +1074,7 @@ type ProofBatch struct {
 	Dist        []float64 `json:"dist"`
 }
 
-func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
+func wrapSubmitPocBatches(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		var body ProofBatch
 
@@ -1084,8 +1084,19 @@ func wrapSubmitPocBatches() func(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 
-		slog.Info("ProofBatch received: %v", body)
-		// TODO: save to BC
+		slog.Info("ProofBatch received", "body", body)
+
+		msg := &inference.MsgSubmitPocBatch{
+			PocStageStartBlockHeight: body.ChainHeight,
+			Nonces:                   body.Nonces,
+			Dist:                     body.Dist,
+		}
+		err := recorder.SubmitPocBatch(msg)
+		if err != nil {
+			slog.Error("Failed to submit MsgSubmitPocBatch", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.WriteHeader(http.StatusOK)
 	}
@@ -1103,7 +1114,7 @@ type ValidatedBatch struct {
 	FraudDetected     bool      `json:"fraud_detected"`
 }
 
-func wrapSubmitValidatedBatch() func(w http.ResponseWriter, request *http.Request) {
+func wrapSubmitValidatedBatch(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		var body ValidatedBatch
 
@@ -1113,8 +1124,19 @@ func wrapSubmitValidatedBatch() func(w http.ResponseWriter, request *http.Reques
 			return
 		}
 
-		slog.Info("ProofBatch received: %v", body)
+		slog.Info("ValidatedProofBatch received", "body", body)
 		// TODO: save to BC
+		msg := &inference.MsgSubmitPocBatch{
+			PocStageStartBlockHeight: body.ChainHeight,
+			Nonces:                   body.Nonces,
+			Dist:                     body.Dist,
+		}
+		err := recorder.SubmitValidatedPoCBatch(msg)
+		if err != nil {
+			slog.Error("Failed to submit MsgSubmitValidatedPocBatch", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.WriteHeader(http.StatusOK)
 	}
