@@ -14,22 +14,8 @@ import (
 )
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
-	allPower := am.keeper.AllPower(ctx)
+	allPower := am.keeper.AllUpcomingPower(ctx)
 	am.LogInfo("Amount of power entries found.", "n", len(allPower))
-
-	lastGroupId := am.keeper.GetEpochGroupId(ctx)
-	if lastGroupId != 0 {
-		recentMembers, err := am.groupMsgServer.GroupMembers(ctx, &group.QueryGroupMembersRequest{
-			GroupId: lastGroupId,
-		})
-		if err != nil {
-			am.LogError("Error getting group members", "error", err)
-		} else {
-			for _, m := range recentMembers.Members {
-				am.LogInfo("Group member found.", "address", m.Member.Address, "weight", m.Member.Weight)
-			}
-		}
-	}
 
 	var activeParticipants []*types.ActiveParticipant
 	var computeResults []keeper.ComputeResult
@@ -74,7 +60,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		activeParticipants = append(activeParticipants, activeParticipant)
 	}
 
-	am.keeper.RemoveAllPower(ctx)
+	am.keeper.RemoveAllUpcomingPower(ctx)
 
 	if len(computeResults) == 0 {
 		am.LogWarn("No compute validators to set. Keeping validators and active participants the same.")

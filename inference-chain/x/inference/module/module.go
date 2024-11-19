@@ -166,6 +166,27 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to settle accounts", "error", err.Error())
 		}
 		am.SendNewValidatorWeightsToStaking(ctx, blockHeight)
+		newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
+		previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
+		am.LogInfo("NewEpochGroup", "blockHeight", blockHeight, "newGroupId", newGroupId)
+		am.keeper.SetEffectiveEpochGroupId(ctx, newGroupId)
+		am.keeper.SetPreviousEpochGroupId(ctx, previousGroupId)
+		am.keeper.SetUpcomingEpochGroupId(ctx, 0)
+	}
+
+	if proofofcompute.IsStartOfPoCStage(blockHeight) {
+		am.LogInfo("NewPocStart", "blockHeight", blockHeight)
+		newGroup, err := am.keeper.GetEpochGroup(ctx, blockHeight)
+		if err != nil {
+			am.LogError("Unable to create epoch group", "error", err.Error())
+			return err
+		}
+		err = newGroup.CreateGroup(ctx)
+		if err != nil {
+			am.LogError("Unable to create epoch group", "error", err.Error())
+			return err
+		}
+		am.keeper.SetUpcomingEpochGroupId(ctx, blockHeight)
 	}
 
 	return nil

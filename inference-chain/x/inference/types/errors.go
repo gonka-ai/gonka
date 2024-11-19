@@ -20,4 +20,5 @@ var (
 	ErrPocNonceNotAccepted                   = sdkerrors.Register(ModuleName, 1109, "POC nonce not accepted")
 	ErrAccountAlreadyExists                  = sdkerrors.Register(ModuleName, 1110, "account already exists")
 	ErrInferenceAlreadyInvalidated           = sdkerrors.Register(ModuleName, 1111, "inference already invalidated")
+	ErrCurrentEpochGroupNotFound             = sdkerrors.Register(ModuleName, 1112, "current epoch group not found")
 )

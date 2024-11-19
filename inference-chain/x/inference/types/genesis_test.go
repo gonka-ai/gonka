@@ -38,6 +38,14 @@ func TestGenesisState_Validate(t *testing.T) {
 						Index: "1",
 					},
 				},
+				EpochGroupDataList: []types.EpochGroupData{
+					{
+						PocStartBlockHeight: 0,
+					},
+					{
+						PocStartBlockHeight: 1,
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -65,6 +73,20 @@ func TestGenesisState_Validate(t *testing.T) {
 					},
 					{
 						Index: "0",
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated epochGroupData",
+			genState: &types.GenesisState{
+				EpochGroupDataList: []types.EpochGroupData{
+					{
+						PocStartBlockHeight: 0,
+					},
+					{
+						PocStartBlockHeight: 0,
 					},
 				},
 			},
