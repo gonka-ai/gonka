@@ -57,3 +57,11 @@ func shift(blockHeight int64) int64 {
 	// PRTODO: remove the shift!
 	return blockHeight + 90
 }
+
+func GetStartBlockHeightFromEndOfPocStage(blockHeight int64) int64 {
+	return blockHeight - endOfPocStage
+}
+
+func GetStartBlockHeightFromStartOfValStage(blockHeight int64) int64 {
+	return blockHeight - startOfPocValStage
+}

@@ -11,10 +11,6 @@ import (
 	"github.com/cometbft/cometbft/rpc/client/http"
 )
 
-func NewRpcClient(address string) (*http.HTTP, error) {
-	return http.New(address, "/websocket")
-}
-
 func QueryWithProof(rpcClient *http.HTTP, storeKey, dataKey string) (*coretypes.ResultABCIQuery, error) {
 	log.Printf("Querying store %s with key %s...\n", storeKey, dataKey)
 

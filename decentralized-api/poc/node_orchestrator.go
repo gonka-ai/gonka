@@ -2,9 +2,12 @@ package poc
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/broker"
+	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -26,9 +29,10 @@ type NodePoCOrchestrator struct {
 	HTTPClient   *http.Client
 	nodeBroker   *broker.Broker
 	callbackHost string
+	chainNodeUrl string
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, chainNodeUrl string) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
@@ -36,6 +40,7 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 		},
 		nodeBroker:   nodeBroker,
 		callbackHost: callbackHost,
+		chainNodeUrl: chainNodeUrl,
 	}
 }
 
@@ -88,7 +93,7 @@ var DefaultParams = Params{
 }
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
-	slog.Info("Starting PoC on nodes")
+	slog.Info("Starting PoC on nodes", "blockHeight", blockHeight, "blockHash", blockHash)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
 		// PRTODO: log error
@@ -108,16 +113,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 }
 
 func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
-	initDto := InitDto{
-		ChainHeight:    blockHeight,
-		ChainHash:      blockHash,
-		PublicKey:      o.pubKey,
-		BatchSize:      DefaultBatchSize,
-		RTarget:        DefaultRTarget,
-		FraudThreshold: DefaultFraudThreshold,
-		Params:         &DefaultParams,
-		URL:            o.getPocBatchesCallbackUrl(),
-	}
+	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocBatchesCallbackUrl())
 
 	initUrl, err := url.JoinPath(node.Url, InitGeneratePath)
 	if err != nil {
@@ -127,6 +123,19 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 	slog.Info("Sending init-generate request to node.", "url", initUrl, "initDto", initDto)
 
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
+}
+
+func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, callbackUrl string) InitDto {
+	return InitDto{
+		ChainHeight:    blockHeight,
+		ChainHash:      blockHash,
+		PublicKey:      o.pubKey,
+		BatchSize:      DefaultBatchSize,
+		RTarget:        DefaultRTarget,
+		FraudThreshold: DefaultFraudThreshold,
+		Params:         &DefaultParams,
+		URL:            callbackUrl,
+	}
 }
 
 func (o *NodePoCOrchestrator) Stop() {
@@ -157,15 +166,8 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
-func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHash string) (*http.Response, error) {
-	initDto := InitDto{
-		ChainHash: blockHash,
-		PublicKey: o.pubKey,
-		BatchSize: DefaultBatchSize,
-		RTarget:   DefaultRTarget,
-		URL:       o.getPocValidateCallbackUrl(),
-		Params:    &DefaultParams,
-	}
+func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
+	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocValidateCallbackUrl())
 
 	initUrl, err := url.JoinPath(node.Url, InitValidatePath)
 	if err != nil {
@@ -198,11 +200,15 @@ func sendPostRequest(client *http.Client, url string, payload any) (*http.Respon
 	return client.Do(req)
 }
 
-func (o *NodePoCOrchestrator) MoveToValidationStage(currentBlockHeight int64) {
-	// PRTODO: figure out original start blockHeight
-	startBlockHeight := int64(0)
-	// PRTODO: figure out original blockHash
-	blockHash := "asa"
+func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
+	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
+	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
+	if err != nil {
+		slog.Error("MoveToValidationStage. Failed to get block hash", "error", err)
+		return
+	}
+
+	slog.Info("Moving to PoC Validation Stage", "startOfPoCBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
 
 	slog.Info("Starting PoC Validation on nodes")
 	nodes, err := o.nodeBroker.GetNodes()
@@ -212,7 +218,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(currentBlockHeight int64) {
 	}
 
 	for _, n := range nodes {
-		resp, err := o.sendInitValidateRequest(n.Node, startBlockHeight, blockHash)
+		resp, err := o.sendInitValidateRequest(n.Node, startOfPoCBlockHeight, blockHash)
 		if err != nil {
 			slog.Error("Failed to send init-generate request to node", "node", n.Node.Url, "error", err)
 			continue
@@ -225,4 +231,18 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(currentBlockHeight int64) {
 
 func (o *NodePoCOrchestrator) ValidateReceivedBatches(currentBlockHeight int64) {
 
+}
+
+func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
+	client, err := cosmos_client.NewRpcClient(o.chainNodeUrl)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := client.Block(context.Background(), &height)
+	if err != nil {
+		return "", err
+	}
+
+	return block.Block.Hash().String(), err
 }

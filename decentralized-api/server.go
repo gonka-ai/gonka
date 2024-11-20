@@ -140,7 +140,7 @@ func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			return
 		}
 
-		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
+		rplClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
 		if err != nil {
 			slog.Error("Failed to create rpc client", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
