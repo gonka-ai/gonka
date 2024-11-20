@@ -18,6 +18,7 @@ const (
 	InitGeneratePath = "/api/v1/pow/init/generate"
 	InitValidatePath = "/api/v1/pow/init/validate"
 	StopPath         = "/api/v1/pow/stop"
+	InferenceUpPath  = "/api/v1/inference/up"
 
 	DefaultRTarget        = 1.390051443
 	DefaultBatchSize      = 8000
@@ -146,12 +147,19 @@ func (o *NodePoCOrchestrator) Stop() {
 	}
 
 	for _, n := range nodes {
-		resp, err := o.sendStopRequest(n.Node)
+		respStop, err := o.sendStopRequest(n.Node)
 		if err != nil {
 			slog.Error("Failed to send stop request to node", "node", n.Node.Url, "error", err)
 			continue
 		}
-		_ = resp
+		_ = respStop
+
+		respUp, err := o.sendInferenceUpRequest(n.Node)
+		if err != nil {
+			slog.Error("Failed to send inference/up request to node", "node", n.Node.Url, "error", err)
+			continue
+		}
+		_ = respUp
 	}
 }
 
@@ -164,6 +172,30 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
+}
+
+type InferenceUpDto struct {
+	Model string   `json:"model"`
+	Dtype string   `json:"dtype"`
+	Args  []string `json:"additional_args"`
+}
+
+func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode) (*http.Response, error) {
+	inferenceUpUrl, err := url.JoinPath(node.Url, InferenceUpPath)
+	if err != nil {
+		return nil, err
+	}
+
+	model := node.Models[0]
+	inferenceUpDto := InferenceUpDto{
+		Model: model,
+		Dtype: "float32",
+		Args:  []string{},
+	}
+
+	slog.Info("Sending inference/up request to node", "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
+
+	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
 
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
