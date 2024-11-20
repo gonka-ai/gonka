@@ -13,19 +13,16 @@ import (
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
+	"regexp"
+	"time"
+
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/go-errors/errors"
-	"regexp"
-	"time"
 
-	"github.com/google/uuid"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"log/slog"
@@ -33,6 +30,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type InferenceTransaction struct {
@@ -77,6 +79,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
 	mux.HandleFunc("/v1/poc-batches/", wrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
+	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
 		if err != nil {
@@ -1223,4 +1226,52 @@ func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Response
 	}
 
 	respondWithJson(w, response)
+}
+
+func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract address from URL path
+		address := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-by-address/")
+		if address == "" {
+			http.Error(w, "Address is required", http.StatusBadRequest)
+			return
+		}
+
+		slog.Debug("Getting pubkey for address", "address", address)
+
+		client := recorder.NewAuthQueryClient()
+
+		// Query the public key using the cosmos client
+		pubKey, err := cosmos_client.GetPubKeyByAddress(client, address)
+		if err != nil {
+			slog.Error("Failed to get public key", "address", address, "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		pubKeyString := cosmos_client.PubKeyToString(pubKey)
+		var addressFromPubKey = ""
+		addressFromPubKey, err = cosmos_client.PubKeyToAddress(cosmos_client.PubKeyToString(pubKey))
+		if err != nil {
+			slog.Error("Failed to get address from public key", "pubKey", pubKeyString, "error", err)
+		}
+
+		// Create response structure
+		response := struct {
+			Address           string `json:"address"`
+			PubKey            string `json:"pub_key"`
+			AddressFromPubKey string `json:"address_from_pub_key"`
+		}{
+			Address:           address,
+			PubKey:            pubKeyString,
+			AddressFromPubKey: addressFromPubKey,
+		}
+
+		respondWithJson(w, response)
+	}
 }
