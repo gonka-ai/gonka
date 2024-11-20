@@ -206,7 +206,9 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 	if proofofcompute.IsStartOfPoCValidationStage(blockHeight) {
 		slog.Info("IsStartOfPoCValidationStage")
 
-		nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
+		go func() {
+			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
+		}()
 
 		return
 	}

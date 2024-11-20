@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -15,10 +16,11 @@ import (
 )
 
 const (
-	InitGeneratePath = "/api/v1/pow/init/generate"
-	InitValidatePath = "/api/v1/pow/init/validate"
-	StopPath         = "/api/v1/pow/stop"
-	InferenceUpPath  = "/api/v1/inference/up"
+	InitGeneratePath  = "/api/v1/pow/init/generate"
+	InitValidatePath  = "/api/v1/pow/init/validate"
+	ValidateBatchPath = "/api/v1/pow/validate"
+	StopPath          = "/api/v1/pow/stop"
+	InferenceUpPath   = "/api/v1/inference/up"
 
 	DefaultRTarget        = 1.390051443
 	DefaultBatchSize      = 8000
@@ -31,9 +33,10 @@ type NodePoCOrchestrator struct {
 	nodeBroker   *broker.Broker
 	callbackHost string
 	chainNodeUrl string
+	cosmosClient *cosmos_client.InferenceCosmosClient
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, chainNodeUrl string) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
@@ -42,6 +45,7 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 		nodeBroker:   nodeBroker,
 		callbackHost: callbackHost,
 		chainNodeUrl: chainNodeUrl,
+		cosmosClient: cosmosClient,
 	}
 }
 
@@ -264,8 +268,71 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	}
 }
 
-func (o *NodePoCOrchestrator) ValidateReceivedBatches(currentBlockHeight int64) {
+func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
+	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromStartOfValStage(startOfValStageHeight)
+	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
+	if err != nil {
+		slog.Error("ValidateReceivedBatches. Failed to get block hash", "error", err)
+		return
+	}
 
+	// 1. GET ALL SUBMITTED BATCHES!
+	// batches, err := o.cosmosClient.GetBatchesByPoCStage(startOfPoCBlockHeight)
+	// FIXME: might be too long of a transaction, paging might be needed
+	queryClient := o.cosmosClient.NewInferenceQueryClient()
+	batches, err := queryClient.PocBatchesForStage(o.cosmosClient.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: startOfPoCBlockHeight})
+	if err != nil {
+		slog.Error("Failed to get PoC batches", "error", err)
+		return
+	}
+
+	nodes, err := o.nodeBroker.GetNodes()
+	if err != nil {
+		slog.Error("Failed to get nodes", "error", err)
+		return
+	}
+
+	if len(nodes) == 0 {
+		slog.Error("No nodes available to validate PoC batches")
+		return
+	}
+
+	for i, batch := range batches.PocBatch {
+		_ = batch
+
+		joinedBatch := ProofBatch{
+			PublicKey:   batch.PubKey,
+			ChainHash:   blockHash,
+			ChainHeight: startOfPoCBlockHeight,
+			Nonces:      nil,
+			Dist:        nil,
+		}
+
+		for _, b := range batch.PocBatch {
+			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
+			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
+		}
+
+		node := nodes[i%len(nodes)]
+
+		resp, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
+		if err != nil {
+			slog.Error("Failed to send validate batch request to node", "node", node.Node.Url, "error", err)
+			continue
+		}
+
+		_ = resp
+	}
+}
+
+// FIXME: copying ;( doesn't look good for large PoCBatch structures
+func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.InferenceNode, batch ProofBatch) (*http.Response, error) {
+	validateBatchUrl, err := url.JoinPath(node.Url, ValidateBatchPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return sendPostRequest(o.HTTPClient, validateBatchUrl, batch)
 }
 
 func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {

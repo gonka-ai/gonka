@@ -9,6 +9,7 @@ import (
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
+	"decentralized-api/poc"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1071,16 +1072,8 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 	return defaultValue
 }
 
-type ProofBatch struct {
-	PublicKey   string    `json:"public_key"`
-	ChainHash   string    `json:"chain_hash"`
-	ChainHeight int64     `json:"chain_height"`
-	Nonces      []int64   `json:"nonces"`
-	Dist        []float64 `json:"dist"`
-}
-
 func submitPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	var body ProofBatch
+	var body poc.ProofBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 		slog.Error("Failed to decode request body of type ProofBatch", "error", err)
@@ -1105,22 +1098,8 @@ func submitPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Respo
 	w.WriteHeader(http.StatusOK)
 }
 
-type ValidatedBatch struct {
-	ProofBatch // Inherits from ProofBatch
-
-	// New fields
-	ReceivedDist      []float64 `json:"received_dist"`
-	RTarget           float64   `json:"r_target"`
-	FraudThreshold    float64   `json:"fraud_threshold"`
-	NInvalid          int64     `json:"n_invalid"`
-	ProbabilityHonest float64   `json:"probability_honest"`
-	FraudDetected     bool      `json:"fraud_detected"`
-}
-
-func submitValidatedPoCBatches(participantAddress string, recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	slog.Debug("submitValidatedPoCBatches", "participantAddress", participantAddress)
-
-	var body ValidatedBatch
+func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+	var body poc.ValidatedBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 		slog.Error("Failed to decode request body of type ValidatedBatch", "error", err)
@@ -1166,17 +1145,8 @@ func postPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Respons
 	switch suffix {
 	case "generated":
 		submitPoCBatches(recorder, w, request)
-	default:
-		participantAddress, err := parseValidatedUrl(suffix)
-		if err != nil {
-			slog.Error("Failed to parse validated URL", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		submitValidatedPoCBatches(participantAddress, recorder, w, request)
-
-		return
+	case "validated":
+		submitValidatedPoCBatches(recorder, w, request)
 	}
 }
 
