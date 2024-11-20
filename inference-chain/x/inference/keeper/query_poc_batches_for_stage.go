@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"github.com/productscience/inference/x/inference/utils"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -24,9 +25,21 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 
 	pocBatchesWithParticipants := make([]types.PoCBatchesWithParticipants, 0, len(pocBatches))
 	for participantIndex, batches := range pocBatches {
+		acc := k.AccountKeeper.GetAccount(ctx, []byte(participantIndex))
+		if acc == nil {
+			continue
+		}
+
+		pubKey := acc.GetPubKey()
+		if pubKey == nil {
+			continue
+		}
+
 		pocBatchesWithParticipants = append(pocBatchesWithParticipants, types.PoCBatchesWithParticipants{
 			Participant: participantIndex,
 			PocBatch:    batches,
+			PubKey:      utils.PubKeyToString(pubKey),
+			HexPubKey:   utils.PubKeyToHexString(pubKey),
 		})
 	}
 
