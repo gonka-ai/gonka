@@ -36,7 +36,10 @@ func GetPubKeyByAddress(client auth.QueryClient, address string) (cryptotypes.Pu
 
 	// Unmarshal the account
 	var account auth.BaseAccount
-	cdc := codec.NewProtoCodec(types.NewInterfaceRegistry())
+	interfaceRegistry := types.NewInterfaceRegistry()
+	auth.RegisterInterfaces(interfaceRegistry)
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+
 	err = cdc.UnpackAny(res.Account, &account)
 	if err != nil {
 		slog.Error("Failed to unmarshal account: %v", err)

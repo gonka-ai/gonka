@@ -10,6 +10,7 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
@@ -1265,10 +1266,12 @@ func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(h
 		response := struct {
 			Address           string `json:"address"`
 			PubKey            string `json:"pub_key"`
+			HexPubKey         string `json:"hex_pub_key"`
 			AddressFromPubKey string `json:"address_from_pub_key"`
 		}{
 			Address:           address,
 			PubKey:            pubKeyString,
+			HexPubKey:         hex.EncodeToString(pubKey.Bytes()),
 			AddressFromPubKey: addressFromPubKey,
 		}
 
