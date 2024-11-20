@@ -197,3 +197,32 @@ func sendPostRequest(client *http.Client, url string, payload any) (*http.Respon
 
 	return client.Do(req)
 }
+
+func (o *NodePoCOrchestrator) MoveToValidationStage(currentBlockHeight int64) {
+	// PRTODO: figure out original start blockHeight
+	startBlockHeight := int64(0)
+	// PRTODO: figure out original blockHash
+	blockHash := "asa"
+
+	slog.Info("Starting PoC Validation on nodes")
+	nodes, err := o.nodeBroker.GetNodes()
+	if err != nil {
+		// PRTODO: log error
+		return
+	}
+
+	for _, n := range nodes {
+		resp, err := o.sendInitValidateRequest(n.Node, startBlockHeight, blockHash)
+		if err != nil {
+			slog.Error("Failed to send init-generate request to node", "node", n.Node.Url, "error", err)
+			continue
+		}
+
+		// PRTODO: analyze response somehow?
+		_ = resp
+	}
+}
+
+func (o *NodePoCOrchestrator) ValidateReceivedBatches(currentBlockHeight int64) {
+
+}

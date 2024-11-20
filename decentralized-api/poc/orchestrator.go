@@ -191,13 +191,28 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 		nodePoCOrchestrator.Start(blockHeight, blockHash)
 
-
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
-		slog.Info("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
+		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
+
+		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
+
+		return
+	}
+
+	if proofofcompute.IsStartOfPoCValidationStage(blockHeight) {
+		slog.Info("IsStartOfPoCValidationStage")
+
+		nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
+
+		return
+	}
+
+	if proofofcompute.IsEndOfPoCValidationStage(blockHeight) {
+		slog.Info("IsEndOfPoCValidationStage")
 
 		nodePoCOrchestrator.Stop()
 

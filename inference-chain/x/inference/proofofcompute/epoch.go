@@ -5,8 +5,10 @@ const (
 	EpochLength           = 100 * Multiplier
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 20 * Multiplier
-	pocExchangeDeadline   = endOfPocStage + 2
-	setNewValidatorsStage = pocExchangeDeadline + 1
+	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier
+	startOfPocValStage    = (endOfPocStage + 1) * Multiplier
+	endOfPocValStage      = (startOfPocValStage + 20) * Multiplier
+	setNewValidatorsStage = (endOfPocValStage + 1) * Multiplier
 )
 
 func IsStartOfPoCStage(blockHeight int64) bool {
@@ -27,6 +29,18 @@ func IsPoCExchangeWindow(startBlockHeight, currentBlockHeight int64) bool {
 
 	elapsedEpochs := currentBlockHeight - startBlockHeight
 	return isNotZeroEpoch(startBlockHeight) && elapsedEpochs > 0 && elapsedEpochs <= pocExchangeDeadline
+}
+
+func IsStartOfPoCValidationStage(blockHeight int64) bool {
+	blockHeight = shift(blockHeight)
+
+	return isNotZeroEpoch(blockHeight) && blockHeight%EpochLength == startOfPocValStage
+}
+
+func IsEndOfPoCValidationStage(blockHeight int64) bool {
+	blockHeight = shift(blockHeight)
+
+	return isNotZeroEpoch(blockHeight) && blockHeight%EpochLength == endOfPocValStage
 }
 
 func IsSetNewValidatorsStage(blockHeight int64) bool {
