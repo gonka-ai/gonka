@@ -97,6 +97,20 @@ var DefaultParams = Params{
 	SeqLen:           4,
 }
 
+var DevTestParams = Params{
+	Dim:              512,
+	NLayers:          16,
+	NHeads:           16,
+	NKVHeads:         16,
+	VocabSize:        8192,
+	FFNDimMultiplier: 1.3,
+	MultipleOf:       1024,
+	NormEps:          1e-05,
+	RopeTheta:        500000.0,
+	UseScaledRope:    true,
+	SeqLen:           4,
+}
+
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	slog.Info("Starting PoC on nodes", "blockHeight", blockHeight, "blockHash", blockHash)
 	nodes, err := o.nodeBroker.GetNodes()
@@ -138,7 +152,7 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, 
 		BatchSize:      DefaultBatchSize,
 		RTarget:        DefaultRTarget,
 		FraudThreshold: DefaultFraudThreshold,
-		Params:         &DefaultParams,
+		Params:         &DevTestParams,
 		URL:            callbackUrl,
 	}
 }
