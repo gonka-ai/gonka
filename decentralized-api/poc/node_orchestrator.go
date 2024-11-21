@@ -55,7 +55,7 @@ func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// PRTODO: This is a placeholder. Replace with actual URL.
-	return fmt.Sprintf("https://%s/v1/poc-validate-results", o.callbackHost)
+	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
 }
 
 type InitDto struct {
