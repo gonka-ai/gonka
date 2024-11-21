@@ -53,14 +53,16 @@ func isNotZeroEpoch(blockHeight int64) bool {
 	return blockHeight >= EpochLength
 }
 
+const shiftVal = 95
+
 func shift(blockHeight int64) int64 {
 	// PRTODO: remove the shift!
-	return blockHeight + 90
+	return blockHeight + shiftVal
 }
 
 func unshift(blockHeight int64) int64 {
 	// PRTODO: remove the shift!
-	return blockHeight - 90
+	return blockHeight - shiftVal
 }
 
 func GetStartBlockHeightFromEndOfPocStage(blockHeight int64) int64 {
