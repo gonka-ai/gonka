@@ -10,6 +10,7 @@ import (
 	fmt "fmt"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"log/slog"
 	"net/url"
@@ -37,20 +38,21 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 
-	pubKey, err := transactionRecorder.Account.PubKey()
+	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
 		slog.Error("Failed to get public key", "error", err)
 		return
 	}
+	pubKeyString := utils.PubKeyToHexString(pubKey)
 
 	slog.Debug("Initializing PoC orchestrator",
 		"name", transactionRecorder.Account.Name,
 		"address", transactionRecorder.Address,
-		"pubkey", pubKey)
+		"pubkey", pubKeyString)
 
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, proofofcompute.DefaultDifficulty)
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKey, nodeBroker, config.Api.Host, config.ChainNode.Url, &transactionRecorder)
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKeyString, nodeBroker, config.Api.Host, config.ChainNode.Url, &transactionRecorder)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 

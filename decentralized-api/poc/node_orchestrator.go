@@ -315,7 +315,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 		_ = batch
 
 		joinedBatch := ProofBatch{
-			PublicKey:   batch.PubKey,
+			PublicKey:   batch.HexPubKey,
 			ChainHash:   blockHash,
 			ChainHeight: startOfPoCBlockHeight,
 			Nonces:      nil,
@@ -329,6 +329,8 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 
 		node := nodes[i%len(nodes)]
 
+		slog.Debug("ValidateReceivedBatches. pubKey", "pubKey", batch.HexPubKey)
+		slog.Debug("ValidateReceivedBatches. sending batch", "node", node.Node.Url, "batch", joinedBatch)
 		resp, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
 		if err != nil {
 			slog.Error("Failed to send validate batch request to node", "node", node.Node.Url, "error", err)
