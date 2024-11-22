@@ -58,21 +58,38 @@ func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]Se
 	// Halve it that many times
 	totalRewardCoin := EpochNewCoin / math.Pow(2.0, float64(halvings))
 	totalWork := int64(0)
+	invalidatedBalance := int64(0)
 	for _, p := range participants {
-		totalWork += p.CoinBalance
+		// Do not count invalid participants work as "work", since it should not be part of the distributions
+		if p.CoinBalance > 0 && p.RefundBalance >= 0 && p.Status != types.ParticipantStatus_INVALID {
+			totalWork += p.CoinBalance
+		}
+		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_INVALID {
+			invalidatedBalance += p.CoinBalance
+		}
 	}
-	rewardInfo := RewardCoinInfo{
+	punishmentDistribution := DistributedCoinInfo{
+		totalWork:       totalWork,
+		totalRewardCoin: float64(invalidatedBalance),
+	}
+	rewardDistribution := DistributedCoinInfo{
 		totalWork:       totalWork,
 		totalRewardCoin: totalRewardCoin,
 	}
 	amounts := make([]SettleAmounts, len(participants))
+	distributions := make([]DistributedCoinInfo, 0)
+	distributions = append(distributions, punishmentDistribution)
+	distributions = append(distributions, rewardDistribution)
 	for i, p := range participants {
-		amounts[i] = getSettleAmount(&p, rewardInfo)
+		amounts[i] = getSettleAmount(&p, distributions)
+	}
+	if totalWork == 0 {
+		return amounts, 0, nil
 	}
 	return amounts, int64(totalRewardCoin), nil
 }
 
-func getSettleAmount(participant *types.Participant, rewardInfo RewardCoinInfo) SettleAmounts {
+func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoinInfo) SettleAmounts {
 	if participant.CoinBalance < 0 {
 		return SettleAmounts{
 			Participant: participant,
@@ -88,9 +105,20 @@ func getSettleAmount(participant *types.Participant, rewardInfo RewardCoinInfo) 
 	if participant.CoinBalance == 0 && participant.RefundBalance == 0 {
 		return SettleAmounts{Participant: participant}
 	}
+	if participant.Status == types.ParticipantStatus_INVALID {
+		return SettleAmounts{
+			Participant: participant,
+		}
+	}
 	workCoins := participant.CoinBalance
 	refundCoins := participant.RefundBalance
-	rewardCoins := rewardInfo.calculateBonusCoins(workCoins)
+	rewardCoins := int64(0)
+	for _, distribution := range rewardInfo {
+		if participant.Status == types.ParticipantStatus_INVALID {
+			continue
+		}
+		rewardCoins += distribution.calculateDistribution(workCoins)
+	}
 	return SettleAmounts{
 		RewardCoins: uint64(rewardCoins),
 		RefundCoins: uint64(refundCoins),
@@ -99,12 +127,12 @@ func getSettleAmount(participant *types.Participant, rewardInfo RewardCoinInfo) 
 	}
 }
 
-type RewardCoinInfo struct {
+type DistributedCoinInfo struct {
 	totalWork       int64
 	totalRewardCoin float64
 }
 
-func (rc *RewardCoinInfo) calculateBonusCoins(participantWorkDone int64) int64 {
+func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) int64 {
 	bonusCoins := float64(participantWorkDone) / float64(rc.totalWork) * rc.totalRewardCoin
 	return int64(bonusCoins)
 }
