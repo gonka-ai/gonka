@@ -21,7 +21,7 @@ func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
 	store.Set(key, b)
 }
 
-func (k Keeper) GetBatchesByPoCStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCBatch, error) {
+func (k Keeper) GetPoCBatchesByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCBatch, error) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
 
@@ -33,18 +33,16 @@ func (k Keeper) GetBatchesByPoCStage(ctx context.Context, pocStageStartBlockHeig
 	batches := make(map[string][]types.PoCBatch)
 
 	for ; iterator.Valid(); iterator.Next() {
-		key := iterator.Key()
+		key := string(iterator.Key())
 		value := iterator.Value()
-		// Convert the key from []byte to string for easier manipulation
-		keyStr := string(key)
 
 		// Trim the trailing "/" and split the key to extract participantIndex and batchId
-		trimmedKey := strings.TrimSuffix(keyStr, "/")
+		trimmedKey := strings.TrimSuffix(key, "/")
 		segments := strings.Split(trimmedKey, "/")
 
 		// Validate the key format
 		if len(segments) != 2 {
-			return nil, fmt.Errorf("invalid key format: %s", keyStr)
+			return nil, fmt.Errorf("invalid key format: %s", key)
 		}
 
 		participantIndex := segments[0]
@@ -61,4 +59,59 @@ func (k Keeper) GetBatchesByPoCStage(ctx context.Context, pocStageStartBlockHeig
 	}
 
 	return batches, nil
+}
+
+func JoinPocBatches(batches map[string][]types.PoCBatch) map[string]types.PoCBatch {
+	result := make(map[string]types.PoCBatch)
+	for _, batchSlice := range batches {
+		joinedBatch := types.PoCBatch{
+			ParticipantAddress:       batchSlice[0].ParticipantAddress,
+			PocStageStartBlockHeight: batchSlice[0].PocStageStartBlockHeight,
+			ReceivedAtBlockHeight:    batchSlice[0].ReceivedAtBlockHeight,
+			Nonces:                   nil,
+			Dist:                     nil,
+		}
+
+		for _, b := range batchSlice {
+			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
+			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
+		}
+	}
+	return result
+}
+
+func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCValidation, error) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)
+
+	store := prefix.NewStore(storeAdapter, prefixKey)
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	validations := make(map[string][]types.PoCValidation)
+
+	for ; iterator.Valid(); iterator.Next() {
+		key := string(iterator.Key())
+		value := iterator.Value()
+
+		trimmedKey := strings.TrimSuffix(key, "/")
+		segments := strings.Split(trimmedKey, "/")
+
+		// Validate the key format
+		if len(segments) != 2 {
+			return nil, fmt.Errorf("invalid key format: %s", key)
+		}
+
+		participantIndex := segments[0]
+		// valParticipantIndex := segments[1]
+
+		var validation types.PoCValidation
+		if err := k.cdc.Unmarshal(value, &validation); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal PoCBatch: %w", err)
+		}
+
+		validations[participantIndex] = append(validations[participantIndex], validation)
+	}
+
+	return validations, nil
 }

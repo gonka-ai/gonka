@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"log"
 	"strconv"
@@ -91,6 +92,7 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 	//activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
 	groupMembers := make([]group.MemberRequest, len(computeResults))
 	for i, r := range computeResults {
+		// TODO: remove??? no re reason to do it, since we already fill up the participants array in the loop above
 		activeParticipants[i] = &types.ActiveParticipant{
 			Index:  r.OperatorAddress,
 			Weight: r.Power,
@@ -141,4 +143,101 @@ func (am AppModule) createEpochGroup(ctx context.Context, groupMembers []group.M
 
 	am.LogInfo("Created group", "groupID", result.GroupId, "policyAddress", result.GroupPolicyAddress)
 	return nil
+}
+
+func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
+	// PRTODO: make an exception for 1st epoch?
+	currentActiveParticipants, found := am.keeper.GetActiveParticipants(ctx)
+	if !found {
+		am.LogError("No active participants found.")
+		return
+	}
+
+	_ = currentActiveParticipants
+
+	epochStartBlockHeight := proofofcompute.GetStartBlockHeightFromSetNewValidatorsStage(blockHeight)
+	am.LogInfo("Epoch start block height", "blockHeight", epochStartBlockHeight)
+
+	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, blockHeight)
+	if err != nil {
+		am.LogError("Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		return
+	}
+
+	am.LogInfo("Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
+
+	validations, err := am.keeper.GetPoCValidationByStage(ctx, blockHeight)
+	if err != nil {
+		am.LogError("Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+	}
+
+	am.LogInfo("Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+
+	var activeParticipants []*types.ActiveParticipant
+	var computeResults []keeper.ComputeResult
+
+	for participantAddress, batches := range originalBatches {
+		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
+		if !ok {
+			am.LogError("Error getting participant", "address", participantAddress)
+			continue
+		}
+
+		vals := validations[participantAddress]
+		if vals == nil || len(vals) == 0 {
+			am.LogError("No validations for participant found", "participant", participantAddress)
+			continue
+		}
+
+		claimedWeight := getParticipantWeight(batches)
+		if claimedWeight < 1 {
+			am.LogWarn("Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
+			continue
+		}
+
+		if participant.ValidatorKey == "" {
+			am.LogError("Participant hasn't provided their validator key.", "participant", participantAddress)
+			continue
+		}
+
+		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
+		if err != nil {
+			am.LogError("Error decoding pubkey", "error", err)
+			continue
+		}
+
+		pubKey := ed25519.PubKey{Key: pubKeyBytes}
+
+		r := keeper.ComputeResult{
+			Power:           claimedWeight,
+			ValidatorPubKey: &pubKey,
+			OperatorAddress: participantAddress,
+		}
+		am.LogInfo("Setting compute validator.", "computeResult", r)
+		computeResults = append(computeResults, r)
+
+		activeParticipant := &types.ActiveParticipant{
+			Index:        participantAddress,
+			ValidatorKey: participant.ValidatorKey,
+			Weight:       claimedWeight,
+			InferenceUrl: participant.InferenceUrl,
+			Models:       participant.Models,
+		}
+		activeParticipants = append(activeParticipants, activeParticipant)
+	}
+
+	am.keeper.RemoveAllPower(ctx)
+
+	if len(computeResults) == 0 {
+		am.LogWarn("No compute validators to set. Keeping validators and active participants the same.")
+		return
+	}
+}
+
+func getParticipantWeight(batches []types.PoCBatch) int64 {
+	var weight int64
+	for _, b := range batches {
+		weight += int64(len(b.Nonces))
+	}
+	return weight
 }

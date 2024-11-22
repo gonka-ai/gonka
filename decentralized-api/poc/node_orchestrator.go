@@ -291,7 +291,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 	}
 
 	// 1. GET ALL SUBMITTED BATCHES!
-	// batches, err := o.cosmosClient.GetBatchesByPoCStage(startOfPoCBlockHeight)
+	// batches, err := o.cosmosClient.GetPoCBatchesByStage(startOfPoCBlockHeight)
 	// FIXME: might be too long of a transaction, paging might be needed
 	queryClient := o.cosmosClient.NewInferenceQueryClient()
 	batches, err := queryClient.PocBatchesForStage(o.cosmosClient.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: startOfPoCBlockHeight})

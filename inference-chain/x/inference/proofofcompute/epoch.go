@@ -72,3 +72,7 @@ func GetStartBlockHeightFromEndOfPocStage(blockHeight int64) int64 {
 func GetStartBlockHeightFromStartOfValStage(blockHeight int64) int64 {
 	return unshift(shift(blockHeight) - startOfPocValStage)
 }
+
+func GetStartBlockHeightFromSetNewValidatorsStage(blockHeight int64) int64 {
+	return unshift(shift(blockHeight) - setNewValidatorsStage)
+}

@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const PocBatchKeyPrefix = "PoCBatch/value/"
+const (
+	PocBatchKeyPrefix   = "PoCBatch/value/"
+	PocValidationPrefix = "PoCValidation/value/"
+)
 
 func PoCBatchKey(pocStageStartBlockHeight int64, participantIndex string, batchId string) []byte {
 	var key []byte
@@ -42,4 +45,17 @@ func parsePoCBatchKey(key []byte) (participantIndex string, batchId string, err 
 	batchId = segments[1]
 
 	return participantIndex, batchId, nil
+}
+
+func PoCValidationKey(pocStageStartBlockHeight int64, participantIndex string, valParticipantIndex string) []byte {
+	var key []byte
+
+	key = append(key, []byte(strconv.FormatInt(pocStageStartBlockHeight, 10))...)
+	key = append(key, []byte("/")...)
+	key = append(key, []byte(participantIndex)...)
+	key = append(key, []byte("/")...)
+	key = append(key, []byte(valParticipantIndex)...)
+	key = append(key, []byte("/")...)
+
+	return key
 }
