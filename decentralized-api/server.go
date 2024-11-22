@@ -82,6 +82,18 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/poc-batches/", wrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
+	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
+		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
+		addr, err := cosmos_client.PubKeyToAddress(pubkey)
+		if err != nil {
+			slog.Error("Failed to convert pubkey to address", "error", err)
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte(addr))
+	})
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
 		if err != nil {
@@ -1108,6 +1120,10 @@ func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w h
 	}
 
 	slog.Info("ValidatedProofBatch received", "body", body)
+
+	w.WriteHeader(http.StatusOK)
+	return
+
 	// TODO: save to BC
 	msg := &inference.MsgSubmitPocBatch{
 		PocStageStartBlockHeight: body.ChainHeight,
