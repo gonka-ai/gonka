@@ -36,6 +36,7 @@ type GroupMessageKeeper interface {
 	CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error)
 	CreateGroupWithPolicy(ctx context.Context, msg *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error)
 	UpdateGroupMembers(goCtx context.Context, msg *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error)
+	UpdateGroupMetadata(goCtx context.Context, msg *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error)
 	SubmitProposal(goCtx context.Context, msg *group.MsgSubmitProposal) (*group.MsgSubmitProposalResponse, error)
 	Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error)
 	GroupInfo(goCtx context.Context, request *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error)

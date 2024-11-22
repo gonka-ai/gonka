@@ -46,6 +46,7 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 func (k msgServer) markInferenceAsInvalid(executor *types.Participant, inference *types.Inference, ctx sdk.Context) error {
 	inference.Status = types.InferenceStatus_INVALIDATED
 	executor.InvalidatedInferences++
+	executor.ConsecutiveInvalidInferences++
 	executor.CoinBalance -= inference.ActualCost
 	// We need to refund the cost, so we have to lookup the person who paid
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)

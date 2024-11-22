@@ -342,6 +342,21 @@ func (mr *MockGroupMessageKeeperMockRecorder) UpdateGroupMembers(goCtx, msg any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateGroupMembers", reflect.TypeOf((*MockGroupMessageKeeper)(nil).UpdateGroupMembers), goCtx, msg)
 }
 
+// UpdateGroupMetadata mocks base method.
+func (m *MockGroupMessageKeeper) UpdateGroupMetadata(goCtx context.Context, msg *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateGroupMetadata", goCtx, msg)
+	ret0, _ := ret[0].(*group.MsgUpdateGroupMetadataResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateGroupMetadata indicates an expected call of UpdateGroupMetadata.
+func (mr *MockGroupMessageKeeperMockRecorder) UpdateGroupMetadata(goCtx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateGroupMetadata", reflect.TypeOf((*MockGroupMessageKeeper)(nil).UpdateGroupMetadata), goCtx, msg)
+}
+
 // Vote mocks base method.
 func (m *MockGroupMessageKeeper) Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error) {
 	m.ctrl.T.Helper()

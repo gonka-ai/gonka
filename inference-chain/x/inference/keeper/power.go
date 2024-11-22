@@ -116,38 +116,6 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight int64) (*epoch
 	}, nil
 }
 
-func (k Keeper) SetEpochPolicy(ctx context.Context, policyAddress string) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
-
-	key := []byte(EpochPolicyKey)
-	value := []byte(policyAddress)
-	store.Set(key, value)
-}
-
-func (k Keeper) SetEpochGroupId(ctx context.Context, groupId uint64) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
-
-	key := []byte(EpochGroupIdKey)
-	value := sdk.Uint64ToBigEndian(groupId)
-	store.Set(key, value)
-}
-
-func (k Keeper) GetEpochGroupId(ctx context.Context) (groupId uint64) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
-
-	key := []byte(EpochGroupIdKey)
-	value := store.Get(key)
-
-	if value == nil {
-		return 0
-	}
-
-	return sdk.BigEndianToUint64(value)
-}
-
 func (k Keeper) SetUpcomingPower(ctx context.Context, power types.Power) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PowerKeyPrefix))

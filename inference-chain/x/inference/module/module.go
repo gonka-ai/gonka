@@ -165,7 +165,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to settle accounts", "error", err.Error())
 		}
-		am.SendNewValidatorWeightsToStaking(ctx, blockHeight)
+		am.SetActiveParticipants(ctx, blockHeight)
 		newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 		previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
 		am.LogInfo("NewEpochGroup", "blockHeight", blockHeight, "newGroupId", newGroupId)
@@ -187,6 +187,25 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, blockHeight)
+	}
+	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		am.LogError("Unable to get current epoch group", "error", err.Error())
+		return nil
+	}
+
+	if currentEpochGroup.IsChanged(ctx) {
+		am.LogInfo("EpochGroupChanged", "blockHeight", blockHeight)
+		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
+		if err != nil {
+			am.LogError("Unable to get compute results", "error", err.Error())
+			return nil
+		}
+		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
+		if err != nil {
+			am.LogError("Unable to update epoch group", "error", err.Error())
+		}
+		currentEpochGroup.MarkUnchanged(ctx)
 	}
 
 	return nil

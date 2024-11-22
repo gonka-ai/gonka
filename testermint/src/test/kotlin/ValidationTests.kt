@@ -63,6 +63,27 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
+    fun `test invalid gets removed`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val highestFunded = initialize(pairs)
+        val oddPair = pairs.last()
+        oddPair.api.setNodesTo(invalidNode)
+        val invalidResult =
+            generateSequence { getInferenceResult(highestFunded) }
+                .filter {
+                    Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
+                    it.executorBefore.id == oddPair.node.addresss
+                }
+                .take(5)
+                .toList()
+        Logger.warn("Got invalid result, waiting for invalidation.")
+
+        highestFunded.node.waitForNextBlock(10)
+        val participants = highestFunded.api.getParticipants()
+        participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
+
+    }
+    @Test
     fun `test valid with invalid validator gets validated`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)

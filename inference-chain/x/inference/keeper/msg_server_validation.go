@@ -54,6 +54,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
+		executor.ConsecutiveInvalidInferences = 0
 		executor.ValidatedInferences++
 	} else {
 		inference.Status = types.InferenceStatus_VOTING
@@ -87,6 +88,10 @@ func calculateStatus(falsePositiveRate float64, participant types.Participant) (
 	// Why not use the p-value, you ask? (or should).
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
+	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
+	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
+		return types.ParticipantStatus_INVALID
+	}
 	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
 	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, MinRampUpMeasurements)
 	if participant.InferenceCount < measurementsNeeded {
@@ -136,4 +141,17 @@ func MeasurementsNeeded(p float64, max uint64) uint64 {
 		return max
 	}
 	return needed
+}
+
+// If we have consecutive failures, it is rapidly more likely that the executor is bad
+func ProbabilityOfConsecutiveFailures(expectedFailureRate float64, consecutiveFailures int64) float64 {
+	if expectedFailureRate < 0 || expectedFailureRate > 1 {
+		panic("expectedFailureRate must be between 0 and 1")
+	}
+	if consecutiveFailures < 0 {
+		panic("consecutiveFailures must be non-negative")
+	}
+
+	// P(F^N|G) = x^N
+	return math.Pow(expectedFailureRate, float64(consecutiveFailures))
 }

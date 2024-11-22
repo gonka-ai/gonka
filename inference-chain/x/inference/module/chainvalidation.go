@@ -3,17 +3,12 @@ package inference
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/types"
-	"log"
-	"strconv"
-	"time"
 )
 
-func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
+func (am AppModule) SetActiveParticipants(ctx context.Context, blockHeight int64) {
 	allPower := am.keeper.AllUpcomingPower(ctx)
 	am.LogInfo("Amount of power entries found.", "n", len(allPower))
 
@@ -67,24 +62,18 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		return
 	}
 
-	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
-	if err != nil {
-		msg := fmt.Sprintf("Error setting compute validators: %v", err)
-		am.LogError("Error setting compute validators.", "err", err)
-		log.Fatalf(msg)
-	}
+	//_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
+	//if err != nil {
+	//	msg := fmt.Sprintf("Error setting compute validators: %v", err)
+	//	am.LogError("Error setting compute validators.", "err", err)
+	//	log.Fatalf(msg)
+	//}
 
 	//activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
-	groupMembers := make([]group.MemberRequest, len(computeResults))
 	for i, r := range computeResults {
 		activeParticipants[i] = &types.ActiveParticipant{
 			Index:  r.OperatorAddress,
 			Weight: r.Power,
-		}
-		groupMembers[i] = group.MemberRequest{
-			Address:  r.OperatorAddress,
-			Weight:   strconv.FormatInt(r.Power, 10),
-			Metadata: "",
 		}
 	}
 
@@ -92,39 +81,4 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		Participants:         activeParticipants,
 		CreatedAtBlockHeight: blockHeight,
 	})
-	err = am.createEpochGroup(ctx, groupMembers)
-	if err != nil {
-		am.LogError("Error creating epoch group", "error", err)
-	}
-}
-
-func (am AppModule) createEpochGroup(ctx context.Context, groupMembers []group.MemberRequest) error {
-	votingPeriod := 4 * time.Minute
-	minExecutionPeriod := 0 * time.Minute
-
-	groupMsg := &group.MsgCreateGroupWithPolicy{
-		Admin:   am.keeper.GetAuthority(),
-		Members: groupMembers,
-	}
-	policy := group.NewPercentageDecisionPolicy(
-		"0.50",
-		votingPeriod,
-		minExecutionPeriod,
-	)
-	err := groupMsg.SetDecisionPolicy(policy)
-	if err != nil {
-		am.LogError("Error setting decision policy", "error", err)
-		return err
-	}
-
-	result, err := am.groupMsgServer.CreateGroupWithPolicy(ctx, groupMsg)
-	if err != nil {
-		am.LogError("Error creating group", "error", err)
-		return err
-	}
-	am.keeper.SetEpochGroupId(ctx, result.GroupId)
-	am.keeper.SetEpochPolicy(ctx, result.GroupPolicyAddress)
-
-	am.LogInfo("Created group", "groupID", result.GroupId, "policyAddress", result.GroupPolicyAddress)
-	return nil
 }

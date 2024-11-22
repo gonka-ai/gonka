@@ -19,6 +19,14 @@ const PocFailureTag = "PoC [Failure] "
 
 func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*types.MsgSubmitPoCResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	participant, found := k.GetParticipant(ctx, msg.Creator)
+	if !found {
+		return nil, errors.New("participant not found")
+	}
+
+	if participant.Status == types.ParticipantStatus_INVALID {
+		return nil, sdkerrors.Wrap(types.ErrPocAddressInvalid, "participant is invalid")
+	}
 
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.BlockHeight
@@ -84,7 +92,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	if err != nil {
 		return nil, err
 	}
-	err = group.AddMember(ctx, msg.Creator, uint64(power))
+	err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey)
 	if err != nil {
 		return nil, err
 	}
