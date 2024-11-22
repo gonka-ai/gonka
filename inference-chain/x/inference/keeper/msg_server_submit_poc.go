@@ -88,7 +88,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		PocStageStartBlockHeight: startBlockHeight,
 		ReceivedAtBlockHeight:    currentBlockHeight,
 	})
-	group, err := k.Keeper.GetEpochGroup(ctx, startBlockHeight)
+	group, err := k.Keeper.GetEpochGroup(ctx, uint64(startBlockHeight))
 	if err != nil {
 		return nil, err
 	}

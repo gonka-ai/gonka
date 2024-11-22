@@ -11,23 +11,21 @@ import (
 )
 
 const (
-	EpochPolicyKey         = "epoch-policy"
-	EpochGroupIdKey        = "epoch-group-id"
 	EffectiveEpochGroupKey = "effective-epoch-group"
 	UpcomingEpochGroupKey  = "upcoming-epoch-group"
 	PreviousEpochGroupKey  = "previous-epoch-group"
 )
 
-func (k Keeper) SetEffectiveEpochGroupId(ctx context.Context, pocStartHeight int64) {
+func (k Keeper) SetEffectiveEpochGroupId(ctx context.Context, pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
 	key := []byte(EffectiveEpochGroupKey)
-	value := sdk.Uint64ToBigEndian(uint64(pocStartHeight))
+	value := sdk.Uint64ToBigEndian(pocStartHeight)
 	store.Set(key, value)
 }
 
-func (k Keeper) GetEffectiveEpochGroupId(ctx context.Context) (pocStartHeight int64) {
+func (k Keeper) GetEffectiveEpochGroupId(ctx context.Context) (pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
@@ -38,19 +36,19 @@ func (k Keeper) GetEffectiveEpochGroupId(ctx context.Context) (pocStartHeight in
 		return 0
 	}
 
-	return int64(sdk.BigEndianToUint64(value))
+	return sdk.BigEndianToUint64(value)
 }
 
-func (k Keeper) SetUpcomingEpochGroupId(ctx context.Context, pocStartHeight int64) {
+func (k Keeper) SetUpcomingEpochGroupId(ctx context.Context, pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
 	key := []byte(UpcomingEpochGroupKey)
-	value := sdk.Uint64ToBigEndian(uint64(pocStartHeight))
+	value := sdk.Uint64ToBigEndian(pocStartHeight)
 	store.Set(key, value)
 }
 
-func (k Keeper) GetUpcomingEpochGroupId(ctx context.Context) (pocStartHeight int64) {
+func (k Keeper) GetUpcomingEpochGroupId(ctx context.Context) (pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
@@ -61,19 +59,19 @@ func (k Keeper) GetUpcomingEpochGroupId(ctx context.Context) (pocStartHeight int
 		return 0
 	}
 
-	return int64(sdk.BigEndianToUint64(value))
+	return sdk.BigEndianToUint64(value)
 }
 
-func (k Keeper) SetPreviousEpochGroupId(ctx context.Context, pocStartHeight int64) {
+func (k Keeper) SetPreviousEpochGroupId(ctx context.Context, pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
 	key := []byte(PreviousEpochGroupKey)
-	value := sdk.Uint64ToBigEndian(uint64(pocStartHeight))
+	value := sdk.Uint64ToBigEndian(pocStartHeight)
 	store.Set(key, value)
 }
 
-func (k Keeper) GetPreviousEpochGroupId(ctx context.Context) (pocStartHeight int64) {
+func (k Keeper) GetPreviousEpochGroupId(ctx context.Context) (pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupPrefix))
 
@@ -84,7 +82,7 @@ func (k Keeper) GetPreviousEpochGroupId(ctx context.Context) (pocStartHeight int
 		return 0
 	}
 
-	return int64(sdk.BigEndianToUint64(value))
+	return sdk.BigEndianToUint64(value)
 }
 
 func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
@@ -97,11 +95,11 @@ func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGro
 	return k.GetEpochGroup(ctx, currentId)
 }
 
-func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight int64) (*epochgroup.EpochGroup, error) {
-	data, found := k.GetEpochGroupData(ctx, uint64(pocStartHeight))
+func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epochgroup.EpochGroup, error) {
+	data, found := k.GetEpochGroupData(ctx, pocStartHeight)
 	if !found {
 		data = types.EpochGroupData{
-			PocStartBlockHeight: uint64(pocStartHeight),
+			PocStartBlockHeight: pocStartHeight,
 		}
 		k.SetEpochGroupData(ctx, data)
 	}
