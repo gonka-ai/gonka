@@ -17,8 +17,8 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	startBlockHeight := msg.PocStageStartBlockHeight
 
 	if !proofofcompute.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"start block height must be divisible by EpochLength", "EpochLength", proofofcompute.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
+		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height must be divisible by EpochLength", "EpochLength", proofofcompute.EpochLength, "msg.BlockHeight", startBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 

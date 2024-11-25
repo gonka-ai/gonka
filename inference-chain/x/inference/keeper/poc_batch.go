@@ -80,6 +80,17 @@ func JoinPocBatches(batches map[string][]types.PoCBatch) map[string]types.PoCBat
 	return result
 }
 
+func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValidation) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocValidationPrefix))
+	key := types.PoCValidationKey(validation.PocStageStartBlockHeight, validation.ParticipantAddress, validation.ValidatorParticipantAddress)
+
+	k.LogInfo("PoC: Storing validation", "key", key, "validation", validation)
+
+	b := k.cdc.MustMarshal(&validation)
+	store.Set(key, b)
+}
+
 func (k Keeper) GetPoCValidationByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCValidation, error) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	prefixKey := append(types.KeyPrefix(types.PocValidationPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)

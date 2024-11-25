@@ -153,14 +153,14 @@ message MsgSubmitPocValidation {
   option (cosmos.msg.v1.signer) = "creator";
            string creator                  =  1;
            string participantAddress       =  2;
-           int32  pocStageStartBlockHeight =  3;
-  repeated int32  nonces                   =  4;
-  repeated int32  dist                     =  5;
-  repeated int32  receivedDist             =  6;
-           int32  rTarget                  =  7;
-           int32  fraudThreshold           =  8;
-           int32  nInvalid                 =  9;
-           int32  probabilityHonest        = 10;
+           int64  pocStageStartBlockHeight =  3;
+  repeated int64  nonces                   =  4;
+  repeated double dist                     =  5;
+  repeated double receivedDist             =  6;
+           double rTarget                  =  7;
+           double fraudThreshold           =  8;
+           int64  nInvalid                 =  9;
+           double probabilityHonest        = 10;
            bool   fraudDetected            = 11;
 }
 

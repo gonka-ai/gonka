@@ -10445,7 +10445,7 @@ func (x *fastReflection_MsgSubmitPocBatchResponse) ProtoMethods() *protoiface.Me
 var _ protoreflect.List = (*_MsgSubmitPocValidation_4_list)(nil)
 
 type _MsgSubmitPocValidation_4_list struct {
-	list *[]int32
+	list *[]int64
 }
 
 func (x *_MsgSubmitPocValidation_4_list) Len() int {
@@ -10456,18 +10456,18 @@ func (x *_MsgSubmitPocValidation_4_list) Len() int {
 }
 
 func (x *_MsgSubmitPocValidation_4_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfInt32((*x.list)[i])
+	return protoreflect.ValueOfInt64((*x.list)[i])
 }
 
 func (x *_MsgSubmitPocValidation_4_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_MsgSubmitPocValidation_4_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
@@ -10480,8 +10480,8 @@ func (x *_MsgSubmitPocValidation_4_list) Truncate(n int) {
 }
 
 func (x *_MsgSubmitPocValidation_4_list) NewElement() protoreflect.Value {
-	v := int32(0)
-	return protoreflect.ValueOfInt32(v)
+	v := int64(0)
+	return protoreflect.ValueOfInt64(v)
 }
 
 func (x *_MsgSubmitPocValidation_4_list) IsValid() bool {
@@ -10491,7 +10491,7 @@ func (x *_MsgSubmitPocValidation_4_list) IsValid() bool {
 var _ protoreflect.List = (*_MsgSubmitPocValidation_5_list)(nil)
 
 type _MsgSubmitPocValidation_5_list struct {
-	list *[]int32
+	list *[]float64
 }
 
 func (x *_MsgSubmitPocValidation_5_list) Len() int {
@@ -10502,18 +10502,18 @@ func (x *_MsgSubmitPocValidation_5_list) Len() int {
 }
 
 func (x *_MsgSubmitPocValidation_5_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfInt32((*x.list)[i])
+	return protoreflect.ValueOfFloat64((*x.list)[i])
 }
 
 func (x *_MsgSubmitPocValidation_5_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	valueUnwrapped := value.Float()
+	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_MsgSubmitPocValidation_5_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	valueUnwrapped := value.Float()
+	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
@@ -10526,8 +10526,8 @@ func (x *_MsgSubmitPocValidation_5_list) Truncate(n int) {
 }
 
 func (x *_MsgSubmitPocValidation_5_list) NewElement() protoreflect.Value {
-	v := int32(0)
-	return protoreflect.ValueOfInt32(v)
+	v := float64(0)
+	return protoreflect.ValueOfFloat64(v)
 }
 
 func (x *_MsgSubmitPocValidation_5_list) IsValid() bool {
@@ -10537,7 +10537,7 @@ func (x *_MsgSubmitPocValidation_5_list) IsValid() bool {
 var _ protoreflect.List = (*_MsgSubmitPocValidation_6_list)(nil)
 
 type _MsgSubmitPocValidation_6_list struct {
-	list *[]int32
+	list *[]float64
 }
 
 func (x *_MsgSubmitPocValidation_6_list) Len() int {
@@ -10548,18 +10548,18 @@ func (x *_MsgSubmitPocValidation_6_list) Len() int {
 }
 
 func (x *_MsgSubmitPocValidation_6_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfInt32((*x.list)[i])
+	return protoreflect.ValueOfFloat64((*x.list)[i])
 }
 
 func (x *_MsgSubmitPocValidation_6_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	valueUnwrapped := value.Float()
+	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_MsgSubmitPocValidation_6_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Int()
-	concreteValue := (int32)(valueUnwrapped)
+	valueUnwrapped := value.Float()
+	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
@@ -10572,8 +10572,8 @@ func (x *_MsgSubmitPocValidation_6_list) Truncate(n int) {
 }
 
 func (x *_MsgSubmitPocValidation_6_list) NewElement() protoreflect.Value {
-	v := int32(0)
-	return protoreflect.ValueOfInt32(v)
+	v := float64(0)
+	return protoreflect.ValueOfFloat64(v)
 }
 
 func (x *_MsgSubmitPocValidation_6_list) IsValid() bool {
@@ -10688,8 +10688,8 @@ func (x *fastReflection_MsgSubmitPocValidation) Range(f func(protoreflect.FieldD
 			return
 		}
 	}
-	if x.PocStageStartBlockHeight != int32(0) {
-		value := protoreflect.ValueOfInt32(x.PocStageStartBlockHeight)
+	if x.PocStageStartBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
 		if !f(fd_MsgSubmitPocValidation_pocStageStartBlockHeight, value) {
 			return
 		}
@@ -10712,26 +10712,26 @@ func (x *fastReflection_MsgSubmitPocValidation) Range(f func(protoreflect.FieldD
 			return
 		}
 	}
-	if x.RTarget != int32(0) {
-		value := protoreflect.ValueOfInt32(x.RTarget)
+	if x.RTarget != float64(0) || math.Signbit(x.RTarget) {
+		value := protoreflect.ValueOfFloat64(x.RTarget)
 		if !f(fd_MsgSubmitPocValidation_rTarget, value) {
 			return
 		}
 	}
-	if x.FraudThreshold != int32(0) {
-		value := protoreflect.ValueOfInt32(x.FraudThreshold)
+	if x.FraudThreshold != float64(0) || math.Signbit(x.FraudThreshold) {
+		value := protoreflect.ValueOfFloat64(x.FraudThreshold)
 		if !f(fd_MsgSubmitPocValidation_fraudThreshold, value) {
 			return
 		}
 	}
-	if x.NInvalid != int32(0) {
-		value := protoreflect.ValueOfInt32(x.NInvalid)
+	if x.NInvalid != int64(0) {
+		value := protoreflect.ValueOfInt64(x.NInvalid)
 		if !f(fd_MsgSubmitPocValidation_nInvalid, value) {
 			return
 		}
 	}
-	if x.ProbabilityHonest != int32(0) {
-		value := protoreflect.ValueOfInt32(x.ProbabilityHonest)
+	if x.ProbabilityHonest != float64(0) || math.Signbit(x.ProbabilityHonest) {
+		value := protoreflect.ValueOfFloat64(x.ProbabilityHonest)
 		if !f(fd_MsgSubmitPocValidation_probabilityHonest, value) {
 			return
 		}
@@ -10762,7 +10762,7 @@ func (x *fastReflection_MsgSubmitPocValidation) Has(fd protoreflect.FieldDescrip
 	case "inference.inference.MsgSubmitPocValidation.participantAddress":
 		return x.ParticipantAddress != ""
 	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
-		return x.PocStageStartBlockHeight != int32(0)
+		return x.PocStageStartBlockHeight != int64(0)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		return len(x.Nonces) != 0
 	case "inference.inference.MsgSubmitPocValidation.dist":
@@ -10770,13 +10770,13 @@ func (x *fastReflection_MsgSubmitPocValidation) Has(fd protoreflect.FieldDescrip
 	case "inference.inference.MsgSubmitPocValidation.receivedDist":
 		return len(x.ReceivedDist) != 0
 	case "inference.inference.MsgSubmitPocValidation.rTarget":
-		return x.RTarget != int32(0)
+		return x.RTarget != float64(0) || math.Signbit(x.RTarget)
 	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
-		return x.FraudThreshold != int32(0)
+		return x.FraudThreshold != float64(0) || math.Signbit(x.FraudThreshold)
 	case "inference.inference.MsgSubmitPocValidation.nInvalid":
-		return x.NInvalid != int32(0)
+		return x.NInvalid != int64(0)
 	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
-		return x.ProbabilityHonest != int32(0)
+		return x.ProbabilityHonest != float64(0) || math.Signbit(x.ProbabilityHonest)
 	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
 		return x.FraudDetected != false
 	default:
@@ -10800,7 +10800,7 @@ func (x *fastReflection_MsgSubmitPocValidation) Clear(fd protoreflect.FieldDescr
 	case "inference.inference.MsgSubmitPocValidation.participantAddress":
 		x.ParticipantAddress = ""
 	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
-		x.PocStageStartBlockHeight = int32(0)
+		x.PocStageStartBlockHeight = int64(0)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		x.Nonces = nil
 	case "inference.inference.MsgSubmitPocValidation.dist":
@@ -10808,13 +10808,13 @@ func (x *fastReflection_MsgSubmitPocValidation) Clear(fd protoreflect.FieldDescr
 	case "inference.inference.MsgSubmitPocValidation.receivedDist":
 		x.ReceivedDist = nil
 	case "inference.inference.MsgSubmitPocValidation.rTarget":
-		x.RTarget = int32(0)
+		x.RTarget = float64(0)
 	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
-		x.FraudThreshold = int32(0)
+		x.FraudThreshold = float64(0)
 	case "inference.inference.MsgSubmitPocValidation.nInvalid":
-		x.NInvalid = int32(0)
+		x.NInvalid = int64(0)
 	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
-		x.ProbabilityHonest = int32(0)
+		x.ProbabilityHonest = float64(0)
 	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
 		x.FraudDetected = false
 	default:
@@ -10841,7 +10841,7 @@ func (x *fastReflection_MsgSubmitPocValidation) Get(descriptor protoreflect.Fiel
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
 		value := x.PocStageStartBlockHeight
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		if len(x.Nonces) == 0 {
 			return protoreflect.ValueOfList(&_MsgSubmitPocValidation_4_list{})
@@ -10862,16 +10862,16 @@ func (x *fastReflection_MsgSubmitPocValidation) Get(descriptor protoreflect.Fiel
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.MsgSubmitPocValidation.rTarget":
 		value := x.RTarget
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfFloat64(value)
 	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
 		value := x.FraudThreshold
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfFloat64(value)
 	case "inference.inference.MsgSubmitPocValidation.nInvalid":
 		value := x.NInvalid
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
 		value := x.ProbabilityHonest
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfFloat64(value)
 	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
 		value := x.FraudDetected
 		return protoreflect.ValueOfBool(value)
@@ -10900,7 +10900,7 @@ func (x *fastReflection_MsgSubmitPocValidation) Set(fd protoreflect.FieldDescrip
 	case "inference.inference.MsgSubmitPocValidation.participantAddress":
 		x.ParticipantAddress = value.Interface().(string)
 	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
-		x.PocStageStartBlockHeight = int32(value.Int())
+		x.PocStageStartBlockHeight = value.Int()
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		lv := value.List()
 		clv := lv.(*_MsgSubmitPocValidation_4_list)
@@ -10914,13 +10914,13 @@ func (x *fastReflection_MsgSubmitPocValidation) Set(fd protoreflect.FieldDescrip
 		clv := lv.(*_MsgSubmitPocValidation_6_list)
 		x.ReceivedDist = *clv.list
 	case "inference.inference.MsgSubmitPocValidation.rTarget":
-		x.RTarget = int32(value.Int())
+		x.RTarget = value.Float()
 	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
-		x.FraudThreshold = int32(value.Int())
+		x.FraudThreshold = value.Float()
 	case "inference.inference.MsgSubmitPocValidation.nInvalid":
-		x.NInvalid = int32(value.Int())
+		x.NInvalid = value.Int()
 	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
-		x.ProbabilityHonest = int32(value.Int())
+		x.ProbabilityHonest = value.Float()
 	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
 		x.FraudDetected = value.Bool()
 	default:
@@ -10945,19 +10945,19 @@ func (x *fastReflection_MsgSubmitPocValidation) Mutable(fd protoreflect.FieldDes
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		if x.Nonces == nil {
-			x.Nonces = []int32{}
+			x.Nonces = []int64{}
 		}
 		value := &_MsgSubmitPocValidation_4_list{list: &x.Nonces}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitPocValidation.dist":
 		if x.Dist == nil {
-			x.Dist = []int32{}
+			x.Dist = []float64{}
 		}
 		value := &_MsgSubmitPocValidation_5_list{list: &x.Dist}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitPocValidation.receivedDist":
 		if x.ReceivedDist == nil {
-			x.ReceivedDist = []int32{}
+			x.ReceivedDist = []float64{}
 		}
 		value := &_MsgSubmitPocValidation_6_list{list: &x.ReceivedDist}
 		return protoreflect.ValueOfList(value)
@@ -10995,24 +10995,24 @@ func (x *fastReflection_MsgSubmitPocValidation) NewField(fd protoreflect.FieldDe
 	case "inference.inference.MsgSubmitPocValidation.participantAddress":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitPocValidation.nonces":
-		list := []int32{}
+		list := []int64{}
 		return protoreflect.ValueOfList(&_MsgSubmitPocValidation_4_list{list: &list})
 	case "inference.inference.MsgSubmitPocValidation.dist":
-		list := []int32{}
+		list := []float64{}
 		return protoreflect.ValueOfList(&_MsgSubmitPocValidation_5_list{list: &list})
 	case "inference.inference.MsgSubmitPocValidation.receivedDist":
-		list := []int32{}
+		list := []float64{}
 		return protoreflect.ValueOfList(&_MsgSubmitPocValidation_6_list{list: &list})
 	case "inference.inference.MsgSubmitPocValidation.rTarget":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfFloat64(float64(0))
 	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfFloat64(float64(0))
 	case "inference.inference.MsgSubmitPocValidation.nInvalid":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfFloat64(float64(0))
 	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
 		return protoreflect.ValueOfBool(false)
 	default:
@@ -11103,30 +11103,22 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 			n += 1 + runtime.Sov(uint64(l)) + l
 		}
 		if len(x.Dist) > 0 {
-			l = 0
-			for _, e := range x.Dist {
-				l += runtime.Sov(uint64(e))
-			}
-			n += 1 + runtime.Sov(uint64(l)) + l
+			n += 1 + runtime.Sov(uint64(len(x.Dist)*8)) + len(x.Dist)*8
 		}
 		if len(x.ReceivedDist) > 0 {
-			l = 0
-			for _, e := range x.ReceivedDist {
-				l += runtime.Sov(uint64(e))
-			}
-			n += 1 + runtime.Sov(uint64(l)) + l
+			n += 1 + runtime.Sov(uint64(len(x.ReceivedDist)*8)) + len(x.ReceivedDist)*8
 		}
-		if x.RTarget != 0 {
-			n += 1 + runtime.Sov(uint64(x.RTarget))
+		if x.RTarget != 0 || math.Signbit(x.RTarget) {
+			n += 9
 		}
-		if x.FraudThreshold != 0 {
-			n += 1 + runtime.Sov(uint64(x.FraudThreshold))
+		if x.FraudThreshold != 0 || math.Signbit(x.FraudThreshold) {
+			n += 9
 		}
 		if x.NInvalid != 0 {
 			n += 1 + runtime.Sov(uint64(x.NInvalid))
 		}
-		if x.ProbabilityHonest != 0 {
-			n += 1 + runtime.Sov(uint64(x.ProbabilityHonest))
+		if x.ProbabilityHonest != 0 || math.Signbit(x.ProbabilityHonest) {
+			n += 9
 		}
 		if x.FraudDetected {
 			n += 2
@@ -11170,55 +11162,57 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 			i--
 			dAtA[i] = 0x58
 		}
-		if x.ProbabilityHonest != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ProbabilityHonest))
+		if x.ProbabilityHonest != 0 || math.Signbit(x.ProbabilityHonest) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.ProbabilityHonest))))
 			i--
-			dAtA[i] = 0x50
+			dAtA[i] = 0x51
 		}
 		if x.NInvalid != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.NInvalid))
 			i--
 			dAtA[i] = 0x48
 		}
-		if x.FraudThreshold != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.FraudThreshold))
+		if x.FraudThreshold != 0 || math.Signbit(x.FraudThreshold) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.FraudThreshold))))
 			i--
-			dAtA[i] = 0x40
+			dAtA[i] = 0x41
 		}
-		if x.RTarget != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.RTarget))
+		if x.RTarget != 0 || math.Signbit(x.RTarget) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.RTarget))))
 			i--
-			dAtA[i] = 0x38
+			dAtA[i] = 0x39
 		}
 		if len(x.ReceivedDist) > 0 {
-			var pksize2 int
-			for _, num := range x.ReceivedDist {
-				pksize2 += runtime.Sov(uint64(num))
+			for iNdEx := len(x.ReceivedDist) - 1; iNdEx >= 0; iNdEx-- {
+				f1 := math.Float64bits(float64(x.ReceivedDist[iNdEx]))
+				i -= 8
+				binary.LittleEndian.PutUint64(dAtA[i:], uint64(f1))
 			}
-			i -= pksize2
-			j1 := i
-			for _, num1 := range x.ReceivedDist {
-				num := uint64(num1)
-				for num >= 1<<7 {
-					dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
-					num >>= 7
-					j1++
-				}
-				dAtA[j1] = uint8(num)
-				j1++
-			}
-			i = runtime.EncodeVarint(dAtA, i, uint64(pksize2))
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ReceivedDist)*8))
 			i--
 			dAtA[i] = 0x32
 		}
 		if len(x.Dist) > 0 {
+			for iNdEx := len(x.Dist) - 1; iNdEx >= 0; iNdEx-- {
+				f2 := math.Float64bits(float64(x.Dist[iNdEx]))
+				i -= 8
+				binary.LittleEndian.PutUint64(dAtA[i:], uint64(f2))
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Dist)*8))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if len(x.Nonces) > 0 {
 			var pksize4 int
-			for _, num := range x.Dist {
+			for _, num := range x.Nonces {
 				pksize4 += runtime.Sov(uint64(num))
 			}
 			i -= pksize4
 			j3 := i
-			for _, num1 := range x.Dist {
+			for _, num1 := range x.Nonces {
 				num := uint64(num1)
 				for num >= 1<<7 {
 					dAtA[j3] = uint8(uint64(num)&0x7f | 0x80)
@@ -11229,27 +11223,6 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 				j3++
 			}
 			i = runtime.EncodeVarint(dAtA, i, uint64(pksize4))
-			i--
-			dAtA[i] = 0x2a
-		}
-		if len(x.Nonces) > 0 {
-			var pksize6 int
-			for _, num := range x.Nonces {
-				pksize6 += runtime.Sov(uint64(num))
-			}
-			i -= pksize6
-			j5 := i
-			for _, num1 := range x.Nonces {
-				num := uint64(num1)
-				for num >= 1<<7 {
-					dAtA[j5] = uint8(uint64(num)&0x7f | 0x80)
-					num >>= 7
-					j5++
-				}
-				dAtA[j5] = uint8(num)
-				j5++
-			}
-			i = runtime.EncodeVarint(dAtA, i, uint64(pksize6))
 			i--
 			dAtA[i] = 0x22
 		}
@@ -11399,14 +11372,14 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.PocStageStartBlockHeight |= int32(b&0x7F) << shift
+					x.PocStageStartBlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
 			case 4:
 				if wireType == 0 {
-					var v int32
+					var v int64
 					for shift := uint(0); ; shift += 7 {
 						if shift >= 64 {
 							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -11416,7 +11389,7 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 						}
 						b := dAtA[iNdEx]
 						iNdEx++
-						v |= int32(b&0x7F) << shift
+						v |= int64(b&0x7F) << shift
 						if b < 0x80 {
 							break
 						}
@@ -11457,10 +11430,10 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 					}
 					elementCount = count
 					if elementCount != 0 && len(x.Nonces) == 0 {
-						x.Nonces = make([]int32, 0, elementCount)
+						x.Nonces = make([]int64, 0, elementCount)
 					}
 					for iNdEx < postIndex {
-						var v int32
+						var v int64
 						for shift := uint(0); ; shift += 7 {
 							if shift >= 64 {
 								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -11470,7 +11443,7 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 							}
 							b := dAtA[iNdEx]
 							iNdEx++
-							v |= int32(b&0x7F) << shift
+							v |= int64(b&0x7F) << shift
 							if b < 0x80 {
 								break
 							}
@@ -11481,23 +11454,15 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Nonces", wireType)
 				}
 			case 5:
-				if wireType == 0 {
-					var v int32
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-						}
-						if iNdEx >= l {
-							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						v |= int32(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
+				if wireType == 1 {
+					var v uint64
+					if (iNdEx + 8) > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 					}
-					x.Dist = append(x.Dist, v)
+					v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+					iNdEx += 8
+					v2 := float64(math.Float64frombits(v))
+					x.Dist = append(x.Dist, v2)
 				} else if wireType == 2 {
 					var packedLen int
 					for shift := uint(0); ; shift += 7 {
@@ -11525,55 +11490,33 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 					}
 					var elementCount int
-					var count int
-					for _, integer := range dAtA[iNdEx:postIndex] {
-						if integer < 128 {
-							count++
-						}
-					}
-					elementCount = count
+					elementCount = packedLen / 8
 					if elementCount != 0 && len(x.Dist) == 0 {
-						x.Dist = make([]int32, 0, elementCount)
+						x.Dist = make([]float64, 0, elementCount)
 					}
 					for iNdEx < postIndex {
-						var v int32
-						for shift := uint(0); ; shift += 7 {
-							if shift >= 64 {
-								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-							}
-							if iNdEx >= l {
-								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-							}
-							b := dAtA[iNdEx]
-							iNdEx++
-							v |= int32(b&0x7F) << shift
-							if b < 0x80 {
-								break
-							}
+						var v uint64
+						if (iNdEx + 8) > l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 						}
-						x.Dist = append(x.Dist, v)
+						v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+						iNdEx += 8
+						v2 := float64(math.Float64frombits(v))
+						x.Dist = append(x.Dist, v2)
 					}
 				} else {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Dist", wireType)
 				}
 			case 6:
-				if wireType == 0 {
-					var v int32
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-						}
-						if iNdEx >= l {
-							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						v |= int32(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
+				if wireType == 1 {
+					var v uint64
+					if (iNdEx + 8) > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 					}
-					x.ReceivedDist = append(x.ReceivedDist, v)
+					v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+					iNdEx += 8
+					v2 := float64(math.Float64frombits(v))
+					x.ReceivedDist = append(x.ReceivedDist, v2)
 				} else if wireType == 2 {
 					var packedLen int
 					for shift := uint(0); ; shift += 7 {
@@ -11601,75 +11544,45 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 					}
 					var elementCount int
-					var count int
-					for _, integer := range dAtA[iNdEx:postIndex] {
-						if integer < 128 {
-							count++
-						}
-					}
-					elementCount = count
+					elementCount = packedLen / 8
 					if elementCount != 0 && len(x.ReceivedDist) == 0 {
-						x.ReceivedDist = make([]int32, 0, elementCount)
+						x.ReceivedDist = make([]float64, 0, elementCount)
 					}
 					for iNdEx < postIndex {
-						var v int32
-						for shift := uint(0); ; shift += 7 {
-							if shift >= 64 {
-								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-							}
-							if iNdEx >= l {
-								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-							}
-							b := dAtA[iNdEx]
-							iNdEx++
-							v |= int32(b&0x7F) << shift
-							if b < 0x80 {
-								break
-							}
+						var v uint64
+						if (iNdEx + 8) > l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 						}
-						x.ReceivedDist = append(x.ReceivedDist, v)
+						v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+						iNdEx += 8
+						v2 := float64(math.Float64frombits(v))
+						x.ReceivedDist = append(x.ReceivedDist, v2)
 					}
 				} else {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ReceivedDist", wireType)
 				}
 			case 7:
-				if wireType != 0 {
+				if wireType != 1 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RTarget", wireType)
 				}
-				x.RTarget = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.RTarget |= int32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
+				var v uint64
+				if (iNdEx + 8) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.RTarget = float64(math.Float64frombits(v))
 			case 8:
-				if wireType != 0 {
+				if wireType != 1 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FraudThreshold", wireType)
 				}
-				x.FraudThreshold = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.FraudThreshold |= int32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
+				var v uint64
+				if (iNdEx + 8) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.FraudThreshold = float64(math.Float64frombits(v))
 			case 9:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NInvalid", wireType)
@@ -11684,30 +11597,22 @@ func (x *fastReflection_MsgSubmitPocValidation) ProtoMethods() *protoiface.Metho
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.NInvalid |= int32(b&0x7F) << shift
+					x.NInvalid |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
 			case 10:
-				if wireType != 0 {
+				if wireType != 1 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ProbabilityHonest", wireType)
 				}
-				x.ProbabilityHonest = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.ProbabilityHonest |= int32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
+				var v uint64
+				if (iNdEx + 8) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.ProbabilityHonest = float64(math.Float64frombits(v))
 			case 11:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FraudDetected", wireType)
@@ -13051,17 +12956,17 @@ type MsgSubmitPocValidation struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Creator                  string  `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	ParticipantAddress       string  `protobuf:"bytes,2,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
-	PocStageStartBlockHeight int32   `protobuf:"varint,3,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
-	Nonces                   []int32 `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
-	Dist                     []int32 `protobuf:"varint,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
-	ReceivedDist             []int32 `protobuf:"varint,6,rep,packed,name=receivedDist,proto3" json:"receivedDist,omitempty"`
-	RTarget                  int32   `protobuf:"varint,7,opt,name=rTarget,proto3" json:"rTarget,omitempty"`
-	FraudThreshold           int32   `protobuf:"varint,8,opt,name=fraudThreshold,proto3" json:"fraudThreshold,omitempty"`
-	NInvalid                 int32   `protobuf:"varint,9,opt,name=nInvalid,proto3" json:"nInvalid,omitempty"`
-	ProbabilityHonest        int32   `protobuf:"varint,10,opt,name=probabilityHonest,proto3" json:"probabilityHonest,omitempty"`
-	FraudDetected            bool    `protobuf:"varint,11,opt,name=fraudDetected,proto3" json:"fraudDetected,omitempty"`
+	Creator                  string    `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	ParticipantAddress       string    `protobuf:"bytes,2,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
+	PocStageStartBlockHeight int64     `protobuf:"varint,3,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
+	Nonces                   []int64   `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
+	Dist                     []float64 `protobuf:"fixed64,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
+	ReceivedDist             []float64 `protobuf:"fixed64,6,rep,packed,name=receivedDist,proto3" json:"receivedDist,omitempty"`
+	RTarget                  float64   `protobuf:"fixed64,7,opt,name=rTarget,proto3" json:"rTarget,omitempty"`
+	FraudThreshold           float64   `protobuf:"fixed64,8,opt,name=fraudThreshold,proto3" json:"fraudThreshold,omitempty"`
+	NInvalid                 int64     `protobuf:"varint,9,opt,name=nInvalid,proto3" json:"nInvalid,omitempty"`
+	ProbabilityHonest        float64   `protobuf:"fixed64,10,opt,name=probabilityHonest,proto3" json:"probabilityHonest,omitempty"`
+	FraudDetected            bool      `protobuf:"varint,11,opt,name=fraudDetected,proto3" json:"fraudDetected,omitempty"`
 }
 
 func (x *MsgSubmitPocValidation) Reset() {
@@ -13098,56 +13003,56 @@ func (x *MsgSubmitPocValidation) GetParticipantAddress() string {
 	return ""
 }
 
-func (x *MsgSubmitPocValidation) GetPocStageStartBlockHeight() int32 {
+func (x *MsgSubmitPocValidation) GetPocStageStartBlockHeight() int64 {
 	if x != nil {
 		return x.PocStageStartBlockHeight
 	}
 	return 0
 }
 
-func (x *MsgSubmitPocValidation) GetNonces() []int32 {
+func (x *MsgSubmitPocValidation) GetNonces() []int64 {
 	if x != nil {
 		return x.Nonces
 	}
 	return nil
 }
 
-func (x *MsgSubmitPocValidation) GetDist() []int32 {
+func (x *MsgSubmitPocValidation) GetDist() []float64 {
 	if x != nil {
 		return x.Dist
 	}
 	return nil
 }
 
-func (x *MsgSubmitPocValidation) GetReceivedDist() []int32 {
+func (x *MsgSubmitPocValidation) GetReceivedDist() []float64 {
 	if x != nil {
 		return x.ReceivedDist
 	}
 	return nil
 }
 
-func (x *MsgSubmitPocValidation) GetRTarget() int32 {
+func (x *MsgSubmitPocValidation) GetRTarget() float64 {
 	if x != nil {
 		return x.RTarget
 	}
 	return 0
 }
 
-func (x *MsgSubmitPocValidation) GetFraudThreshold() int32 {
+func (x *MsgSubmitPocValidation) GetFraudThreshold() float64 {
 	if x != nil {
 		return x.FraudThreshold
 	}
 	return 0
 }
 
-func (x *MsgSubmitPocValidation) GetNInvalid() int32 {
+func (x *MsgSubmitPocValidation) GetNInvalid() int64 {
 	if x != nil {
 		return x.NInvalid
 	}
 	return 0
 }
 
-func (x *MsgSubmitPocValidation) GetProbabilityHonest() int32 {
+func (x *MsgSubmitPocValidation) GetProbabilityHonest() float64 {
 	if x != nil {
 		return x.ProbabilityHonest
 	}
@@ -13352,21 +13257,21 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12,
 	0x3a, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x05, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74,
+	0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x6e,
-	0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x05, 0x52, 0x06, 0x6e, 0x6f, 0x6e,
+	0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x03, 0x52, 0x06, 0x6e, 0x6f, 0x6e,
 	0x63, 0x65, 0x73, 0x12, 0x12, 0x0a, 0x04, 0x64, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28,
-	0x05, 0x52, 0x04, 0x64, 0x69, 0x73, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69,
-	0x76, 0x65, 0x64, 0x44, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28, 0x05, 0x52, 0x0c, 0x72,
+	0x01, 0x52, 0x04, 0x64, 0x69, 0x73, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69,
+	0x76, 0x65, 0x64, 0x44, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28, 0x01, 0x52, 0x0c, 0x72,
 	0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x44, 0x69, 0x73, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x72,
-	0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x05, 0x52, 0x07, 0x72, 0x54,
+	0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x01, 0x52, 0x07, 0x72, 0x54,
 	0x61, 0x72, 0x67, 0x65, 0x74, 0x12, 0x26, 0x0a, 0x0e, 0x66, 0x72, 0x61, 0x75, 0x64, 0x54, 0x68,
-	0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0e, 0x66,
+	0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x01, 0x52, 0x0e, 0x66,
 	0x72, 0x61, 0x75, 0x64, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x12, 0x1a, 0x0a,
-	0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x05, 0x52,
+	0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52,
 	0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x2c, 0x0a, 0x11, 0x70, 0x72, 0x6f,
 	0x62, 0x61, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79, 0x48, 0x6f, 0x6e, 0x65, 0x73, 0x74, 0x18, 0x0a,
-	0x20, 0x01, 0x28, 0x05, 0x52, 0x11, 0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69, 0x6c, 0x69, 0x74,
+	0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69, 0x6c, 0x69, 0x74,
 	0x79, 0x48, 0x6f, 0x6e, 0x65, 0x73, 0x74, 0x12, 0x24, 0x0a, 0x0d, 0x66, 0x72, 0x61, 0x75, 0x64,
 	0x44, 0x65, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0d,
 	0x66, 0x72, 0x61, 0x75, 0x64, 0x44, 0x65, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64, 0x3a, 0x0c, 0x82,

@@ -8,7 +8,7 @@ import (
 
 var _ sdk.Msg = &MsgSubmitPocValidation{}
 
-func NewMsgSubmitPocValidation(creator string, participantAddress string, pocStageStartBlockHeight int32, nonces []int32, dist []int32, receivedDist []int32, rTarget int32, fraudThreshold int32, nInvalid int32, probabilityHonest int32, fraudDetected bool) *MsgSubmitPocValidation {
+func NewMsgSubmitPocValidation(creator string, participantAddress string, pocStageStartBlockHeight int64, nonces []int64, dist []float64, receivedDist []float64, rTarget float64, fraudThreshold float64, nInvalid int64, probabilityHonest float64, fraudDetected bool) *MsgSubmitPocValidation {
 	return &MsgSubmitPocValidation{
 		Creator:                  creator,
 		ParticipantAddress:       participantAddress,

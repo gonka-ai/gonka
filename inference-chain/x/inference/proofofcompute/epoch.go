@@ -37,6 +37,14 @@ func IsStartOfPoCValidationStage(blockHeight int64) bool {
 	return isNotZeroEpoch(blockHeight) && blockHeight%EpochLength == startOfPocValStage
 }
 
+func IsValidationExchangeWindow(startBlockHeight int64, currentBlockHeight int64) bool {
+	startBlockHeight = shift(startBlockHeight)
+	currentBlockHeight = shift(currentBlockHeight)
+
+	elapsedEpochs := currentBlockHeight - startBlockHeight
+	return isNotZeroEpoch(startBlockHeight) && elapsedEpochs > 0 && elapsedEpochs <= setNewValidatorsStage
+}
+
 func IsEndOfPoCValidationStage(blockHeight int64) bool {
 	blockHeight = shift(blockHeight)
 
