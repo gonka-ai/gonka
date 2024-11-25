@@ -79,7 +79,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.Equal(t, types.Participant{
 		Index:             testutil.Executor,
 		Address:           testutil.Executor,
-		Reputation:        1,
+		Reputation:        0,
 		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
