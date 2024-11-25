@@ -10,7 +10,7 @@ func Test(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	addresses := []string{"participant-1", "participant-2", "participant-3"}
 	for _, address := range addresses {
-		keeper.SetPower(ctx, types.Power{
+		keeper.SetUpcomingPower(ctx, types.Power{
 			ParticipantAddress:       address,
 			Power:                    10,
 			PocStageStartBlockHeight: 240,
@@ -18,13 +18,13 @@ func Test(t *testing.T) {
 		})
 	}
 
-	if len(keeper.AllPower(ctx)) != 3 {
+	if len(keeper.AllUpcomingPower(ctx)) != 3 {
 		t.Errorf("Expected to retrieve 3 power values")
 	}
 
-	keeper.RemoveAllPower(ctx)
+	keeper.RemoveAllUpcomingPower(ctx)
 
-	if len(keeper.AllPower(ctx)) != 0 {
+	if len(keeper.AllUpcomingPower(ctx)) != 0 {
 		t.Errorf("Expected to retrieve 0 power values")
 	}
 }

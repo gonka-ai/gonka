@@ -20,4 +20,8 @@ var (
 	ErrPocNonceNotAccepted                   = sdkerrors.Register(ModuleName, 1109, "POC nonce not accepted")
 	ErrAccountAlreadyExists                  = sdkerrors.Register(ModuleName, 1110, "account already exists")
 	ErrInferenceAlreadyInvalidated           = sdkerrors.Register(ModuleName, 1111, "inference already invalidated")
+	ErrCurrentEpochGroupNotFound             = sdkerrors.Register(ModuleName, 1112, "current epoch group not found")
+	ErrPocAddressInvalid                     = sdkerrors.Register(ModuleName, 1113, "POC address marked invalid, no longer allowed")
+	ErrNegativeCoinBalance                   = sdkerrors.Register(ModuleName, 1114, "negative coin balance")
+	ErrNegativeRefundBalance                 = sdkerrors.Register(ModuleName, 1115, "negative refund balance")
 )

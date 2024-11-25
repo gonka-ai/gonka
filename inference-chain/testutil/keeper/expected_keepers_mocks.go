@@ -18,6 +18,7 @@ import (
 	group "github.com/cosmos/cosmos-sdk/x/group"
 	keeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	types0 "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types1 "github.com/productscience/inference/x/inference/types"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -326,6 +327,36 @@ func (mr *MockGroupMessageKeeperMockRecorder) SubmitProposal(goCtx, msg any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitProposal", reflect.TypeOf((*MockGroupMessageKeeper)(nil).SubmitProposal), goCtx, msg)
 }
 
+// UpdateGroupMembers mocks base method.
+func (m *MockGroupMessageKeeper) UpdateGroupMembers(goCtx context.Context, msg *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateGroupMembers", goCtx, msg)
+	ret0, _ := ret[0].(*group.MsgUpdateGroupMembersResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateGroupMembers indicates an expected call of UpdateGroupMembers.
+func (mr *MockGroupMessageKeeperMockRecorder) UpdateGroupMembers(goCtx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateGroupMembers", reflect.TypeOf((*MockGroupMessageKeeper)(nil).UpdateGroupMembers), goCtx, msg)
+}
+
+// UpdateGroupMetadata mocks base method.
+func (m *MockGroupMessageKeeper) UpdateGroupMetadata(goCtx context.Context, msg *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateGroupMetadata", goCtx, msg)
+	ret0, _ := ret[0].(*group.MsgUpdateGroupMetadataResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateGroupMetadata indicates an expected call of UpdateGroupMetadata.
+func (mr *MockGroupMessageKeeperMockRecorder) UpdateGroupMetadata(goCtx, msg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateGroupMetadata", reflect.TypeOf((*MockGroupMessageKeeper)(nil).UpdateGroupMetadata), goCtx, msg)
+}
+
 // Vote mocks base method.
 func (m *MockGroupMessageKeeper) Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error) {
 	m.ctrl.T.Helper()
@@ -624,4 +655,171 @@ func (m *MockStakingKeeper) SetComputeValidators(ctx context.Context, computeRes
 func (mr *MockStakingKeeperMockRecorder) SetComputeValidators(ctx, computeResults any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetComputeValidators", reflect.TypeOf((*MockStakingKeeper)(nil).SetComputeValidators), ctx, computeResults)
+}
+
+// MockParticipantKeeper is a mock of ParticipantKeeper interface.
+type MockParticipantKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockParticipantKeeperMockRecorder
+}
+
+// MockParticipantKeeperMockRecorder is the mock recorder for MockParticipantKeeper.
+type MockParticipantKeeperMockRecorder struct {
+	mock *MockParticipantKeeper
+}
+
+// NewMockParticipantKeeper creates a new mock instance.
+func NewMockParticipantKeeper(ctrl *gomock.Controller) *MockParticipantKeeper {
+	mock := &MockParticipantKeeper{ctrl: ctrl}
+	mock.recorder = &MockParticipantKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockParticipantKeeper) EXPECT() *MockParticipantKeeperMockRecorder {
+	return m.recorder
+}
+
+// GetAllParticipant mocks base method.
+func (m *MockParticipantKeeper) GetAllParticipant(ctx context.Context) []types1.Participant {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllParticipant", ctx)
+	ret0, _ := ret[0].([]types1.Participant)
+	return ret0
+}
+
+// GetAllParticipant indicates an expected call of GetAllParticipant.
+func (mr *MockParticipantKeeperMockRecorder) GetAllParticipant(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).GetAllParticipant), ctx)
+}
+
+// GetParticipant mocks base method.
+func (m *MockParticipantKeeper) GetParticipant(ctx context.Context, index string) (types1.Participant, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetParticipant", ctx, index)
+	ret0, _ := ret[0].(types1.Participant)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetParticipant indicates an expected call of GetParticipant.
+func (mr *MockParticipantKeeperMockRecorder) GetParticipant(ctx, index any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).GetParticipant), ctx, index)
+}
+
+// GetParticipants mocks base method.
+func (m *MockParticipantKeeper) GetParticipants(ctx context.Context, ids []string) ([]types1.Participant, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetParticipants", ctx, ids)
+	ret0, _ := ret[0].([]types1.Participant)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetParticipants indicates an expected call of GetParticipants.
+func (mr *MockParticipantKeeperMockRecorder) GetParticipants(ctx, ids any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParticipants", reflect.TypeOf((*MockParticipantKeeper)(nil).GetParticipants), ctx, ids)
+}
+
+// RemoveParticipant mocks base method.
+func (m *MockParticipantKeeper) RemoveParticipant(ctx context.Context, index string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RemoveParticipant", ctx, index)
+}
+
+// RemoveParticipant indicates an expected call of RemoveParticipant.
+func (mr *MockParticipantKeeperMockRecorder) RemoveParticipant(ctx, index any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).RemoveParticipant), ctx, index)
+}
+
+// SetParticipant mocks base method.
+func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types1.Participant) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetParticipant", ctx, participant)
+}
+
+// SetParticipant indicates an expected call of SetParticipant.
+func (mr *MockParticipantKeeperMockRecorder) SetParticipant(ctx, participant any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetParticipant", reflect.TypeOf((*MockParticipantKeeper)(nil).SetParticipant), ctx, participant)
+}
+
+// MockEpochGroupDataKeeper is a mock of EpochGroupDataKeeper interface.
+type MockEpochGroupDataKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockEpochGroupDataKeeperMockRecorder
+}
+
+// MockEpochGroupDataKeeperMockRecorder is the mock recorder for MockEpochGroupDataKeeper.
+type MockEpochGroupDataKeeperMockRecorder struct {
+	mock *MockEpochGroupDataKeeper
+}
+
+// NewMockEpochGroupDataKeeper creates a new mock instance.
+func NewMockEpochGroupDataKeeper(ctrl *gomock.Controller) *MockEpochGroupDataKeeper {
+	mock := &MockEpochGroupDataKeeper{ctrl: ctrl}
+	mock.recorder = &MockEpochGroupDataKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockEpochGroupDataKeeper) EXPECT() *MockEpochGroupDataKeeperMockRecorder {
+	return m.recorder
+}
+
+// GetAllEpochGroupData mocks base method.
+func (m *MockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types1.EpochGroupData {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllEpochGroupData", ctx)
+	ret0, _ := ret[0].([]types1.EpochGroupData)
+	return ret0
+}
+
+// GetAllEpochGroupData indicates an expected call of GetAllEpochGroupData.
+func (mr *MockEpochGroupDataKeeperMockRecorder) GetAllEpochGroupData(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).GetAllEpochGroupData), ctx)
+}
+
+// GetEpochGroupData mocks base method.
+func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (types1.EpochGroupData, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetEpochGroupData", ctx, pocStartBlockHeight)
+	ret0, _ := ret[0].(types1.EpochGroupData)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetEpochGroupData indicates an expected call of GetEpochGroupData.
+func (mr *MockEpochGroupDataKeeperMockRecorder) GetEpochGroupData(ctx, pocStartBlockHeight any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).GetEpochGroupData), ctx, pocStartBlockHeight)
+}
+
+// RemoveEpochGroupData mocks base method.
+func (m *MockEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RemoveEpochGroupData", ctx, pocStartBlockHeight)
+}
+
+// RemoveEpochGroupData indicates an expected call of RemoveEpochGroupData.
+func (mr *MockEpochGroupDataKeeperMockRecorder) RemoveEpochGroupData(ctx, pocStartBlockHeight any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).RemoveEpochGroupData), ctx, pocStartBlockHeight)
+}
+
+// SetEpochGroupData mocks base method.
+func (m *MockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types1.EpochGroupData) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetEpochGroupData", ctx, epochGroupData)
+}
+
+// SetEpochGroupData indicates an expected call of SetEpochGroupData.
+func (mr *MockEpochGroupDataKeeperMockRecorder) SetEpochGroupData(ctx, epochGroupData any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).SetEpochGroupData), ctx, epochGroupData)
 }

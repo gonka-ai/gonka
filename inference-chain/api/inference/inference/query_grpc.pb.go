@@ -27,6 +27,8 @@ const (
 	Query_GetInferencesWithExecutors_FullMethodName = "/inference.inference.Query/GetInferencesWithExecutors"
 	Query_InferenceParticipant_FullMethodName       = "/inference.inference.Query/InferenceParticipant"
 	Query_GetRandomExecutor_FullMethodName          = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName             = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -47,6 +49,9 @@ type QueryClient interface {
 	InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error)
 	// Queries a list of GetRandomExecutor items.
 	GetRandomExecutor(ctx context.Context, in *QueryGetRandomExecutorRequest, opts ...grpc.CallOption) (*QueryGetRandomExecutorResponse, error)
+	// Queries a list of EpochGroupData items.
+	EpochGroupData(ctx context.Context, in *QueryGetEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupDataResponse, error)
+	EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupDataResponse, error)
 }
 
 type queryClient struct {
@@ -129,6 +134,24 @@ func (c *queryClient) GetRandomExecutor(ctx context.Context, in *QueryGetRandomE
 	return out, nil
 }
 
+func (c *queryClient) EpochGroupData(ctx context.Context, in *QueryGetEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupDataResponse, error) {
+	out := new(QueryGetEpochGroupDataResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupData_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupDataResponse, error) {
+	out := new(QueryAllEpochGroupDataResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupDataAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -147,6 +170,9 @@ type QueryServer interface {
 	InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error)
 	// Queries a list of GetRandomExecutor items.
 	GetRandomExecutor(context.Context, *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error)
+	// Queries a list of EpochGroupData items.
+	EpochGroupData(context.Context, *QueryGetEpochGroupDataRequest) (*QueryGetEpochGroupDataResponse, error)
+	EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -177,6 +203,12 @@ func (UnimplementedQueryServer) InferenceParticipant(context.Context, *QueryInfe
 }
 func (UnimplementedQueryServer) GetRandomExecutor(context.Context, *QueryGetRandomExecutorRequest) (*QueryGetRandomExecutorResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRandomExecutor not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupData(context.Context, *QueryGetEpochGroupDataRequest) (*QueryGetEpochGroupDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupData not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupDataAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -335,6 +367,42 @@ func _Query_GetRandomExecutor_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_EpochGroupData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetEpochGroupDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupData(ctx, req.(*QueryGetEpochGroupDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochGroupDataAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllEpochGroupDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupDataAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupDataAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupDataAll(ctx, req.(*QueryAllEpochGroupDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -373,6 +441,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRandomExecutor",
 			Handler:    _Query_GetRandomExecutor_Handler,
+		},
+		{
+			MethodName: "EpochGroupData",
+			Handler:    _Query_EpochGroupData_Handler,
+		},
+		{
+			MethodName: "EpochGroupDataAll",
+			Handler:    _Query_EpochGroupDataAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

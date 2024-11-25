@@ -31,4 +31,5 @@ message Participant {
   int64 coinBalance = 16;
   string validatorKey = 17;
   int64 refundBalance = 18;
+  int64 consecutiveInvalidInferences = 19;
 }

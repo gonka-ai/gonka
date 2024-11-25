@@ -1,0 +1,14 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message EpochGroupData {
+  uint64 pocStartBlockHeight = 1; 
+  uint64 epochGroupId = 2;
+  string epochPolicy = 3; 
+  uint64 effectiveBlockHeight = 4; 
+  uint64 lastBlockHeight = 5; 
+  
+}
+

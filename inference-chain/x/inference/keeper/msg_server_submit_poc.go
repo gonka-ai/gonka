@@ -19,6 +19,14 @@ const PocFailureTag = "PoC [Failure] "
 
 func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*types.MsgSubmitPoCResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	participant, found := k.GetParticipant(ctx, msg.Creator)
+	if !found {
+		return nil, errors.New("participant not found")
+	}
+
+	if participant.Status == types.ParticipantStatus_INVALID {
+		return nil, sdkerrors.Wrap(types.ErrPocAddressInvalid, "participant is invalid")
+	}
 
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.BlockHeight
@@ -74,12 +82,20 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	// 4. Store power
 	k.LogInfo("Storing power for participant", "participant", msg.Creator, "power", len(msg.Nonce))
 	power := len(msg.Nonce)
-	k.Keeper.SetPower(ctx, types.Power{
+	k.Keeper.SetUpcomingPower(ctx, types.Power{
 		ParticipantAddress:       msg.Creator,
 		Power:                    int64(power),
 		PocStageStartBlockHeight: startBlockHeight,
 		ReceivedAtBlockHeight:    currentBlockHeight,
 	})
+	group, err := k.Keeper.GetEpochGroup(ctx, uint64(startBlockHeight))
+	if err != nil {
+		return nil, err
+	}
+	err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey)
+	if err != nil {
+		return nil, err
+	}
 
 	return &types.MsgSubmitPoCResponse{}, nil
 }

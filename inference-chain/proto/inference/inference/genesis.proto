@@ -7,6 +7,7 @@ import "gogoproto/gogo.proto";
 import "inference/inference/params.proto";
 import "inference/inference/inference.proto";
 import "inference/inference/participant.proto";
+import "inference/inference/epoch_group_data.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -14,8 +15,9 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message GenesisState {
   
   // params defines all the parameters of the module.
-           Params      params          = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
-  repeated Inference   inferenceList   = 2 [(gogoproto.nullable) = false] ;
-  repeated Participant participantList = 3 [(gogoproto.nullable) = false] ;
+           Params         params             = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  repeated Inference      inferenceList      = 2 [(gogoproto.nullable) = false] ;
+  repeated Participant    participantList    = 3 [(gogoproto.nullable) = false] ;
+  repeated EpochGroupData epochGroupDataList = 4 [(gogoproto.nullable) = false] ;
 }
 

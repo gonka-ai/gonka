@@ -32,9 +32,6 @@ func (k Keeper) ParticipantAll(ctx context.Context, req *types.QueryAllParticipa
 		participants = append(participants, participant)
 		return nil
 	})
-	currentGroupId := k.GetEpochGroupId(sdkCtx)
-
-	k.LogInfo("Current group ID", "group_id", currentGroupId)
 
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

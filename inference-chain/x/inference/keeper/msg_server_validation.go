@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"math"
 	"strconv"
@@ -45,15 +44,21 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	passed := msg.Value > PassValue
 	needsRevalidation := false
 
+	epochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	k.LogInfo("Validation: Validating inner loop", "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
-		return k.revalidate(passed, inference, msg, ctx)
+		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
+		executor.ConsecutiveInvalidInferences = 0
 		executor.ValidatedInferences++
 	} else {
 		inference.Status = types.InferenceStatus_VOTING
-		proposalDetails, err := k.startValidationVote(ctx, &inference, msg.Creator)
+		proposalDetails, err := epochGroup.StartValidationVote(ctx, &inference, msg.Creator)
 		if err != nil {
 			return nil, err
 		}
@@ -79,52 +84,14 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	return &types.MsgValidationResponse{}, nil
 }
 
-func (k msgServer) revalidate(passed bool, inference types.Inference, msg *types.MsgValidation, ctx sdk.Context) (*types.MsgValidationResponse, error) {
-	invalidateOption := group.VOTE_OPTION_YES
-	revalidationOption := group.VOTE_OPTION_NO
-	if passed {
-		invalidateOption = group.VOTE_OPTION_NO
-		revalidationOption = group.VOTE_OPTION_YES
-	}
-	voteMsg := &group.MsgVote{
-		ProposalId: inference.ProposalDetails.InvalidatePolicyId,
-		Voter:      msg.Creator,
-		Option:     invalidateOption,
-		Metadata:   "Invalidate inference " + inference.InferenceId,
-		Exec:       group.Exec_EXEC_TRY,
-	}
-	err := k.vote2(ctx, voteMsg)
-	if err != nil {
-		return nil, err
-	}
-	voteMsg.ProposalId = inference.ProposalDetails.ReValidatePolicyId
-	voteMsg.Option = revalidationOption
-	voteMsg.Metadata = "Revalidate inference " + inference.InferenceId
-	err = k.vote2(ctx, voteMsg)
-	if err != nil {
-		return nil, err
-	}
-	return &types.MsgValidationResponse{}, nil
-}
-func (k msgServer) vote2(ctx sdk.Context, vote *group.MsgVote) error {
-	k.LogInfo("Validation: Voting", "vote", vote)
-	_, err := k.group.Vote(ctx, vote)
-	if err != nil {
-		if err.Error() == "proposal not open for voting: invalid value" {
-			k.LogInfo("Validation: Proposal already decided", "vote", vote)
-			return nil
-		}
-		k.LogError("Validation: Error voting", "error", err, "vote", vote)
-		return err
-	}
-	k.LogInfo("Validation: Voted on validation", "vote", vote)
-	return nil
-}
-
 func calculateStatus(falsePositiveRate float64, participant types.Participant) (status types.ParticipantStatus) {
 	// Why not use the p-value, you ask? (or should).
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
+	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
+	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
+		return types.ParticipantStatus_INVALID
+	}
 	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
 	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, MinRampUpMeasurements)
 	if participant.InferenceCount < measurementsNeeded {
@@ -174,4 +141,17 @@ func MeasurementsNeeded(p float64, max uint64) uint64 {
 		return max
 	}
 	return needed
+}
+
+// If we have consecutive failures, it is rapidly more likely that the executor is bad
+func ProbabilityOfConsecutiveFailures(expectedFailureRate float64, consecutiveFailures int64) float64 {
+	if expectedFailureRate < 0 || expectedFailureRate > 1 {
+		panic("expectedFailureRate must be between 0 and 1")
+	}
+	if consecutiveFailures < 0 {
+		panic("consecutiveFailures must be non-negative")
+	}
+
+	// P(F^N|G) = x^N
+	return math.Pow(expectedFailureRate, float64(consecutiveFailures))
 }

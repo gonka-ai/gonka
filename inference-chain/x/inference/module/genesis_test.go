@@ -30,6 +30,14 @@ func TestGenesis(t *testing.T) {
 				Index: "1",
 			},
 		},
+		EpochGroupDataList: []types.EpochGroupData{
+			{
+				PocStartBlockHeight: 0,
+			},
+			{
+				PocStartBlockHeight: 1,
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -43,5 +51,6 @@ func TestGenesis(t *testing.T) {
 
 	require.ElementsMatch(t, genesisState.InferenceList, got.InferenceList)
 	require.ElementsMatch(t, genesisState.ParticipantList, got.ParticipantList)
+	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }
