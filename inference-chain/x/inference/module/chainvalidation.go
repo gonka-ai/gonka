@@ -176,15 +176,22 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) ([
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
 		if currentActiveParticipants != nil {
-			validatorCount := getValidatorIntersectionCount(currentValidatorsAddressSet, vals)
 			requiredValidators := (len(currentActiveParticipants.Participants) * 2) / 3
-
-			if validatorCount < requiredValidators {
-				am.LogWarn("Participant didn't receive enough validations",
+			if len(vals) < requiredValidators {
+				am.LogWarn("Participant didn't receive enough validations. Defaulting to accepting",
 					"participant", participantAddress,
-					"validations", validatorCount,
+					"validations", len(vals),
 					"required", requiredValidators)
-				continue
+			} else {
+				validatorCount := getValidatorIntersectionCount(currentValidatorsAddressSet, vals)
+
+				if validatorCount < requiredValidators {
+					am.LogWarn("Participant didn't receive enough validations",
+						"participant", participantAddress,
+						"validations", validatorCount,
+						"required", requiredValidators)
+					continue
+				}
 			}
 		}
 
@@ -232,7 +239,7 @@ func getActiveAddressSet(activeParticipants *types.ActiveParticipants) *map[stri
 func getValidatorIntersectionCount(currentValidatorsSet *map[string]struct{}, validations []types.PoCValidation) int {
 	count := 0
 	for _, v := range validations {
-		if _, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok {
+		if _, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok && !v.FraudDetected {
 			count++
 		}
 	}
