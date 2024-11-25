@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,9 +21,9 @@ func setupMsgServerWithKeeper(k keeper.Keeper) types.MsgServer {
 	return keeper.NewMsgServerImpl(k)
 }
 
-func setupKeeperWithBankMock(t testing.TB) (keeper.Keeper, types.MsgServer, context.Context, *keepertest.MockBankEscrowKeeper) {
-	k, ctx, mock := keepertest.InferenceKeeperReturningMock(t)
-	return k, keeper.NewMsgServerImpl(k), ctx, mock.BankKeeper
+func setupKeeperWithMocks(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	return k, keeper.NewMsgServerImpl(k), ctx, &mock
 }
 
 func TestMsgServer(t *testing.T) {

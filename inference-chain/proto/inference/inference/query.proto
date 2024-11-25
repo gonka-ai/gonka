@@ -9,6 +9,7 @@ import "cosmos/base/query/v1beta1/pagination.proto";
 import "inference/inference/params.proto";
 import "inference/inference/inference.proto";
 import "inference/inference/participant.proto";
+import "inference/inference/epoch_group_data.proto";
 import "inference/inference/pocbatch.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -60,6 +61,17 @@ service Query {
 
   }
 
+  // Queries a list of EpochGroupData items.
+  rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{pocStartBlockHeight}";
+
+  }
+  rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
+
+
+  }
+
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{blockHeight}";
@@ -106,9 +118,9 @@ message QueryAllParticipantRequest {
 }
 
 message QueryAllParticipantResponse {
-  repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
-  int64                                  block_height = 3;
+  repeated Participant                            participant  = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+           int64                                  block_height = 3;
 }
 
 message QueryGetInferencesWithExecutorsRequest {
@@ -139,6 +151,24 @@ message QueryGetRandomExecutorRequest {}
 message QueryGetRandomExecutorResponse {
   Participant executor = 1 [(gogoproto.nullable) = false];
 }
+
+message QueryGetEpochGroupDataRequest {
+  uint64 pocStartBlockHeight = 1;
+}
+
+message QueryGetEpochGroupDataResponse {
+  EpochGroupData epochGroupData = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllEpochGroupDataRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllEpochGroupDataResponse {
+  repeated EpochGroupData                         epochGroupData = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination     = 2;
+}
+
 
 message QueryPocBatchesForStageRequest {
   int64 blockHeight = 1;

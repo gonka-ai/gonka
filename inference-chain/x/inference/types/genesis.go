@@ -10,8 +10,9 @@ const DefaultIndex uint64 = 1
 // DefaultGenesis returns the default genesis state
 func DefaultGenesis() *GenesisState {
 	return &GenesisState{
-		InferenceList:   []Inference{},
-		ParticipantList: []Participant{},
+		InferenceList:      []Inference{},
+		ParticipantList:    []Participant{},
+		EpochGroupDataList: []EpochGroupData{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params: DefaultParams(),
 	}
@@ -39,6 +40,16 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for participant")
 		}
 		participantIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in epochGroupData
+	epochGroupDataIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.EpochGroupDataList {
+		index := string(EpochGroupDataKey(elem.PocStartBlockHeight))
+		if _, ok := epochGroupDataIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for epochGroupData")
+		}
+		epochGroupDataIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 

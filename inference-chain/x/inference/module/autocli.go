@@ -61,6 +61,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod: "EpochGroupDataAll",
+					Use:       "list-epoch-group-data",
+					Short:     "List all epochGroupData",
+				},
+				{
+					RpcMethod:      "EpochGroupData",
+					Use:            "show-epoch-group-data [id]",
+					Short:          "Shows a epochGroupData",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStartBlockHeight"}},
+				},
+				{
 					RpcMethod:      "PocBatchesForStage",
 					Use:            "poc-batches-for-stage [block-height]",
 					Short:          "Query pocBatchesForStage",

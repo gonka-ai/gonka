@@ -165,10 +165,69 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to settle accounts", "error", err.Error())
 		}
-		am.SendNewValidatorWeightsToStaking(ctx, blockHeight)
+		am.SetActiveParticipants(ctx, blockHeight)
+		am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+	}
+
+	if proofofcompute.IsStartOfPoCStage(blockHeight) {
+		am.LogInfo("NewPocStart", "blockHeight", blockHeight)
+		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight))
+		if err != nil {
+			am.LogError("Unable to create epoch group", "error", err.Error())
+			return err
+		}
+		err = newGroup.CreateGroup(ctx)
+		if err != nil {
+			am.LogError("Unable to create epoch group", "error", err.Error())
+			return err
+		}
+		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
+	}
+	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		am.LogError("Unable to get current epoch group", "error", err.Error())
+		return nil
+	}
+
+	if currentEpochGroup.IsChanged(ctx) {
+		am.LogInfo("EpochGroupChanged", "blockHeight", blockHeight)
+		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
+		if err != nil {
+			am.LogError("Unable to get compute results", "error", err.Error())
+			return nil
+		}
+		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
+		if err != nil {
+			am.LogError("Unable to update epoch group", "error", err.Error())
+		}
+		currentEpochGroup.MarkUnchanged(ctx)
 	}
 
 	return nil
+}
+
+func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {
+	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
+	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
+
+	am.LogInfo("NewEpochGroup", "blockHeight", blockHeight, "newGroupId", newGroupId)
+	am.keeper.SetEffectiveEpochGroupId(ctx, newGroupId)
+	am.keeper.SetPreviousEpochGroupId(ctx, previousGroupId)
+	am.keeper.SetUpcomingEpochGroupId(ctx, 0)
+	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId)
+	if !found {
+		am.LogWarn("NewEpochGroupDataNotFound", "blockHeight", blockHeight, "newGroupId", newGroupId)
+		return
+	}
+	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousGroupId)
+	if !found {
+		am.LogWarn("PreviousEpochGroupDataNotFound", "blockHeight", blockHeight, "previousGroupId", previousGroupId)
+		return
+	}
+	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
+	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
+	am.keeper.SetEpochGroupData(ctx, newGroupData)
+	am.keeper.SetEpochGroupData(ctx, previousGroupData)
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.

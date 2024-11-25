@@ -35,6 +35,8 @@ type BankEscrowKeeper interface {
 type GroupMessageKeeper interface {
 	CreateGroup(goCtx context.Context, msg *group.MsgCreateGroup) (*group.MsgCreateGroupResponse, error)
 	CreateGroupWithPolicy(ctx context.Context, msg *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error)
+	UpdateGroupMembers(goCtx context.Context, msg *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error)
+	UpdateGroupMetadata(goCtx context.Context, msg *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error)
 	SubmitProposal(goCtx context.Context, msg *group.MsgSubmitProposal) (*group.MsgSubmitProposalResponse, error)
 	Vote(goCtx context.Context, msg *group.MsgVote) (*group.MsgVoteResponse, error)
 	GroupInfo(goCtx context.Context, request *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error)
@@ -70,4 +72,19 @@ type ValidatorSet interface {
 
 type StakingKeeper interface {
 	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types.Validator, error)
+}
+
+type ParticipantKeeper interface {
+	GetParticipant(ctx context.Context, index string) (val Participant, found bool)
+	GetParticipants(ctx context.Context, ids []string) ([]Participant, bool)
+	SetParticipant(ctx context.Context, participant Participant)
+	RemoveParticipant(ctx context.Context, index string)
+	GetAllParticipant(ctx context.Context) []Participant
+}
+
+type EpochGroupDataKeeper interface {
+	SetEpochGroupData(ctx context.Context, epochGroupData EpochGroupData)
+	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (val EpochGroupData, found bool)
+	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64)
+	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
 }

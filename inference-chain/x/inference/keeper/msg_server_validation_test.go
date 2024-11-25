@@ -2,10 +2,13 @@ package keeper_test
 
 import (
 	"context"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+	"log"
 	"testing"
 )
 
@@ -34,9 +37,16 @@ func createParticipants(t *testing.T, ms types.MsgServer, ctx context.Context) {
 }
 
 func TestMsgServer_Validation_Invalidate(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	mocks.BankKeeper.ExpectAny(ctx)
 	createParticipants(t, ms, ctx)
 	createCompletedInference(t, ms, ctx)
+	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+		ProposalId: 1,
+	}, nil)
+	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
+		ProposalId: 2,
+	}, nil)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
 		Creator:     testutil.Validator,
@@ -44,8 +54,34 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 	})
 	require.NoError(t, err)
 	inference, found := k.GetInference(ctx, INFERENCE_ID)
+	log.Print(inference)
 	require.True(t, found)
-	require.Equal(t, types.InferenceStatus_INVALIDATED, inference.Status)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
+	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+		ProposalId: 1,
+		Voter:      testutil.Requester,
+		Option:     group.VOTE_OPTION_YES,
+		Metadata:   "Invalidate inference " + INFERENCE_ID,
+		Exec:       group.Exec_EXEC_TRY,
+	}))
+	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
+		ProposalId: 2,
+		Voter:      testutil.Requester,
+		Option:     group.VOTE_OPTION_NO,
+		Metadata:   "Revalidate inference " + INFERENCE_ID,
+		Exec:       group.Exec_EXEC_TRY,
+	}))
+
+	_, err = ms.Validation(ctx, &types.MsgValidation{
+		InferenceId:  INFERENCE_ID,
+		Creator:      testutil.Requester,
+		Value:        0.80,
+		Revalidation: true,
+	})
+	inference, found = k.GetInference(ctx, INFERENCE_ID)
+
+	require.True(t, found)
+	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
 }
 
 func TestMsgServer_NoInference(t *testing.T) {

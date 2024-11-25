@@ -31,50 +31,14 @@ func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
 	return k.bank.MintCoins(ctx, types.ModuleName, getCoins(newCoins))
 }
 
-func (k *Keeper) SettleParticipant(ctx context.Context, participant *types.Participant, totalWork uint64, newCoin uint64) error {
-	k.LogInfo("Settling participant", "participant", participant)
-	participantAddress, err := sdk.AccAddressFromBech32(participant.Address)
+func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, amount uint64) error {
+	participantAddress, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
-		k.LogError("Error converting participant address", "error", err)
 		return err
 	}
-	if participant.CoinBalance < 0 {
-		k.LogWarn("Participant has negative coin balance", "participant", participant)
-	}
-	if participant.RefundBalance < 0 {
-		k.LogWarn("Participant has negative refund balance", "participant", participant)
-	}
-	if participant.CoinBalance > 0 {
-		bonusCoinsInt := k.calculateBonusCoins(participant, totalWork, newCoin)
-		k.LogDebug("Bonus coins", "coins", bonusCoinsInt)
-		k.LogDebug("Participant coin balance", "coins", participant.CoinBalance)
-		k.LogInfo("Sending coins to participant", "coins", participant.CoinBalance+bonusCoinsInt, "participant", participant.Address)
-		err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(participant.CoinBalance+bonusCoinsInt))
-		if err != nil {
-			k.LogError("Error sending coins to participant", "error", err)
-			return err
-		}
-		participant.CoinBalance = 0
-		k.LogDebug("Sent coins to participant", "participant", participant)
-	}
-	if participant.RefundBalance > 0 {
-		err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(participant.RefundBalance))
-		k.LogInfo("Sending refund to participant", "refund", participant.RefundBalance, "participant", participant.Address)
-		if err != nil {
-			k.LogError("Error sending refund to participant", "error", err)
-			return err
-		}
-		participant.RefundBalance = 0
-		k.LogDebug("Sent refund to participant", "participant", participant)
-	}
-	k.LogDebug("Settled participant", "participant", participant)
-	return nil
-}
 
-func (k *Keeper) calculateBonusCoins(participant *types.Participant, totalWork uint64, newCoin uint64) int64 {
-	bonusCoins := float64(participant.CoinBalance) / float64(totalWork) * float64(newCoin)
-	bonusCoinsInt := int64(bonusCoins)
-	return bonusCoinsInt
+	err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(int64(amount)))
+	return err
 }
 
 func getCoins(coins int64) sdk.Coins {

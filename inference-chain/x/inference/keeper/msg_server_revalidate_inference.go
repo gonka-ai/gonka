@@ -33,6 +33,7 @@ func (k msgServer) RevalidateInference(goCtx context.Context, msg *types.MsgReva
 	}
 
 	inference.Status = types.InferenceStatus_VALIDATED
+	executor.ConsecutiveInvalidInferences = 0
 	executor.ValidatedInferences++
 
 	executor.Status = calculateStatus(FalsePositiveRate, executor)

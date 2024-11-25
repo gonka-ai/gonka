@@ -18,6 +18,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetParticipant(ctx, elem)
 	}
 	// PRTODO: set active participants here, but how?
+	// Set all the epochGroupData
+	for _, elem := range genState.EpochGroupDataList {
+		k.SetEpochGroupData(ctx, elem)
+	}
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -31,6 +35,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 
 	genesis.InferenceList = k.GetAllInference(ctx)
 	genesis.ParticipantList = k.GetAllParticipant(ctx)
+	genesis.EpochGroupDataList = k.GetAllEpochGroupData(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

@@ -7797,25 +7797,25 @@ func (x *fastReflection_QueryGetRandomExecutorResponse) ProtoMethods() *protoifa
 }
 
 var (
-	md_QueryPocBatchesForStageRequest             protoreflect.MessageDescriptor
-	fd_QueryPocBatchesForStageRequest_blockHeight protoreflect.FieldDescriptor
+	md_QueryGetEpochGroupDataRequest                     protoreflect.MessageDescriptor
+	fd_QueryGetEpochGroupDataRequest_pocStartBlockHeight protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_query_proto_init()
-	md_QueryPocBatchesForStageRequest = File_inference_inference_query_proto.Messages().ByName("QueryPocBatchesForStageRequest")
-	fd_QueryPocBatchesForStageRequest_blockHeight = md_QueryPocBatchesForStageRequest.Fields().ByName("blockHeight")
+	md_QueryGetEpochGroupDataRequest = File_inference_inference_query_proto.Messages().ByName("QueryGetEpochGroupDataRequest")
+	fd_QueryGetEpochGroupDataRequest_pocStartBlockHeight = md_QueryGetEpochGroupDataRequest.Fields().ByName("pocStartBlockHeight")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryPocBatchesForStageRequest)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryGetEpochGroupDataRequest)(nil)
 
-type fastReflection_QueryPocBatchesForStageRequest QueryPocBatchesForStageRequest
+type fastReflection_QueryGetEpochGroupDataRequest QueryGetEpochGroupDataRequest
 
-func (x *QueryPocBatchesForStageRequest) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryPocBatchesForStageRequest)(x)
+func (x *QueryGetEpochGroupDataRequest) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryGetEpochGroupDataRequest)(x)
 }
 
-func (x *QueryPocBatchesForStageRequest) slowProtoReflect() protoreflect.Message {
+func (x *QueryGetEpochGroupDataRequest) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_query_proto_msgTypes[17]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7827,43 +7827,43 @@ func (x *QueryPocBatchesForStageRequest) slowProtoReflect() protoreflect.Message
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryPocBatchesForStageRequest_messageType fastReflection_QueryPocBatchesForStageRequest_messageType
-var _ protoreflect.MessageType = fastReflection_QueryPocBatchesForStageRequest_messageType{}
+var _fastReflection_QueryGetEpochGroupDataRequest_messageType fastReflection_QueryGetEpochGroupDataRequest_messageType
+var _ protoreflect.MessageType = fastReflection_QueryGetEpochGroupDataRequest_messageType{}
 
-type fastReflection_QueryPocBatchesForStageRequest_messageType struct{}
+type fastReflection_QueryGetEpochGroupDataRequest_messageType struct{}
 
-func (x fastReflection_QueryPocBatchesForStageRequest_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryPocBatchesForStageRequest)(nil)
+func (x fastReflection_QueryGetEpochGroupDataRequest_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryGetEpochGroupDataRequest)(nil)
 }
-func (x fastReflection_QueryPocBatchesForStageRequest_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryPocBatchesForStageRequest)
+func (x fastReflection_QueryGetEpochGroupDataRequest_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryGetEpochGroupDataRequest)
 }
-func (x fastReflection_QueryPocBatchesForStageRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryPocBatchesForStageRequest
+func (x fastReflection_QueryGetEpochGroupDataRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryGetEpochGroupDataRequest
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryPocBatchesForStageRequest
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryGetEpochGroupDataRequest
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Type() protoreflect.MessageType {
-	return _fastReflection_QueryPocBatchesForStageRequest_messageType
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Type() protoreflect.MessageType {
+	return _fastReflection_QueryGetEpochGroupDataRequest_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryPocBatchesForStageRequest) New() protoreflect.Message {
-	return new(fastReflection_QueryPocBatchesForStageRequest)
+func (x *fastReflection_QueryGetEpochGroupDataRequest) New() protoreflect.Message {
+	return new(fastReflection_QueryGetEpochGroupDataRequest)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Interface() protoreflect.ProtoMessage {
-	return (*QueryPocBatchesForStageRequest)(x)
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Interface() protoreflect.ProtoMessage {
+	return (*QueryGetEpochGroupDataRequest)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -7871,10 +7871,10 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Interface() protoreflect
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.BlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_QueryPocBatchesForStageRequest_blockHeight, value) {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.PocStartBlockHeight != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.PocStartBlockHeight)
+		if !f(fd_QueryGetEpochGroupDataRequest_pocStartBlockHeight, value) {
 			return
 		}
 	}
@@ -7891,15 +7891,15 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Range(f func(protoreflec
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		return x.BlockHeight != int64(0)
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		return x.PocStartBlockHeight != uint64(0)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -7909,15 +7909,15 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Has(fd protoreflect.Fiel
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		x.BlockHeight = int64(0)
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		x.PocStartBlockHeight = uint64(0)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -7927,16 +7927,16 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Clear(fd protoreflect.Fi
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		value := x.BlockHeight
-		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		value := x.PocStartBlockHeight
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -7950,15 +7950,15 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Get(descriptor protorefl
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		x.BlockHeight = value.Int()
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		x.PocStartBlockHeight = value.Uint()
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -7972,40 +7972,40 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) Set(fd protoreflect.Fiel
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		panic(fmt.Errorf("field blockHeight of message inference.inference.QueryPocBatchesForStageRequest is not mutable"))
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.QueryGetEpochGroupDataRequest is not mutable"))
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryPocBatchesForStageRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageRequest.blockHeight":
-		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.QueryGetEpochGroupDataRequest.pocStartBlockHeight":
+		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryPocBatchesForStageRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryPocBatchesForStageRequest", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryGetEpochGroupDataRequest", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -8013,7 +8013,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) WhichOneof(d protoreflec
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryPocBatchesForStageRequest) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -8024,7 +8024,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) GetUnknown() protoreflec
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageRequest) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -8036,7 +8036,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) SetUnknown(fields protor
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryPocBatchesForStageRequest) IsValid() bool {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) IsValid() bool {
 	return x != nil
 }
 
@@ -8046,9 +8046,9 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryGetEpochGroupDataRequest) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryPocBatchesForStageRequest)
+		x := input.Message.Interface().(*QueryGetEpochGroupDataRequest)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8060,8 +8060,8 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 		var n int
 		var l int
 		_ = l
-		if x.BlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.BlockHeight))
+		if x.PocStartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocStartBlockHeight))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -8073,7 +8073,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryPocBatchesForStageRequest)
+		x := input.Message.Interface().(*QueryGetEpochGroupDataRequest)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8092,8 +8092,8 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.BlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockHeight))
+		if x.PocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStartBlockHeight))
 			i--
 			dAtA[i] = 0x8
 		}
@@ -8108,7 +8108,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryPocBatchesForStageRequest)
+		x := input.Message.Interface().(*QueryGetEpochGroupDataRequest)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8140,17 +8140,17 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryPocBatchesForStageRequest: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryGetEpochGroupDataRequest: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryPocBatchesForStageRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryGetEpochGroupDataRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockHeight", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStartBlockHeight", wireType)
 				}
-				x.BlockHeight = 0
+				x.PocStartBlockHeight = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -8160,7 +8160,7 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.BlockHeight |= int64(b&0x7F) << shift
+					x.PocStartBlockHeight |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -8200,77 +8200,26 @@ func (x *fastReflection_QueryPocBatchesForStageRequest) ProtoMethods() *protoifa
 	}
 }
 
-var _ protoreflect.List = (*_QueryPocBatchesForStageResponse_1_list)(nil)
-
-type _QueryPocBatchesForStageResponse_1_list struct {
-	list *[]*PoCBatchesWithParticipants
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCBatchesWithParticipants)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCBatchesWithParticipants)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) AppendMutable() protoreflect.Value {
-	v := new(PoCBatchesWithParticipants)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) NewElement() protoreflect.Value {
-	v := new(PoCBatchesWithParticipants)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_QueryPocBatchesForStageResponse_1_list) IsValid() bool {
-	return x.list != nil
-}
-
 var (
-	md_QueryPocBatchesForStageResponse          protoreflect.MessageDescriptor
-	fd_QueryPocBatchesForStageResponse_pocBatch protoreflect.FieldDescriptor
+	md_QueryGetEpochGroupDataResponse                protoreflect.MessageDescriptor
+	fd_QueryGetEpochGroupDataResponse_epochGroupData protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_query_proto_init()
-	md_QueryPocBatchesForStageResponse = File_inference_inference_query_proto.Messages().ByName("QueryPocBatchesForStageResponse")
-	fd_QueryPocBatchesForStageResponse_pocBatch = md_QueryPocBatchesForStageResponse.Fields().ByName("pocBatch")
+	md_QueryGetEpochGroupDataResponse = File_inference_inference_query_proto.Messages().ByName("QueryGetEpochGroupDataResponse")
+	fd_QueryGetEpochGroupDataResponse_epochGroupData = md_QueryGetEpochGroupDataResponse.Fields().ByName("epochGroupData")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryPocBatchesForStageResponse)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryGetEpochGroupDataResponse)(nil)
 
-type fastReflection_QueryPocBatchesForStageResponse QueryPocBatchesForStageResponse
+type fastReflection_QueryGetEpochGroupDataResponse QueryGetEpochGroupDataResponse
 
-func (x *QueryPocBatchesForStageResponse) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryPocBatchesForStageResponse)(x)
+func (x *QueryGetEpochGroupDataResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryGetEpochGroupDataResponse)(x)
 }
 
-func (x *QueryPocBatchesForStageResponse) slowProtoReflect() protoreflect.Message {
+func (x *QueryGetEpochGroupDataResponse) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_query_proto_msgTypes[18]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8282,43 +8231,43 @@ func (x *QueryPocBatchesForStageResponse) slowProtoReflect() protoreflect.Messag
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryPocBatchesForStageResponse_messageType fastReflection_QueryPocBatchesForStageResponse_messageType
-var _ protoreflect.MessageType = fastReflection_QueryPocBatchesForStageResponse_messageType{}
+var _fastReflection_QueryGetEpochGroupDataResponse_messageType fastReflection_QueryGetEpochGroupDataResponse_messageType
+var _ protoreflect.MessageType = fastReflection_QueryGetEpochGroupDataResponse_messageType{}
 
-type fastReflection_QueryPocBatchesForStageResponse_messageType struct{}
+type fastReflection_QueryGetEpochGroupDataResponse_messageType struct{}
 
-func (x fastReflection_QueryPocBatchesForStageResponse_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryPocBatchesForStageResponse)(nil)
+func (x fastReflection_QueryGetEpochGroupDataResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryGetEpochGroupDataResponse)(nil)
 }
-func (x fastReflection_QueryPocBatchesForStageResponse_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryPocBatchesForStageResponse)
+func (x fastReflection_QueryGetEpochGroupDataResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryGetEpochGroupDataResponse)
 }
-func (x fastReflection_QueryPocBatchesForStageResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryPocBatchesForStageResponse
+func (x fastReflection_QueryGetEpochGroupDataResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryGetEpochGroupDataResponse
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryPocBatchesForStageResponse
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryGetEpochGroupDataResponse
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Type() protoreflect.MessageType {
-	return _fastReflection_QueryPocBatchesForStageResponse_messageType
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Type() protoreflect.MessageType {
+	return _fastReflection_QueryGetEpochGroupDataResponse_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryPocBatchesForStageResponse) New() protoreflect.Message {
-	return new(fastReflection_QueryPocBatchesForStageResponse)
+func (x *fastReflection_QueryGetEpochGroupDataResponse) New() protoreflect.Message {
+	return new(fastReflection_QueryGetEpochGroupDataResponse)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Interface() protoreflect.ProtoMessage {
-	return (*QueryPocBatchesForStageResponse)(x)
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Interface() protoreflect.ProtoMessage {
+	return (*QueryGetEpochGroupDataResponse)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -8326,10 +8275,10 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Interface() protoreflec
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if len(x.PocBatch) != 0 {
-		value := protoreflect.ValueOfList(&_QueryPocBatchesForStageResponse_1_list{list: &x.PocBatch})
-		if !f(fd_QueryPocBatchesForStageResponse_pocBatch, value) {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.EpochGroupData != nil {
+		value := protoreflect.ValueOfMessage(x.EpochGroupData.ProtoReflect())
+		if !f(fd_QueryGetEpochGroupDataResponse_epochGroupData, value) {
 			return
 		}
 	}
@@ -8346,15 +8295,15 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Range(f func(protorefle
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		return len(x.PocBatch) != 0
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		return x.EpochGroupData != nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -8364,15 +8313,15 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Has(fd protoreflect.Fie
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		x.PocBatch = nil
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		x.EpochGroupData = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -8382,19 +8331,16 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Clear(fd protoreflect.F
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		if len(x.PocBatch) == 0 {
-			return protoreflect.ValueOfList(&_QueryPocBatchesForStageResponse_1_list{})
-		}
-		listValue := &_QueryPocBatchesForStageResponse_1_list{list: &x.PocBatch}
-		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		value := x.EpochGroupData
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -8408,17 +8354,15 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Get(descriptor protoref
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		lv := value.List()
-		clv := lv.(*_QueryPocBatchesForStageResponse_1_list)
-		x.PocBatch = *clv.list
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		x.EpochGroupData = value.Message().Interface().(*EpochGroupData)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -8432,45 +8376,44 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) Set(fd protoreflect.Fie
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		if x.PocBatch == nil {
-			x.PocBatch = []*PoCBatchesWithParticipants{}
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		if x.EpochGroupData == nil {
+			x.EpochGroupData = new(EpochGroupData)
 		}
-		value := &_QueryPocBatchesForStageResponse_1_list{list: &x.PocBatch}
-		return protoreflect.ValueOfList(value)
+		return protoreflect.ValueOfMessage(x.EpochGroupData.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryPocBatchesForStageResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryPocBatchesForStageResponse.pocBatch":
-		list := []*PoCBatchesWithParticipants{}
-		return protoreflect.ValueOfList(&_QueryPocBatchesForStageResponse_1_list{list: &list})
+	case "inference.inference.QueryGetEpochGroupDataResponse.epochGroupData":
+		m := new(EpochGroupData)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryPocBatchesForStageResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetEpochGroupDataResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryPocBatchesForStageResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryGetEpochGroupDataResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryPocBatchesForStageResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryPocBatchesForStageResponse", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryGetEpochGroupDataResponse", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -8478,7 +8421,7 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) WhichOneof(d protorefle
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryPocBatchesForStageResponse) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -8489,7 +8432,7 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) GetUnknown() protorefle
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryPocBatchesForStageResponse) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -8501,7 +8444,7 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) SetUnknown(fields proto
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryPocBatchesForStageResponse) IsValid() bool {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) IsValid() bool {
 	return x != nil
 }
 
@@ -8511,9 +8454,9 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryGetEpochGroupDataResponse) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryPocBatchesForStageResponse)
+		x := input.Message.Interface().(*QueryGetEpochGroupDataResponse)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8525,11 +8468,9 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 		var n int
 		var l int
 		_ = l
-		if len(x.PocBatch) > 0 {
-			for _, e := range x.PocBatch {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
+		if x.EpochGroupData != nil {
+			l = options.Size(x.EpochGroupData)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -8541,7 +8482,7 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryPocBatchesForStageResponse)
+		x := input.Message.Interface().(*QueryGetEpochGroupDataResponse)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8560,9 +8501,981 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.PocBatch) > 0 {
-			for iNdEx := len(x.PocBatch) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.PocBatch[iNdEx])
+		if x.EpochGroupData != nil {
+			encoded, err := options.Marshal(x.EpochGroupData)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*QueryGetEpochGroupDataResponse)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryGetEpochGroupDataResponse: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryGetEpochGroupDataResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupData", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.EpochGroupData == nil {
+					x.EpochGroupData = &EpochGroupData{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochGroupData); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_QueryAllEpochGroupDataRequest            protoreflect.MessageDescriptor
+	fd_QueryAllEpochGroupDataRequest_pagination protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_query_proto_init()
+	md_QueryAllEpochGroupDataRequest = File_inference_inference_query_proto.Messages().ByName("QueryAllEpochGroupDataRequest")
+	fd_QueryAllEpochGroupDataRequest_pagination = md_QueryAllEpochGroupDataRequest.Fields().ByName("pagination")
+}
+
+var _ protoreflect.Message = (*fastReflection_QueryAllEpochGroupDataRequest)(nil)
+
+type fastReflection_QueryAllEpochGroupDataRequest QueryAllEpochGroupDataRequest
+
+func (x *QueryAllEpochGroupDataRequest) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllEpochGroupDataRequest)(x)
+}
+
+func (x *QueryAllEpochGroupDataRequest) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_query_proto_msgTypes[19]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_QueryAllEpochGroupDataRequest_messageType fastReflection_QueryAllEpochGroupDataRequest_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllEpochGroupDataRequest_messageType{}
+
+type fastReflection_QueryAllEpochGroupDataRequest_messageType struct{}
+
+func (x fastReflection_QueryAllEpochGroupDataRequest_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllEpochGroupDataRequest)(nil)
+}
+func (x fastReflection_QueryAllEpochGroupDataRequest_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllEpochGroupDataRequest)
+}
+func (x fastReflection_QueryAllEpochGroupDataRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllEpochGroupDataRequest
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllEpochGroupDataRequest
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllEpochGroupDataRequest_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) New() protoreflect.Message {
+	return new(fastReflection_QueryAllEpochGroupDataRequest)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllEpochGroupDataRequest)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Pagination != nil {
+		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
+		if !f(fd_QueryAllEpochGroupDataRequest_pagination, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		return x.Pagination != nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		x.Pagination = nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		value := x.Pagination
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		x.Pagination = value.Message().Interface().(*v1beta1.PageRequest)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		if x.Pagination == nil {
+			x.Pagination = new(v1beta1.PageRequest)
+		}
+		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataRequest.pagination":
+		m := new(v1beta1.PageRequest)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataRequest"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataRequest does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryAllEpochGroupDataRequest", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_QueryAllEpochGroupDataRequest) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*QueryAllEpochGroupDataRequest)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.Pagination != nil {
+			l = options.Size(x.Pagination)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*QueryAllEpochGroupDataRequest)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Pagination != nil {
+			encoded, err := options.Marshal(x.Pagination)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*QueryAllEpochGroupDataRequest)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllEpochGroupDataRequest: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllEpochGroupDataRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Pagination", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.Pagination == nil {
+					x.Pagination = &v1beta1.PageRequest{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Pagination); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var _ protoreflect.List = (*_QueryAllEpochGroupDataResponse_1_list)(nil)
+
+type _QueryAllEpochGroupDataResponse_1_list struct {
+	list *[]*EpochGroupData
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) AppendMutable() protoreflect.Value {
+	v := new(EpochGroupData)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) NewElement() protoreflect.Value {
+	v := new(EpochGroupData)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_QueryAllEpochGroupDataResponse_1_list) IsValid() bool {
+	return x.list != nil
+}
+
+var (
+	md_QueryAllEpochGroupDataResponse                protoreflect.MessageDescriptor
+	fd_QueryAllEpochGroupDataResponse_epochGroupData protoreflect.FieldDescriptor
+	fd_QueryAllEpochGroupDataResponse_pagination     protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_query_proto_init()
+	md_QueryAllEpochGroupDataResponse = File_inference_inference_query_proto.Messages().ByName("QueryAllEpochGroupDataResponse")
+	fd_QueryAllEpochGroupDataResponse_epochGroupData = md_QueryAllEpochGroupDataResponse.Fields().ByName("epochGroupData")
+	fd_QueryAllEpochGroupDataResponse_pagination = md_QueryAllEpochGroupDataResponse.Fields().ByName("pagination")
+}
+
+var _ protoreflect.Message = (*fastReflection_QueryAllEpochGroupDataResponse)(nil)
+
+type fastReflection_QueryAllEpochGroupDataResponse QueryAllEpochGroupDataResponse
+
+func (x *QueryAllEpochGroupDataResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryAllEpochGroupDataResponse)(x)
+}
+
+func (x *QueryAllEpochGroupDataResponse) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_query_proto_msgTypes[20]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_QueryAllEpochGroupDataResponse_messageType fastReflection_QueryAllEpochGroupDataResponse_messageType
+var _ protoreflect.MessageType = fastReflection_QueryAllEpochGroupDataResponse_messageType{}
+
+type fastReflection_QueryAllEpochGroupDataResponse_messageType struct{}
+
+func (x fastReflection_QueryAllEpochGroupDataResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryAllEpochGroupDataResponse)(nil)
+}
+func (x fastReflection_QueryAllEpochGroupDataResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryAllEpochGroupDataResponse)
+}
+func (x fastReflection_QueryAllEpochGroupDataResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllEpochGroupDataResponse
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryAllEpochGroupDataResponse
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Type() protoreflect.MessageType {
+	return _fastReflection_QueryAllEpochGroupDataResponse_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) New() protoreflect.Message {
+	return new(fastReflection_QueryAllEpochGroupDataResponse)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Interface() protoreflect.ProtoMessage {
+	return (*QueryAllEpochGroupDataResponse)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if len(x.EpochGroupData) != 0 {
+		value := protoreflect.ValueOfList(&_QueryAllEpochGroupDataResponse_1_list{list: &x.EpochGroupData})
+		if !f(fd_QueryAllEpochGroupDataResponse_epochGroupData, value) {
+			return
+		}
+	}
+	if x.Pagination != nil {
+		value := protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
+		if !f(fd_QueryAllEpochGroupDataResponse_pagination, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		return len(x.EpochGroupData) != 0
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		return x.Pagination != nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		x.EpochGroupData = nil
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		x.Pagination = nil
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		if len(x.EpochGroupData) == 0 {
+			return protoreflect.ValueOfList(&_QueryAllEpochGroupDataResponse_1_list{})
+		}
+		listValue := &_QueryAllEpochGroupDataResponse_1_list{list: &x.EpochGroupData}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		value := x.Pagination
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		lv := value.List()
+		clv := lv.(*_QueryAllEpochGroupDataResponse_1_list)
+		x.EpochGroupData = *clv.list
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		x.Pagination = value.Message().Interface().(*v1beta1.PageResponse)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		if x.EpochGroupData == nil {
+			x.EpochGroupData = []*EpochGroupData{}
+		}
+		value := &_QueryAllEpochGroupDataResponse_1_list{list: &x.EpochGroupData}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		if x.Pagination == nil {
+			x.Pagination = new(v1beta1.PageResponse)
+		}
+		return protoreflect.ValueOfMessage(x.Pagination.ProtoReflect())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.QueryAllEpochGroupDataResponse.epochGroupData":
+		list := []*EpochGroupData{}
+		return protoreflect.ValueOfList(&_QueryAllEpochGroupDataResponse_1_list{list: &list})
+	case "inference.inference.QueryAllEpochGroupDataResponse.pagination":
+		m := new(v1beta1.PageResponse)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryAllEpochGroupDataResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.QueryAllEpochGroupDataResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryAllEpochGroupDataResponse", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_QueryAllEpochGroupDataResponse) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*QueryAllEpochGroupDataResponse)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if len(x.EpochGroupData) > 0 {
+			for _, e := range x.EpochGroupData {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if x.Pagination != nil {
+			l = options.Size(x.Pagination)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*QueryAllEpochGroupDataResponse)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Pagination != nil {
+			encoded, err := options.Marshal(x.Pagination)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.EpochGroupData) > 0 {
+			for iNdEx := len(x.EpochGroupData) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.EpochGroupData[iNdEx])
 				if err != nil {
 					return protoiface.MarshalOutput{
 						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8587,7 +9500,7 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryPocBatchesForStageResponse)
+		x := input.Message.Interface().(*QueryAllEpochGroupDataResponse)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -8619,15 +9532,15 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryPocBatchesForStageResponse: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllEpochGroupDataResponse: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryPocBatchesForStageResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryAllEpochGroupDataResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocBatch", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupData", wireType)
 				}
 				var msglen int
 				for shift := uint(0); ; shift += 7 {
@@ -8654,666 +9567,14 @@ func (x *fastReflection_QueryPocBatchesForStageResponse) ProtoMethods() *protoif
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.PocBatch = append(x.PocBatch, &PoCBatchesWithParticipants{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PocBatch[len(x.PocBatch)-1]); err != nil {
+				x.EpochGroupData = append(x.EpochGroupData, &EpochGroupData{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochGroupData[len(x.EpochGroupData)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
-				iNdEx = postIndex
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var _ protoreflect.List = (*_PoCBatchesWithParticipants_4_list)(nil)
-
-type _PoCBatchesWithParticipants_4_list struct {
-	list *[]*PoCBatch
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCBatch)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCBatch)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) AppendMutable() protoreflect.Value {
-	v := new(PoCBatch)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) NewElement() protoreflect.Value {
-	v := new(PoCBatch)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_PoCBatchesWithParticipants_4_list) IsValid() bool {
-	return x.list != nil
-}
-
-var (
-	md_PoCBatchesWithParticipants             protoreflect.MessageDescriptor
-	fd_PoCBatchesWithParticipants_participant protoreflect.FieldDescriptor
-	fd_PoCBatchesWithParticipants_pubKey      protoreflect.FieldDescriptor
-	fd_PoCBatchesWithParticipants_hexPubKey   protoreflect.FieldDescriptor
-	fd_PoCBatchesWithParticipants_pocBatch    protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_query_proto_init()
-	md_PoCBatchesWithParticipants = File_inference_inference_query_proto.Messages().ByName("PoCBatchesWithParticipants")
-	fd_PoCBatchesWithParticipants_participant = md_PoCBatchesWithParticipants.Fields().ByName("participant")
-	fd_PoCBatchesWithParticipants_pubKey = md_PoCBatchesWithParticipants.Fields().ByName("pubKey")
-	fd_PoCBatchesWithParticipants_hexPubKey = md_PoCBatchesWithParticipants.Fields().ByName("hexPubKey")
-	fd_PoCBatchesWithParticipants_pocBatch = md_PoCBatchesWithParticipants.Fields().ByName("pocBatch")
-}
-
-var _ protoreflect.Message = (*fastReflection_PoCBatchesWithParticipants)(nil)
-
-type fastReflection_PoCBatchesWithParticipants PoCBatchesWithParticipants
-
-func (x *PoCBatchesWithParticipants) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_PoCBatchesWithParticipants)(x)
-}
-
-func (x *PoCBatchesWithParticipants) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_query_proto_msgTypes[19]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_PoCBatchesWithParticipants_messageType fastReflection_PoCBatchesWithParticipants_messageType
-var _ protoreflect.MessageType = fastReflection_PoCBatchesWithParticipants_messageType{}
-
-type fastReflection_PoCBatchesWithParticipants_messageType struct{}
-
-func (x fastReflection_PoCBatchesWithParticipants_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_PoCBatchesWithParticipants)(nil)
-}
-func (x fastReflection_PoCBatchesWithParticipants_messageType) New() protoreflect.Message {
-	return new(fastReflection_PoCBatchesWithParticipants)
-}
-func (x fastReflection_PoCBatchesWithParticipants_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCBatchesWithParticipants
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_PoCBatchesWithParticipants) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCBatchesWithParticipants
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_PoCBatchesWithParticipants) Type() protoreflect.MessageType {
-	return _fastReflection_PoCBatchesWithParticipants_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_PoCBatchesWithParticipants) New() protoreflect.Message {
-	return new(fastReflection_PoCBatchesWithParticipants)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_PoCBatchesWithParticipants) Interface() protoreflect.ProtoMessage {
-	return (*PoCBatchesWithParticipants)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_PoCBatchesWithParticipants) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Participant != "" {
-		value := protoreflect.ValueOfString(x.Participant)
-		if !f(fd_PoCBatchesWithParticipants_participant, value) {
-			return
-		}
-	}
-	if x.PubKey != "" {
-		value := protoreflect.ValueOfString(x.PubKey)
-		if !f(fd_PoCBatchesWithParticipants_pubKey, value) {
-			return
-		}
-	}
-	if x.HexPubKey != "" {
-		value := protoreflect.ValueOfString(x.HexPubKey)
-		if !f(fd_PoCBatchesWithParticipants_hexPubKey, value) {
-			return
-		}
-	}
-	if len(x.PocBatch) != 0 {
-		value := protoreflect.ValueOfList(&_PoCBatchesWithParticipants_4_list{list: &x.PocBatch})
-		if !f(fd_PoCBatchesWithParticipants_pocBatch, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_PoCBatchesWithParticipants) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		return x.Participant != ""
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		return x.PubKey != ""
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		return x.HexPubKey != ""
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		return len(x.PocBatch) != 0
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCBatchesWithParticipants) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		x.Participant = ""
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		x.PubKey = ""
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		x.HexPubKey = ""
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		x.PocBatch = nil
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_PoCBatchesWithParticipants) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		value := x.Participant
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		value := x.PubKey
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		value := x.HexPubKey
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		if len(x.PocBatch) == 0 {
-			return protoreflect.ValueOfList(&_PoCBatchesWithParticipants_4_list{})
-		}
-		listValue := &_PoCBatchesWithParticipants_4_list{list: &x.PocBatch}
-		return protoreflect.ValueOfList(listValue)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCBatchesWithParticipants) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		x.Participant = value.Interface().(string)
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		x.PubKey = value.Interface().(string)
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		x.HexPubKey = value.Interface().(string)
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		lv := value.List()
-		clv := lv.(*_PoCBatchesWithParticipants_4_list)
-		x.PocBatch = *clv.list
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCBatchesWithParticipants) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		if x.PocBatch == nil {
-			x.PocBatch = []*PoCBatch{}
-		}
-		value := &_PoCBatchesWithParticipants_4_list{list: &x.PocBatch}
-		return protoreflect.ValueOfList(value)
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		panic(fmt.Errorf("field participant of message inference.inference.PoCBatchesWithParticipants is not mutable"))
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		panic(fmt.Errorf("field pubKey of message inference.inference.PoCBatchesWithParticipants is not mutable"))
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		panic(fmt.Errorf("field hexPubKey of message inference.inference.PoCBatchesWithParticipants is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_PoCBatchesWithParticipants) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCBatchesWithParticipants.participant":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCBatchesWithParticipants.pubKey":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCBatchesWithParticipants.hexPubKey":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCBatchesWithParticipants.pocBatch":
-		list := []*PoCBatch{}
-		return protoreflect.ValueOfList(&_PoCBatchesWithParticipants_4_list{list: &list})
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCBatchesWithParticipants"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCBatchesWithParticipants does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_PoCBatchesWithParticipants) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.PoCBatchesWithParticipants", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_PoCBatchesWithParticipants) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCBatchesWithParticipants) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_PoCBatchesWithParticipants) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_PoCBatchesWithParticipants) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*PoCBatchesWithParticipants)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		l = len(x.Participant)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		l = len(x.PubKey)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		l = len(x.HexPubKey)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if len(x.PocBatch) > 0 {
-			for _, e := range x.PocBatch {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*PoCBatchesWithParticipants)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if len(x.PocBatch) > 0 {
-			for iNdEx := len(x.PocBatch) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.PocBatch[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x22
-			}
-		}
-		if len(x.HexPubKey) > 0 {
-			i -= len(x.HexPubKey)
-			copy(dAtA[i:], x.HexPubKey)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.HexPubKey)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if len(x.PubKey) > 0 {
-			i -= len(x.PubKey)
-			copy(dAtA[i:], x.PubKey)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.PubKey)))
-			i--
-			dAtA[i] = 0x12
-		}
-		if len(x.Participant) > 0 {
-			i -= len(x.Participant)
-			copy(dAtA[i:], x.Participant)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Participant)))
-			i--
-			dAtA[i] = 0xa
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*PoCBatchesWithParticipants)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCBatchesWithParticipants: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCBatchesWithParticipants: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Participant = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 2:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PubKey", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.PubKey = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 3:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field HexPubKey", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.HexPubKey = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 4:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocBatch", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Pagination", wireType)
 				}
 				var msglen int
 				for shift := uint(0); ; shift += 7 {
@@ -9340,8 +9601,10 @@ func (x *fastReflection_PoCBatchesWithParticipants) ProtoMethods() *protoiface.M
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.PocBatch = append(x.PocBatch, &PoCBatch{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PocBatch[len(x.PocBatch)-1]); err != nil {
+				if x.Pagination == nil {
+					x.Pagination = &v1beta1.PageResponse{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Pagination); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -10021,16 +10284,16 @@ func (x *QueryGetRandomExecutorResponse) GetExecutor() *Participant {
 	return nil
 }
 
-type QueryPocBatchesForStageRequest struct {
+type QueryGetEpochGroupDataRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	BlockHeight int64 `protobuf:"varint,1,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	PocStartBlockHeight uint64 `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
 }
 
-func (x *QueryPocBatchesForStageRequest) Reset() {
-	*x = QueryPocBatchesForStageRequest{}
+func (x *QueryGetEpochGroupDataRequest) Reset() {
+	*x = QueryGetEpochGroupDataRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_query_proto_msgTypes[17]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -10038,34 +10301,34 @@ func (x *QueryPocBatchesForStageRequest) Reset() {
 	}
 }
 
-func (x *QueryPocBatchesForStageRequest) String() string {
+func (x *QueryGetEpochGroupDataRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryPocBatchesForStageRequest) ProtoMessage() {}
+func (*QueryGetEpochGroupDataRequest) ProtoMessage() {}
 
-// Deprecated: Use QueryPocBatchesForStageRequest.ProtoReflect.Descriptor instead.
-func (*QueryPocBatchesForStageRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryGetEpochGroupDataRequest.ProtoReflect.Descriptor instead.
+func (*QueryGetEpochGroupDataRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *QueryPocBatchesForStageRequest) GetBlockHeight() int64 {
+func (x *QueryGetEpochGroupDataRequest) GetPocStartBlockHeight() uint64 {
 	if x != nil {
-		return x.BlockHeight
+		return x.PocStartBlockHeight
 	}
 	return 0
 }
 
-type QueryPocBatchesForStageResponse struct {
+type QueryGetEpochGroupDataResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocBatch []*PoCBatchesWithParticipants `protobuf:"bytes,1,rep,name=pocBatch,proto3" json:"pocBatch,omitempty"`
+	EpochGroupData *EpochGroupData `protobuf:"bytes,1,opt,name=epochGroupData,proto3" json:"epochGroupData,omitempty"`
 }
 
-func (x *QueryPocBatchesForStageResponse) Reset() {
-	*x = QueryPocBatchesForStageResponse{}
+func (x *QueryGetEpochGroupDataResponse) Reset() {
+	*x = QueryGetEpochGroupDataResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_query_proto_msgTypes[18]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -10073,37 +10336,34 @@ func (x *QueryPocBatchesForStageResponse) Reset() {
 	}
 }
 
-func (x *QueryPocBatchesForStageResponse) String() string {
+func (x *QueryGetEpochGroupDataResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryPocBatchesForStageResponse) ProtoMessage() {}
+func (*QueryGetEpochGroupDataResponse) ProtoMessage() {}
 
-// Deprecated: Use QueryPocBatchesForStageResponse.ProtoReflect.Descriptor instead.
-func (*QueryPocBatchesForStageResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryGetEpochGroupDataResponse.ProtoReflect.Descriptor instead.
+func (*QueryGetEpochGroupDataResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{18}
 }
 
-func (x *QueryPocBatchesForStageResponse) GetPocBatch() []*PoCBatchesWithParticipants {
+func (x *QueryGetEpochGroupDataResponse) GetEpochGroupData() *EpochGroupData {
 	if x != nil {
-		return x.PocBatch
+		return x.EpochGroupData
 	}
 	return nil
 }
 
-type PoCBatchesWithParticipants struct {
+type QueryAllEpochGroupDataRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Participant string      `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
-	PubKey      string      `protobuf:"bytes,2,opt,name=pubKey,proto3" json:"pubKey,omitempty"`
-	HexPubKey   string      `protobuf:"bytes,3,opt,name=hexPubKey,proto3" json:"hexPubKey,omitempty"`
-	PocBatch    []*PoCBatch `protobuf:"bytes,4,rep,name=pocBatch,proto3" json:"pocBatch,omitempty"`
+	Pagination *v1beta1.PageRequest `protobuf:"bytes,1,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *PoCBatchesWithParticipants) Reset() {
-	*x = PoCBatchesWithParticipants{}
+func (x *QueryAllEpochGroupDataRequest) Reset() {
+	*x = QueryAllEpochGroupDataRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_query_proto_msgTypes[19]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -10111,41 +10371,63 @@ func (x *PoCBatchesWithParticipants) Reset() {
 	}
 }
 
-func (x *PoCBatchesWithParticipants) String() string {
+func (x *QueryAllEpochGroupDataRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PoCBatchesWithParticipants) ProtoMessage() {}
+func (*QueryAllEpochGroupDataRequest) ProtoMessage() {}
 
-// Deprecated: Use PoCBatchesWithParticipants.ProtoReflect.Descriptor instead.
-func (*PoCBatchesWithParticipants) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryAllEpochGroupDataRequest.ProtoReflect.Descriptor instead.
+func (*QueryAllEpochGroupDataRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{19}
 }
 
-func (x *PoCBatchesWithParticipants) GetParticipant() string {
+func (x *QueryAllEpochGroupDataRequest) GetPagination() *v1beta1.PageRequest {
 	if x != nil {
-		return x.Participant
+		return x.Pagination
 	}
-	return ""
+	return nil
 }
 
-func (x *PoCBatchesWithParticipants) GetPubKey() string {
-	if x != nil {
-		return x.PubKey
-	}
-	return ""
+type QueryAllEpochGroupDataResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	EpochGroupData []*EpochGroupData     `protobuf:"bytes,1,rep,name=epochGroupData,proto3" json:"epochGroupData,omitempty"`
+	Pagination     *v1beta1.PageResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
 }
 
-func (x *PoCBatchesWithParticipants) GetHexPubKey() string {
-	if x != nil {
-		return x.HexPubKey
+func (x *QueryAllEpochGroupDataResponse) Reset() {
+	*x = QueryAllEpochGroupDataResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_query_proto_msgTypes[20]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
 	}
-	return ""
 }
 
-func (x *PoCBatchesWithParticipants) GetPocBatch() []*PoCBatch {
+func (x *QueryAllEpochGroupDataResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryAllEpochGroupDataResponse) ProtoMessage() {}
+
+// Deprecated: Use QueryAllEpochGroupDataResponse.ProtoReflect.Descriptor instead.
+func (*QueryAllEpochGroupDataResponse) Descriptor() ([]byte, []int) {
+	return file_inference_inference_query_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *QueryAllEpochGroupDataResponse) GetEpochGroupData() []*EpochGroupData {
 	if x != nil {
-		return x.PocBatch
+		return x.EpochGroupData
+	}
+	return nil
+}
+
+func (x *QueryAllEpochGroupDataResponse) GetPagination() *v1beta1.PageResponse {
+	if x != nil {
+		return x.Pagination
 	}
 	return nil
 }
@@ -10170,244 +10452,264 @@ var file_inference_inference_query_proto_rawDesc = []byte{
 	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
 	0x1a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x22, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x6f, 0x63,
-	0x62, 0x61, 0x74, 0x63, 0x68, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x14, 0x0a, 0x12, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x22, 0x55, 0x0a, 0x13, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61,
-	0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50,
-	0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01,
-	0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x30, 0x0a, 0x18, 0x51, 0x75, 0x65, 0x72,
-	0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x22, 0x5f, 0x0a, 0x19, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52,
-	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x42, 0x0a, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66,
+	0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x2a, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x22, 0x14, 0x0a, 0x12, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x55, 0x0a, 0x13, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8,
+	0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73,
+	0x22, 0x30, 0x0a, 0x18, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x14, 0x0a, 0x05,
+	0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64,
+	0x65, 0x78, 0x22, 0x5f, 0x0a, 0x19, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x42, 0x0a, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x22, 0x62, 0x0a, 0x18, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
+	0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73,
+	0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e,
+	0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67,
+	0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0xa8, 0x01, 0x0a, 0x19, 0x51, 0x75, 0x65, 0x72,
+	0x79, 0x41, 0x6c, 0x6c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x42, 0x0a, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67,
+	0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e,
+	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72,
+	0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x22, 0x32, 0x0a, 0x1a, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61,
+	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x22, 0x67, 0x0a, 0x1b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47,
+	0x65, 0x74, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x48, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
+	0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
-	0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x62, 0x0a, 0x18, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e,
-	0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22,
-	0xa8, 0x01, 0x0a, 0x19, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x42, 0x0a,
-	0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62,
-	0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61,
-	0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a,
-	0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x32, 0x0a, 0x1a, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
-	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x22, 0x67,
-	0x0a, 0x1b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
-	0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x48, 0x0a,
-	0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x22, 0x64, 0x0a, 0x1a, 0x51, 0x75, 0x65, 0x72, 0x79,
-	0x41, 0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31,
-	0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0xd3, 0x01,
-	0x0a, 0x1b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
-	0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x48, 0x0a,
-	0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x03,
-	0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e,
-	0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74,
-	0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x22, 0x3a, 0x0a, 0x26, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65,
-	0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x10, 0x0a,
-	0x03, 0x69, 0x64, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x09, 0x52, 0x03, 0x69, 0x64, 0x73, 0x22,
-	0xb7, 0x01, 0x0a, 0x27, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74,
-	0x6f, 0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x66, 0x0a, 0x15, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63,
-	0x75, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66,
+	0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde,
+	0x1f, 0x00, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x22,
+	0x64, 0x0a, 0x1a, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69,
+	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a,
+	0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x26, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e,
+	0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61,
+	0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0xd3, 0x01, 0x0a, 0x1b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41,
+	0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x48, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
+	0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78,
-	0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x15, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75,
-	0x74, 0x6f, 0x72, 0x12, 0x24, 0x0a, 0x0d, 0x4e, 0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
-	0x74, 0x6f, 0x72, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0d, 0x4e, 0x75, 0x6d, 0x56,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x22, 0x9f, 0x01, 0x0a, 0x15, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75,
-	0x74, 0x6f, 0x72, 0x12, 0x42, 0x0a, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x42, 0x0a, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75,
-	0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f,
-	0x00, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x22, 0x3c, 0x0a, 0x20, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72,
-	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
-	0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x55, 0x0a, 0x21, 0x51, 0x75, 0x65,
-	0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69,
-	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x16,
-	0x0a, 0x06, 0x70, 0x75, 0x62, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06,
-	0x70, 0x75, 0x62, 0x6b, 0x65, 0x79, 0x12, 0x18, 0x0a, 0x07, 0x62, 0x61, 0x6c, 0x61, 0x6e, 0x63,
-	0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x07, 0x62, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65,
-	0x22, 0x1f, 0x0a, 0x1d, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64,
-	0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x22, 0x64, 0x0a, 0x1e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e,
-	0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x12, 0x42, 0x0a, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x65,
-	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x22, 0x42, 0x0a, 0x1e, 0x51, 0x75, 0x65, 0x72, 0x79,
-	0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x46, 0x6f, 0x72, 0x53, 0x74, 0x61,
-	0x67, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f,
-	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b,
-	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x74, 0x0a, 0x1f, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x46, 0x6f,
-	0x72, 0x53, 0x74, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x51,
-	0x0a, 0x08, 0x70, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65,
-	0x73, 0x57, 0x69, 0x74, 0x68, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
-	0x73, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x70, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63,
-	0x68, 0x22, 0xb5, 0x01, 0x0a, 0x1a, 0x50, 0x6f, 0x43, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73,
-	0x57, 0x69, 0x74, 0x68, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73,
-	0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x12, 0x1c, 0x0a, 0x09, 0x68, 0x65,
-	0x78, 0x50, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x68,
-	0x65, 0x78, 0x50, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x12, 0x3f, 0x0a, 0x08, 0x70, 0x6f, 0x63, 0x42,
-	0x61, 0x74, 0x63, 0x68, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x50, 0x6f, 0x43, 0x42, 0x61, 0x74, 0x63, 0x68, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52,
-	0x08, 0x70, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x32, 0xa2, 0x0d, 0x0a, 0x05, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x12, 0x8f, 0x01, 0x0a, 0x06, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x27,
+	0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde,
+	0x1f, 0x00, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12,
+	0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73,
+	0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e,
+	0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61,
+	0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b,
+	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x3a, 0x0a, 0x26, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x10, 0x0a, 0x03, 0x69, 0x64, 0x73, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x09, 0x52, 0x03, 0x69, 0x64, 0x73, 0x22, 0xb7, 0x01, 0x0a, 0x27, 0x51, 0x75, 0x65, 0x72,
+	0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69,
+	0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x12, 0x66, 0x0a, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x03,
+	0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57,
+	0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x24, 0x0a, 0x0d, 0x4e,
+	0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x0d, 0x4e, 0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72,
+	0x73, 0x22, 0x9f, 0x01, 0x0a, 0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57,
+	0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x42, 0x0a, 0x09, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12,
+	0x42, 0x0a, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
+	0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75,
+	0x74, 0x6f, 0x72, 0x22, 0x3c, 0x0a, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65,
+	0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73,
+	0x73, 0x22, 0x55, 0x0a, 0x21, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x70, 0x75, 0x62, 0x6b, 0x65, 0x79,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x70, 0x75, 0x62, 0x6b, 0x65, 0x79, 0x12, 0x18,
+	0x0a, 0x07, 0x62, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x07, 0x62, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x22, 0x1f, 0x0a, 0x1d, 0x51, 0x75, 0x65, 0x72,
+	0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74,
+	0x6f, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x64, 0x0a, 0x1e, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75,
+	0x74, 0x6f, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x42, 0x0a, 0x08, 0x65,
+	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x22,
+	0x51, 0x0a, 0x1d, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68,
+	0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63,
+	0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x70,
+	0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x22, 0x73, 0x0a, 0x1e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x45, 0x70,
+	0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x51, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f,
+	0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74,
+	0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72,
+	0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x22, 0x67, 0x0a, 0x1d, 0x51, 0x75, 0x65, 0x72, 0x79,
+	0x41, 0x6c, 0x6c, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74,
+	0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x46, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69,
+	0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x63,
+	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79,
+	0x2e, 0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x22, 0xbc, 0x01, 0x0a, 0x1e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x12, 0x51, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x44, 0x61, 0x74, 0x61, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61,
+	0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f,
+	0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x12, 0x47, 0x0a, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x27, 0x2e, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e, 0x71, 0x75, 0x65, 0x72, 0x79, 0x2e, 0x76,
+	0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61, 0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x32,
+	0xdc, 0x0e, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x8f, 0x01, 0x0a, 0x06, 0x50, 0x61,
+	0x72, 0x61, 0x6d, 0x73, 0x12, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79,
+	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x32, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x2c, 0x12,
+	0x2a, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0xa9, 0x01, 0x0a, 0x09,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x3d, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x37,
+	0x12, 0x35, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
+	0x7b, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x7d, 0x12, 0xa4, 0x01, 0x0a, 0x0c, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x41, 0x6c, 0x6c, 0x12, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x32, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x2c, 0x12, 0x2a, 0x2f, 0x70, 0x72, 0x6f, 0x64,
+	0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x35, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x2f, 0x12,
+	0x2d, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0xb1,
+	0x01, 0x0a, 0x0b, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x2f,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61, 0x72,
+	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61,
+	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x22, 0x3f, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x39, 0x12, 0x37, 0x2f, 0x70, 0x72, 0x6f, 0x64,
 	0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
 	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70,
-	0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0xa9, 0x01, 0x0a, 0x09, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x12, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47,
-	0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65,
-	0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x3d, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x37, 0x12, 0x35, 0x2f, 0x70, 0x72, 0x6f,
-	0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x7b, 0x69, 0x6e, 0x64, 0x65, 0x78,
-	0x7d, 0x12, 0xa4, 0x01, 0x0a, 0x0c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x41,
-	0x6c, 0x6c, 0x12, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c,
-	0x6c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x35, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x2f, 0x12, 0x2d, 0x2f, 0x70, 0x72, 0x6f, 0x64,
-	0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0xb1, 0x01, 0x0a, 0x0b, 0x50, 0x61, 0x72,
-	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51,
-	0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x3f, 0x82, 0xd3, 0xe4,
-	0x93, 0x02, 0x39, 0x12, 0x37, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x2f, 0x7b, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x7d, 0x12, 0xac, 0x01, 0x0a,
-	0x0e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41, 0x6c, 0x6c, 0x12,
-	0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x50, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x50,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x37, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x31, 0x12, 0x2f, 0x2f, 0x70, 0x72, 0x6f,
-	0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0xe8, 0x01, 0x0a, 0x1a,
-	0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74,
-	0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x12, 0x3b, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x3c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73,
-	0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x4f, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x49, 0x12, 0x47, 0x2f,
-	0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x67, 0x65, 0x74, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x73, 0x5f, 0x77, 0x69, 0x74, 0x68, 0x5f, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73,
-	0x2f, 0x7b, 0x69, 0x64, 0x73, 0x7d, 0x12, 0xd2, 0x01, 0x0a, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12,
-	0x35, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x36, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65,
-	0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69,
-	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x4b,
-	0x82, 0xd3, 0xe4, 0x93, 0x02, 0x45, 0x12, 0x43, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74,
-	0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x2f, 0x7b, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x7d, 0x12, 0xbd, 0x01, 0x0a, 0x11,
-	0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f,
-	0x72, 0x12, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74,
-	0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x2f, 0x7b, 0x69, 0x6e, 0x64, 0x65,
+	0x78, 0x7d, 0x12, 0xac, 0x01, 0x0a, 0x0e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
+	0x6e, 0x74, 0x41, 0x6c, 0x6c, 0x12, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
 	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72,
-	0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74,
-	0x6f, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x3f, 0x82, 0xd3, 0xe4, 0x93,
-	0x02, 0x39, 0x12, 0x37, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65,
-	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x67, 0x65, 0x74, 0x5f, 0x72, 0x61, 0x6e, 0x64,
-	0x6f, 0x6d, 0x5f, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0xd0, 0x01, 0x0a, 0x12,
-	0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x46, 0x6f, 0x72, 0x53, 0x74, 0x61,
-	0x67, 0x65, 0x12, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x50, 0x6f,
-	0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x46, 0x6f, 0x72, 0x53, 0x74, 0x61, 0x67, 0x65,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x34, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x79, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x30, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x37, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x31,
+	0x12, 0x2f, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x12, 0xe8, 0x01, 0x0a, 0x1a, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73,
+	0x12, 0x3b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65,
+	0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x3c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74,
+	0x6f, 0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x4f, 0x82, 0xd3, 0xe4,
+	0x93, 0x02, 0x49, 0x12, 0x47, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69,
+	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x67, 0x65, 0x74, 0x5f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x5f, 0x77, 0x69, 0x74, 0x68, 0x5f, 0x65, 0x78, 0x65,
+	0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x2f, 0x7b, 0x69, 0x64, 0x73, 0x7d, 0x12, 0xd2, 0x01, 0x0a,
+	0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
+	0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x35, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72,
+	0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
+	0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x36, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x4b, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x45, 0x12, 0x43, 0x2f, 0x70,
+	0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x70, 0x61, 0x72, 0x74,
+	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x2f, 0x7b, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73,
+	0x7d, 0x12, 0xbd, 0x01, 0x0a, 0x11, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45,
+	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x46, 0x6f, 0x72,
-	0x53, 0x74, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x4f, 0x82,
-	0xd3, 0xe4, 0x93, 0x02, 0x49, 0x12, 0x47, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73,
+	0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x45, 0x78, 0x65, 0x63,
+	0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x33, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d,
+	0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x22, 0x3f, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x39, 0x12, 0x37, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75,
+	0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x67, 0x65,
+	0x74, 0x5f, 0x72, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x5f, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f,
+	0x72, 0x12, 0xcd, 0x01, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x12, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79,
+	0x47, 0x65, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74,
+	0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x52, 0x82,
+	0xd3, 0xe4, 0x93, 0x02, 0x4c, 0x12, 0x4a, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73,
 	0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x6f, 0x63, 0x5f, 0x62,
-	0x61, 0x74, 0x63, 0x68, 0x65, 0x73, 0x5f, 0x66, 0x6f, 0x72, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65,
-	0x2f, 0x7b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x7d, 0x42, 0xb8,
+	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2f, 0x7b, 0x70, 0x6f, 0x63,
+	0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x7d, 0x12, 0xba, 0x01, 0x0a, 0x11, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x41, 0x6c, 0x6c, 0x12, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75,
+	0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x33, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x6c, 0x6c, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47,
+	0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x22, 0x3c, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x36, 0x12, 0x34, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75,
+	0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70,
+	0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x42, 0xb8,
 	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x51, 0x75, 0x65, 0x72,
 	0x79, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73,
@@ -10435,7 +10737,7 @@ func file_inference_inference_query_proto_rawDescGZIP() []byte {
 	return file_inference_inference_query_proto_rawDescData
 }
 
-var file_inference_inference_query_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_inference_inference_query_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_inference_inference_query_proto_goTypes = []interface{}{
 	(*QueryParamsRequest)(nil),                      // 0: inference.inference.QueryParamsRequest
 	(*QueryParamsResponse)(nil),                     // 1: inference.inference.QueryParamsResponse
@@ -10454,55 +10756,60 @@ var file_inference_inference_query_proto_goTypes = []interface{}{
 	(*QueryInferenceParticipantResponse)(nil),       // 14: inference.inference.QueryInferenceParticipantResponse
 	(*QueryGetRandomExecutorRequest)(nil),           // 15: inference.inference.QueryGetRandomExecutorRequest
 	(*QueryGetRandomExecutorResponse)(nil),          // 16: inference.inference.QueryGetRandomExecutorResponse
-	(*QueryPocBatchesForStageRequest)(nil),          // 17: inference.inference.QueryPocBatchesForStageRequest
-	(*QueryPocBatchesForStageResponse)(nil),         // 18: inference.inference.QueryPocBatchesForStageResponse
-	(*PoCBatchesWithParticipants)(nil),              // 19: inference.inference.PoCBatchesWithParticipants
-	(*Params)(nil),                                  // 20: inference.inference.Params
-	(*Inference)(nil),                               // 21: inference.inference.Inference
-	(*v1beta1.PageRequest)(nil),                     // 22: cosmos.base.query.v1beta1.PageRequest
-	(*v1beta1.PageResponse)(nil),                    // 23: cosmos.base.query.v1beta1.PageResponse
-	(*Participant)(nil),                             // 24: inference.inference.Participant
-	(*PoCBatch)(nil),                                // 25: inference.inference.PoCBatch
+	(*QueryGetEpochGroupDataRequest)(nil),           // 17: inference.inference.QueryGetEpochGroupDataRequest
+	(*QueryGetEpochGroupDataResponse)(nil),          // 18: inference.inference.QueryGetEpochGroupDataResponse
+	(*QueryAllEpochGroupDataRequest)(nil),           // 19: inference.inference.QueryAllEpochGroupDataRequest
+	(*QueryAllEpochGroupDataResponse)(nil),          // 20: inference.inference.QueryAllEpochGroupDataResponse
+	(*Params)(nil),                                  // 21: inference.inference.Params
+	(*Inference)(nil),                               // 22: inference.inference.Inference
+	(*v1beta1.PageRequest)(nil),                     // 23: cosmos.base.query.v1beta1.PageRequest
+	(*v1beta1.PageResponse)(nil),                    // 24: cosmos.base.query.v1beta1.PageResponse
+	(*Participant)(nil),                             // 25: inference.inference.Participant
+	(*EpochGroupData)(nil),                          // 26: inference.inference.EpochGroupData
 }
 var file_inference_inference_query_proto_depIdxs = []int32{
-	20, // 0: inference.inference.QueryParamsResponse.params:type_name -> inference.inference.Params
-	21, // 1: inference.inference.QueryGetInferenceResponse.inference:type_name -> inference.inference.Inference
-	22, // 2: inference.inference.QueryAllInferenceRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
-	21, // 3: inference.inference.QueryAllInferenceResponse.inference:type_name -> inference.inference.Inference
-	23, // 4: inference.inference.QueryAllInferenceResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
-	24, // 5: inference.inference.QueryGetParticipantResponse.participant:type_name -> inference.inference.Participant
-	22, // 6: inference.inference.QueryAllParticipantRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
-	24, // 7: inference.inference.QueryAllParticipantResponse.participant:type_name -> inference.inference.Participant
-	23, // 8: inference.inference.QueryAllParticipantResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
+	21, // 0: inference.inference.QueryParamsResponse.params:type_name -> inference.inference.Params
+	22, // 1: inference.inference.QueryGetInferenceResponse.inference:type_name -> inference.inference.Inference
+	23, // 2: inference.inference.QueryAllInferenceRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
+	22, // 3: inference.inference.QueryAllInferenceResponse.inference:type_name -> inference.inference.Inference
+	24, // 4: inference.inference.QueryAllInferenceResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
+	25, // 5: inference.inference.QueryGetParticipantResponse.participant:type_name -> inference.inference.Participant
+	23, // 6: inference.inference.QueryAllParticipantRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
+	25, // 7: inference.inference.QueryAllParticipantResponse.participant:type_name -> inference.inference.Participant
+	24, // 8: inference.inference.QueryAllParticipantResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
 	12, // 9: inference.inference.QueryGetInferencesWithExecutorsResponse.inferenceWithExecutor:type_name -> inference.inference.InferenceWithExecutor
-	21, // 10: inference.inference.InferenceWithExecutor.inference:type_name -> inference.inference.Inference
-	24, // 11: inference.inference.InferenceWithExecutor.executor:type_name -> inference.inference.Participant
-	24, // 12: inference.inference.QueryGetRandomExecutorResponse.executor:type_name -> inference.inference.Participant
-	19, // 13: inference.inference.QueryPocBatchesForStageResponse.pocBatch:type_name -> inference.inference.PoCBatchesWithParticipants
-	25, // 14: inference.inference.PoCBatchesWithParticipants.pocBatch:type_name -> inference.inference.PoCBatch
-	0,  // 15: inference.inference.Query.Params:input_type -> inference.inference.QueryParamsRequest
-	2,  // 16: inference.inference.Query.Inference:input_type -> inference.inference.QueryGetInferenceRequest
-	4,  // 17: inference.inference.Query.InferenceAll:input_type -> inference.inference.QueryAllInferenceRequest
-	6,  // 18: inference.inference.Query.Participant:input_type -> inference.inference.QueryGetParticipantRequest
-	8,  // 19: inference.inference.Query.ParticipantAll:input_type -> inference.inference.QueryAllParticipantRequest
-	10, // 20: inference.inference.Query.GetInferencesWithExecutors:input_type -> inference.inference.QueryGetInferencesWithExecutorsRequest
-	13, // 21: inference.inference.Query.InferenceParticipant:input_type -> inference.inference.QueryInferenceParticipantRequest
-	15, // 22: inference.inference.Query.GetRandomExecutor:input_type -> inference.inference.QueryGetRandomExecutorRequest
-	17, // 23: inference.inference.Query.PocBatchesForStage:input_type -> inference.inference.QueryPocBatchesForStageRequest
-	1,  // 24: inference.inference.Query.Params:output_type -> inference.inference.QueryParamsResponse
-	3,  // 25: inference.inference.Query.Inference:output_type -> inference.inference.QueryGetInferenceResponse
-	5,  // 26: inference.inference.Query.InferenceAll:output_type -> inference.inference.QueryAllInferenceResponse
-	7,  // 27: inference.inference.Query.Participant:output_type -> inference.inference.QueryGetParticipantResponse
-	9,  // 28: inference.inference.Query.ParticipantAll:output_type -> inference.inference.QueryAllParticipantResponse
-	11, // 29: inference.inference.Query.GetInferencesWithExecutors:output_type -> inference.inference.QueryGetInferencesWithExecutorsResponse
-	14, // 30: inference.inference.Query.InferenceParticipant:output_type -> inference.inference.QueryInferenceParticipantResponse
-	16, // 31: inference.inference.Query.GetRandomExecutor:output_type -> inference.inference.QueryGetRandomExecutorResponse
-	18, // 32: inference.inference.Query.PocBatchesForStage:output_type -> inference.inference.QueryPocBatchesForStageResponse
-	24, // [24:33] is the sub-list for method output_type
-	15, // [15:24] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	22, // 10: inference.inference.InferenceWithExecutor.inference:type_name -> inference.inference.Inference
+	25, // 11: inference.inference.InferenceWithExecutor.executor:type_name -> inference.inference.Participant
+	25, // 12: inference.inference.QueryGetRandomExecutorResponse.executor:type_name -> inference.inference.Participant
+	26, // 13: inference.inference.QueryGetEpochGroupDataResponse.epochGroupData:type_name -> inference.inference.EpochGroupData
+	23, // 14: inference.inference.QueryAllEpochGroupDataRequest.pagination:type_name -> cosmos.base.query.v1beta1.PageRequest
+	26, // 15: inference.inference.QueryAllEpochGroupDataResponse.epochGroupData:type_name -> inference.inference.EpochGroupData
+	24, // 16: inference.inference.QueryAllEpochGroupDataResponse.pagination:type_name -> cosmos.base.query.v1beta1.PageResponse
+	0,  // 17: inference.inference.Query.Params:input_type -> inference.inference.QueryParamsRequest
+	2,  // 18: inference.inference.Query.Inference:input_type -> inference.inference.QueryGetInferenceRequest
+	4,  // 19: inference.inference.Query.InferenceAll:input_type -> inference.inference.QueryAllInferenceRequest
+	6,  // 20: inference.inference.Query.Participant:input_type -> inference.inference.QueryGetParticipantRequest
+	8,  // 21: inference.inference.Query.ParticipantAll:input_type -> inference.inference.QueryAllParticipantRequest
+	10, // 22: inference.inference.Query.GetInferencesWithExecutors:input_type -> inference.inference.QueryGetInferencesWithExecutorsRequest
+	13, // 23: inference.inference.Query.InferenceParticipant:input_type -> inference.inference.QueryInferenceParticipantRequest
+	15, // 24: inference.inference.Query.GetRandomExecutor:input_type -> inference.inference.QueryGetRandomExecutorRequest
+	17, // 25: inference.inference.Query.EpochGroupData:input_type -> inference.inference.QueryGetEpochGroupDataRequest
+	19, // 26: inference.inference.Query.EpochGroupDataAll:input_type -> inference.inference.QueryAllEpochGroupDataRequest
+	1,  // 27: inference.inference.Query.Params:output_type -> inference.inference.QueryParamsResponse
+	3,  // 28: inference.inference.Query.Inference:output_type -> inference.inference.QueryGetInferenceResponse
+	5,  // 29: inference.inference.Query.InferenceAll:output_type -> inference.inference.QueryAllInferenceResponse
+	7,  // 30: inference.inference.Query.Participant:output_type -> inference.inference.QueryGetParticipantResponse
+	9,  // 31: inference.inference.Query.ParticipantAll:output_type -> inference.inference.QueryAllParticipantResponse
+	11, // 32: inference.inference.Query.GetInferencesWithExecutors:output_type -> inference.inference.QueryGetInferencesWithExecutorsResponse
+	14, // 33: inference.inference.Query.InferenceParticipant:output_type -> inference.inference.QueryInferenceParticipantResponse
+	16, // 34: inference.inference.Query.GetRandomExecutor:output_type -> inference.inference.QueryGetRandomExecutorResponse
+	18, // 35: inference.inference.Query.EpochGroupData:output_type -> inference.inference.QueryGetEpochGroupDataResponse
+	20, // 36: inference.inference.Query.EpochGroupDataAll:output_type -> inference.inference.QueryAllEpochGroupDataResponse
+	27, // [27:37] is the sub-list for method output_type
+	17, // [17:27] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_query_proto_init() }
@@ -10513,7 +10820,7 @@ func file_inference_inference_query_proto_init() {
 	file_inference_inference_params_proto_init()
 	file_inference_inference_inference_proto_init()
 	file_inference_inference_participant_proto_init()
-	file_inference_inference_pocbatch_proto_init()
+	file_inference_inference_epoch_group_data_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_inference_inference_query_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*QueryParamsRequest); i {
@@ -10720,7 +11027,7 @@ func file_inference_inference_query_proto_init() {
 			}
 		}
 		file_inference_inference_query_proto_msgTypes[17].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryPocBatchesForStageRequest); i {
+			switch v := v.(*QueryGetEpochGroupDataRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -10732,7 +11039,7 @@ func file_inference_inference_query_proto_init() {
 			}
 		}
 		file_inference_inference_query_proto_msgTypes[18].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryPocBatchesForStageResponse); i {
+			switch v := v.(*QueryGetEpochGroupDataResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -10744,7 +11051,19 @@ func file_inference_inference_query_proto_init() {
 			}
 		}
 		file_inference_inference_query_proto_msgTypes[19].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PoCBatchesWithParticipants); i {
+			switch v := v.(*QueryAllEpochGroupDataRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_query_proto_msgTypes[20].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*QueryAllEpochGroupDataResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -10762,7 +11081,7 @@ func file_inference_inference_query_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_query_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
