@@ -2,12 +2,14 @@
 package inference
 
 import (
+	binary "encoding/binary"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
+	math "math"
 	reflect "reflect"
 	sort "sort"
 	sync "sync"
@@ -347,8 +349,8 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.Reputation != int32(0) {
-		value := protoreflect.ValueOfInt32(x.Reputation)
+	if x.Reputation != float32(0) || math.Signbit(float64(x.Reputation)) {
+		value := protoreflect.ValueOfFloat32(x.Reputation)
 		if !f(fd_Participant_reputation, value) {
 			return
 		}
@@ -469,7 +471,7 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.Participant.address":
 		return x.Address != ""
 	case "inference.inference.Participant.reputation":
-		return x.Reputation != int32(0)
+		return x.Reputation != float32(0) || math.Signbit(float64(x.Reputation))
 	case "inference.inference.Participant.weight":
 		return x.Weight != int32(0)
 	case "inference.inference.Participant.joinTime":
@@ -523,7 +525,7 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.Participant.address":
 		x.Address = ""
 	case "inference.inference.Participant.reputation":
-		x.Reputation = int32(0)
+		x.Reputation = float32(0)
 	case "inference.inference.Participant.weight":
 		x.Weight = int32(0)
 	case "inference.inference.Participant.joinTime":
@@ -580,7 +582,7 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.Participant.reputation":
 		value := x.Reputation
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfFloat32(value)
 	case "inference.inference.Participant.weight":
 		value := x.Weight
 		return protoreflect.ValueOfInt32(value)
@@ -663,7 +665,7 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 	case "inference.inference.Participant.address":
 		x.Address = value.Interface().(string)
 	case "inference.inference.Participant.reputation":
-		x.Reputation = int32(value.Int())
+		x.Reputation = float32(value.Float())
 	case "inference.inference.Participant.weight":
 		x.Weight = int32(value.Int())
 	case "inference.inference.Participant.joinTime":
@@ -790,7 +792,7 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 	case "inference.inference.Participant.address":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Participant.reputation":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfFloat32(float32(0))
 	case "inference.inference.Participant.weight":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.Participant.joinTime":
@@ -903,8 +905,8 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.Reputation != 0 {
-			n += 1 + runtime.Sov(uint64(x.Reputation))
+		if x.Reputation != 0 || math.Signbit(float64(x.Reputation)) {
+			n += 5
 		}
 		if x.Weight != 0 {
 			n += 1 + runtime.Sov(uint64(x.Weight))
@@ -1192,10 +1194,11 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x20
 		}
-		if x.Reputation != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Reputation))
+		if x.Reputation != 0 || math.Signbit(float64(x.Reputation)) {
+			i -= 4
+			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.Reputation))))
 			i--
-			dAtA[i] = 0x18
+			dAtA[i] = 0x1d
 		}
 		if len(x.Address) > 0 {
 			i -= len(x.Address)
@@ -1325,24 +1328,16 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				x.Address = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 3:
-				if wireType != 0 {
+				if wireType != 5 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Reputation", wireType)
 				}
-				x.Reputation = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Reputation |= int32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
+				var v uint32
+				if (iNdEx + 4) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
+				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+				iNdEx += 4
+				x.Reputation = float32(math.Float32frombits(v))
 			case 4:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
@@ -1984,7 +1979,7 @@ type Participant struct {
 
 	Index                 string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
 	Address               string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Reputation            int32             `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
+	Reputation            float32           `protobuf:"fixed32,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
 	Weight                int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
 	JoinTime              int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
 	JoinHeight            int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
@@ -2038,7 +2033,7 @@ func (x *Participant) GetAddress() string {
 	return ""
 }
 
-func (x *Participant) GetReputation() int32 {
+func (x *Participant) GetReputation() float32 {
 	if x != nil {
 		return x.Reputation
 	}
@@ -2168,7 +2163,7 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64,
 	0x65, 0x78, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
 	0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1e, 0x0a, 0x0a,
-	0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05,
+	0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x02,
 	0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x16, 0x0a, 0x06,
 	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x05, 0x52, 0x06, 0x77, 0x65,
 	0x69, 0x67, 0x68, 0x74, 0x12, 0x1a, 0x0a, 0x08, 0x6a, 0x6f, 0x69, 0x6e, 0x54, 0x69, 0x6d, 0x65,

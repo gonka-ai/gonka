@@ -14,7 +14,7 @@ enum ParticipantStatus {
 message Participant {
   string index = 1;
   string address = 2;
-  int32 reputation = 3;
+  float reputation = 3;
   int32 weight = 4;
   int64 joinTime = 5;
   int64 joinHeight = 6;

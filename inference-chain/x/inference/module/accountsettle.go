@@ -46,6 +46,9 @@ func (am AppModule) SettleAccounts(ctx context.Context) error {
 			am.LogError("Error paying participant", "error", err)
 			return err
 		}
+		if amount.RewardCoins > 0 && amount.Participant.Status != types.ParticipantStatus_INVALID && amount.Participant.Reputation < 1.0 {
+			amount.Participant.Reputation += 0.01
+		}
 		amount.Participant.CoinBalance = 0
 		amount.Participant.RefundBalance = 0
 		am.keeper.SetParticipant(ctx, *amount.Participant)
