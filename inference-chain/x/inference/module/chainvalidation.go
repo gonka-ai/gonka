@@ -3,10 +3,6 @@ package inference
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
-	"log"
-	"strconv"
-	"time"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
