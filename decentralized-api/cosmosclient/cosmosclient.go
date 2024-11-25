@@ -140,8 +140,7 @@ func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmi
 	return icc.sendTransaction(transaction)
 }
 
-// PRTODO: MsgSubmitPocBatch > MsgSubmitValidatedPoCBatch
-func (icc *InferenceCosmosClient) SubmitValidatedPoCBatch(transaction *inference.MsgSubmitPocBatch) error {
+func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
 	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }

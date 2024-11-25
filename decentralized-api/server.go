@@ -1121,16 +1121,27 @@ func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w h
 
 	slog.Info("ValidatedProofBatch received", "body", body)
 
-	w.WriteHeader(http.StatusOK)
-	return
+	address, err := cosmos_client.PubKeyToAddress(body.PublicKey)
+	if err != nil {
+		slog.Error("Failed to convert public key to address", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	// TODO: save to BC
-	msg := &inference.MsgSubmitPocBatch{
+	msg := &inference.MsgSubmitPocValidation{
+		ParticipantAddress:       address,
 		PocStageStartBlockHeight: body.ChainHeight,
 		Nonces:                   body.Nonces,
 		Dist:                     body.Dist,
+		ReceivedDist:             body.ReceivedDist,
+		RTarget:                  body.RTarget,
+		FraudThreshold:           body.FraudThreshold,
+		NInvalid:                 body.NInvalid,
+		ProbabilityHonest:        body.ProbabilityHonest,
+		FraudDetected:            body.FraudDetected,
 	}
-	err := recorder.SubmitValidatedPoCBatch(msg)
+
+	err = recorder.SubmitPoCValidation(msg)
 	if err != nil {
 		slog.Error("Failed to submit MsgSubmitValidatedPocBatch", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1138,6 +1149,7 @@ func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w h
 	}
 
 	w.WriteHeader(http.StatusOK)
+	return
 }
 
 func wrapPoCBatches(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
