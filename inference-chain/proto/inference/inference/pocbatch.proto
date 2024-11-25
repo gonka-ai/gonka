@@ -11,6 +11,9 @@ message PoCBatch {
   repeated double dist = 5;
 }
 
+/*
+ignite scaffold message SubmitPocValidation participantAddress pocStageStartBlockHeight:int nonces:array.int dist:array.int receivedDist:array.int rTarget:int fraudThreshold:int nInvalid:int probabilityHonest:int fraudDetected:bool
+ */
 message PoCValidation {
   string participantAddress = 1;
   string validatorParticipantAddress = 2;

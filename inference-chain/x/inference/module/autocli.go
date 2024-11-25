@@ -132,6 +132,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a SubmitPocBatch tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStageStartBlockHeight"}, {ProtoField: "nonces"}, {ProtoField: "dist"}},
 				},
+				{
+					RpcMethod:      "SubmitPocValidation",
+					Use:            "submit-poc-validation [participant-address] [poc-stage-start-block-height] [nonces] [dist] [received-dist] [r-target] [fraud-threshold] [n-invalid] [probability-honest] [fraud-detected]",
+					Short:          "Send a SubmitPocValidation tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participantAddress"}, {ProtoField: "pocStageStartBlockHeight"}, {ProtoField: "nonces"}, {ProtoField: "dist"}, {ProtoField: "receivedDist"}, {ProtoField: "rTarget"}, {ProtoField: "fraudThreshold"}, {ProtoField: "nInvalid"}, {ProtoField: "probabilityHonest"}, {ProtoField: "fraudDetected"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

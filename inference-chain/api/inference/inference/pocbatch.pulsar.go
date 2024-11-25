@@ -2209,6 +2209,7 @@ func (x *PoCBatch) GetDist() []float64 {
 	return nil
 }
 
+// ignite scaffold message SubmitPocValidation participantAddress pocStageStartBlockHeight:int nonces:array.int dist:array.int receivedDist:array.int rTarget:int fraudThreshold:int nInvalid:int probabilityHonest:int fraudDetected:bool
 type PoCValidation struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

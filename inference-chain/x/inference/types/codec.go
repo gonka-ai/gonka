@@ -35,6 +35,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitPocBatch{},
 	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSubmitPocValidation{},
+	)
 	// this line is used by starport scaffolding # 3
 
 	registry.RegisterImplementations((*sdk.Msg)(nil),

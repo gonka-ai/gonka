@@ -99,6 +99,7 @@ func (m *PoCBatch) GetDist() []float64 {
 	return nil
 }
 
+// ignite scaffold message SubmitPocValidation participantAddress pocStageStartBlockHeight:int nonces:array.int dist:array.int receivedDist:array.int rTarget:int fraudThreshold:int nInvalid:int probabilityHonest:int fraudDetected:bool
 type PoCValidation struct {
 	ParticipantAddress          string    `protobuf:"bytes,1,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
 	ValidatorParticipantAddress string    `protobuf:"bytes,2,opt,name=validatorParticipantAddress,proto3" json:"validatorParticipantAddress,omitempty"`
