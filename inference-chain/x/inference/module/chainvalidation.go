@@ -33,55 +33,17 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		}
 	}
 
-	var activeParticipants []*types.ActiveParticipant
-	var computeResults []keeper.ComputeResult
-	for _, p := range allPower {
-		participant, ok := am.keeper.GetParticipant(ctx, p.ParticipantAddress)
-		if !ok {
-			am.LogError("Error getting participant", "address", p.ParticipantAddress)
-			continue
-		}
-		if p.Power < 1 {
-			am.LogWarn("Participant has no power.", "participant", p.ParticipantAddress)
-			continue
-		}
+	computeResults, activeParticipants := am.ComputeNewWeights(ctx, blockHeight)
 
-		if participant.ValidatorKey == "" {
-			am.LogError("Participant hasn't provided their validator key.", "participant", p.ParticipantAddress)
-			continue
-		}
-		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
-		if err != nil {
-			am.LogError("Error decoding pubkey", "error", err)
-			continue
-		}
-
-		pubKey := ed25519.PubKey{Key: pubKeyBytes}
-
-		r := keeper.ComputeResult{
-			Power:           p.Power,
-			ValidatorPubKey: &pubKey,
-			OperatorAddress: p.ParticipantAddress,
-		}
-		am.LogInfo("Setting compute validator.", "computeResult", r)
-		computeResults = append(computeResults, r)
-
-		activeParticipant := &types.ActiveParticipant{
-			Index:        p.ParticipantAddress,
-			ValidatorKey: participant.ValidatorKey,
-			Weight:       p.Power,
-			InferenceUrl: participant.InferenceUrl,
-			Models:       participant.Models,
-		}
-		activeParticipants = append(activeParticipants, activeParticipant)
-	}
-
+	// TODO: remove this once fully migrated to PoC v2
 	am.keeper.RemoveAllPower(ctx)
 
 	if len(computeResults) == 0 {
 		am.LogWarn("No compute validators to set. Keeping validators and active participants the same.")
 		return
 	}
+
+	am.LogInfo("Setting compute validators.", "len(computeResults)", len(computeResults), "len(activeParticipants)", len(activeParticipants))
 
 	_, err := am.keeper.Staking.SetComputeValidators(ctx, computeResults)
 	if err != nil {
@@ -90,14 +52,13 @@ func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockH
 		log.Fatalf(msg)
 	}
 
-	//activeParticipants := make([]*types.ActiveParticipant, len(computeResults))
 	groupMembers := make([]group.MemberRequest, len(computeResults))
 	for i, r := range computeResults {
 		// TODO: remove??? no re reason to do it, since we already fill up the participants array in the loop above
-		activeParticipants[i] = &types.ActiveParticipant{
-			Index:  r.OperatorAddress,
-			Weight: r.Power,
-		}
+		/*		activeParticipants[i] = &types.ActiveParticipant{
+				Index:  r.OperatorAddress,
+				Weight: r.Power,
+			}*/
 		groupMembers[i] = group.MemberRequest{
 			Address:  r.OperatorAddress,
 			Weight:   strconv.FormatInt(r.Power, 10),
@@ -146,7 +107,7 @@ func (am AppModule) createEpochGroup(ctx context.Context, groupMembers []group.M
 	return nil
 }
 
-func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
+func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
 	// FIXME: Figure out something here:
 	//  1. Either get current validators by using staking keeper or smth
 	//  2. Or alter InitGenesis or set validator logic so there's always active participants
@@ -156,7 +117,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
 		currentActiveParticipants = &val
 		if !found {
 			am.LogError("No active participants found.")
-			return
+			return nil, nil
 		}
 	}
 	currentValidatorsAddressSet := getActiveAddressSet(currentActiveParticipants)
@@ -167,7 +128,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, blockHeight)
 	if err != nil {
 		am.LogError("Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
-		return
+		return nil, nil
 	}
 
 	am.LogInfo("Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
@@ -245,12 +206,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
 		activeParticipants = append(activeParticipants, activeParticipant)
 	}
 
-	am.keeper.RemoveAllPower(ctx)
-
-	if len(computeResults) == 0 {
-		am.LogWarn("No compute validators to set. Keeping validators and active participants the same.")
-		return
-	}
+	return computeResults, activeParticipants
 }
 
 func getParticipantWeight(batches []types.PoCBatch) int64 {
