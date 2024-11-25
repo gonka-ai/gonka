@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
+	"strconv"
+	"time"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
-	"log"
-	"strconv"
-	"time"
 )
 
 func (am AppModule) SendNewValidatorWeightsToStaking(ctx context.Context, blockHeight int64) {
@@ -146,14 +147,19 @@ func (am AppModule) createEpochGroup(ctx context.Context, groupMembers []group.M
 }
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
-	// PRTODO: make an exception for 1st epoch?
-	currentActiveParticipants, found := am.keeper.GetActiveParticipants(ctx)
-	if !found {
-		am.LogError("No active participants found.")
-		return
+	// FIXME: Figure out something here:
+	//  1. Either get current validators by using staking keeper or smth
+	//  2. Or alter InitGenesis or set validator logic so there's always active participants
+	var currentActiveParticipants *types.ActiveParticipants = nil
+	if !proofofcompute.IsZeroEpoch(blockHeight) {
+		val, found := am.keeper.GetActiveParticipants(ctx)
+		currentActiveParticipants = &val
+		if !found {
+			am.LogError("No active participants found.")
+			return
+		}
 	}
-
-	_ = currentActiveParticipants
+	currentValidatorsAddressSet := getActiveAddressSet(currentActiveParticipants)
 
 	epochStartBlockHeight := proofofcompute.GetStartBlockHeightFromSetNewValidatorsStage(blockHeight)
 	am.LogInfo("Epoch start block height", "blockHeight", epochStartBlockHeight)
@@ -208,6 +214,19 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) {
 
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
+		if currentActiveParticipants != nil {
+			validatorCount := getValidatorIntersectionCount(currentValidatorsAddressSet, vals)
+			requiredValidators := (len(currentActiveParticipants.Participants) * 2) / 3
+
+			if validatorCount < requiredValidators {
+				am.LogWarn("Participant didn't receive enough validations",
+					"participant", participantAddress,
+					"validations", validatorCount,
+					"required", requiredValidators)
+				continue
+			}
+		}
+
 		r := keeper.ComputeResult{
 			Power:           claimedWeight,
 			ValidatorPubKey: &pubKey,
@@ -240,4 +259,26 @@ func getParticipantWeight(batches []types.PoCBatch) int64 {
 		weight += int64(len(b.Nonces))
 	}
 	return weight
+}
+
+func getActiveAddressSet(activeParticipants *types.ActiveParticipants) *map[string]struct{} {
+	if activeParticipants == nil {
+		return nil
+	}
+
+	set := make(map[string]struct{})
+	for _, ap := range activeParticipants.Participants {
+		set[ap.Index] = struct{}{}
+	}
+	return &set
+}
+
+func getValidatorIntersectionCount(currentValidatorsSet *map[string]struct{}, validations []types.PoCValidation) int {
+	count := 0
+	for _, v := range validations {
+		if _, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok {
+			count++
+		}
+	}
+	return count
 }

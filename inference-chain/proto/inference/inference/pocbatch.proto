@@ -13,16 +13,17 @@ message PoCBatch {
 
 message PoCValidation {
   string participantAddress = 1;
-  int64 pocStageStartBlockHeight = 2;
-  int64 validatedAtBlockHeight = 3;
-  repeated int64 nonces = 4;
-  repeated double dist = 5;
-  repeated double receivedDist = 6;
-  double rTarget = 7;
-  double fraudThreshold = 8;
-  int64 nInvalid = 9;
-  double probabilityHonest = 10;
-  bool fraudDetected = 11;
+  string validatorParticipantAddress = 2;
+  int64 pocStageStartBlockHeight = 3;
+  int64 validatedAtBlockHeight = 4;
+  repeated int64 nonces = 5;
+  repeated double dist = 6;
+  repeated double receivedDist = 7;
+  double rTarget = 8;
+  double fraudThreshold = 9;
+  int64 nInvalid = 10;
+  double probabilityHonest = 11;
+  bool fraudDetected = 12;
 }
 /*
 message ValidatedPoCBatch {

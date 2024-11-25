@@ -50,7 +50,11 @@ func IsSetNewValidatorsStage(blockHeight int64) bool {
 }
 
 func isNotZeroEpoch(blockHeight int64) bool {
-	return blockHeight >= EpochLength
+	return !IsZeroEpoch(blockHeight)
+}
+
+func IsZeroEpoch(blockHeight int64) bool {
+	return blockHeight < EpochLength
 }
 
 const shiftVal = 95
