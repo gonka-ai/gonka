@@ -4,7 +4,7 @@ const (
 	Multiplier            = 1
 	EpochLength           = 100 * Multiplier
 	startOfPocStage       = 0 * Multiplier
-	endOfPocStage         = 20 * Multiplier
+	endOfPocStage         = 15 * Multiplier
 	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier
 	startOfPocValStage    = (endOfPocStage + 1) * Multiplier
 	endOfPocValStage      = (startOfPocValStage + 20) * Multiplier
