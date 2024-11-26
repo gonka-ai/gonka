@@ -54,7 +54,8 @@ func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
-	// PRTODO: This is a placeholder. Replace with actual URL.
+	// For now the URl is the same, the node inference server appends "/validated" to the URL
+	//  or "/generated" (in case of init-generate)
 	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
 }
 
