@@ -116,7 +116,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	slog.Info("Starting PoC on nodes", "blockHeight", blockHeight, "blockHash", blockHash)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		// PRTODO: log error
+		slog.Error("NodePoCOrchestrator.Start. Failed to get nodes", "error", err)
 		return
 	}
 
