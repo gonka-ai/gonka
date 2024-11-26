@@ -80,6 +80,7 @@ type ParticipantKeeper interface {
 	SetParticipant(ctx context.Context, participant Participant)
 	RemoveParticipant(ctx context.Context, index string)
 	GetAllParticipant(ctx context.Context) []Participant
+	ParticipantAll(ctx context.Context, req *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 }
 
 type EpochGroupDataKeeper interface {

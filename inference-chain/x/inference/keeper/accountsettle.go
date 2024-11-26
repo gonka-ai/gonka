@@ -1,4 +1,4 @@
-package inference
+package keeper
 
 import (
 	"context"
@@ -11,44 +11,50 @@ import (
 const EpochNewCoin = 1_048_576
 const CoinHalvingHeight = 100
 
-func (am AppModule) SettleAccounts(ctx context.Context) error {
+func (k *Keeper) SettleAccounts(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
-	participants, err := am.keeper.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
+	participants, err := k.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
 	if err != nil {
-		am.LogError("Error getting participants", "error", err)
+		k.LogError("Error getting participants", "error", err)
 		return err
 	}
 
+	k.LogInfo("Block height", "height", blockHeight)
+	k.LogInfo("Got participants", "participants", len(participants.Participant))
+
 	amounts, rewardCoins, err := GetSettleAmounts(participants.Participant, blockHeight)
 	if err != nil {
-		am.LogError("Error getting settle amounts", "error", err)
+		k.LogError("Error getting settle amounts", "error", err)
 		return err
 	}
-	err = am.keeper.MintRewardCoins(ctx, rewardCoins)
+	err = k.MintRewardCoins(ctx, rewardCoins)
 	if err != nil {
-		am.LogError("Unable to mint new coins!", "error", err)
+		k.LogError("Unable to mint new coins!", "error", err)
 		return err
 	}
 	for _, amount := range amounts {
 		if amount.Error != nil {
-			am.LogError("Error calculating settle amounts", "error", amount.Error)
+			k.LogError("Error calculating settle amounts", "error", amount.Error)
 			continue
 		}
 		totalPayment := amount.WorkCoins + amount.RewardCoins + amount.RefundCoins
 		if totalPayment == 0 {
-			am.LogDebug("No payment needed for participant", "address", amount.Participant.Index)
+			k.LogDebug("No payment needed for participant", "address", amount.Participant.Index)
 			continue
 		}
-		am.LogInfo("Settling participant", "rewardCoins", amount.RewardCoins, "refundCoins", amount.RefundCoins, "workCoins", amount.WorkCoins, "address", amount.Participant.Index)
-		err = am.keeper.PayParticipantFromEscrow(ctx, amount.Participant.Address, totalPayment)
+		k.LogInfo("Settling participant", "rewardCoins", amount.RewardCoins, "refundCoins", amount.RefundCoins, "workCoins", amount.WorkCoins, "address", amount.Participant.Index)
+		err = k.PayParticipantFromEscrow(ctx, amount.Participant.Address, totalPayment)
 		if err != nil {
-			am.LogError("Error paying participant", "error", err)
+			k.LogError("Error paying participant", "error", err)
 			return err
+		}
+		if amount.RewardCoins > 0 && amount.Participant.Status != types.ParticipantStatus_INVALID && amount.Participant.Reputation < 1.0 {
+			amount.Participant.Reputation += 0.01
 		}
 		amount.Participant.CoinBalance = 0
 		amount.Participant.RefundBalance = 0
-		am.keeper.SetParticipant(ctx, *amount.Participant)
+		k.SetParticipant(ctx, *amount.Participant)
 	}
 	return nil
 }

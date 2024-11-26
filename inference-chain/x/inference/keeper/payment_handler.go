@@ -10,6 +10,12 @@ import (
 
 const inferenceDenom = "icoin"
 
+type PaymentHandler interface {
+	PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (int64, error)
+	MintRewardCoins(ctx context.Context, newCoins int64) error
+	PayParticipantFromEscrow(ctx context.Context, address string, amount uint64) error
+}
+
 func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (int64, error) {
 	cost := CalculateCost(*inference)
 	payeeAddress, err := sdk.AccAddressFromBech32(inference.RequestedBy)
@@ -17,7 +23,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 		return 0, err
 	}
 	k.LogDebug("Sending coins to escrow", "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
-	err = k.bank.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, getCoins(cost))
+	err = k.bank.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, GetCoins(cost))
 	if err != nil {
 		k.LogError("Error sending coins to escrow", "error", err)
 		return 0,
@@ -28,7 +34,7 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 }
 
 func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
-	return k.bank.MintCoins(ctx, types.ModuleName, getCoins(newCoins))
+	return k.bank.MintCoins(ctx, types.ModuleName, GetCoins(newCoins))
 }
 
 func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, amount uint64) error {
@@ -37,10 +43,11 @@ func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, a
 		return err
 	}
 
-	err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, getCoins(int64(amount)))
+	k.LogInfo("Paying participant", "participant", participantAddress, "amount", amount, "address", address)
+	err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, GetCoins(int64(amount)))
 	return err
 }
 
-func getCoins(coins int64) sdk.Coins {
+func GetCoins(coins int64) sdk.Coins {
 	return sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, coins))
 }

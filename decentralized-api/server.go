@@ -935,6 +935,7 @@ type ParticipantDto struct {
 	RefundsOwed int64    `json:"refunds_owed"`
 	Balance     int64    `json:"balance"`
 	VotingPower int64    `json:"voting_power"`
+	Reputation  float32  `json:"reputation"`
 }
 
 func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
@@ -1033,6 +1034,7 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 			RefundsOwed: p.RefundBalance,
 			Balance:     pBalance,
 			VotingPower: int64(p.Weight),
+			Reputation:  p.Reputation,
 		}
 	}
 
