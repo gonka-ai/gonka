@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -230,7 +231,9 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	})
 
 	for _, result := range computeResult {
-		err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), result.ValidatorPubKey.String())
+		// FIXME: add some centralized way that'd govern key enc/dec rules
+		validatorPubKey := base64.StdEncoding.EncodeToString(result.ValidatorPubKey.Bytes())
+		err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), validatorPubKey)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", "error", err.Error())
 			continue

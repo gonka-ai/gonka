@@ -69,7 +69,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, epochStartBlockHeight
 
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			am.LogError("Error decoding pubkey", "error", err)
+			am.LogError("am.ComputeNewWeights. Error decoding pubkey", "error", err)
 			continue
 		}
 
