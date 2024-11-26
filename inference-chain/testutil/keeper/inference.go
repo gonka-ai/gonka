@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"go.uber.org/mock/gomock"
+	"golang.org/x/exp/slog"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -75,7 +76,7 @@ func InferenceKeeperWithMock(
 	k := keeper.NewKeeper(
 		cdc,
 		runtime.NewKVStoreService(storeKey),
-		log.NewNopLogger(),
+		PrintlnLogger{},
 		authority.String(),
 		bankMock,
 		nil,
@@ -93,4 +94,30 @@ func InferenceKeeperWithMock(
 	}
 
 	return k, ctx
+}
+
+type PrintlnLogger struct{}
+
+func (PrintlnLogger) Info(msg string, keyVals ...any) {
+	slog.Info(msg, keyVals...)
+}
+
+func (PrintlnLogger) Warn(msg string, keyVals ...any) {
+	slog.Warn(msg, keyVals...)
+}
+
+func (PrintlnLogger) Error(msg string, keyVals ...any) {
+	slog.Error(msg, keyVals...)
+}
+
+func (PrintlnLogger) Debug(msg string, keyVals ...any) {
+	slog.Debug(msg, keyVals...)
+}
+
+func (PrintlnLogger) With(keyVals ...any) log.Logger {
+	return PrintlnLogger{}
+}
+
+func (PrintlnLogger) Impl() any {
+	return nil
 }

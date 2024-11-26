@@ -1,7 +1,9 @@
-package inference_test
+package keeper_test
 
 import (
-	inference "github.com/productscience/inference/x/inference/module"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	keeper2 "github.com/productscience/inference/testutil/keeper"
+	inference "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -136,4 +138,43 @@ func newParticipant(coinBalance int64, refundBalance int64, id string) types.Par
 		RefundBalance: refundBalance,
 		Status:        types.ParticipantStatus_ACTIVE,
 	}
+}
+
+func TestActualSettle(t *testing.T) {
+	participant1 := types.Participant{
+		Index:         "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
+		Address:       "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
+		CoinBalance:   1000,
+		RefundBalance: 0,
+		Status:        types.ParticipantStatus_ACTIVE,
+	}
+	participant2 := types.Participant{
+		Index:         "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
+		Address:       "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
+		CoinBalance:   1000,
+		RefundBalance: 500,
+		Status:        types.ParticipantStatus_ACTIVE,
+	}
+	address1, _ := sdk.AccAddressFromBech32(participant1.Address)
+	address2, _ := sdk.AccAddressFromBech32(participant2.Address)
+	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+	keeper.SetParticipant(ctx, participant1)
+	keeper.SetParticipant(ctx, participant2)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, address2, inference.GetCoins(1000+500+inference.EpochNewCoin/2)).Return(nil)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, address1, inference.GetCoins(1000+inference.EpochNewCoin/2)).Return(nil)
+
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, inference.GetCoins(inference.EpochNewCoin)).Return(nil)
+	err := keeper.SettleAccounts(ctx)
+	require.NoError(t, err)
+	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
+	require.True(t, found)
+	require.Equal(t, int64(0), updated1.CoinBalance)
+	require.Equal(t, int64(0), updated1.RefundBalance)
+	require.Equal(t, float32(0.01), updated1.Reputation)
+	updated2, found := keeper.GetParticipant(ctx, participant2.Address)
+	require.True(t, found)
+	require.Equal(t, int64(0), updated2.CoinBalance)
+	require.Equal(t, int64(0), updated2.RefundBalance)
+	require.Equal(t, float32(0.01), updated2.Reputation)
+
 }
