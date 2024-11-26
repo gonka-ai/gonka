@@ -4,18 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"decentralized-api/api"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
-	"decentralized-api/poc"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
@@ -23,8 +22,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	"github.com/go-errors/errors"
-
 	"io"
 	"log"
 	"log/slog"
@@ -79,7 +76,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
-	mux.HandleFunc("/v1/poc-batches/", wrapPoCBatches(transactionRecorder))
+	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
@@ -656,19 +653,7 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 		return
 	}
 
-	respondWithJson(w, response)
-}
-
-func respondWithJson(w http.ResponseWriter, response interface{}) {
-	respBytes, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	api.RespondWithJson(w, response)
 }
 
 func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder cosmos_client.InferenceCosmosClient) {
@@ -1084,149 +1069,6 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 	return defaultValue
 }
 
-func submitPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	var body poc.ProofBatch
-
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body of type ProofBatch", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	slog.Info("ProofBatch received", "body", body)
-
-	msg := &inference.MsgSubmitPocBatch{
-		PocStageStartBlockHeight: body.ChainHeight,
-		Nonces:                   body.Nonces,
-		Dist:                     body.Dist,
-	}
-	err := recorder.SubmitPocBatch(msg)
-	if err != nil {
-		slog.Error("Failed to submit MsgSubmitPocBatch", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	var body poc.ValidatedBatch
-
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body of type ValidatedBatch", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	slog.Info("ValidatedProofBatch received", "body", body)
-
-	address, err := cosmos_client.PubKeyToAddress(body.PublicKey)
-	if err != nil {
-		slog.Error("Failed to convert public key to address", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	msg := &inference.MsgSubmitPocValidation{
-		ParticipantAddress:       address,
-		PocStageStartBlockHeight: body.ChainHeight,
-		Nonces:                   body.Nonces,
-		Dist:                     body.Dist,
-		ReceivedDist:             body.ReceivedDist,
-		RTarget:                  body.RTarget,
-		FraudThreshold:           body.FraudThreshold,
-		NInvalid:                 body.NInvalid,
-		ProbabilityHonest:        body.ProbabilityHonest,
-		FraudDetected:            body.FraudDetected,
-	}
-
-	err = recorder.SubmitPoCValidation(msg)
-	if err != nil {
-		slog.Error("Failed to submit MsgSubmitValidatedPocBatch", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	return
-}
-
-func wrapPoCBatches(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		switch request.Method {
-		case http.MethodPost:
-			postPoCBatches(recorder, w, request)
-		case http.MethodGet:
-			getPoCBatches(recorder, w, request)
-		default:
-			slog.Error("Invalid request method", "method", request.Method)
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-func postPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	suffix := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	slog.Debug("postPoCBatches", "suffix", suffix)
-
-	switch suffix {
-	case "generated":
-		submitPoCBatches(recorder, w, request)
-	case "validated":
-		submitValidatedPoCBatches(recorder, w, request)
-	}
-}
-
-func parseValidatedUrl(input string) (string, error) {
-	// Define the regex pattern to match the address
-	pattern := `^/(cosmos[0-9a-zA-Z]+?)/validated$`
-	re := regexp.MustCompile(pattern)
-
-	// Find the matches
-	matches := re.FindStringSubmatch(input)
-	if len(matches) != 2 {
-		return "", errors.New("input does not conform to the pattern")
-	}
-
-	// Return the address
-	return matches[1], nil
-}
-
-func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
-	// Get what's after /v1/poc/batches/
-	epoch := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	slog.Debug("getPoCBatches", "epoch", epoch)
-
-	// Parse int64 from epoch:
-	value, err := strconv.ParseInt(epoch, 10, 64)
-	if err != nil {
-		slog.Error("Failed to parse epoch", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	slog.Debug("Requesting PoC batches.", "epoch", value)
-
-	queryClient := recorder.NewInferenceQueryClient()
-	// ignite scaffold query pocBatchesForStage blockHeight:int
-	response, err := queryClient.PocBatchesForStage(recorder.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: value})
-	if err != nil {
-		slog.Error("Failed to get PoC batches.", "epoch", value)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if response == nil {
-		slog.Error("PoC batches batches not found", "epoch", value)
-		msg := fmt.Sprintf("PoC batches batches not found. epoch = %d", value)
-		http.Error(w, msg, http.StatusNotFound)
-		return
-	}
-
-	respondWithJson(w, response)
-}
-
 func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
@@ -1273,6 +1115,6 @@ func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(h
 			AddressFromPubKey: addressFromPubKey,
 		}
 
-		respondWithJson(w, response)
+		api.RespondWithJson(w, response)
 	}
 }
