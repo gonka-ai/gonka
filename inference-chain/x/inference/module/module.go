@@ -160,33 +160,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
-		err := am.SettleAccounts(ctx)
-		if err != nil {
-			am.LogError("Unable to settle accounts", "error", err.Error())
-		}
-
-		computeResult, activeParticipants := am.ComputeNewWeights(ctx, blockHeight)
-		am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-			Participants:         activeParticipants,
-			CreatedAtBlockHeight: blockHeight,
-		})
-
-		upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
-		if err != nil {
-			am.LogError("Unable to get upcoming epoch group", "error", err.Error())
-			return err
-		}
-
-		for _, result := range computeResult {
-			err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), result.ValidatorPubKey.String())
-			if err != nil {
-				am.LogError("Unable to add member", "error", err.Error())
-				continue
-			}
-		}
-
-		am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+		am.onSetNewValidatorsStage(ctx, blockHeight)
 	}
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
@@ -226,6 +200,45 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	return nil
 }
 
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64) {
+	am.LogInfo("onSetNewValidatorsStage start", "blockHeight", blockHeight)
+	err := am.SettleAccounts(ctx)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", "error", err.Error())
+	}
+
+	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", "error", err.Error())
+		return
+	}
+
+	epochStartBlockHeight := int64(upcomingEg.GroupData.PocStartBlockHeight)
+	am.LogInfo("onSetNewValidatorsStage: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
+
+	computeResult, activeParticipants := am.ComputeNewWeights(ctx, int64(upcomingEg.GroupData.EpochGroupId))
+	if computeResult == nil && activeParticipants == nil {
+		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
+		return
+	}
+
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", "epochStartBlockHeight", epochStartBlockHeight, "len(computeResult)", len(computeResult), "len(activeParticipants)", len(activeParticipants))
+
+	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		Participants:         activeParticipants,
+		CreatedAtBlockHeight: blockHeight,
+	})
+
+	for _, result := range computeResult {
+		err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), result.ValidatorPubKey.String())
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to add member", "error", err.Error())
+			continue
+		}
+	}
+
+	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+}
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {
 	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)

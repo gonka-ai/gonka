@@ -4,10 +4,10 @@ const (
 	Multiplier            = 1
 	EpochLength           = 100 * Multiplier
 	startOfPocStage       = 0 * Multiplier
-	endOfPocStage         = 15 * Multiplier
+	endOfPocStage         = 10 * Multiplier
 	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier
 	startOfPocValStage    = (endOfPocStage + 1) * Multiplier
-	endOfPocValStage      = (startOfPocValStage + 20) * Multiplier
+	endOfPocValStage      = (startOfPocValStage + 15) * Multiplier
 	setNewValidatorsStage = (endOfPocValStage + 1) * Multiplier
 )
 
@@ -83,8 +83,4 @@ func GetStartBlockHeightFromEndOfPocStage(blockHeight int64) int64 {
 
 func GetStartBlockHeightFromStartOfValStage(blockHeight int64) int64 {
 	return unshift(shift(blockHeight) - startOfPocValStage)
-}
-
-func GetStartBlockHeightFromSetNewValidatorsStage(blockHeight int64) int64 {
-	return unshift(shift(blockHeight) - setNewValidatorsStage)
 }

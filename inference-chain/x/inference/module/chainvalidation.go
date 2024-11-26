@@ -10,12 +10,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
+func (am AppModule) ComputeNewWeights(ctx context.Context, epochStartBlockHeight int64) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
 	// FIXME: Figure out something here:
 	//  1. Either get current validators by using staking keeper or smth
 	//  2. Or alter InitGenesis or set validator logic so there's always active participants
 	var currentActiveParticipants *types.ActiveParticipants = nil
-	if !proofofcompute.IsZeroEpoch(blockHeight) {
+	if !proofofcompute.IsZeroEpoch(epochStartBlockHeight) {
 		val, found := am.keeper.GetActiveParticipants(ctx)
 		currentActiveParticipants = &val
 		if !found {
@@ -25,10 +25,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) ([
 	}
 	currentValidatorsAddressSet := getActiveAddressSet(currentActiveParticipants)
 
-	epochStartBlockHeight := proofofcompute.GetStartBlockHeightFromSetNewValidatorsStage(blockHeight)
-	am.LogInfo("Epoch start block height", "blockHeight", blockHeight, "epochStartBlockHeight", epochStartBlockHeight)
-
-	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, blockHeight)
+	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
 		am.LogError("Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 		return nil, nil
@@ -36,7 +33,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, blockHeight int64) ([
 
 	am.LogInfo("Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
 
-	validations, err := am.keeper.GetPoCValidationByStage(ctx, blockHeight)
+	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
 		am.LogError("Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
