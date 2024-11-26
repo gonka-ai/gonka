@@ -165,7 +165,27 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err != nil {
 			am.LogError("Unable to settle accounts", "error", err.Error())
 		}
-		am.SetActiveParticipants(ctx, blockHeight)
+
+		computeResult, activeParticipants := am.ComputeNewWeights(ctx, blockHeight)
+		am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+			Participants:         activeParticipants,
+			CreatedAtBlockHeight: blockHeight,
+		})
+
+		upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
+		if err != nil {
+			am.LogError("Unable to get upcoming epoch group", "error", err.Error())
+			return err
+		}
+
+		for _, result := range computeResult {
+			err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), result.ValidatorPubKey.String())
+			if err != nil {
+				am.LogError("Unable to add member", "error", err.Error())
+				continue
+			}
+		}
+
 		am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
 	}
 
