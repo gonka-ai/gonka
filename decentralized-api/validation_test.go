@@ -8,17 +8,17 @@ import (
 
 func TestValidationOdds(t *testing.T) {
 	newExecutor := executor(0.0)
-	odds := getOdds(t, newExecutor, 1, 1000)
+	odds := getOdds(newExecutor, 1, 1000)
 	require.InEpsilon(t, 0.001, odds, 0.0001)
-	odds = getOdds(t, newExecutor, 10, 1000)
+	odds = getOdds(newExecutor, 10, 1000)
 	require.InEpsilon(t, 0.01, odds, 0.0001)
 	fullExecutor := executor(1.0)
-	odds = getOdds(t, fullExecutor, 1, 1000)
+	odds = getOdds(fullExecutor, 1, 1000)
 	require.InEpsilon(t, 0.0001, odds, 0.000001)
 }
 
-func getOdds(t *testing.T, participant *types.Participant, numParticipants uint32, numValidators uint32) float64 {
-	_, odds := ShouldValidate(participant, "validator", numParticipants, numValidators)
+func getOdds(participant *types.Participant, numParticipants uint32, numValidators uint32) float64 {
+	_, odds := ShouldValidate(participant, "validator", numParticipants, numValidators, 0)
 	return float64(odds)
 }
 

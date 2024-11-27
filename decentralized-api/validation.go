@@ -6,12 +6,14 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/poc"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
+	"hash/fnv"
 	"io"
 	"log"
 	"log/slog"
@@ -79,8 +81,10 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
 
+		inferenceSeed := hashStringToInt64(inferenceWithExecutor.Inference.InferenceId)
+
 		shouldValidate, _ := ShouldValidate(&inferenceWithExecutor.Executor, transactionRecorder.Address,
-			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower)
+			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower, inferenceSeed+poc.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
@@ -92,6 +96,15 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder, false)
 		}()
 	}
+}
+
+func hashStringToInt64(s string) int64 {
+	h := fnv.New64a()      // Create a new 64-bit FNV-1a hash
+	h.Write([]byte(s))     // Write the string to the hash
+	hashValue := h.Sum64() // Get the unsigned 64-bit hash
+
+	// Convert to int64, taking care of potential overflow.
+	return int64(hashValue)
 }
 
 func logInferencesToSample(inferences []types.InferenceWithExecutor) {
@@ -121,14 +134,15 @@ func logInferencesToValidate(toValidate []types.Inference) {
 	slog.Info("Validation: Inferences to validate", "inferences", ids)
 }
 
-func ShouldValidate(executor *types.Participant, currentAccountAddress string, currentAccountPower uint32, totalPower uint32) (bool, float32) {
+func ShouldValidate(executor *types.Participant, currentAccountAddress string, currentAccountPower uint32, totalPower uint32, seed int64) (bool, float32) {
 	if executor.Index == currentAccountAddress {
 		return false, 0.0
 	}
 	targetValidations := 1 - (executor.Reputation * 0.9)
 	ourProbability := targetValidations * (float32(currentAccountPower) / float32(totalPower))
 	slog.Info("Validation: ShouldValidate", "currentAccountPower", currentAccountPower, "totalPower", totalPower, "ourProbability", ourProbability)
-	return rand.Float32() < ourProbability, ourProbability
+	randFloat := rand.New(rand.NewSource(seed)).Float32()
+	return randFloat < ourProbability, ourProbability
 }
 
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {

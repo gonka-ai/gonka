@@ -9,8 +9,173 @@ import (
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
 	reflect "reflect"
+	sort "sort"
 	sync "sync"
 )
+
+var _ protoreflect.Map = (*_EpochGroupData_6_map)(nil)
+
+type _EpochGroupData_6_map struct {
+	m *map[string]string
+}
+
+func (x *_EpochGroupData_6_map) Len() int {
+	if x.m == nil {
+		return 0
+	}
+	return len(*x.m)
+}
+
+func (x *_EpochGroupData_6_map) Range(f func(protoreflect.MapKey, protoreflect.Value) bool) {
+	if x.m == nil {
+		return
+	}
+	for k, v := range *x.m {
+		mapKey := (protoreflect.MapKey)(protoreflect.ValueOfString(k))
+		mapValue := protoreflect.ValueOfString(v)
+		if !f(mapKey, mapValue) {
+			break
+		}
+	}
+}
+
+func (x *_EpochGroupData_6_map) Has(key protoreflect.MapKey) bool {
+	if x.m == nil {
+		return false
+	}
+	keyUnwrapped := key.String()
+	concreteValue := keyUnwrapped
+	_, ok := (*x.m)[concreteValue]
+	return ok
+}
+
+func (x *_EpochGroupData_6_map) Clear(key protoreflect.MapKey) {
+	if x.m == nil {
+		return
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	delete(*x.m, concreteKey)
+}
+
+func (x *_EpochGroupData_6_map) Get(key protoreflect.MapKey) protoreflect.Value {
+	if x.m == nil {
+		return protoreflect.Value{}
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	v, ok := (*x.m)[concreteKey]
+	if !ok {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_EpochGroupData_6_map) Set(key protoreflect.MapKey, value protoreflect.Value) {
+	if !key.IsValid() || !value.IsValid() {
+		panic("invalid key or value provided")
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	(*x.m)[concreteKey] = concreteValue
+}
+
+func (x *_EpochGroupData_6_map) Mutable(key protoreflect.MapKey) protoreflect.Value {
+	panic("should not call Mutable on protoreflect.Map whose value is not of type protoreflect.Message")
+}
+
+func (x *_EpochGroupData_6_map) NewValue() protoreflect.Value {
+	v := ""
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_EpochGroupData_6_map) IsValid() bool {
+	return x.m != nil
+}
+
+var _ protoreflect.Map = (*_EpochGroupData_7_map)(nil)
+
+type _EpochGroupData_7_map struct {
+	m *map[string]uint64
+}
+
+func (x *_EpochGroupData_7_map) Len() int {
+	if x.m == nil {
+		return 0
+	}
+	return len(*x.m)
+}
+
+func (x *_EpochGroupData_7_map) Range(f func(protoreflect.MapKey, protoreflect.Value) bool) {
+	if x.m == nil {
+		return
+	}
+	for k, v := range *x.m {
+		mapKey := (protoreflect.MapKey)(protoreflect.ValueOfString(k))
+		mapValue := protoreflect.ValueOfUint64(v)
+		if !f(mapKey, mapValue) {
+			break
+		}
+	}
+}
+
+func (x *_EpochGroupData_7_map) Has(key protoreflect.MapKey) bool {
+	if x.m == nil {
+		return false
+	}
+	keyUnwrapped := key.String()
+	concreteValue := keyUnwrapped
+	_, ok := (*x.m)[concreteValue]
+	return ok
+}
+
+func (x *_EpochGroupData_7_map) Clear(key protoreflect.MapKey) {
+	if x.m == nil {
+		return
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	delete(*x.m, concreteKey)
+}
+
+func (x *_EpochGroupData_7_map) Get(key protoreflect.MapKey) protoreflect.Value {
+	if x.m == nil {
+		return protoreflect.Value{}
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	v, ok := (*x.m)[concreteKey]
+	if !ok {
+		return protoreflect.Value{}
+	}
+	return protoreflect.ValueOfUint64(v)
+}
+
+func (x *_EpochGroupData_7_map) Set(key protoreflect.MapKey, value protoreflect.Value) {
+	if !key.IsValid() || !value.IsValid() {
+		panic("invalid key or value provided")
+	}
+	keyUnwrapped := key.String()
+	concreteKey := keyUnwrapped
+	valueUnwrapped := value.Uint()
+	concreteValue := valueUnwrapped
+	(*x.m)[concreteKey] = concreteValue
+}
+
+func (x *_EpochGroupData_7_map) Mutable(key protoreflect.MapKey) protoreflect.Value {
+	panic("should not call Mutable on protoreflect.Map whose value is not of type protoreflect.Message")
+}
+
+func (x *_EpochGroupData_7_map) NewValue() protoreflect.Value {
+	v := uint64(0)
+	return protoreflect.ValueOfUint64(v)
+}
+
+func (x *_EpochGroupData_7_map) IsValid() bool {
+	return x.m != nil
+}
 
 var (
 	md_EpochGroupData                      protoreflect.MessageDescriptor
@@ -19,6 +184,8 @@ var (
 	fd_EpochGroupData_epochPolicy          protoreflect.FieldDescriptor
 	fd_EpochGroupData_effectiveBlockHeight protoreflect.FieldDescriptor
 	fd_EpochGroupData_lastBlockHeight      protoreflect.FieldDescriptor
+	fd_EpochGroupData_memberSeedSignatures protoreflect.FieldDescriptor
+	fd_EpochGroupData_removalBlockHeights  protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -29,6 +196,8 @@ func init() {
 	fd_EpochGroupData_epochPolicy = md_EpochGroupData.Fields().ByName("epochPolicy")
 	fd_EpochGroupData_effectiveBlockHeight = md_EpochGroupData.Fields().ByName("effectiveBlockHeight")
 	fd_EpochGroupData_lastBlockHeight = md_EpochGroupData.Fields().ByName("lastBlockHeight")
+	fd_EpochGroupData_memberSeedSignatures = md_EpochGroupData.Fields().ByName("memberSeedSignatures")
+	fd_EpochGroupData_removalBlockHeights = md_EpochGroupData.Fields().ByName("removalBlockHeights")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -126,6 +295,18 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
+	if len(x.MemberSeedSignatures) != 0 {
+		value := protoreflect.ValueOfMap(&_EpochGroupData_6_map{m: &x.MemberSeedSignatures})
+		if !f(fd_EpochGroupData_memberSeedSignatures, value) {
+			return
+		}
+	}
+	if len(x.RemovalBlockHeights) != 0 {
+		value := protoreflect.ValueOfMap(&_EpochGroupData_7_map{m: &x.RemovalBlockHeights})
+		if !f(fd_EpochGroupData_removalBlockHeights, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -151,6 +332,10 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 		return x.EffectiveBlockHeight != uint64(0)
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		return x.LastBlockHeight != uint64(0)
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		return len(x.MemberSeedSignatures) != 0
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		return len(x.RemovalBlockHeights) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -177,6 +362,10 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 		x.EffectiveBlockHeight = uint64(0)
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		x.LastBlockHeight = uint64(0)
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		x.MemberSeedSignatures = nil
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		x.RemovalBlockHeights = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -208,6 +397,18 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		value := x.LastBlockHeight
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		if len(x.MemberSeedSignatures) == 0 {
+			return protoreflect.ValueOfMap(&_EpochGroupData_6_map{})
+		}
+		mapValue := &_EpochGroupData_6_map{m: &x.MemberSeedSignatures}
+		return protoreflect.ValueOfMap(mapValue)
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		if len(x.RemovalBlockHeights) == 0 {
+			return protoreflect.ValueOfMap(&_EpochGroupData_7_map{})
+		}
+		mapValue := &_EpochGroupData_7_map{m: &x.RemovalBlockHeights}
+		return protoreflect.ValueOfMap(mapValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -238,6 +439,14 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		x.EffectiveBlockHeight = value.Uint()
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		x.LastBlockHeight = value.Uint()
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		mv := value.Map()
+		cmv := mv.(*_EpochGroupData_6_map)
+		x.MemberSeedSignatures = *cmv.m
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		mv := value.Map()
+		cmv := mv.(*_EpochGroupData_7_map)
+		x.RemovalBlockHeights = *cmv.m
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -258,6 +467,18 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		if x.MemberSeedSignatures == nil {
+			x.MemberSeedSignatures = make(map[string]string)
+		}
+		value := &_EpochGroupData_6_map{m: &x.MemberSeedSignatures}
+		return protoreflect.ValueOfMap(value)
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		if x.RemovalBlockHeights == nil {
+			x.RemovalBlockHeights = make(map[string]uint64)
+		}
+		value := &_EpochGroupData_7_map{m: &x.RemovalBlockHeights}
+		return protoreflect.ValueOfMap(value)
 	case "inference.inference.EpochGroupData.pocStartBlockHeight":
 		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.EpochGroupData is not mutable"))
 	case "inference.inference.EpochGroupData.epochGroupId":
@@ -291,6 +512,12 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.EpochGroupData.memberSeedSignatures":
+		m := make(map[string]string)
+		return protoreflect.ValueOfMap(&_EpochGroupData_6_map{m: &m})
+	case "inference.inference.EpochGroupData.removalBlockHeights":
+		m := make(map[string]uint64)
+		return protoreflect.ValueOfMap(&_EpochGroupData_7_map{m: &m})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -376,6 +603,48 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 		if x.LastBlockHeight != 0 {
 			n += 1 + runtime.Sov(uint64(x.LastBlockHeight))
 		}
+		if len(x.MemberSeedSignatures) > 0 {
+			SiZeMaP := func(k string, v string) {
+				mapEntrySize := 1 + len(k) + runtime.Sov(uint64(len(k))) + 1 + len(v) + runtime.Sov(uint64(len(v)))
+				n += mapEntrySize + 1 + runtime.Sov(uint64(mapEntrySize))
+			}
+			if options.Deterministic {
+				sortme := make([]string, 0, len(x.MemberSeedSignatures))
+				for k := range x.MemberSeedSignatures {
+					sortme = append(sortme, k)
+				}
+				sort.Strings(sortme)
+				for _, k := range sortme {
+					v := x.MemberSeedSignatures[k]
+					SiZeMaP(k, v)
+				}
+			} else {
+				for k, v := range x.MemberSeedSignatures {
+					SiZeMaP(k, v)
+				}
+			}
+		}
+		if len(x.RemovalBlockHeights) > 0 {
+			SiZeMaP := func(k string, v uint64) {
+				mapEntrySize := 1 + len(k) + runtime.Sov(uint64(len(k))) + 1 + runtime.Sov(uint64(v))
+				n += mapEntrySize + 1 + runtime.Sov(uint64(mapEntrySize))
+			}
+			if options.Deterministic {
+				sortme := make([]string, 0, len(x.RemovalBlockHeights))
+				for k := range x.RemovalBlockHeights {
+					sortme = append(sortme, k)
+				}
+				sort.Strings(sortme)
+				for _, k := range sortme {
+					v := x.RemovalBlockHeights[k]
+					SiZeMaP(k, v)
+				}
+			} else {
+				for k, v := range x.RemovalBlockHeights {
+					SiZeMaP(k, v)
+				}
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -404,6 +673,90 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.RemovalBlockHeights) > 0 {
+			MaRsHaLmAp := func(k string, v uint64) (protoiface.MarshalOutput, error) {
+				baseI := i
+				i = runtime.EncodeVarint(dAtA, i, uint64(v))
+				i--
+				dAtA[i] = 0x10
+				i -= len(k)
+				copy(dAtA[i:], k)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(k)))
+				i--
+				dAtA[i] = 0xa
+				i = runtime.EncodeVarint(dAtA, i, uint64(baseI-i))
+				i--
+				dAtA[i] = 0x3a
+				return protoiface.MarshalOutput{}, nil
+			}
+			if options.Deterministic {
+				keysForRemovalBlockHeights := make([]string, 0, len(x.RemovalBlockHeights))
+				for k := range x.RemovalBlockHeights {
+					keysForRemovalBlockHeights = append(keysForRemovalBlockHeights, string(k))
+				}
+				sort.Slice(keysForRemovalBlockHeights, func(i, j int) bool {
+					return keysForRemovalBlockHeights[i] < keysForRemovalBlockHeights[j]
+				})
+				for iNdEx := len(keysForRemovalBlockHeights) - 1; iNdEx >= 0; iNdEx-- {
+					v := x.RemovalBlockHeights[string(keysForRemovalBlockHeights[iNdEx])]
+					out, err := MaRsHaLmAp(keysForRemovalBlockHeights[iNdEx], v)
+					if err != nil {
+						return out, err
+					}
+				}
+			} else {
+				for k := range x.RemovalBlockHeights {
+					v := x.RemovalBlockHeights[k]
+					out, err := MaRsHaLmAp(k, v)
+					if err != nil {
+						return out, err
+					}
+				}
+			}
+		}
+		if len(x.MemberSeedSignatures) > 0 {
+			MaRsHaLmAp := func(k string, v string) (protoiface.MarshalOutput, error) {
+				baseI := i
+				i -= len(v)
+				copy(dAtA[i:], v)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(v)))
+				i--
+				dAtA[i] = 0x12
+				i -= len(k)
+				copy(dAtA[i:], k)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(k)))
+				i--
+				dAtA[i] = 0xa
+				i = runtime.EncodeVarint(dAtA, i, uint64(baseI-i))
+				i--
+				dAtA[i] = 0x32
+				return protoiface.MarshalOutput{}, nil
+			}
+			if options.Deterministic {
+				keysForMemberSeedSignatures := make([]string, 0, len(x.MemberSeedSignatures))
+				for k := range x.MemberSeedSignatures {
+					keysForMemberSeedSignatures = append(keysForMemberSeedSignatures, string(k))
+				}
+				sort.Slice(keysForMemberSeedSignatures, func(i, j int) bool {
+					return keysForMemberSeedSignatures[i] < keysForMemberSeedSignatures[j]
+				})
+				for iNdEx := len(keysForMemberSeedSignatures) - 1; iNdEx >= 0; iNdEx-- {
+					v := x.MemberSeedSignatures[string(keysForMemberSeedSignatures[iNdEx])]
+					out, err := MaRsHaLmAp(keysForMemberSeedSignatures[iNdEx], v)
+					if err != nil {
+						return out, err
+					}
+				}
+			} else {
+				for k := range x.MemberSeedSignatures {
+					v := x.MemberSeedSignatures[k]
+					out, err := MaRsHaLmAp(k, v)
+					if err != nil {
+						return out, err
+					}
+				}
+			}
 		}
 		if x.LastBlockHeight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.LastBlockHeight))
@@ -589,6 +942,246 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MemberSeedSignatures", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.MemberSeedSignatures == nil {
+					x.MemberSeedSignatures = make(map[string]string)
+				}
+				var mapkey string
+				var mapvalue string
+				for iNdEx < postIndex {
+					entryPreIndex := iNdEx
+					var wire uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						wire |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					fieldNum := int32(wire >> 3)
+					if fieldNum == 1 {
+						var stringLenmapkey uint64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							stringLenmapkey |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						intStringLenmapkey := int(stringLenmapkey)
+						if intStringLenmapkey < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						postStringIndexmapkey := iNdEx + intStringLenmapkey
+						if postStringIndexmapkey < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						if postStringIndexmapkey > l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+						iNdEx = postStringIndexmapkey
+					} else if fieldNum == 2 {
+						var stringLenmapvalue uint64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							stringLenmapvalue |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						intStringLenmapvalue := int(stringLenmapvalue)
+						if intStringLenmapvalue < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						postStringIndexmapvalue := iNdEx + intStringLenmapvalue
+						if postStringIndexmapvalue < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						if postStringIndexmapvalue > l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
+						iNdEx = postStringIndexmapvalue
+					} else {
+						iNdEx = entryPreIndex
+						skippy, err := runtime.Skip(dAtA[iNdEx:])
+						if err != nil {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+						}
+						if (skippy < 0) || (iNdEx+skippy) < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						if (iNdEx + skippy) > postIndex {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						iNdEx += skippy
+					}
+				}
+				x.MemberSeedSignatures[mapkey] = mapvalue
+				iNdEx = postIndex
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RemovalBlockHeights", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.RemovalBlockHeights == nil {
+					x.RemovalBlockHeights = make(map[string]uint64)
+				}
+				var mapkey string
+				var mapvalue uint64
+				for iNdEx < postIndex {
+					entryPreIndex := iNdEx
+					var wire uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						wire |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					fieldNum := int32(wire >> 3)
+					if fieldNum == 1 {
+						var stringLenmapkey uint64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							stringLenmapkey |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						intStringLenmapkey := int(stringLenmapkey)
+						if intStringLenmapkey < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						postStringIndexmapkey := iNdEx + intStringLenmapkey
+						if postStringIndexmapkey < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						if postStringIndexmapkey > l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+						iNdEx = postStringIndexmapkey
+					} else if fieldNum == 2 {
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							mapvalue |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+					} else {
+						iNdEx = entryPreIndex
+						skippy, err := runtime.Skip(dAtA[iNdEx:])
+						if err != nil {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+						}
+						if (skippy < 0) || (iNdEx+skippy) < 0 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+						}
+						if (iNdEx + skippy) > postIndex {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						iNdEx += skippy
+					}
+				}
+				x.RemovalBlockHeights[mapkey] = mapvalue
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -642,11 +1235,13 @@ type EpochGroupData struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocStartBlockHeight  uint64 `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
-	EpochGroupId         uint64 `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
-	EpochPolicy          string `protobuf:"bytes,3,opt,name=epochPolicy,proto3" json:"epochPolicy,omitempty"`
-	EffectiveBlockHeight uint64 `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
-	LastBlockHeight      uint64 `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
+	PocStartBlockHeight  uint64            `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
+	EpochGroupId         uint64            `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
+	EpochPolicy          string            `protobuf:"bytes,3,opt,name=epochPolicy,proto3" json:"epochPolicy,omitempty"`
+	EffectiveBlockHeight uint64            `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
+	LastBlockHeight      uint64            `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
+	MemberSeedSignatures map[string]string `protobuf:"bytes,6,rep,name=memberSeedSignatures,proto3" json:"memberSeedSignatures,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	RemovalBlockHeights  map[string]uint64 `protobuf:"bytes,7,rep,name=removalBlockHeights,proto3" json:"removalBlockHeights,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -704,6 +1299,20 @@ func (x *EpochGroupData) GetLastBlockHeight() uint64 {
 	return 0
 }
 
+func (x *EpochGroupData) GetMemberSeedSignatures() map[string]string {
+	if x != nil {
+		return x.MemberSeedSignatures
+	}
+	return nil
+}
+
+func (x *EpochGroupData) GetRemovalBlockHeights() map[string]uint64 {
+	if x != nil {
+		return x.RemovalBlockHeights
+	}
+	return nil
+}
+
 var File_inference_inference_epoch_group_data_proto protoreflect.FileDescriptor
 
 var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
@@ -711,7 +1320,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75,
 	0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x22, 0xe6, 0x01, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x65, 0x22, 0xda, 0x04, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
 	0x44, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
@@ -725,20 +1334,43 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
 	0x12, 0x28, 0x0a, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
 	0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63,
-	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f,
-	0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63,
-	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca,
-	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06,
-	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x71, 0x0a, 0x14, 0x6d, 0x65,
+	0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
+	0x65, 0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x3d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45,
+	0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x2e, 0x4d, 0x65,
+	0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
+	0x65, 0x73, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x52, 0x14, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x53,
+	0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x73, 0x12, 0x6e, 0x0a,
+	0x13, 0x72, 0x65, 0x6d, 0x6f, 0x76, 0x61, 0x6c, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x3c, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x2e,
+	0x52, 0x65, 0x6d, 0x6f, 0x76, 0x61, 0x6c, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x73, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x52, 0x13, 0x72, 0x65, 0x6d, 0x6f, 0x76, 0x61,
+	0x6c, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x1a, 0x47, 0x0a,
+	0x19, 0x4d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61,
+	0x74, 0x75, 0x72, 0x65, 0x73, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65,
+	0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x6b, 0x65, 0x79, 0x12, 0x14, 0x0a, 0x05,
+	0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x76, 0x61, 0x6c,
+	0x75, 0x65, 0x3a, 0x02, 0x38, 0x01, 0x1a, 0x46, 0x0a, 0x18, 0x52, 0x65, 0x6d, 0x6f, 0x76, 0x61,
+	0x6c, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x45, 0x6e, 0x74,
+	0x72, 0x79, 0x12, 0x10, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x03, 0x6b, 0x65, 0x79, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x3a, 0x02, 0x38, 0x01, 0x42, 0xc1,
+	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63,
+	0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -753,16 +1385,20 @@ func file_inference_inference_epoch_group_data_proto_rawDescGZIP() []byte {
 	return file_inference_inference_epoch_group_data_proto_rawDescData
 }
 
-var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_inference_inference_epoch_group_data_proto_goTypes = []interface{}{
 	(*EpochGroupData)(nil), // 0: inference.inference.EpochGroupData
+	nil,                    // 1: inference.inference.EpochGroupData.MemberSeedSignaturesEntry
+	nil,                    // 2: inference.inference.EpochGroupData.RemovalBlockHeightsEntry
 }
 var file_inference_inference_epoch_group_data_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	1, // 0: inference.inference.EpochGroupData.memberSeedSignatures:type_name -> inference.inference.EpochGroupData.MemberSeedSignaturesEntry
+	2, // 1: inference.inference.EpochGroupData.removalBlockHeights:type_name -> inference.inference.EpochGroupData.RemovalBlockHeightsEntry
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_epoch_group_data_proto_init() }
@@ -790,7 +1426,7 @@ func file_inference_inference_epoch_group_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_epoch_group_data_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

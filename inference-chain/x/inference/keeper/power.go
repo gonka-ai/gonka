@@ -104,7 +104,9 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epoc
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight)
 	if !found {
 		data = types.EpochGroupData{
-			PocStartBlockHeight: pocStartHeight,
+			PocStartBlockHeight:  pocStartHeight,
+			MemberSeedSignatures: make(map[string]string),
+			RemovalBlockHeights:  make(map[string]uint64),
 		}
 		k.SetEpochGroupData(ctx, data)
 	}
