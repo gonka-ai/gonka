@@ -116,17 +116,22 @@ message QueryAllParticipantResponse {
 }
 
 message QueryGetInferencesWithExecutorsRequest {
-  repeated string ids = 1;
+  repeated string ids       = 1;
+           string requester = 2;
 }
 
 message QueryGetInferencesWithExecutorsResponse {
   repeated InferenceWithExecutor inferenceWithExecutor = 1 [(gogoproto.nullable) = false];
            uint32                NumValidators         = 2;
+           uint32                TotalPower            = 3;
+           uint32                ValidatorPower        = 4;
+           uint32                CurrentHeight         = 5;
 }
 
 message InferenceWithExecutor {
   Inference   inference = 1 [(gogoproto.nullable) = false];
   Participant executor  = 2 [(gogoproto.nullable) = false];
+  uint32      currentPower = 3;
 }
 
 message QueryInferenceParticipantRequest {

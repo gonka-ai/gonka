@@ -63,7 +63,11 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 
-	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.Context, &types.QueryGetInferencesWithExecutorsRequest{Ids: ids})
+	query := &types.QueryGetInferencesWithExecutorsRequest{
+		Ids:       ids,
+		Requester: transactionRecorder.Address,
+	}
+	r, err := queryClient.GetInferencesWithExecutors(transactionRecorder.Context, query)
 	if err != nil {
 		// FIXME: what should we do with validating the transaction?
 		slog.Warn("Validation: Failed to query GetInferencesWithExecutors.", "error", err)
@@ -74,7 +78,10 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-		if shouldValidate(inferenceWithExecutor.Executor, transactionRecorder.Address, r.NumValidators) {
+
+		shouldValidate, _ := ShouldValidate(&inferenceWithExecutor.Executor, transactionRecorder.Address,
+			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower)
+		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
 	}
@@ -114,41 +121,14 @@ func logInferencesToValidate(toValidate []types.Inference) {
 	slog.Info("Validation: Inferences to validate", "inferences", ids)
 }
 
-func shouldValidate(executor types.Participant, currentAccountAddress string, numValidators uint32) bool {
-	// Don't validate your own transactions
+func ShouldValidate(executor *types.Participant, currentAccountAddress string, currentAccountPower uint32, totalPower uint32) (bool, float32) {
 	if executor.Index == currentAccountAddress {
-		return false
+		return false, 0.0
 	}
-
-	if numValidators <= 1 {
-		return true
-	}
-
-	reputationP := getReputationP(executor.Status)
-	samplingP := 1 - math.Pow(1-reputationP, 1/float64(numValidators-1))
-	randFloat := rand.Float64()
-
-	log.Printf("reputationP = %v. samplingP = %v. randFloat = %v", reputationP, samplingP, randFloat)
-
-	return randFloat < samplingP
-}
-
-func getReputationP(status types.ParticipantStatus) float64 {
-	switch status {
-	case types.ParticipantStatus_UNSPECIFIED:
-		return 1.0
-	case types.ParticipantStatus_ACTIVE:
-		return 1.0
-	case types.ParticipantStatus_INACTIVE:
-		return 1.0
-	case types.ParticipantStatus_INVALID:
-		return 1.0
-	case types.ParticipantStatus_RAMPING:
-		return 1.0
-	default:
-
-		return 1.0
-	}
+	targetValidations := 1 - (executor.Reputation * 0.9)
+	ourProbability := targetValidations * (float32(currentAccountPower) / float32(totalPower))
+	slog.Info("Validation: ShouldValidate", "currentAccountPower", currentAccountPower, "totalPower", totalPower, "ourProbability", ourProbability)
+	return rand.Float32() < ourProbability, ourProbability
 }
 
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
