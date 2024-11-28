@@ -2,6 +2,8 @@ package keeper_test
 
 import (
 	"context"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"strconv"
 	"testing"
 
@@ -19,10 +21,25 @@ func createNEpochGroupData(keeper keeper.Keeper, ctx context.Context, n int) []t
 	items := make([]types.EpochGroupData, n)
 	for i := range items {
 		items[i].PocStartBlockHeight = uint64(i)
+		items[i].MemberSeedSignatures = make(map[string]string)
 
 		keeper.SetEpochGroupData(ctx, items[i])
 	}
 	return items
+}
+
+func TestRawRoundTrip(t *testing.T) {
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+	epochGroupData := types.EpochGroupData{
+		PocStartBlockHeight:  1,
+		MemberSeedSignatures: make(map[string]string),
+		RemovalBlockHeights:  make(map[string]uint64),
+	}
+	bytes := cdc.MustMarshal(&epochGroupData)
+	roundTripped := types.EpochGroupData{}
+	cdc.Unmarshal(bytes, &roundTripped)
+	require.Equal(t, epochGroupData, roundTripped)
 }
 
 func TestEpochGroupDataGet(t *testing.T) {
@@ -33,6 +50,7 @@ func TestEpochGroupDataGet(t *testing.T) {
 			item.PocStartBlockHeight,
 		)
 		require.True(t, found)
+		require.NotNil(t, rst.MemberSeedSignatures)
 		require.Equal(t,
 			nullify.Fill(&item),
 			nullify.Fill(&rst),
