@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -72,10 +71,20 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string) error {
-	if eg.GroupData.MemberSeedSignatures == nil {
-		eg.GroupData.MemberSeedSignatures = make(map[string]string)
+	eg.Logger.LogInfo("Adding member", "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
+	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
+	if !found {
+		eg.Logger.LogError("Epoch group not found", "blockHeight", eg.GroupData.PocStartBlockHeight)
+		return types.ErrCurrentEpochGroupNotFound
 	}
-	eg.GroupData.MemberSeedSignatures[address] = seedSignature
+	eg.GroupData = &val
+	if eg.GroupData.MemberSeedSignatures == nil {
+		eg.GroupData.MemberSeedSignatures = []*types.SeedSignature{}
+	}
+	eg.GroupData.MemberSeedSignatures = append(eg.GroupData.MemberSeedSignatures, &types.SeedSignature{
+		MemberAddress: address,
+		Signature:     seedSignature,
+	})
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
 }
@@ -117,6 +126,9 @@ func (eg *EpochGroup) MarkUnchanged(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) IsChanged(ctx context.Context) bool {
+	if eg.GroupData.EpochGroupId == 0 {
+		return false
+	}
 	info, err := eg.GroupKeeper.GroupInfo(ctx, &group.QueryGroupInfoRequest{
 		GroupId: eg.GroupData.EpochGroupId,
 	})
@@ -155,11 +167,8 @@ func (eg *EpochGroup) updateMember(ctx context.Context, address string, weight u
 }
 
 func (eg *EpochGroup) UpdateMember(ctx context.Context, previousVersion *types.Participant, currentVersion *types.Participant) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	if previousVersion != nil && previousVersion.Status != currentVersion.Status {
 		if currentVersion.Status == types.ParticipantStatus_INVALID {
-			eg.GroupData.RemovalBlockHeights[currentVersion.Address] = uint64(sdkCtx.BlockHeight())
-			eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 			// Effectively delete the member
 			return eg.updateMember(ctx, currentVersion.Address, 0, "")
 		}

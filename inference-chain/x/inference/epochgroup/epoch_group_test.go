@@ -60,11 +60,9 @@ func TestCreateEpochGroup(t *testing.T) {
 
 func createTestEpochGroup(t *testing.T) *EpochGroupMock {
 	epochGroupData := &types.EpochGroupData{
-		PocStartBlockHeight:  10,
-		EpochGroupId:         8,
-		EpochPolicy:          "epochPolicy",
-		MemberSeedSignatures: make(map[string]string),
-		RemovalBlockHeights:  make(map[string]uint64),
+		PocStartBlockHeight: 10,
+		EpochGroupId:        8,
+		EpochPolicy:         "epochPolicy",
 	}
 	epochGroup := createEpochGroupObject(t, epochGroupData)
 	epochGroup.EpochGroup.GroupDataKeeper.SetEpochGroupData(context.Background(), *epochGroupData)

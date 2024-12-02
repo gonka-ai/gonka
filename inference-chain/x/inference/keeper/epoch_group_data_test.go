@@ -21,8 +21,7 @@ func createNEpochGroupData(keeper keeper.Keeper, ctx context.Context, n int) []t
 	items := make([]types.EpochGroupData, n)
 	for i := range items {
 		items[i].PocStartBlockHeight = uint64(i)
-		items[i].MemberSeedSignatures = make(map[string]string)
-
+		items[i].MemberSeedSignatures = []*types.SeedSignature{}
 		keeper.SetEpochGroupData(ctx, items[i])
 	}
 	return items
@@ -32,9 +31,7 @@ func TestRawRoundTrip(t *testing.T) {
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	epochGroupData := types.EpochGroupData{
-		PocStartBlockHeight:  1,
-		MemberSeedSignatures: make(map[string]string),
-		RemovalBlockHeights:  make(map[string]uint64),
+		PocStartBlockHeight: 1,
 	}
 	bytes := cdc.MustMarshal(&epochGroupData)
 	roundTripped := types.EpochGroupData{}
@@ -50,7 +47,8 @@ func TestEpochGroupDataGet(t *testing.T) {
 			item.PocStartBlockHeight,
 		)
 		require.True(t, found)
-		require.NotNil(t, rst.MemberSeedSignatures)
+		// This will be nil if MemberSeedSignature is empty!!
+		require.Nil(t, rst.MemberSeedSignatures)
 		require.Equal(t,
 			nullify.Fill(&item),
 			nullify.Fill(&rst),
