@@ -9443,8 +9443,8 @@ func (x *fastReflection_MsgClaimRewards) Range(f func(protoreflect.FieldDescript
 			return
 		}
 	}
-	if x.Seed != int32(0) {
-		value := protoreflect.ValueOfInt32(x.Seed)
+	if x.Seed != int64(0) {
+		value := protoreflect.ValueOfInt64(x.Seed)
 		if !f(fd_MsgClaimRewards_seed, value) {
 			return
 		}
@@ -9473,7 +9473,7 @@ func (x *fastReflection_MsgClaimRewards) Has(fd protoreflect.FieldDescriptor) bo
 	case "inference.inference.MsgClaimRewards.creator":
 		return x.Creator != ""
 	case "inference.inference.MsgClaimRewards.seed":
-		return x.Seed != int32(0)
+		return x.Seed != int64(0)
 	case "inference.inference.MsgClaimRewards.pocStartHeight":
 		return x.PocStartHeight != uint64(0)
 	default:
@@ -9495,7 +9495,7 @@ func (x *fastReflection_MsgClaimRewards) Clear(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.MsgClaimRewards.creator":
 		x.Creator = ""
 	case "inference.inference.MsgClaimRewards.seed":
-		x.Seed = int32(0)
+		x.Seed = int64(0)
 	case "inference.inference.MsgClaimRewards.pocStartHeight":
 		x.PocStartHeight = uint64(0)
 	default:
@@ -9519,7 +9519,7 @@ func (x *fastReflection_MsgClaimRewards) Get(descriptor protoreflect.FieldDescri
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgClaimRewards.seed":
 		value := x.Seed
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgClaimRewards.pocStartHeight":
 		value := x.PocStartHeight
 		return protoreflect.ValueOfUint64(value)
@@ -9546,7 +9546,7 @@ func (x *fastReflection_MsgClaimRewards) Set(fd protoreflect.FieldDescriptor, va
 	case "inference.inference.MsgClaimRewards.creator":
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgClaimRewards.seed":
-		x.Seed = int32(value.Int())
+		x.Seed = value.Int()
 	case "inference.inference.MsgClaimRewards.pocStartHeight":
 		x.PocStartHeight = value.Uint()
 	default:
@@ -9591,7 +9591,7 @@ func (x *fastReflection_MsgClaimRewards) NewField(fd protoreflect.FieldDescripto
 	case "inference.inference.MsgClaimRewards.creator":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgClaimRewards.seed":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgClaimRewards.pocStartHeight":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
@@ -9814,7 +9814,7 @@ func (x *fastReflection_MsgClaimRewards) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.Seed |= int32(b&0x7F) << shift
+					x.Seed |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -11197,7 +11197,7 @@ type MsgClaimRewards struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator        string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	Seed           int32  `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
+	Seed           int64  `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
 	PocStartHeight uint64 `protobuf:"varint,3,opt,name=pocStartHeight,proto3" json:"pocStartHeight,omitempty"`
 }
 
@@ -11228,7 +11228,7 @@ func (x *MsgClaimRewards) GetCreator() string {
 	return ""
 }
 
-func (x *MsgClaimRewards) GetSeed() int32 {
+func (x *MsgClaimRewards) GetSeed() int64 {
 	if x != nil {
 		return x.Seed
 	}
@@ -11435,7 +11435,7 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x0a, 0x0f, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64,
 	0x73, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01,
 	0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x73,
-	0x65, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12,
+	0x65, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12,
 	0x26, 0x0a, 0x0e, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68,
 	0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72,
 	0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72,

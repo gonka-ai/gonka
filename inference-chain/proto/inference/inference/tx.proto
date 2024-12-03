@@ -142,7 +142,7 @@ message MsgRevalidateInferenceResponse {}
 message MsgClaimRewards {
   option (cosmos.msg.v1.signer) = "creator";
   string creator        = 1;
-  int32  seed           = 2;
+  int64  seed           = 2;
   uint64 pocStartHeight = 3;
 }
 

@@ -8,7 +8,7 @@ import (
 
 var _ sdk.Msg = &MsgClaimRewards{}
 
-func NewMsgClaimRewards(creator string, seed int32, pocStartHeight uint64) *MsgClaimRewards {
+func NewMsgClaimRewards(creator string, seed int64, pocStartHeight uint64) *MsgClaimRewards {
 	return &MsgClaimRewards{
 		Creator:        creator,
 		Seed:           seed,
