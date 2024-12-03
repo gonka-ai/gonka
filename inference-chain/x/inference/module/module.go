@@ -214,19 +214,19 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	epochStartBlockHeight := int64(upcomingEg.GroupData.PocStartBlockHeight)
-	am.LogInfo("onSetNewValidatorsStage: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
-
-	computeResult, activeParticipants := am.ComputeNewWeights(ctx, epochStartBlockHeight)
+	computeResult, activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
 	if computeResult == nil && activeParticipants == nil {
 		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", "epochStartBlockHeight", epochStartBlockHeight, "len(computeResult)", len(computeResult), "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(computeResult)", len(computeResult), "len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
+		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
+		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
+		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
 		CreatedAtBlockHeight: blockHeight,
 	})
 

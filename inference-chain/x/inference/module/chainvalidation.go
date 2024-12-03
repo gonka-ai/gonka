@@ -10,13 +10,16 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (am AppModule) ComputeNewWeights(ctx context.Context, epochStartBlockHeight int64) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
+func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
+	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
+	am.LogInfo("ComputeNewWeights: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
+
 	// FIXME: Figure out something here:
 	//  1. Either get current validators by using staking keeper or smth
 	//  2. Or alter InitGenesis or set validator logic so there's always active participants
 	var currentActiveParticipants *types.ActiveParticipants = nil
 	if !proofofcompute.IsZeroEpoch(epochStartBlockHeight) {
-		val, found := am.keeper.GetActiveParticipants(ctx)
+		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {
 			am.LogError("No active participants found.")
