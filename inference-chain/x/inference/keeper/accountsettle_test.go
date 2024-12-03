@@ -159,7 +159,7 @@ func TestActualSettle(t *testing.T) {
 	keeper.SetParticipant(ctx, participant2)
 
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, inference.GetCoins(inference.EpochNewCoin)).Return(nil)
-	err := keeper.SettleAccounts(ctx)
+	err := keeper.SettleAccounts(ctx, 10)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
 	require.True(t, found)
@@ -176,6 +176,7 @@ func TestActualSettle(t *testing.T) {
 	require.Equal(t, uint64(1000), settleAmount1.WorkCoins)
 	require.Equal(t, uint64(inference.EpochNewCoin/2), settleAmount1.RewardCoins)
 	require.Equal(t, uint64(0), settleAmount1.RefundCoins)
+	require.Equal(t, uint64(10), settleAmount1.PocStartHeight)
 	settleAmount2, found := keeper.GetSettleAmount(ctx, participant2.Address)
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount2.WorkCoins)

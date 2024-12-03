@@ -161,7 +161,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
-		err := am.keeper.SettleAccounts(ctx)
+		pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
+		err := am.keeper.SettleAccounts(ctx, pocHeight)
 		if err != nil {
 			am.LogError("Unable to settle accounts", "error", err.Error())
 		}

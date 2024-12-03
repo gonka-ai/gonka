@@ -11,7 +11,7 @@ import (
 const EpochNewCoin = 1_048_576
 const CoinHalvingHeight = 100
 
-func (k *Keeper) SettleAccounts(ctx context.Context) error {
+func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	participants, err := k.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
@@ -55,6 +55,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context) error {
 		participant.CoinBalance = 0
 		participant.RefundBalance = 0
 		k.SetParticipant(ctx, participant)
+		amount.Settle.PocStartHeight = pocBlockHeight
 		k.SetSettleAmount(ctx, *amount.Settle)
 	}
 	return nil
