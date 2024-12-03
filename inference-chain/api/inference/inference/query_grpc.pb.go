@@ -31,6 +31,8 @@ const (
 	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
 	Query_SettleAmount_FullMethodName               = "/inference.inference.Query/SettleAmount"
 	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName      = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -57,6 +59,9 @@ type QueryClient interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error)
+	// Queries a list of EpochGroupValidations items.
+	EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error)
+	EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error)
 }
 
 type queryClient struct {
@@ -175,6 +180,24 @@ func (c *queryClient) SettleAmountAll(ctx context.Context, in *QueryAllSettleAmo
 	return out, nil
 }
 
+func (c *queryClient) EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error) {
+	out := new(QueryGetEpochGroupValidationsResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupValidations_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error) {
+	out := new(QueryAllEpochGroupValidationsResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupValidationsAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -199,6 +222,9 @@ type QueryServer interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error)
+	// Queries a list of EpochGroupValidations items.
+	EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error)
+	EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -241,6 +267,12 @@ func (UnimplementedQueryServer) SettleAmount(context.Context, *QueryGetSettleAmo
 }
 func (UnimplementedQueryServer) SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleAmountAll not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidations not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidationsAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -471,6 +503,42 @@ func _Query_SettleAmountAll_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_EpochGroupValidations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetEpochGroupValidationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupValidations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupValidations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupValidations(ctx, req.(*QueryGetEpochGroupValidationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochGroupValidationsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllEpochGroupValidationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupValidationsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupValidationsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupValidationsAll(ctx, req.(*QueryAllEpochGroupValidationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -525,6 +593,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleAmountAll",
 			Handler:    _Query_SettleAmountAll_Handler,
+		},
+		{
+			MethodName: "EpochGroupValidations",
+			Handler:    _Query_EpochGroupValidations_Handler,
+		},
+		{
+			MethodName: "EpochGroupValidationsAll",
+			Handler:    _Query_EpochGroupValidationsAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

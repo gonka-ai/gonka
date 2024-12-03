@@ -46,6 +46,16 @@ func TestGenesis(t *testing.T) {
 				Participant: "1",
 			},
 		},
+		EpochGroupValidationsList: []types.EpochGroupValidations{
+			{
+				Participant:         "0",
+				PocStartBlockHeight: 0,
+			},
+			{
+				Participant:         "1",
+				PocStartBlockHeight: 1,
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -61,5 +71,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.ParticipantList, got.ParticipantList)
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
+	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

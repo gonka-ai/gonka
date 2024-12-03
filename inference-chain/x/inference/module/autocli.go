@@ -82,6 +82,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a settleAmount",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
+				{
+					RpcMethod: "EpochGroupValidationsAll",
+					Use:       "list-epoch-group-validations",
+					Short:     "List all epochGroupValidations",
+				},
+				{
+					RpcMethod:      "EpochGroupValidations",
+					Use:            "show-epoch-group-validations [id]",
+					Short:          "Shows a epochGroupValidations",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "pocStartBlockHeight"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
