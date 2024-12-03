@@ -3,24 +3,9 @@ package merkleproof
 import (
 	"context"
 	"fmt"
-	"github.com/cometbft/cometbft/rpc/core/types"
-	comettypes "github.com/cometbft/cometbft/types"
-	"log"
-
-	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	"github.com/cometbft/cometbft/rpc/client/http"
+	comettypes "github.com/cometbft/cometbft/types"
 )
-
-func QueryWithProof(rpcClient *http.HTTP, storeKey, dataKey string) (*coretypes.ResultABCIQuery, error) {
-	log.Printf("Querying store %s with key %s...\n", storeKey, dataKey)
-
-	key := []byte(dataKey)
-	path := fmt.Sprintf("store/%s/key", storeKey)
-
-	response, err := rpcClient.ABCIQueryWithOptions(context.Background(), path, key, rpcclient.ABCIQueryOptions{Prove: true})
-
-	return response, err
-}
 
 func VerifyBlockSignatures(address string, height int64) error {
 	// Step 1: Create a new RPC client

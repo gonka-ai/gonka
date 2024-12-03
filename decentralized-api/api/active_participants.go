@@ -4,7 +4,6 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
-	"decentralized-api/merkleproof"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -34,19 +33,22 @@ func WrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
-		// PRTODO: insert epoch here!
-		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
-		if err != nil {
-			slog.Error("Failed to query active participants", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
 		interfaceRegistry := codectypes.NewInterfaceRegistry()
 		// Register interfaces used in your types
 		types.RegisterInterfaces(interfaceRegistry)
 		// Create the codec
 		cdc := codec.NewProtoCodec(interfaceRegistry)
+
+		// PROTDO: query epoch groud data
+		cosmos_client.QueryByKey(rplClient, "inference", "ActiveParticipants/value/", false)
+
+		// PRTODO: insert epoch here!
+		result, err := cosmos_client.QueryByKey(rplClient, "inference", "ActiveParticipants/value/", true)
+		if err != nil {
+			slog.Error("Failed to query active participants", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		var activeParticipants types.ActiveParticipants
 		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
