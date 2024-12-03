@@ -10,6 +10,7 @@ message EpochGroupData {
   uint64 effectiveBlockHeight = 4;
   uint64 lastBlockHeight = 5;
   repeated SeedSignature memberSeedSignatures = 6;
+  repeated string finishedInferences = 7;
 }
 
 message SeedSignature {

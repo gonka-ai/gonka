@@ -63,6 +63,52 @@ func (x *_EpochGroupData_6_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_EpochGroupData_7_list)(nil)
+
+type _EpochGroupData_7_list struct {
+	list *[]string
+}
+
+func (x *_EpochGroupData_7_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_EpochGroupData_7_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfString((*x.list)[i])
+}
+
+func (x *_EpochGroupData_7_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_EpochGroupData_7_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_EpochGroupData_7_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message EpochGroupData at list field FinishedInferences as it is not of Message kind"))
+}
+
+func (x *_EpochGroupData_7_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_EpochGroupData_7_list) NewElement() protoreflect.Value {
+	v := ""
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_EpochGroupData_7_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_EpochGroupData                      protoreflect.MessageDescriptor
 	fd_EpochGroupData_pocStartBlockHeight  protoreflect.FieldDescriptor
@@ -71,6 +117,7 @@ var (
 	fd_EpochGroupData_effectiveBlockHeight protoreflect.FieldDescriptor
 	fd_EpochGroupData_lastBlockHeight      protoreflect.FieldDescriptor
 	fd_EpochGroupData_memberSeedSignatures protoreflect.FieldDescriptor
+	fd_EpochGroupData_finishedInferences   protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -82,6 +129,7 @@ func init() {
 	fd_EpochGroupData_effectiveBlockHeight = md_EpochGroupData.Fields().ByName("effectiveBlockHeight")
 	fd_EpochGroupData_lastBlockHeight = md_EpochGroupData.Fields().ByName("lastBlockHeight")
 	fd_EpochGroupData_memberSeedSignatures = md_EpochGroupData.Fields().ByName("memberSeedSignatures")
+	fd_EpochGroupData_finishedInferences = md_EpochGroupData.Fields().ByName("finishedInferences")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -185,6 +233,12 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
+	if len(x.FinishedInferences) != 0 {
+		value := protoreflect.ValueOfList(&_EpochGroupData_7_list{list: &x.FinishedInferences})
+		if !f(fd_EpochGroupData_finishedInferences, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -212,6 +266,8 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 		return x.LastBlockHeight != uint64(0)
 	case "inference.inference.EpochGroupData.memberSeedSignatures":
 		return len(x.MemberSeedSignatures) != 0
+	case "inference.inference.EpochGroupData.finishedInferences":
+		return len(x.FinishedInferences) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -240,6 +296,8 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 		x.LastBlockHeight = uint64(0)
 	case "inference.inference.EpochGroupData.memberSeedSignatures":
 		x.MemberSeedSignatures = nil
+	case "inference.inference.EpochGroupData.finishedInferences":
+		x.FinishedInferences = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -277,6 +335,12 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		}
 		listValue := &_EpochGroupData_6_list{list: &x.MemberSeedSignatures}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.EpochGroupData.finishedInferences":
+		if len(x.FinishedInferences) == 0 {
+			return protoreflect.ValueOfList(&_EpochGroupData_7_list{})
+		}
+		listValue := &_EpochGroupData_7_list{list: &x.FinishedInferences}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -311,6 +375,10 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_6_list)
 		x.MemberSeedSignatures = *clv.list
+	case "inference.inference.EpochGroupData.finishedInferences":
+		lv := value.List()
+		clv := lv.(*_EpochGroupData_7_list)
+		x.FinishedInferences = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -336,6 +404,12 @@ func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor)
 			x.MemberSeedSignatures = []*SeedSignature{}
 		}
 		value := &_EpochGroupData_6_list{list: &x.MemberSeedSignatures}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.EpochGroupData.finishedInferences":
+		if x.FinishedInferences == nil {
+			x.FinishedInferences = []string{}
+		}
+		value := &_EpochGroupData_7_list{list: &x.FinishedInferences}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.EpochGroupData.pocStartBlockHeight":
 		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.EpochGroupData is not mutable"))
@@ -373,6 +447,9 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 	case "inference.inference.EpochGroupData.memberSeedSignatures":
 		list := []*SeedSignature{}
 		return protoreflect.ValueOfList(&_EpochGroupData_6_list{list: &list})
+	case "inference.inference.EpochGroupData.finishedInferences":
+		list := []string{}
+		return protoreflect.ValueOfList(&_EpochGroupData_7_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -464,6 +541,12 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if len(x.FinishedInferences) > 0 {
+			for _, s := range x.FinishedInferences {
+				l = len(s)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -492,6 +575,15 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.FinishedInferences) > 0 {
+			for iNdEx := len(x.FinishedInferences) - 1; iNdEx >= 0; iNdEx-- {
+				i -= len(x.FinishedInferences[iNdEx])
+				copy(dAtA[i:], x.FinishedInferences[iNdEx])
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.FinishedInferences[iNdEx])))
+				i--
+				dAtA[i] = 0x3a
+			}
 		}
 		if len(x.MemberSeedSignatures) > 0 {
 			for iNdEx := len(x.MemberSeedSignatures) - 1; iNdEx >= 0; iNdEx-- {
@@ -726,6 +818,38 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MemberSeedSignatures[len(x.MemberSeedSignatures)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
+				iNdEx = postIndex
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FinishedInferences", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.FinishedInferences = append(x.FinishedInferences, string(dAtA[iNdEx:postIndex]))
 				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
@@ -1270,6 +1394,7 @@ type EpochGroupData struct {
 	EffectiveBlockHeight uint64           `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
 	LastBlockHeight      uint64           `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
 	MemberSeedSignatures []*SeedSignature `protobuf:"bytes,6,rep,name=memberSeedSignatures,proto3" json:"memberSeedSignatures,omitempty"`
+	FinishedInferences   []string         `protobuf:"bytes,7,rep,name=finishedInferences,proto3" json:"finishedInferences,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -1334,6 +1459,13 @@ func (x *EpochGroupData) GetMemberSeedSignatures() []*SeedSignature {
 	return nil
 }
 
+func (x *EpochGroupData) GetFinishedInferences() []string {
+	if x != nil {
+		return x.FinishedInferences
+	}
+	return nil
+}
+
 type SeedSignature struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1384,7 +1516,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75,
 	0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x22, 0xbe, 0x02, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x65, 0x22, 0xee, 0x02, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
 	0x44, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
@@ -1404,6 +1536,9 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53,
 	0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x52, 0x14, 0x6d, 0x65,
 	0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
+	0x65, 0x73, 0x12, 0x2e, 0x0a, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x09, 0x52, 0x12,
+	0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
 	0x65, 0x73, 0x22, 0x53, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74,
 	0x75, 0x72, 0x65, 0x12, 0x24, 0x0a, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64,
 	0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62,
