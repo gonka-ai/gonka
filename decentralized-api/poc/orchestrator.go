@@ -198,6 +198,20 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 		return
 	}
+	// once the new stage has started, request our money!
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight - 1) {
+		go func() {
+			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "blockHeight", PreviousPocHeight,
+				"seed", PreviousSeed)
+			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
+				Seed:           PreviousSeed,
+				PocStartHeight: uint64(PreviousPocHeight),
+			})
+			if err != nil {
+				slog.Error("Failed to send ClaimRewards transaction", "error", err)
+			}
+		}()
+	}
 }
 
 func getBlockHeight(data map[string]interface{}) (int64, error) {
@@ -239,6 +253,9 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 }
 
 var Seed int64 = 0
+var CurrentPocHeight int64 = 0
+var PreviousSeed int64 = 0
+var PreviousPocHeight int64 = 0
 
 func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
 	return func(proofs *ProofOfComputeResults) {
@@ -247,7 +264,10 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			nonce[i] = p.Nonce
 		}
 
+		PreviousSeed = Seed
+		PreviousPocHeight = CurrentPocHeight
 		Seed = rand.Int63()
+		CurrentPocHeight = proofs.BlockHeight
 		seedBytes := make([]byte, 8)
 		binary.BigEndian.PutUint64(seedBytes, uint64(Seed))
 		signature, err := transactionRecorder.SignBytes(seedBytes)

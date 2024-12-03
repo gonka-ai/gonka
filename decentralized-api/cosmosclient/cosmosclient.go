@@ -146,6 +146,11 @@ func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC)
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
