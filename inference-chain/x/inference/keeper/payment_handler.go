@@ -48,6 +48,10 @@ func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, a
 	return err
 }
 
+func (k *Keeper) BurnCoins(ctx context.Context, burnCoins int64) error {
+	return k.bank.BurnCoins(ctx, types.ModuleName, GetCoins(burnCoins))
+}
+
 func GetCoins(coins int64) sdk.Coins {
 	return sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, coins))
 }

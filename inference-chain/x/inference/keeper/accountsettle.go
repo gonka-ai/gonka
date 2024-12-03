@@ -56,6 +56,14 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		participant.RefundBalance = 0
 		k.SetParticipant(ctx, participant)
 		amount.Settle.PocStartHeight = pocBlockHeight
+		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
+		if found {
+			// No claim, burn it!
+			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()))
+			if err != nil {
+				k.LogError("Error burning coins", "error", err)
+			}
+		}
 		k.SetSettleAmount(ctx, *amount.Settle)
 	}
 	return nil

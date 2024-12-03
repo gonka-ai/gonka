@@ -24,9 +24,12 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 		}, nil
 	}
 
-	totalCoins := settleAmount.RewardCoins + settleAmount.RefundCoins + settleAmount.WorkCoins
+	totalCoins := settleAmount.GetTotalCoins()
+	k.LogInfo("Issuing rewards", "address", msg.Creator, "amount", totalCoins)
 	err := k.PayParticipantFromEscrow(ctx, msg.Creator, totalCoins)
 	if err != nil {
+		k.LogError("Error paying participant", "error", err)
+		// Big question: do we remove the settle amount? Probably not
 		return nil, err
 	}
 	k.RemoveSettleAmount(ctx, msg.Creator)
