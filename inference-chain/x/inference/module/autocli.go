@@ -141,6 +141,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a revalidateInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
 				},
+				{
+					RpcMethod:      "ClaimRewards",
+					Use:            "claim-rewards [seed] [poc-start-height]",
+					Short:          "Send a claimRewards tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "pocStartHeight"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
