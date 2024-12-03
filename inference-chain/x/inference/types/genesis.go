@@ -13,6 +13,7 @@ func DefaultGenesis() *GenesisState {
 		InferenceList:      []Inference{},
 		ParticipantList:    []Participant{},
 		EpochGroupDataList: []EpochGroupData{},
+		SettleAmountList:   []SettleAmount{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params: DefaultParams(),
 	}
@@ -50,6 +51,16 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for epochGroupData")
 		}
 		epochGroupDataIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in settleAmount
+	settleAmountIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.SettleAmountList {
+		index := string(SettleAmountKey(elem.Participant))
+		if _, ok := settleAmountIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for settleAmount")
+		}
+		settleAmountIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 

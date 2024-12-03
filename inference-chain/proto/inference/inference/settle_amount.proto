@@ -1,0 +1,14 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message SettleAmount {
+  string participant = 1; 
+  uint64 rewardCoins = 2; 
+  uint64 refundCoins = 3; 
+  uint64 workCoins = 4; 
+  uint64 pocStartHeight = 5; 
+  
+}
+

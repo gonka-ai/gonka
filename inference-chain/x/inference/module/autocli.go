@@ -71,6 +71,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a epochGroupData",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStartBlockHeight"}},
 				},
+				{
+					RpcMethod: "SettleAmountAll",
+					Use:       "list-settle-amount",
+					Short:     "List all settleAmount",
+				},
+				{
+					RpcMethod:      "SettleAmount",
+					Use:            "show-settle-amount [id]",
+					Short:          "Shows a settleAmount",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

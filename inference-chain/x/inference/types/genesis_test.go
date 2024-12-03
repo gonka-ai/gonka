@@ -46,6 +46,14 @@ func TestGenesisState_Validate(t *testing.T) {
 						PocStartBlockHeight: 1,
 					},
 				},
+				SettleAmountList: []types.SettleAmount{
+					{
+						Participant: "0",
+					},
+					{
+						Participant: "1",
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -87,6 +95,20 @@ func TestGenesisState_Validate(t *testing.T) {
 					},
 					{
 						PocStartBlockHeight: 0,
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated settleAmount",
+			genState: &types.GenesisState{
+				SettleAmountList: []types.SettleAmount{
+					{
+						Participant: "0",
+					},
+					{
+						Participant: "0",
 					},
 				},
 			},
