@@ -4,13 +4,16 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
-	"net/http"
 )
 
 type ActiveParticipantWithProof struct {
@@ -20,19 +23,60 @@ type ActiveParticipantWithProof struct {
 	Block              *types2.Block            `json:"block"`
 }
 
-func WrapGetActiveParticipants(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
+func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		rplClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
-		if err != nil {
-			slog.Error("Failed to create rpc client", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Extract the path after '/v1/epochs/'
+		path := strings.TrimPrefix(r.URL.Path, "/v1/epochs/")
+
+		// Check if the path ends with '/participants'
+		if !strings.HasSuffix(path, "/participants") {
+			http.NotFound(w, r)
+			return
 		}
 
+		// Remove the '/participants' suffix to get the epochId
+		epochIdStr := strings.TrimSuffix(path, "/participants")
+
+		// Ensure that there's no additional path segments
+		if strings.ContainsRune(epochIdStr, '/') {
+			http.NotFound(w, r)
+			return
+		}
+
+		if epochIdStr == "current" {
+			getParticipants(nil, w, config, transactionRecorder)
+		} else {
+			epochInt, err := strconv.Atoi(epochIdStr)
+			if err != nil {
+				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
+				return
+			}
+
+			if epochInt < 0 {
+				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
+				return
+			}
+
+			epochUint := uint64(epochInt)
+			getParticipants(&epochUint, w, config, transactionRecorder)
+		}
+	}
+}
+
+func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig.Config, transactionRecorder cosmos_client.InferenceCosmosClient) {
+	rplClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
+	if err != nil {
+		slog.Error("Failed to create rpc client", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	var epoch uint64
+	if epochOrNil == nil {
 		queryClient := transactionRecorder.NewInferenceQueryClient()
 		currEpoch, err := queryClient.GetCurrentEpoch(transactionRecorder.Context, &types.QueryGetCurrentEpochRequest{})
 		if err != nil {
@@ -40,49 +84,52 @@ func WrapGetActiveParticipants(transactionRecorder cosmos_client.InferenceCosmos
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		dataKey := string(types.ActiveParticipantsFullKey(currEpoch.Epoch))
-		result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, true)
-		if err != nil {
-			slog.Error("Failed to query active participants", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		interfaceRegistry := codectypes.NewInterfaceRegistry()
-		// Register interfaces used in your types
-		types.RegisterInterfaces(interfaceRegistry)
-		// Create the codec
-		cdc := codec.NewProtoCodec(interfaceRegistry)
-
-		var activeParticipants types.ActiveParticipants
-		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			slog.Error("Failed to unmarshal active participant", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-		if err != nil {
-			slog.Error("Failed to get block", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-		if err != nil {
-			slog.Error("Failed to get validators", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		response := ActiveParticipantWithProof{
-			ActiveParticipants: activeParticipants,
-			ProofOps:           *result.Response.ProofOps,
-			Validators:         vals.Validators,
-			Block:              block.Block,
-		}
-
-		RespondWithJson(w, response)
+		epoch = currEpoch.Epoch
+	} else {
+		epoch = *epochOrNil
 	}
+
+	dataKey := string(types.ActiveParticipantsFullKey(epoch))
+	result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, true)
+	if err != nil {
+		slog.Error("Failed to query active participants", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	// Register interfaces used in your types
+	types.RegisterInterfaces(interfaceRegistry)
+	// Create the codec
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+
+	var activeParticipants types.ActiveParticipants
+	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
+		slog.Error("Failed to unmarshal active participant", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
+	if err != nil {
+		slog.Error("Failed to get block", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
+	if err != nil {
+		slog.Error("Failed to get validators", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := ActiveParticipantWithProof{
+		ActiveParticipants: activeParticipants,
+		ProofOps:           *result.Response.ProofOps,
+		Validators:         vals.Validators,
+		Block:              block.Block,
+	}
+
+	RespondWithJson(w, response)
 }
