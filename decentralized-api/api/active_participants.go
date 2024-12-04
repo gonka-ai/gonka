@@ -97,6 +97,11 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		epoch = *epochOrNil
 	}
 
+	if epoch == 0 {
+		http.Error(w, "Epoch enumeration starts with 1", http.StatusBadRequest)
+		return
+	}
+
 	dataKey := string(types.ActiveParticipantsFullKey(epoch))
 	result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, true)
 	if err != nil {
