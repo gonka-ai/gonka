@@ -34,13 +34,15 @@ func WrapGetActiveParticipants(transactionRecorder cosmos_client.InferenceCosmos
 		}
 
 		queryClient := transactionRecorder.NewInferenceQueryClient()
-		queryClient.GetCurrentEpoch()
+		currEpoch, err := queryClient.GetCurrentEpoch(transactionRecorder.Context, &types.QueryGetCurrentEpochRequest{})
+		if err != nil {
+			slog.Error("Failed to get current epoch", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-		types.EpochGroupDataKey()
-		// PROTDO: query epoch groud data
-
-		// PRTODO: insert epoch here!
-		result, err := cosmos_client.QueryByKey(rplClient, "inference", "ActiveParticipants/value/", true)
+		dataKey := string(types.ActiveParticipantsFullKey(currEpoch.Epoch))
+		result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, true)
 		if err != nil {
 			slog.Error("Failed to query active participants", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
