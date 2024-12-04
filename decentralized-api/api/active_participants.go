@@ -20,7 +20,7 @@ type ActiveParticipantWithProof struct {
 	Block              *types2.Block            `json:"block"`
 }
 
-func WrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+func WrapGetActiveParticipants(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
@@ -33,14 +33,11 @@ func WrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
-		interfaceRegistry := codectypes.NewInterfaceRegistry()
-		// Register interfaces used in your types
-		types.RegisterInterfaces(interfaceRegistry)
-		// Create the codec
-		cdc := codec.NewProtoCodec(interfaceRegistry)
+		queryClient := transactionRecorder.NewInferenceQueryClient()
+		queryClient.GetCurrentEpoch()
 
+		types.EpochGroupDataKey()
 		// PROTDO: query epoch groud data
-		cosmos_client.QueryByKey(rplClient, "inference", "ActiveParticipants/value/", false)
 
 		// PRTODO: insert epoch here!
 		result, err := cosmos_client.QueryByKey(rplClient, "inference", "ActiveParticipants/value/", true)
@@ -49,6 +46,12 @@ func WrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		interfaceRegistry := codectypes.NewInterfaceRegistry()
+		// Register interfaces used in your types
+		types.RegisterInterfaces(interfaceRegistry)
+		// Create the codec
+		cdc := codec.NewProtoCodec(interfaceRegistry)
 
 		var activeParticipants types.ActiveParticipants
 		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {

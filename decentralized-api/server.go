@@ -70,7 +70,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/participants/", wrapGetInferenceParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/nodes", api.WrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(nodeBroker, config))
-	mux.HandleFunc("/v1/active-participants", api.WrapGetActiveParticipants(config))
+	mux.HandleFunc("/v1/active-participants", api.WrapGetActiveParticipants(transactionRecorder, config))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
