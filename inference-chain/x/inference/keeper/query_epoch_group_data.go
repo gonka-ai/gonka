@@ -52,7 +52,6 @@ func (k Keeper) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGrou
 		return &types.QueryGetEpochGroupDataResponse{EpochGroupData: *currEpochGroup.GroupData}, nil
 	}
 
-	k.GetCurrentEpoch()
 	val, found := k.GetEpochGroupData(
 		ctx,
 		req.PocStartBlockHeight,
