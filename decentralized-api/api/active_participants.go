@@ -85,6 +85,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 			return
 		}
 		epoch = currEpoch.Epoch
+		slog.Info("/v1/epoch/current/participants: Current epoch resolved.", "epoch", epoch)
 	} else {
 		epoch = *epochOrNil
 	}

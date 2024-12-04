@@ -16,7 +16,7 @@ func (k Keeper) GetCurrentEpoch(goCtx context.Context, req *types.QueryGetCurren
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochGroup, err := k.GetUpcomingEpochGroup(ctx)
+	epochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
