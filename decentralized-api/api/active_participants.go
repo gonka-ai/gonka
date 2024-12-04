@@ -75,18 +75,25 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
+	queryClient := transactionRecorder.NewInferenceQueryClient()
+	currEpoch, err := queryClient.GetCurrentEpoch(transactionRecorder.Context, &types.QueryGetCurrentEpochRequest{})
+	if err != nil {
+		slog.Error("Failed to get current epoch", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	slog.Info("Current epoch resolved.", "epoch", currEpoch.Epoch)
+
 	var epoch uint64
 	if epochOrNil == nil {
-		queryClient := transactionRecorder.NewInferenceQueryClient()
-		currEpoch, err := queryClient.GetCurrentEpoch(transactionRecorder.Context, &types.QueryGetCurrentEpochRequest{})
-		if err != nil {
-			slog.Error("Failed to get current epoch", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// /v1/epoch/current/participants
+		epoch = currEpoch.Epoch
+	} else {
+		// /v1/epoch/{i}/participants
+		if *epochOrNil > currEpoch.Epoch {
+			http.Error(w, "Epoch not reached", http.StatusBadRequest)
 			return
 		}
-		epoch = currEpoch.Epoch
-		slog.Info("/v1/epoch/current/participants: Current epoch resolved.", "epoch", epoch)
-	} else {
 		epoch = *epochOrNil
 	}
 
