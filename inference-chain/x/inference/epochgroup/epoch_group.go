@@ -70,7 +70,22 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string) error {
+func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string) error {
+	eg.Logger.LogInfo("Adding member", "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
+	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
+	if !found {
+		eg.Logger.LogError("Epoch group not found", "blockHeight", eg.GroupData.PocStartBlockHeight)
+		return types.ErrCurrentEpochGroupNotFound
+	}
+	eg.GroupData = &val
+	if eg.GroupData.MemberSeedSignatures == nil {
+		eg.GroupData.MemberSeedSignatures = []*types.SeedSignature{}
+	}
+	eg.GroupData.MemberSeedSignatures = append(eg.GroupData.MemberSeedSignatures, &types.SeedSignature{
+		MemberAddress: address,
+		Signature:     seedSignature,
+	})
+	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
 }
 
@@ -111,6 +126,9 @@ func (eg *EpochGroup) MarkUnchanged(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) IsChanged(ctx context.Context) bool {
+	if eg.GroupData.EpochGroupId == 0 {
+		return false
+	}
 	info, err := eg.GroupKeeper.GroupInfo(ctx, &group.QueryGroupInfoRequest{
 		GroupId: eg.GroupData.EpochGroupId,
 	})

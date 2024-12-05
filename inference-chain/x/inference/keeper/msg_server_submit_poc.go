@@ -92,7 +92,7 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 	if err != nil {
 		return nil, err
 	}
-	err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey)
+	err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey, msg.SeedSignature)
 	if err != nil {
 		return nil, err
 	}

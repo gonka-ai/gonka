@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
@@ -101,6 +102,16 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		Address: addr,
 		Context: ctx,
 	}, nil
+}
+
+func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
+	name := icc.Account.Name
+	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
+	bytes, _, err := icc.Client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {

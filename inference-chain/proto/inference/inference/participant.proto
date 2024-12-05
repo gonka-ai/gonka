@@ -22,6 +22,7 @@ message Participant {
   string inferenceUrl = 8;
   repeated string models = 9;
   ParticipantStatus status = 10;
+  // TODO: must be removed! maps are not deterministic
   map<string, uint64> promptTokenCount = 11;
   map<string, uint64> completionTokenCount = 12;
   uint64 inferenceCount = 13;

@@ -3,6 +3,7 @@ package poc
 import (
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -236,6 +238,8 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
+var Seed int64 = 0
+
 func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
 	return func(proofs *ProofOfComputeResults) {
 		nonce := make([]string, len(proofs.Results))
@@ -243,14 +247,24 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			nonce[i] = p.Nonce
 		}
 
+		Seed = rand.Int63()
+		seedBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(seedBytes, uint64(Seed))
+		signature, err := transactionRecorder.SignBytes(seedBytes)
+		if err != nil {
+			slog.Error("Failed to sign bytes", "error", err)
+			return
+		}
+
 		message := inference.MsgSubmitPoC{
-			BlockHeight: proofs.BlockHeight,
-			Nonce:       nonce,
+			BlockHeight:   proofs.BlockHeight,
+			Nonce:         nonce,
+			SeedSignature: hex.EncodeToString(signature),
 		}
 
 		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
 
-		err := transactionRecorder.SubmitPoC(&message)
+		err = transactionRecorder.SubmitPoC(&message)
 		if err != nil {
 			log.Printf("Failed to send SubmitPoC transaction. %v", err)
 		}

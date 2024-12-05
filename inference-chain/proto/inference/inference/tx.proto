@@ -102,9 +102,10 @@ message MsgValidationResponse {}
 
 message MsgSubmitPoC {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator     = 1;
-           int64  blockHeight = 2;
-  repeated string nonce       = 3;
+           string creator       = 1;
+           int64  blockHeight   = 2;
+  repeated string nonce         = 3;
+           string seedSignature = 4;
 }
 
 message MsgSubmitPoCResponse {}
