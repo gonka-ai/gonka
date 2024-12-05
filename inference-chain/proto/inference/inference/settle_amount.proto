@@ -9,6 +9,6 @@ message SettleAmount {
   uint64 refundCoins = 3; 
   uint64 workCoins = 4; 
   uint64 pocStartHeight = 5; 
-  
+  string seedSignature = 6;
 }
 

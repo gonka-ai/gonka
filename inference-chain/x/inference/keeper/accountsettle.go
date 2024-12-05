@@ -23,6 +23,16 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	k.LogInfo("Block height", "height", blockHeight)
 	k.LogInfo("Got participants", "participants", len(participants.Participant))
 
+	data, found := k.GetEpochGroupData(ctx, pocBlockHeight)
+	k.LogInfo("Settling for block", "height", pocBlockHeight)
+	if !found {
+		k.LogError("Epoch group data not found", "height", pocBlockHeight)
+		return types.ErrCurrentEpochGroupNotFound
+	}
+	seedSigMap := make(map[string]string)
+	for _, seedSig := range data.MemberSeedSignatures {
+		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
+	}
 	amounts, rewardCoins, err := GetSettleAmounts(participants.Participant, blockHeight)
 	if err != nil {
 		k.LogError("Error getting settle amounts", "error", err)
@@ -38,6 +48,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			k.LogError("Error calculating settle amounts", "error", amount.Error, "participant", amount.Settle.Participant)
 			continue
 		}
+		seedSignature, found := seedSigMap[amount.Settle.Participant]
+		if found {
+			amount.Settle.SeedSignature = seedSignature
+		}
 		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins + amount.Settle.RefundCoins
 		if totalPayment == 0 {
 			k.LogDebug("No payment needed for participant", "address", amount.Settle.Participant)
@@ -48,6 +62,16 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		if !found {
 			k.LogError("Participant not found", "address", amount.Settle.Participant)
 			continue
+		}
+		// Issue refunds right away, participants may not be validating
+		if amount.Settle.RefundCoins > 0 {
+			k.LogInfo("Paying refund", "address", participant.Address, "amount", amount.Settle.RefundCoins)
+			err = k.PayParticipantFromEscrow(ctx, amount.Settle.Participant, amount.Settle.RefundCoins)
+			if err != nil {
+				k.LogError("Error paying refund", "error", err)
+				continue
+			}
+			amount.Settle.RefundCoins = 0
 		}
 		if amount.Settle.RewardCoins > 0 && participant.Reputation < 1.0 {
 			participant.Reputation += 0.01
