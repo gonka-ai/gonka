@@ -74,6 +74,34 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint
 	return eg.updateMember(ctx, address, weight, pubkey)
 }
 
+type VotingData struct {
+	TotalWeight int64
+	Members     map[string]int64
+}
+
+func (eg *EpochGroup) GetVotingData(ctx context.Context) (VotingData, error) {
+	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
+		GroupId: eg.GroupData.EpochGroupId,
+	})
+	if err != nil {
+		eg.Logger.LogError("Error getting group members", "error", err)
+		return VotingData{}, err
+	}
+
+	var totalWeight int64
+	var votingMembers map[string]int64 = make(map[string]int64)
+	for _, member := range members.Members {
+		weight := getWeight(member)
+		totalWeight += weight
+		votingMembers[member.Member.Address] = weight
+	}
+
+	return VotingData{
+		TotalWeight: totalWeight,
+		Members:     votingMembers,
+	}, nil
+}
+
 func (eg *EpochGroup) MarkChanged(ctx context.Context) error {
 	return eg.updateMetadata(ctx, "changed")
 }

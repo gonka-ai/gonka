@@ -4628,14 +4628,16 @@ func (x *_QueryGetInferencesWithExecutorsRequest_1_list) IsValid() bool {
 }
 
 var (
-	md_QueryGetInferencesWithExecutorsRequest     protoreflect.MessageDescriptor
-	fd_QueryGetInferencesWithExecutorsRequest_ids protoreflect.FieldDescriptor
+	md_QueryGetInferencesWithExecutorsRequest           protoreflect.MessageDescriptor
+	fd_QueryGetInferencesWithExecutorsRequest_ids       protoreflect.FieldDescriptor
+	fd_QueryGetInferencesWithExecutorsRequest_requester protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_query_proto_init()
 	md_QueryGetInferencesWithExecutorsRequest = File_inference_inference_query_proto.Messages().ByName("QueryGetInferencesWithExecutorsRequest")
 	fd_QueryGetInferencesWithExecutorsRequest_ids = md_QueryGetInferencesWithExecutorsRequest.Fields().ByName("ids")
+	fd_QueryGetInferencesWithExecutorsRequest_requester = md_QueryGetInferencesWithExecutorsRequest.Fields().ByName("requester")
 }
 
 var _ protoreflect.Message = (*fastReflection_QueryGetInferencesWithExecutorsRequest)(nil)
@@ -4709,6 +4711,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Range(f func(pro
 			return
 		}
 	}
+	if x.Requester != "" {
+		value := protoreflect.ValueOfString(x.Requester)
+		if !f(fd_QueryGetInferencesWithExecutorsRequest_requester, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -4726,6 +4734,8 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Has(fd protorefl
 	switch fd.FullName() {
 	case "inference.inference.QueryGetInferencesWithExecutorsRequest.ids":
 		return len(x.Ids) != 0
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		return x.Requester != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4744,6 +4754,8 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Clear(fd protore
 	switch fd.FullName() {
 	case "inference.inference.QueryGetInferencesWithExecutorsRequest.ids":
 		x.Ids = nil
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		x.Requester = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4766,6 +4778,9 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Get(descriptor p
 		}
 		listValue := &_QueryGetInferencesWithExecutorsRequest_1_list{list: &x.Ids}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		value := x.Requester
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4790,6 +4805,8 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Set(fd protorefl
 		lv := value.List()
 		clv := lv.(*_QueryGetInferencesWithExecutorsRequest_1_list)
 		x.Ids = *clv.list
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		x.Requester = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4816,6 +4833,8 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) Mutable(fd proto
 		}
 		value := &_QueryGetInferencesWithExecutorsRequest_1_list{list: &x.Ids}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		panic(fmt.Errorf("field requester of message inference.inference.QueryGetInferencesWithExecutorsRequest is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4832,6 +4851,8 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) NewField(fd prot
 	case "inference.inference.QueryGetInferencesWithExecutorsRequest.ids":
 		list := []string{}
 		return protoreflect.ValueOfList(&_QueryGetInferencesWithExecutorsRequest_1_list{list: &list})
+	case "inference.inference.QueryGetInferencesWithExecutorsRequest.requester":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsRequest"))
@@ -4907,6 +4928,10 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) ProtoMethods() *
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		l = len(x.Requester)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -4935,6 +4960,13 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) ProtoMethods() *
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Requester) > 0 {
+			i -= len(x.Requester)
+			copy(dAtA[i:], x.Requester)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Requester)))
+			i--
+			dAtA[i] = 0x12
 		}
 		if len(x.Ids) > 0 {
 			for iNdEx := len(x.Ids) - 1; iNdEx >= 0; iNdEx-- {
@@ -5026,6 +5058,38 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsRequest) ProtoMethods() *
 				}
 				x.Ids = append(x.Ids, string(dAtA[iNdEx:postIndex]))
 				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Requester", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Requester = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -5116,6 +5180,9 @@ var (
 	md_QueryGetInferencesWithExecutorsResponse                       protoreflect.MessageDescriptor
 	fd_QueryGetInferencesWithExecutorsResponse_inferenceWithExecutor protoreflect.FieldDescriptor
 	fd_QueryGetInferencesWithExecutorsResponse_NumValidators         protoreflect.FieldDescriptor
+	fd_QueryGetInferencesWithExecutorsResponse_TotalPower            protoreflect.FieldDescriptor
+	fd_QueryGetInferencesWithExecutorsResponse_ValidatorPower        protoreflect.FieldDescriptor
+	fd_QueryGetInferencesWithExecutorsResponse_CurrentHeight         protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -5123,6 +5190,9 @@ func init() {
 	md_QueryGetInferencesWithExecutorsResponse = File_inference_inference_query_proto.Messages().ByName("QueryGetInferencesWithExecutorsResponse")
 	fd_QueryGetInferencesWithExecutorsResponse_inferenceWithExecutor = md_QueryGetInferencesWithExecutorsResponse.Fields().ByName("inferenceWithExecutor")
 	fd_QueryGetInferencesWithExecutorsResponse_NumValidators = md_QueryGetInferencesWithExecutorsResponse.Fields().ByName("NumValidators")
+	fd_QueryGetInferencesWithExecutorsResponse_TotalPower = md_QueryGetInferencesWithExecutorsResponse.Fields().ByName("TotalPower")
+	fd_QueryGetInferencesWithExecutorsResponse_ValidatorPower = md_QueryGetInferencesWithExecutorsResponse.Fields().ByName("ValidatorPower")
+	fd_QueryGetInferencesWithExecutorsResponse_CurrentHeight = md_QueryGetInferencesWithExecutorsResponse.Fields().ByName("CurrentHeight")
 }
 
 var _ protoreflect.Message = (*fastReflection_QueryGetInferencesWithExecutorsResponse)(nil)
@@ -5202,6 +5272,24 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Range(f func(pr
 			return
 		}
 	}
+	if x.TotalPower != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.TotalPower)
+		if !f(fd_QueryGetInferencesWithExecutorsResponse_TotalPower, value) {
+			return
+		}
+	}
+	if x.ValidatorPower != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.ValidatorPower)
+		if !f(fd_QueryGetInferencesWithExecutorsResponse_ValidatorPower, value) {
+			return
+		}
+	}
+	if x.CurrentHeight != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.CurrentHeight)
+		if !f(fd_QueryGetInferencesWithExecutorsResponse_CurrentHeight, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -5221,6 +5309,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Has(fd protoref
 		return len(x.InferenceWithExecutor) != 0
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
 		return x.NumValidators != uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		return x.TotalPower != uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		return x.ValidatorPower != uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
+		return x.CurrentHeight != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsResponse"))
@@ -5241,6 +5335,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Clear(fd protor
 		x.InferenceWithExecutor = nil
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
 		x.NumValidators = uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		x.TotalPower = uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		x.ValidatorPower = uint32(0)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
+		x.CurrentHeight = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsResponse"))
@@ -5265,6 +5365,15 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Get(descriptor 
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
 		value := x.NumValidators
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		value := x.TotalPower
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		value := x.ValidatorPower
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
+		value := x.CurrentHeight
 		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
@@ -5292,6 +5401,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Set(fd protoref
 		x.InferenceWithExecutor = *clv.list
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
 		x.NumValidators = uint32(value.Uint())
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		x.TotalPower = uint32(value.Uint())
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		x.ValidatorPower = uint32(value.Uint())
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
+		x.CurrentHeight = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsResponse"))
@@ -5320,6 +5435,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) Mutable(fd prot
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
 		panic(fmt.Errorf("field NumValidators of message inference.inference.QueryGetInferencesWithExecutorsResponse is not mutable"))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		panic(fmt.Errorf("field TotalPower of message inference.inference.QueryGetInferencesWithExecutorsResponse is not mutable"))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		panic(fmt.Errorf("field ValidatorPower of message inference.inference.QueryGetInferencesWithExecutorsResponse is not mutable"))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
+		panic(fmt.Errorf("field CurrentHeight of message inference.inference.QueryGetInferencesWithExecutorsResponse is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryGetInferencesWithExecutorsResponse"))
@@ -5337,6 +5458,12 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) NewField(fd pro
 		list := []*InferenceWithExecutor{}
 		return protoreflect.ValueOfList(&_QueryGetInferencesWithExecutorsResponse_1_list{list: &list})
 	case "inference.inference.QueryGetInferencesWithExecutorsResponse.NumValidators":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.TotalPower":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.ValidatorPower":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.QueryGetInferencesWithExecutorsResponse.CurrentHeight":
 		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
@@ -5416,6 +5543,15 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) ProtoMethods() 
 		if x.NumValidators != 0 {
 			n += 1 + runtime.Sov(uint64(x.NumValidators))
 		}
+		if x.TotalPower != 0 {
+			n += 1 + runtime.Sov(uint64(x.TotalPower))
+		}
+		if x.ValidatorPower != 0 {
+			n += 1 + runtime.Sov(uint64(x.ValidatorPower))
+		}
+		if x.CurrentHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentHeight))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -5444,6 +5580,21 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) ProtoMethods() 
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CurrentHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentHeight))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.ValidatorPower != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidatorPower))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.TotalPower != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TotalPower))
+			i--
+			dAtA[i] = 0x18
 		}
 		if x.NumValidators != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.NumValidators))
@@ -5568,6 +5719,63 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) ProtoMethods() 
 						break
 					}
 				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TotalPower", wireType)
+				}
+				x.TotalPower = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TotalPower |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatorPower", wireType)
+				}
+				x.ValidatorPower = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidatorPower |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentHeight", wireType)
+				}
+				x.CurrentHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentHeight |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -5604,9 +5812,10 @@ func (x *fastReflection_QueryGetInferencesWithExecutorsResponse) ProtoMethods() 
 }
 
 var (
-	md_InferenceWithExecutor           protoreflect.MessageDescriptor
-	fd_InferenceWithExecutor_inference protoreflect.FieldDescriptor
-	fd_InferenceWithExecutor_executor  protoreflect.FieldDescriptor
+	md_InferenceWithExecutor              protoreflect.MessageDescriptor
+	fd_InferenceWithExecutor_inference    protoreflect.FieldDescriptor
+	fd_InferenceWithExecutor_executor     protoreflect.FieldDescriptor
+	fd_InferenceWithExecutor_currentPower protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -5614,6 +5823,7 @@ func init() {
 	md_InferenceWithExecutor = File_inference_inference_query_proto.Messages().ByName("InferenceWithExecutor")
 	fd_InferenceWithExecutor_inference = md_InferenceWithExecutor.Fields().ByName("inference")
 	fd_InferenceWithExecutor_executor = md_InferenceWithExecutor.Fields().ByName("executor")
+	fd_InferenceWithExecutor_currentPower = md_InferenceWithExecutor.Fields().ByName("currentPower")
 }
 
 var _ protoreflect.Message = (*fastReflection_InferenceWithExecutor)(nil)
@@ -5693,6 +5903,12 @@ func (x *fastReflection_InferenceWithExecutor) Range(f func(protoreflect.FieldDe
 			return
 		}
 	}
+	if x.CurrentPower != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.CurrentPower)
+		if !f(fd_InferenceWithExecutor_currentPower, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -5712,6 +5928,8 @@ func (x *fastReflection_InferenceWithExecutor) Has(fd protoreflect.FieldDescript
 		return x.Inference != nil
 	case "inference.inference.InferenceWithExecutor.executor":
 		return x.Executor != nil
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		return x.CurrentPower != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5732,6 +5950,8 @@ func (x *fastReflection_InferenceWithExecutor) Clear(fd protoreflect.FieldDescri
 		x.Inference = nil
 	case "inference.inference.InferenceWithExecutor.executor":
 		x.Executor = nil
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		x.CurrentPower = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5754,6 +5974,9 @@ func (x *fastReflection_InferenceWithExecutor) Get(descriptor protoreflect.Field
 	case "inference.inference.InferenceWithExecutor.executor":
 		value := x.Executor
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		value := x.CurrentPower
+		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5778,6 +6001,8 @@ func (x *fastReflection_InferenceWithExecutor) Set(fd protoreflect.FieldDescript
 		x.Inference = value.Message().Interface().(*Inference)
 	case "inference.inference.InferenceWithExecutor.executor":
 		x.Executor = value.Message().Interface().(*Participant)
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		x.CurrentPower = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5808,6 +6033,8 @@ func (x *fastReflection_InferenceWithExecutor) Mutable(fd protoreflect.FieldDesc
 			x.Executor = new(Participant)
 		}
 		return protoreflect.ValueOfMessage(x.Executor.ProtoReflect())
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		panic(fmt.Errorf("field currentPower of message inference.inference.InferenceWithExecutor is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5827,6 +6054,8 @@ func (x *fastReflection_InferenceWithExecutor) NewField(fd protoreflect.FieldDes
 	case "inference.inference.InferenceWithExecutor.executor":
 		m := new(Participant)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.InferenceWithExecutor.currentPower":
+		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceWithExecutor"))
@@ -5904,6 +6133,9 @@ func (x *fastReflection_InferenceWithExecutor) ProtoMethods() *protoiface.Method
 			l = options.Size(x.Executor)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.CurrentPower != 0 {
+			n += 1 + runtime.Sov(uint64(x.CurrentPower))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -5932,6 +6164,11 @@ func (x *fastReflection_InferenceWithExecutor) ProtoMethods() *protoiface.Method
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CurrentPower != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CurrentPower))
+			i--
+			dAtA[i] = 0x18
 		}
 		if x.Executor != nil {
 			encoded, err := options.Marshal(x.Executor)
@@ -6082,6 +6319,25 @@ func (x *fastReflection_InferenceWithExecutor) ProtoMethods() *protoiface.Method
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentPower", wireType)
+				}
+				x.CurrentPower = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CurrentPower |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -10029,7 +10285,8 @@ type QueryGetInferencesWithExecutorsRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Ids []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	Ids       []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	Requester string   `protobuf:"bytes,2,opt,name=requester,proto3" json:"requester,omitempty"`
 }
 
 func (x *QueryGetInferencesWithExecutorsRequest) Reset() {
@@ -10059,6 +10316,13 @@ func (x *QueryGetInferencesWithExecutorsRequest) GetIds() []string {
 	return nil
 }
 
+func (x *QueryGetInferencesWithExecutorsRequest) GetRequester() string {
+	if x != nil {
+		return x.Requester
+	}
+	return ""
+}
+
 type QueryGetInferencesWithExecutorsResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -10066,6 +10330,9 @@ type QueryGetInferencesWithExecutorsResponse struct {
 
 	InferenceWithExecutor []*InferenceWithExecutor `protobuf:"bytes,1,rep,name=inferenceWithExecutor,proto3" json:"inferenceWithExecutor,omitempty"`
 	NumValidators         uint32                   `protobuf:"varint,2,opt,name=NumValidators,proto3" json:"NumValidators,omitempty"`
+	TotalPower            uint32                   `protobuf:"varint,3,opt,name=TotalPower,proto3" json:"TotalPower,omitempty"`
+	ValidatorPower        uint32                   `protobuf:"varint,4,opt,name=ValidatorPower,proto3" json:"ValidatorPower,omitempty"`
+	CurrentHeight         uint32                   `protobuf:"varint,5,opt,name=CurrentHeight,proto3" json:"CurrentHeight,omitempty"`
 }
 
 func (x *QueryGetInferencesWithExecutorsResponse) Reset() {
@@ -10102,13 +10369,35 @@ func (x *QueryGetInferencesWithExecutorsResponse) GetNumValidators() uint32 {
 	return 0
 }
 
+func (x *QueryGetInferencesWithExecutorsResponse) GetTotalPower() uint32 {
+	if x != nil {
+		return x.TotalPower
+	}
+	return 0
+}
+
+func (x *QueryGetInferencesWithExecutorsResponse) GetValidatorPower() uint32 {
+	if x != nil {
+		return x.ValidatorPower
+	}
+	return 0
+}
+
+func (x *QueryGetInferencesWithExecutorsResponse) GetCurrentHeight() uint32 {
+	if x != nil {
+		return x.CurrentHeight
+	}
+	return 0
+}
+
 type InferenceWithExecutor struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Inference *Inference   `protobuf:"bytes,1,opt,name=inference,proto3" json:"inference,omitempty"`
-	Executor  *Participant `protobuf:"bytes,2,opt,name=executor,proto3" json:"executor,omitempty"`
+	Inference    *Inference   `protobuf:"bytes,1,opt,name=inference,proto3" json:"inference,omitempty"`
+	Executor     *Participant `protobuf:"bytes,2,opt,name=executor,proto3" json:"executor,omitempty"`
+	CurrentPower uint32       `protobuf:"varint,3,opt,name=currentPower,proto3" json:"currentPower,omitempty"`
 }
 
 func (x *InferenceWithExecutor) Reset() {
@@ -10143,6 +10432,13 @@ func (x *InferenceWithExecutor) GetExecutor() *Participant {
 		return x.Executor
 	}
 	return nil
+}
+
+func (x *InferenceWithExecutor) GetCurrentPower() uint32 {
+	if x != nil {
+		return x.CurrentPower
+	}
+	return 0
 }
 
 type QueryInferenceParticipantRequest struct {
@@ -10517,33 +10813,44 @@ var file_inference_inference_query_proto_rawDesc = []byte{
 	0x50, 0x61, 0x67, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x52, 0x0a, 0x70, 0x61,
 	0x67, 0x69, 0x6e, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63,
 	0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b,
-	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x3a, 0x0a, 0x26, 0x51,
+	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x58, 0x0a, 0x26, 0x51,
 	0x75, 0x65, 0x72, 0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x73, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x10, 0x0a, 0x03, 0x69, 0x64, 0x73, 0x18, 0x01, 0x20, 0x03,
-	0x28, 0x09, 0x52, 0x03, 0x69, 0x64, 0x73, 0x22, 0xb7, 0x01, 0x0a, 0x27, 0x51, 0x75, 0x65, 0x72,
-	0x79, 0x47, 0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69,
-	0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x12, 0x66, 0x0a, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x03,
-	0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x42, 0x04,
-	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57,
-	0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x24, 0x0a, 0x0d, 0x4e,
-	0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x0d, 0x52, 0x0d, 0x4e, 0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72,
-	0x73, 0x22, 0x9f, 0x01, 0x0a, 0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57,
-	0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x42, 0x0a, 0x09, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04,
-	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12,
-	0x42, 0x0a, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75,
-	0x74, 0x6f, 0x72, 0x22, 0x3c, 0x0a, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65,
+	0x28, 0x09, 0x52, 0x03, 0x69, 0x64, 0x73, 0x12, 0x1c, 0x0a, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x65, 0x72, 0x22, 0xa5, 0x02, 0x0a, 0x27, 0x51, 0x75, 0x65, 0x72, 0x79, 0x47,
+	0x65, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x57, 0x69, 0x74, 0x68,
+	0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x12, 0x66, 0x0a, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69,
+	0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b,
+	0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x57, 0x69, 0x74, 0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x42, 0x04, 0xc8, 0xde,
+	0x1f, 0x00, 0x52, 0x15, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74,
+	0x68, 0x45, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x24, 0x0a, 0x0d, 0x4e, 0x75, 0x6d,
+	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d,
+	0x52, 0x0d, 0x4e, 0x75, 0x6d, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x73, 0x12,
+	0x1e, 0x0a, 0x0a, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x03, 0x20,
+	0x01, 0x28, 0x0d, 0x52, 0x0a, 0x54, 0x6f, 0x74, 0x61, 0x6c, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x12,
+	0x26, 0x0a, 0x0e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x50, 0x6f, 0x77, 0x65,
+	0x72, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x6f, 0x72, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x12, 0x24, 0x0a, 0x0d, 0x43, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0d,
+	0x43, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xc3, 0x01,
+	0x0a, 0x15, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x57, 0x69, 0x74, 0x68, 0x45,
+	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x42, 0x0a, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
+	0x52, 0x09, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x42, 0x0a, 0x08, 0x65,
+	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x20, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12,
+	0x22, 0x0a, 0x0c, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0c, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x50, 0x6f,
+	0x77, 0x65, 0x72, 0x22, 0x3c, 0x0a, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x49, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
 	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65,
 	0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73,
