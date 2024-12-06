@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
-	"hash/fnv"
 	"io"
 	"log"
 	"log/slog"
@@ -80,11 +80,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
-
-		inferenceSeed := hashStringToInt64(inferenceWithExecutor.Inference.InferenceId)
-
-		shouldValidate, _ := ShouldValidate(inferenceWithExecutor.Executor.Index, inferenceWithExecutor.Executor.Reputation, transactionRecorder.Address,
-			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower, inferenceSeed+poc.CurrentSeed.Seed)
+		shouldValidate := keeper.ShouldValidate(
+			poc.CurrentSeed.Seed,
+			inferenceWithExecutor.GetInferenceDetails(),
+			r.TotalPower,
+			r.ValidatorPower,
+			inferenceWithExecutor.CurrentPower)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
@@ -96,15 +97,6 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			validateInferenceAndSendValMessage(inf, nodeBroker, transactionRecorder, false)
 		}()
 	}
-}
-
-func hashStringToInt64(s string) int64 {
-	h := fnv.New64a()      // Create a new 64-bit FNV-1a hash
-	h.Write([]byte(s))     // Write the string to the hash
-	hashValue := h.Sum64() // Get the unsigned 64-bit hash
-
-	// Convert to int64, taking care of potential overflow.
-	return int64(hashValue)
 }
 
 func logInferencesToSample(inferences []types.InferenceWithExecutor) {

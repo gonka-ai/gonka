@@ -172,16 +172,16 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			k.LogWarn("Executor not found in weight map", "executor", inference.Executor)
 			continue
 		}
-		if ShouldValidate(msg.Seed, inference, uint32(totalWeight-executorPower), uint32(validatorPower)) {
+		if ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower)) {
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
 		}
 	}
 	return mustBeValidated, nil
 }
 
-func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32) bool {
+func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32, executorPower uint32) bool {
 	targetValidations := 1 - (inferenceDetails.ExecutorReputation * 0.9)
-	ourProbability := targetValidations * (float32(validatorPower) / float32(totalPower))
+	ourProbability := targetValidations * (float32(validatorPower) / float32(totalPower-executorPower))
 	inferenceSeed := hashStringToInt64(inferenceDetails.InferenceId)
 	randFloat := rand.New(rand.NewSource(seed + inferenceSeed)).Float64()
 	return randFloat < float64(ourProbability)
