@@ -68,7 +68,12 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		),
 	)
 
-	currentEpochGroup.GroupData.FinishedInferences = append(currentEpochGroup.GroupData.FinishedInferences, existingInference.InferenceId)
+	currentEpochGroup.GroupData.FinishedInferences = append(currentEpochGroup.GroupData.FinishedInferences,
+		&types.InferenceDetail{
+			InferenceId:        existingInference.InferenceId,
+			Executor:           existingInference.ExecutedBy,
+			ExecutorReputation: executor.Reputation,
+		})
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 
 	return &types.MsgFinishInferenceResponse{}, nil

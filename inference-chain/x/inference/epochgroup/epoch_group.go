@@ -85,6 +85,10 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint
 		MemberAddress: address,
 		Signature:     seedSignature,
 	})
+	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
+		MemberAddress: address,
+		Weight:        int64(weight),
+	})
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
 }
@@ -94,21 +98,13 @@ type VotingData struct {
 	Members     map[string]int64
 }
 
-func (eg *EpochGroup) GetVotingData(ctx context.Context) (VotingData, error) {
-	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
-		GroupId: eg.GroupData.EpochGroupId,
-	})
-	if err != nil {
-		eg.Logger.LogError("Error getting group members", "error", err)
-		return VotingData{}, err
-	}
-
+func (eg *EpochGroup) GetValidationWeights() (VotingData, error) {
 	var totalWeight int64
-	var votingMembers map[string]int64 = make(map[string]int64)
-	for _, member := range members.Members {
-		weight := getWeight(member)
+	var votingMembers = make(map[string]int64)
+	for _, member := range eg.GroupData.ValidationWeights {
+		weight := member.Weight
 		totalWeight += weight
-		votingMembers[member.Member.Address] = weight
+		votingMembers[member.MemberAddress] = weight
 	}
 
 	return VotingData{
@@ -193,7 +189,7 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 			eg.Logger.LogError("Error decoding pubkey", "error", err)
 			continue
 		}
-
+		// The VALIDATOR key, never to be confused with the account key (which is a sekp256k1 key)
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
 		computeResults = append(computeResults, keeper.ComputeResult{
