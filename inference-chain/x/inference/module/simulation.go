@@ -55,6 +55,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgRevalidateInference int = 100
 
+	opWeightMsgClaimRewards = "op_weight_msg_claim_rewards"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgClaimRewards int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -166,6 +170,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgRevalidateInference(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgClaimRewards int
+	simState.AppParams.GetOrGenerate(opWeightMsgClaimRewards, &weightMsgClaimRewards, nil,
+		func(_ *rand.Rand) {
+			weightMsgClaimRewards = defaultWeightMsgClaimRewards
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgClaimRewards,
+		inferencesimulation.SimulateMsgClaimRewards(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -235,6 +250,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgRevalidateInference,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgRevalidateInference(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgClaimRewards,
+			defaultWeightMsgClaimRewards,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgClaimRewards(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

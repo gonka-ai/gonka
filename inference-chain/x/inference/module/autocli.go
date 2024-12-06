@@ -71,6 +71,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a epochGroupData",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStartBlockHeight"}},
 				},
+				{
+					RpcMethod: "SettleAmountAll",
+					Use:       "list-settle-amount",
+					Short:     "List all settleAmount",
+				},
+				{
+					RpcMethod:      "SettleAmount",
+					Use:            "show-settle-amount [id]",
+					Short:          "Shows a settleAmount",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -129,6 +140,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "revalidate-inference [inference-id]",
 					Short:          "Send a revalidateInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "ClaimRewards",
+					Use:            "claim-rewards [seed] [poc-start-height]",
+					Short:          "Send a claimRewards tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "pocStartHeight"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

@@ -29,6 +29,8 @@ const (
 	Query_GetRandomExecutor_FullMethodName          = "/inference.inference.Query/GetRandomExecutor"
 	Query_EpochGroupData_FullMethodName             = "/inference.inference.Query/EpochGroupData"
 	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName               = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -52,6 +54,9 @@ type QueryClient interface {
 	// Queries a list of EpochGroupData items.
 	EpochGroupData(ctx context.Context, in *QueryGetEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupDataResponse, error)
 	EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupDataResponse, error)
+	// Queries a list of SettleAmount items.
+	SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error)
+	SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error)
 }
 
 type queryClient struct {
@@ -152,6 +157,24 @@ func (c *queryClient) EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGr
 	return out, nil
 }
 
+func (c *queryClient) SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error) {
+	out := new(QueryGetSettleAmountResponse)
+	err := c.cc.Invoke(ctx, Query_SettleAmount_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error) {
+	out := new(QueryAllSettleAmountResponse)
+	err := c.cc.Invoke(ctx, Query_SettleAmountAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -173,6 +196,9 @@ type QueryServer interface {
 	// Queries a list of EpochGroupData items.
 	EpochGroupData(context.Context, *QueryGetEpochGroupDataRequest) (*QueryGetEpochGroupDataResponse, error)
 	EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error)
+	// Queries a list of SettleAmount items.
+	SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error)
+	SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -209,6 +235,12 @@ func (UnimplementedQueryServer) EpochGroupData(context.Context, *QueryGetEpochGr
 }
 func (UnimplementedQueryServer) EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupDataAll not implemented")
+}
+func (UnimplementedQueryServer) SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleAmount not implemented")
+}
+func (UnimplementedQueryServer) SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleAmountAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -403,6 +435,42 @@ func _Query_EpochGroupDataAll_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_SettleAmount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetSettleAmountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).SettleAmount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_SettleAmount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).SettleAmount(ctx, req.(*QueryGetSettleAmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_SettleAmountAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllSettleAmountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).SettleAmountAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_SettleAmountAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).SettleAmountAll(ctx, req.(*QueryAllSettleAmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -449,6 +517,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochGroupDataAll",
 			Handler:    _Query_EpochGroupDataAll_Handler,
+		},
+		{
+			MethodName: "SettleAmount",
+			Handler:    _Query_SettleAmount_Handler,
+		},
+		{
+			MethodName: "SettleAmountAll",
+			Handler:    _Query_SettleAmountAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

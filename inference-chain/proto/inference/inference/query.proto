@@ -10,6 +10,7 @@ import "inference/inference/params.proto";
 import "inference/inference/inference.proto";
 import "inference/inference/participant.proto";
 import "inference/inference/epoch_group_data.proto";
+import "inference/inference/settle_amount.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -67,6 +68,16 @@ service Query {
   }
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
+  
+  }
+  
+  // Queries a list of SettleAmount items.
+  rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
+  
+  }
+  rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/settle_amount";
   
   }
 }
@@ -129,8 +140,8 @@ message QueryGetInferencesWithExecutorsResponse {
 }
 
 message InferenceWithExecutor {
-  Inference   inference = 1 [(gogoproto.nullable) = false];
-  Participant executor  = 2 [(gogoproto.nullable) = false];
+  Inference   inference    = 1 [(gogoproto.nullable) = false];
+  Participant executor     = 2 [(gogoproto.nullable) = false];
   uint32      currentPower = 3;
 }
 
@@ -164,5 +175,22 @@ message QueryAllEpochGroupDataRequest {
 message QueryAllEpochGroupDataResponse {
   repeated EpochGroupData                         epochGroupData = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
+}
+
+message QueryGetSettleAmountRequest {
+  string participant = 1;
+}
+
+message QueryGetSettleAmountResponse {
+  SettleAmount settleAmount = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllSettleAmountRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllSettleAmountResponse {
+  repeated SettleAmount                           settleAmount = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
 }
 

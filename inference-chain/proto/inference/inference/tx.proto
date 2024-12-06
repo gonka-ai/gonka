@@ -26,6 +26,7 @@ service Msg {
   rpc SubmitNewUnfundedParticipant (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
   rpc InvalidateInference          (MsgInvalidateInference         ) returns (MsgInvalidateInferenceResponse         );
   rpc RevalidateInference          (MsgRevalidateInference         ) returns (MsgRevalidateInferenceResponse         );
+  rpc ClaimRewards                 (MsgClaimRewards                ) returns (MsgClaimRewardsResponse                );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -137,4 +138,16 @@ message MsgRevalidateInference {
 }
 
 message MsgRevalidateInferenceResponse {}
+
+message MsgClaimRewards {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  int64  seed           = 2;
+  uint64 pocStartHeight = 3;
+}
+
+message MsgClaimRewardsResponse {
+  uint64 amount = 1;
+  string result = 2;
+}
 

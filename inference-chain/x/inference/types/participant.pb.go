@@ -58,16 +58,17 @@ func (ParticipantStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type Participant struct {
-	Index                 string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Address               string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Reputation            float32           `protobuf:"fixed32,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
-	Weight                int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
-	JoinTime              int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
-	JoinHeight            int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
-	LastInferenceTime     int64             `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
-	InferenceUrl          string            `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
-	Models                []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
-	Status                ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
+	Index             string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Address           string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Reputation        float32           `protobuf:"fixed32,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
+	Weight            int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
+	JoinTime          int64             `protobuf:"varint,5,opt,name=joinTime,proto3" json:"joinTime,omitempty"`
+	JoinHeight        int64             `protobuf:"varint,6,opt,name=joinHeight,proto3" json:"joinHeight,omitempty"`
+	LastInferenceTime int64             `protobuf:"varint,7,opt,name=lastInferenceTime,proto3" json:"lastInferenceTime,omitempty"`
+	InferenceUrl      string            `protobuf:"bytes,8,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models            []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
+	Status            ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
+	// TODO: must be removed! maps are not deterministic
 	PromptTokenCount      map[string]uint64 `protobuf:"bytes,11,rep,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
 	CompletionTokenCount  map[string]uint64 `protobuf:"bytes,12,rep,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
 	InferenceCount        uint64            `protobuf:"varint,13,opt,name=inferenceCount,proto3" json:"inferenceCount,omitempty"`

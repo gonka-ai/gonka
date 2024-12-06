@@ -11,7 +11,7 @@ import (
 const EpochNewCoin = 1_048_576
 const CoinHalvingHeight = 100
 
-func (k *Keeper) SettleAccounts(ctx context.Context) error {
+func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	participants, err := k.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
@@ -35,31 +35,33 @@ func (k *Keeper) SettleAccounts(ctx context.Context) error {
 	}
 	for _, amount := range amounts {
 		if amount.Error != nil {
-			k.LogError("Error calculating settle amounts", "error", amount.Error)
+			k.LogError("Error calculating settle amounts", "error", amount.Error, "participant", amount.Settle.Participant)
 			continue
 		}
-		totalPayment := amount.WorkCoins + amount.RewardCoins + amount.RefundCoins
+		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins + amount.Settle.RefundCoins
 		if totalPayment == 0 {
-			k.LogDebug("No payment needed for participant", "address", amount.Participant.Index)
+			k.LogDebug("No payment needed for participant", "address", amount.Settle.Participant)
 			continue
 		}
-		k.LogInfo("Settling participant", "rewardCoins", amount.RewardCoins, "refundCoins", amount.RefundCoins, "workCoins", amount.WorkCoins, "address", amount.Participant.Index)
-		err = k.PayParticipantFromEscrow(ctx, amount.Participant.Address, totalPayment)
-		if err != nil {
-			k.LogError("Error paying participant", "error", err)
-			return err
+		k.LogInfo("Settle for participant", "rewardCoins", amount.Settle.RewardCoins, "refundCoins", amount.Settle.RefundCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
+		participant, found := k.GetParticipant(ctx, amount.Settle.Participant)
+		if !found {
+			k.LogError("Participant not found", "address", amount.Settle.Participant)
+			continue
 		}
-		if amount.RewardCoins > 0 && amount.Participant.Status != types.ParticipantStatus_INVALID && amount.Participant.Reputation < 1.0 {
-			amount.Participant.Reputation += 0.01
+		if amount.Settle.RewardCoins > 0 && participant.Reputation < 1.0 {
+			participant.Reputation += 0.01
 		}
-		amount.Participant.CoinBalance = 0
-		amount.Participant.RefundBalance = 0
-		k.SetParticipant(ctx, *amount.Participant)
+		participant.CoinBalance = 0
+		participant.RefundBalance = 0
+		k.SetParticipant(ctx, participant)
+		amount.Settle.PocStartHeight = pocBlockHeight
+		k.SetSettleAmount(ctx, *amount.Settle)
 	}
 	return nil
 }
 
-func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]SettleAmounts, int64, error) {
+func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]*SettleResult, int64, error) {
 	halvings := blockHeight / CoinHalvingHeight
 	// Halve it that many times
 	totalRewardCoin := EpochNewCoin / math.Pow(2.0, float64(halvings))
@@ -82,12 +84,16 @@ func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]Se
 		totalWork:       totalWork,
 		totalRewardCoin: totalRewardCoin,
 	}
-	amounts := make([]SettleAmounts, len(participants))
+	amounts := make([]*SettleResult, 0)
 	distributions := make([]DistributedCoinInfo, 0)
 	distributions = append(distributions, punishmentDistribution)
 	distributions = append(distributions, rewardDistribution)
-	for i, p := range participants {
-		amounts[i] = getSettleAmount(&p, distributions)
+	for _, p := range participants {
+		settle, err := getSettleAmount(&p, distributions)
+		amounts = append(amounts, &SettleResult{
+			Settle: settle,
+			Error:  err,
+		})
 	}
 	if totalWork == 0 {
 		return amounts, 0, nil
@@ -95,26 +101,21 @@ func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]Se
 	return amounts, int64(totalRewardCoin), nil
 }
 
-func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoinInfo) SettleAmounts {
+func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoinInfo) (*types.SettleAmount, error) {
+	settle := &types.SettleAmount{
+		Participant: participant.Address,
+	}
 	if participant.CoinBalance < 0 {
-		return SettleAmounts{
-			Participant: participant,
-			Error:       types.ErrNegativeCoinBalance,
-		}
+		return settle, types.ErrNegativeCoinBalance
 	}
 	if participant.RefundBalance < 0 {
-		return SettleAmounts{
-			Participant: participant,
-			Error:       types.ErrNegativeRefundBalance,
-		}
+		return settle, types.ErrNegativeRefundBalance
 	}
 	if participant.CoinBalance == 0 && participant.RefundBalance == 0 {
-		return SettleAmounts{Participant: participant}
+		return settle, nil
 	}
 	if participant.Status == types.ParticipantStatus_INVALID {
-		return SettleAmounts{
-			Participant: participant,
-		}
+		return settle, nil
 	}
 	workCoins := participant.CoinBalance
 	refundCoins := participant.RefundBalance
@@ -125,12 +126,12 @@ func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoi
 		}
 		rewardCoins += distribution.calculateDistribution(workCoins)
 	}
-	return SettleAmounts{
+	return &types.SettleAmount{
 		RewardCoins: uint64(rewardCoins),
 		RefundCoins: uint64(refundCoins),
 		WorkCoins:   uint64(workCoins),
-		Participant: participant,
-	}
+		Participant: participant.Address,
+	}, nil
 }
 
 type DistributedCoinInfo struct {
@@ -143,10 +144,7 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 	return int64(bonusCoins)
 }
 
-type SettleAmounts struct {
-	RewardCoins uint64
-	RefundCoins uint64
-	WorkCoins   uint64
-	Participant *types.Participant
-	Error       error
+type SettleResult struct {
+	Settle *types.SettleAmount
+	Error  error
 }
