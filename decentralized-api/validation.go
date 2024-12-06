@@ -83,7 +83,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 
 		inferenceSeed := hashStringToInt64(inferenceWithExecutor.Inference.InferenceId)
 
-		shouldValidate, _ := ShouldValidate(&inferenceWithExecutor.Executor, transactionRecorder.Address,
+		shouldValidate, _ := ShouldValidate(inferenceWithExecutor.Executor.Index, inferenceWithExecutor.Executor.Reputation, transactionRecorder.Address,
 			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower, inferenceSeed+poc.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
@@ -134,13 +134,12 @@ func logInferencesToValidate(toValidate []types.Inference) {
 	slog.Info("Validation: Inferences to validate", "inferences", ids)
 }
 
-func ShouldValidate(executor *types.Participant, currentAccountAddress string, currentAccountPower uint32, totalPower uint32, seed int64) (bool, float32) {
-	if executor.Index == currentAccountAddress {
+func ShouldValidate(executorAddress string, executorReputation float32, currentAccountAddress string, currentAccountPower uint32, totalPower uint32, seed int64) (bool, float32) {
+	if executorAddress == currentAccountAddress {
 		return false, 0.0
 	}
-	targetValidations := 1 - (executor.Reputation * 0.9)
+	targetValidations := 1 - (executorReputation * 0.9)
 	ourProbability := targetValidations * (float32(currentAccountPower) / float32(totalPower))
-	slog.Info("Validation: ShouldValidate", "currentAccountPower", currentAccountPower, "totalPower", totalPower, "ourProbability", ourProbability)
 	randFloat := rand.New(rand.NewSource(seed)).Float32()
 	return randFloat < ourProbability, ourProbability
 }

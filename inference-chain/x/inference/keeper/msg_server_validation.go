@@ -95,6 +95,7 @@ func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *typ
 			Participant: msg.Creator, PocStartBlockHeight: inference.EpochGroupId,
 		}
 	}
+	k.LogInfo("Validation: Adding inference to epoch group validations", "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochGroupId)
 	epochGroupValidations.ValidatedInferences = append(epochGroupValidations.ValidatedInferences, msg.InferenceId)
 	k.SetEpochGroupValidations(ctx, epochGroupValidations)
 }
