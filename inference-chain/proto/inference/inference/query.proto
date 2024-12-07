@@ -11,6 +11,7 @@ import "inference/inference/inference.proto";
 import "inference/inference/participant.proto";
 import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
+import "inference/inference/epoch_group_validations.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -78,6 +79,16 @@ service Query {
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
+  
+  }
+  
+  // Queries a list of EpochGroupValidations items.
+  rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{pocStartBlockHeight}";
+  
+  }
+  rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
   
   }
 }
@@ -192,5 +203,23 @@ message QueryAllSettleAmountRequest {
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settleAmount = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+}
+
+message QueryGetEpochGroupValidationsRequest {
+  string participant         = 1;
+  uint64 pocStartBlockHeight = 2;
+}
+
+message QueryGetEpochGroupValidationsResponse {
+  EpochGroupValidations epochGroupValidations = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllEpochGroupValidationsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllEpochGroupValidationsResponse {
+  repeated EpochGroupValidations                  epochGroupValidations = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination            = 2;
 }
 

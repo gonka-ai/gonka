@@ -3,9 +3,8 @@ package keeper
 import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
-	"github.com/productscience/inference/x/inference/types"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const inferenceDenom = "icoin"
@@ -46,6 +45,15 @@ func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, a
 	k.LogInfo("Paying participant", "participant", participantAddress, "amount", amount, "address", address)
 	err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, GetCoins(int64(amount)))
 	return err
+}
+
+func (k *Keeper) BurnCoins(ctx context.Context, burnCoins int64) error {
+	if burnCoins <= 0 {
+		k.LogInfo("No coins to burn", "coins", burnCoins)
+		return nil
+	}
+	k.LogInfo("Burning coins", "coins", burnCoins)
+	return k.bank.BurnCoins(ctx, types.ModuleName, GetCoins(burnCoins))
 }
 
 func GetCoins(coins int64) sdk.Coins {

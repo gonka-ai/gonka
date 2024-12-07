@@ -84,7 +84,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		inferenceSeed := hashStringToInt64(inferenceWithExecutor.Inference.InferenceId)
 
 		shouldValidate, _ := ShouldValidate(&inferenceWithExecutor.Executor, transactionRecorder.Address,
-			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower, inferenceSeed+poc.Seed)
+			r.ValidatorPower, r.TotalPower-inferenceWithExecutor.CurrentPower, inferenceSeed+poc.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}

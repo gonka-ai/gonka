@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	inference "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -157,9 +158,17 @@ func TestActualSettle(t *testing.T) {
 	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
 	keeper.SetParticipant(ctx, participant1)
 	keeper.SetParticipant(ctx, participant2)
+	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		PocStartBlockHeight: 10,
+	})
 
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, inference.GetCoins(inference.EpochNewCoin)).Return(nil)
-	err := keeper.SettleAccounts(ctx, 10)
+	// Issue refund immediately
+	participant2Address, err := sdk.AccAddressFromBech32(participant2.Address)
+	require.NoError(t, err)
+
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, participant2Address, inference.GetCoins(500)).Return(nil)
+	err = keeper.SettleAccounts(ctx, 10)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
 	require.True(t, found)
@@ -181,5 +190,6 @@ func TestActualSettle(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount2.WorkCoins)
 	require.Equal(t, uint64(inference.EpochNewCoin/2), settleAmount2.RewardCoins)
-	require.Equal(t, uint64(500), settleAmount2.RefundCoins)
+	// Refund should already have been issued
+	require.Equal(t, uint64(0), settleAmount2.RefundCoins)
 }
