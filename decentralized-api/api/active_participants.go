@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	storetypes "cosmossdk.io/store/types"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -115,6 +117,12 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
 	// Register interfaces used in your types
 	types.RegisterInterfaces(interfaceRegistry)
+
+	// Not sure if I need to do it or not?
+	//interfaceRegistry.RegisterImplementations((*sdk.Msg)(nil),
+	//	&storetypes.CommitInfo{},
+	//)
+
 	// Create the codec
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 
@@ -135,6 +143,25 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 	vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 	if err != nil {
 		slog.Error("Failed to get validators", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	commitInfoResponse, err := rplClient.ABCIQueryWithOptions(
+		context.Background(),
+		"/commit",
+		nil,
+		rpcclient.ABCIQueryOptions{Height: activeParticipants.CreatedAtBlockHeight, Prove: false},
+	)
+	if err != nil {
+		slog.Error("Failed to get commit", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var commitInfo storetypes.CommitInfo
+	if err := cdc.Unmarshal(commitInfoResponse.Response.Value, &commitInfo); err != nil {
+		slog.Error("Failed to unmarshal active participant", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -36,26 +36,11 @@ type ProofOps struct {
 	Ops []ProofOp `json:"ops"`
 }
 
-type ValidatorInfo struct {
-	Address          string `json:"address"`
-	PubKey           string `json:"pub_key"`
-	VotingPower      int64  `json:"voting_power"`
-	ProposerPriority int64  `json:"proposer_priority"`
-}
-
 // The JSON structure we received
 type InputJSON struct {
-	ActiveParticipants ActiveParticipants `json:"active_participants"`
-	ProofOps           ProofOps           `json:"proof_ops"`
-	Validators         []ValidatorInfo    `json:"validators"`
-}
-
-// Dummy function to get a trusted app hash for demonstration.
-// In reality, you must have a trusted block header from a known trusted source.
-func getTrustedAppHash() []byte {
-	// In a real scenario, this would be from a previously verified header.
-	// Here we just return a dummy hash:
-	return []byte("some_trusted_app_hash_from_header")
+	ActiveParticipants      ActiveParticipants `json:"active_participants"`
+	ActiveParticipantsBytes string             `json:"active_participants_bytes"`
+	ProofOps                ProofOps           `json:"proof_ops"`
 }
 
 func getBlockAppHash() []byte {
@@ -64,14 +49,6 @@ func getBlockAppHash() []byte {
 		log.Fatalf("failed to decode app hash: %v", err)
 	}
 
-	return bytes
-}
-
-func getBlockHash() []byte {
-	bytes, err := hex.DecodeString("6CD832279C1EF1C6201E3D6B77AD87634B7B85DC4C58E8362451E558ACDF3336")
-	if err != nil {
-		log.Fatalf("failed to decode app hash: %v", err)
-	}
 	return bytes
 }
 
@@ -228,17 +205,6 @@ func VerifyMain() {
 		log.Printf("simple key: %v", simpleKeyBytes)
 	}
 
-	// The value we want to verify is the JSON of active_participants.
-	// In Cosmos SDK, the value stored is often amino or protobuf encoded.
-	// Here we just assume the exact JSON matches what is stored.
-	// In practice, you must know the exact encoding the chain uses.
-	// For demonstration, let's just encode the active_participants back to JSON
-	// and assume that's the value stored.
-	storedValue, err := json.Marshal(input.ActiveParticipants)
-	if err != nil {
-		log.Fatalf("failed to marshal active participants: %v", err)
-	}
-
 	// Verify the simple proof first: This usually ensures that the named store (e.g., "inference") is included in the root.
 	// In many Cosmos-based chains, the `simple` proof is the MultiStore proof that proves a sub-store (like IAVL store) root.
 
@@ -266,6 +232,11 @@ func VerifyMain() {
 	// If you had the sub-store root from the simple proof, you'd verify iavlOp against it.
 	// For now, let's pretend we directly verify iavlProof against blockAppHash (not correct in real scenario).
 	// A real chain would provide a combined proof or you'd know how to chain them.
+
+	storedValue, err := hex.DecodeString(input.ActiveParticipantsBytes)
+	if err != nil {
+		log.Fatalf("failed to decode stored value: %v", err)
+	}
 
 	// ICS23 Verification call:
 	verified := ics23.VerifyMembership(iavlSpec, blockAppHash, iavlProof, iavlKeyBytes, storedValue)
