@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/hex"
+	"github.com/cosmos/gogoproto/proto"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -160,7 +161,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 	}
 
 	var commitInfo storetypes.CommitInfo
-	if err := cdc.Unmarshal(commitInfoResponse.Response.Value, &commitInfo); err != nil {
+	if err := proto.Unmarshal(commitInfoResponse.Response.Value, &commitInfo); err != nil {
 		slog.Error("Failed to unmarshal active participant", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
