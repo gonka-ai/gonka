@@ -43,15 +43,6 @@ func (k Keeper) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGrou
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	if req.PocStartBlockHeight == 0 {
-		currEpochGroup, err := k.GetCurrentEpochGroup(ctx)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		return &types.QueryGetEpochGroupDataResponse{EpochGroupData: *currEpochGroup.GroupData}, nil
-	}
-
 	val, found := k.GetEpochGroupData(
 		ctx,
 		req.PocStartBlockHeight,
