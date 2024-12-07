@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,10 +18,11 @@ import (
 )
 
 type ActiveParticipantWithProof struct {
-	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
-	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
-	Validators         []*types2.Validator      `json:"validators"`
-	Block              *types2.Block            `json:"block"`
+	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
+	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
+	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
+	Validators              []*types2.Validator      `json:"validators"`
+	Block                   *types2.Block            `json:"block"`
 }
 
 func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
@@ -137,11 +139,14 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		return
 	}
 
+	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
+
 	response := ActiveParticipantWithProof{
-		ActiveParticipants: activeParticipants,
-		ProofOps:           *result.Response.ProofOps,
-		Validators:         vals.Validators,
-		Block:              block.Block,
+		ActiveParticipants:      activeParticipants,
+		ActiveParticipantsBytes: activeParticipantsBytes,
+		ProofOps:                *result.Response.ProofOps,
+		Validators:              vals.Validators,
+		Block:                   block.Block,
 	}
 
 	RespondWithJson(w, response)
