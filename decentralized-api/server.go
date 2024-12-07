@@ -10,7 +10,6 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
@@ -73,7 +72,6 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/epochs/", api.WrapGetParticipantsByEpoch(transactionRecorder, config))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
-	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
 		addr, err := cosmos_client.PubKeyToAddress(pubkey)
@@ -984,54 +982,4 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 		return value
 	}
 	return defaultValue
-}
-
-func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Extract address from URL path
-		address := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-by-address/")
-		if address == "" {
-			http.Error(w, "Address is required", http.StatusBadRequest)
-			return
-		}
-
-		slog.Debug("Getting pubkey for address", "address", address)
-
-		client := recorder.NewAuthQueryClient()
-
-		// Query the public key using the cosmos client
-		pubKey, err := cosmos_client.GetPubKeyByAddress(client, address)
-		if err != nil {
-			slog.Error("Failed to get public key", "address", address, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		pubKeyString := cosmos_client.PubKeyToString(pubKey)
-		var addressFromPubKey = ""
-		addressFromPubKey, err = cosmos_client.PubKeyToAddress(cosmos_client.PubKeyToString(pubKey))
-		if err != nil {
-			slog.Error("Failed to get address from public key", "pubKey", pubKeyString, "error", err)
-		}
-
-		// Create response structure
-		response := struct {
-			Address           string `json:"address"`
-			PubKey            string `json:"pub_key"`
-			HexPubKey         string `json:"hex_pub_key"`
-			AddressFromPubKey string `json:"address_from_pub_key"`
-		}{
-			Address:           address,
-			PubKey:            pubKeyString,
-			HexPubKey:         hex.EncodeToString(pubKey.Bytes()),
-			AddressFromPubKey: addressFromPubKey,
-		}
-
-		api.RespondWithJson(w, response)
-	}
 }
