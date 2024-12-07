@@ -28,19 +28,3 @@ message PoCValidation {
   double probabilityHonest = 11;
   bool fraudDetected = 12;
 }
-/*
-message ValidatedPoCBatch {
-  string participantAddress = 1;
-  int64 pocStageStartBlockHeight = 2;
-  int64 validatedAtBlockHeight = 3;
-  repeated int64 nonces = 4;
-  repeated double dist = 5;
-
-  repeated double receivedDist = 6;
-  double rTarget = 7;
-  double fraudThreshold = 8;
-  int64 nInvalid = 9;
-  double probabilityHonest = 10;
-  bool fraudDetected = 11;
-}
-*/
