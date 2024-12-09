@@ -78,7 +78,7 @@ class InferenceAccountingTests : TestermintTest() {
         val currentHeight = highestFunded.getCurrentBlockHeight()
         val preSettle = highestFunded.api.getParticipants()
         val nextSettleBlock = getNextSettleBlock(currentHeight)
-        highestFunded.node.waitForMinimumBlock(nextSettleBlock + 2)
+        highestFunded.node.waitForMinimumBlock(nextSettleBlock + 10)
 
         val afterSettle = highestFunded.api.getParticipants()
         val coinRewards = calculateCoinRewards(preSettle, EPOCH_NEW_COIN, nextSettleBlock - 1)

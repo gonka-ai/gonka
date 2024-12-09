@@ -32,7 +32,7 @@ func (k Keeper) GetInferencesWithExecutors(goCtx context.Context, req *types.Que
 		return nil, status.Error(codes.Internal, "error getting current epoch group")
 	}
 
-	votingData, err := currentEpochGroup.GetVotingData(ctx)
+	votingData, err := currentEpochGroup.GetValidationWeights()
 	if err != nil {
 		k.LogError("GetInferencesWithExecutors: Error getting voting data", "error", err)
 		return nil, status.Error(codes.Internal, "error getting voting data")
