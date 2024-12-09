@@ -21,6 +21,7 @@ func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
 	store.Set(key, b)
 }
 
+// TODO: RENAME GetPoCBatchesByStage > ByEpoch
 func (k Keeper) GetPoCBatchesByStage(ctx context.Context, pocStageStartBlockHeight int64) (map[string][]types.PoCBatch, error) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	prefixKey := append(types.KeyPrefix(types.PocBatchKeyPrefix), []byte(strconv.FormatInt(pocStageStartBlockHeight, 10)+"/")...)

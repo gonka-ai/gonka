@@ -4,7 +4,6 @@ import (
 	"context"
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
-	"encoding/binary"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
 	"log"
@@ -29,12 +28,6 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 		if err != nil {
 			k.LogWarn("Failed to update member", "error", err)
 		}
-	}
-
-	if !isActiveValidator(oldParticipant) && isActiveValidator(&participant) {
-		k.incrementParticipantCounter(ctx)
-	} else if isActiveValidator(oldParticipant) && !isActiveValidator(&participant) {
-		k.decrementParticipantCounter(ctx)
 	}
 }
 
@@ -123,12 +116,7 @@ func (k Keeper) RemoveParticipant(
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
 	key := types.ParticipantKey(index)
 
-	participant := k.retrieveParticipant(&store, key)
-
 	store.Delete(key)
-	if participant != nil && isActiveValidator(participant) {
-		k.decrementParticipantCounter(ctx)
-	}
 }
 
 // GetAllParticipant returns all participant
@@ -146,26 +134,4 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	}
 
 	return
-}
-
-func (k Keeper) setParticipantCounter(counter uint32, ctx context.Context) uint32 {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, []byte{})
-
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, counter)
-
-	store.Set(types.ParticipantCounterKey(), b)
-
-	return counter
-}
-
-func (k Keeper) incrementParticipantCounter(ctx context.Context) uint32 {
-	current := k.GetParticipantCounter(ctx)
-	return k.setParticipantCounter(current+1, ctx)
-}
-
-func (k Keeper) decrementParticipantCounter(ctx context.Context) uint32 {
-	current := k.GetParticipantCounter(ctx)
-	return k.setParticipantCounter(current-1, ctx)
 }

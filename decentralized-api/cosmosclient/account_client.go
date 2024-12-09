@@ -1,60 +1,15 @@
 package cosmosclient
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
-	"fmt"
-	"github.com/cosmos/cosmos-sdk/codec"
-	"github.com/cosmos/cosmos-sdk/codec/types"
-	"log"
 	"log/slog"
 
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
-	auth "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"golang.org/x/crypto/ripemd160"
 )
-
-func (icc *InferenceCosmosClient) NewAuthQueryClient() auth.QueryClient {
-	// Create a new query client
-	queryClient := auth.NewQueryClient(icc.Client.Context())
-	return queryClient
-}
-
-func GetPubKeyByAddress(client auth.QueryClient, address string) (cryptotypes.PubKey, error) {
-	// Create the request
-	req := &auth.QueryAccountRequest{Address: address}
-
-	// Send the request
-	res, err := client.Account(context.Background(), req)
-	if err != nil {
-		log.Fatalf("Failed to query account: %v", err)
-	}
-
-	// Unmarshal the account
-	var account auth.BaseAccount
-	interfaceRegistry := types.NewInterfaceRegistry()
-	auth.RegisterInterfaces(interfaceRegistry)
-	cdc := codec.NewProtoCodec(interfaceRegistry)
-
-	err = cdc.UnpackAny(res.Account, &account)
-	if err != nil {
-		slog.Error("Failed to unmarshal account: %v", err)
-	}
-
-	// Get the public key
-	pubKey := account.GetPubKey()
-
-	if pubKey == nil {
-		fmt.Println("Account has no public key (no transactions signed yet)")
-		return nil, errors.New("account has no public key")
-	}
-
-	return pubKey, nil
-}
 
 // PubKeyToAddress Public key bytes to Cosmos address
 //

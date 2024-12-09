@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"decentralized-api/api"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -11,16 +10,11 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
 	"time"
 
-	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
-	types2 "github.com/cometbft/cometbft/types"
-	"github.com/cosmos/cosmos-sdk/codec"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"io"
 	"log"
@@ -75,10 +69,9 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/participants/", wrapGetInferenceParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/nodes", api.WrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(nodeBroker, config))
-	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
+	mux.HandleFunc("/v1/epochs/", api.WrapGetParticipantsByEpoch(transactionRecorder, config))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
-	mux.HandleFunc("/v1/debug/pubkey-by-address/", wrapGetPubKeyByAddress(transactionRecorder))
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
 		addr, err := cosmos_client.PubKeyToAddress(pubkey)
@@ -137,71 +130,6 @@ func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) f
 			return
 		}
 		processGetInferenceParticipantByAddress(w, request, recorder)
-	}
-}
-
-type ActiveParticipantWithProof struct {
-	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
-	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
-	Validators         []*types2.Validator      `json:"validators"`
-	Block              *types2.Block            `json:"block"`
-}
-
-func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		rplClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
-		if err != nil {
-			slog.Error("Failed to create rpc client", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
-		if err != nil {
-			slog.Error("Failed to query active participants", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		interfaceRegistry := codectypes.NewInterfaceRegistry()
-		// Register interfaces used in your types
-		types.RegisterInterfaces(interfaceRegistry)
-		// Create the codec
-		cdc := codec.NewProtoCodec(interfaceRegistry)
-
-		var activeParticipants types.ActiveParticipants
-		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			slog.Error("Failed to unmarshal active participant", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-		if err != nil {
-			slog.Error("Failed to get block", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-		if err != nil {
-			slog.Error("Failed to get validators", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		response := ActiveParticipantWithProof{
-			ActiveParticipants: activeParticipants,
-			ProofOps:           *result.Response.ProofOps,
-			Validators:         vals.Validators,
-			Block:              block.Block,
-		}
-
-		writeResponseBody(response, w)
 	}
 }
 
@@ -692,19 +620,6 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 	return
 }
 
-func writeResponseBody(body any, w http.ResponseWriter) {
-	respBytes, err := json.Marshal(body)
-	if err != nil {
-		slog.Error("Failed to marshal response", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
-}
-
 func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.InferenceCosmosClient, accountName string, seed int32) (*ResponseWithBody, error) {
 	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
@@ -1067,54 +982,4 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 		return value
 	}
 	return defaultValue
-}
-
-func wrapGetPubKeyByAddress(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Extract address from URL path
-		address := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-by-address/")
-		if address == "" {
-			http.Error(w, "Address is required", http.StatusBadRequest)
-			return
-		}
-
-		slog.Debug("Getting pubkey for address", "address", address)
-
-		client := recorder.NewAuthQueryClient()
-
-		// Query the public key using the cosmos client
-		pubKey, err := cosmos_client.GetPubKeyByAddress(client, address)
-		if err != nil {
-			slog.Error("Failed to get public key", "address", address, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		pubKeyString := cosmos_client.PubKeyToString(pubKey)
-		var addressFromPubKey = ""
-		addressFromPubKey, err = cosmos_client.PubKeyToAddress(cosmos_client.PubKeyToString(pubKey))
-		if err != nil {
-			slog.Error("Failed to get address from public key", "pubKey", pubKeyString, "error", err)
-		}
-
-		// Create response structure
-		response := struct {
-			Address           string `json:"address"`
-			PubKey            string `json:"pub_key"`
-			HexPubKey         string `json:"hex_pub_key"`
-			AddressFromPubKey string `json:"address_from_pub_key"`
-		}{
-			Address:           address,
-			PubKey:            pubKeyString,
-			HexPubKey:         hex.EncodeToString(pubKey.Bytes()),
-			AddressFromPubKey: addressFromPubKey,
-		}
-
-		api.RespondWithJson(w, response)
-	}
 }
