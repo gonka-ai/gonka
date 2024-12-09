@@ -18,7 +18,6 @@ import (
 	"log"
 	"log/slog"
 	"math"
-	"math/rand"
 	"net/http"
 	"strings"
 )
@@ -80,6 +79,9 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 
 	var toValidate []types.Inference
 	for _, inferenceWithExecutor := range r.InferenceWithExecutor {
+		if inferenceWithExecutor.Executor.Address == transactionRecorder.Address {
+			continue
+		}
 		shouldValidate := keeper.ShouldValidate(
 			poc.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
@@ -124,16 +126,6 @@ func logInferencesToValidate(toValidate []types.Inference) {
 		ids = append(ids, inf.InferenceId)
 	}
 	slog.Info("Validation: Inferences to validate", "inferences", ids)
-}
-
-func ShouldValidate(executorAddress string, executorReputation float32, currentAccountAddress string, currentAccountPower uint32, totalPower uint32, seed int64) (bool, float32) {
-	if executorAddress == currentAccountAddress {
-		return false, 0.0
-	}
-	targetValidations := 1 - (executorReputation * 0.9)
-	ourProbability := targetValidations * (float32(currentAccountPower) / float32(totalPower))
-	randFloat := rand.New(rand.NewSource(seed)).Float32()
-	return randFloat < ourProbability, ourProbability
 }
 
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {

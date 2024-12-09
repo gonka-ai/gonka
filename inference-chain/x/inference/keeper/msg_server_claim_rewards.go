@@ -2,12 +2,12 @@ package keeper
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
-	"hash/fnv"
-	"math/rand"
 )
 
 func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimRewards) (*types.MsgClaimRewardsResponse, error) {
@@ -182,16 +182,25 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32, executorPower uint32) bool {
 	targetValidations := 1 - (inferenceDetails.ExecutorReputation * 0.9)
 	ourProbability := targetValidations * (float32(validatorPower) / float32(totalPower-executorPower))
-	inferenceSeed := hashStringToInt64(inferenceDetails.InferenceId)
-	randFloat := rand.New(rand.NewSource(seed + inferenceSeed)).Float64()
+	randFloat := deterministicFloat(seed, inferenceDetails.InferenceId)
 	return randFloat < float64(ourProbability)
 }
 
-func hashStringToInt64(s string) int64 {
-	h := fnv.New64a()      // Create a new 64-bit FNV-1a hash
-	h.Write([]byte(s))     // Write the string to the hash
-	hashValue := h.Sum64() // Get the unsigned 64-bit hash
+// In lieu of a real random number generator, we use a deterministic function that takes a seed and an inferenceId
+// This is more or less as random as using a seed in a deterministic random determined by this same hash, and has
+// the advantage of being 100% deterministic regardless of platform and also faster to compute.
+func deterministicFloat(seed int64, inferenceId string) float64 {
+	// Concatenate the seed and inferenceId into a single string
+	input := fmt.Sprintf("%d:%s", seed, inferenceId)
 
-	// Convert to int64, taking care of potential overflow.
-	return int64(hashValue)
+	// Use a cryptographic hash (e.g., SHA-256)
+	h := sha256.New()
+	h.Write([]byte(input))
+	hash := h.Sum(nil)
+
+	// Convert the first 8 bytes of the hash into a uint64
+	hashInt := binary.BigEndian.Uint64(hash[:8])
+
+	// Normalize the uint64 value to a float64 in the range [0, 1)
+	return float64(hashInt) / float64(^uint64(0)) // ^uint64(0) gives max uint64
 }
