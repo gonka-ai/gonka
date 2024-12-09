@@ -29,8 +29,10 @@ const (
 	Query_GetRandomExecutor_FullMethodName          = "/inference.inference.Query/GetRandomExecutor"
 	Query_EpochGroupData_FullMethodName             = "/inference.inference.Query/EpochGroupData"
 	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
-	Query_PocBatchesForStage_FullMethodName         = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName            = "/inference.inference.Query/GetCurrentEpoch"
+	Query_SettleAmount_FullMethodName               = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName      = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -54,10 +56,12 @@ type QueryClient interface {
 	// Queries a list of EpochGroupData items.
 	EpochGroupData(ctx context.Context, in *QueryGetEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupDataResponse, error)
 	EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupDataResponse, error)
-	// Queries a list of PocBatchesForStage items.
-	PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error)
-	// Queries a list of GetCurrentEpoch items.
-	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
+	// Queries a list of SettleAmount items.
+	SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error)
+	SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error)
+	// Queries a list of EpochGroupValidations items.
+	EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error)
+	EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error)
 }
 
 type queryClient struct {
@@ -158,18 +162,36 @@ func (c *queryClient) EpochGroupDataAll(ctx context.Context, in *QueryAllEpochGr
 	return out, nil
 }
 
-func (c *queryClient) PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error) {
-	out := new(QueryPocBatchesForStageResponse)
-	err := c.cc.Invoke(ctx, Query_PocBatchesForStage_FullMethodName, in, out, opts...)
+func (c *queryClient) SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error) {
+	out := new(QueryGetSettleAmountResponse)
+	err := c.cc.Invoke(ctx, Query_SettleAmount_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *queryClient) GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error) {
-	out := new(QueryGetCurrentEpochResponse)
-	err := c.cc.Invoke(ctx, Query_GetCurrentEpoch_FullMethodName, in, out, opts...)
+func (c *queryClient) SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error) {
+	out := new(QueryAllSettleAmountResponse)
+	err := c.cc.Invoke(ctx, Query_SettleAmountAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error) {
+	out := new(QueryGetEpochGroupValidationsResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupValidations_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error) {
+	out := new(QueryAllEpochGroupValidationsResponse)
+	err := c.cc.Invoke(ctx, Query_EpochGroupValidationsAll_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -197,10 +219,12 @@ type QueryServer interface {
 	// Queries a list of EpochGroupData items.
 	EpochGroupData(context.Context, *QueryGetEpochGroupDataRequest) (*QueryGetEpochGroupDataResponse, error)
 	EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error)
-	// Queries a list of PocBatchesForStage items.
-	PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error)
-	// Queries a list of GetCurrentEpoch items.
-	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
+	// Queries a list of SettleAmount items.
+	SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error)
+	SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error)
+	// Queries a list of EpochGroupValidations items.
+	EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error)
+	EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -238,11 +262,17 @@ func (UnimplementedQueryServer) EpochGroupData(context.Context, *QueryGetEpochGr
 func (UnimplementedQueryServer) EpochGroupDataAll(context.Context, *QueryAllEpochGroupDataRequest) (*QueryAllEpochGroupDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupDataAll not implemented")
 }
-func (UnimplementedQueryServer) PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PocBatchesForStage not implemented")
+func (UnimplementedQueryServer) SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleAmount not implemented")
 }
-func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
+func (UnimplementedQueryServer) SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleAmountAll not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidations not implemented")
+}
+func (UnimplementedQueryServer) EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidationsAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -437,38 +467,74 @@ func _Query_EpochGroupDataAll_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_PocBatchesForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryPocBatchesForStageRequest)
+func _Query_SettleAmount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetSettleAmountRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).PocBatchesForStage(ctx, in)
+		return srv.(QueryServer).SettleAmount(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Query_PocBatchesForStage_FullMethodName,
+		FullMethod: Query_SettleAmount_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).PocBatchesForStage(ctx, req.(*QueryPocBatchesForStageRequest))
+		return srv.(QueryServer).SettleAmount(ctx, req.(*QueryGetSettleAmountRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_GetCurrentEpoch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetCurrentEpochRequest)
+func _Query_SettleAmountAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllSettleAmountRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(QueryServer).GetCurrentEpoch(ctx, in)
+		return srv.(QueryServer).SettleAmountAll(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Query_GetCurrentEpoch_FullMethodName,
+		FullMethod: Query_SettleAmountAll_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).GetCurrentEpoch(ctx, req.(*QueryGetCurrentEpochRequest))
+		return srv.(QueryServer).SettleAmountAll(ctx, req.(*QueryAllSettleAmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochGroupValidations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetEpochGroupValidationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupValidations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupValidations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupValidations(ctx, req.(*QueryGetEpochGroupValidationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochGroupValidationsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllEpochGroupValidationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochGroupValidationsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochGroupValidationsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochGroupValidationsAll(ctx, req.(*QueryAllEpochGroupValidationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -521,12 +587,20 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_EpochGroupDataAll_Handler,
 		},
 		{
-			MethodName: "PocBatchesForStage",
-			Handler:    _Query_PocBatchesForStage_Handler,
+			MethodName: "SettleAmount",
+			Handler:    _Query_SettleAmount_Handler,
 		},
 		{
-			MethodName: "GetCurrentEpoch",
-			Handler:    _Query_GetCurrentEpoch_Handler,
+			MethodName: "SettleAmountAll",
+			Handler:    _Query_SettleAmountAll_Handler,
+		},
+		{
+			MethodName: "EpochGroupValidations",
+			Handler:    _Query_EpochGroupValidations_Handler,
+		},
+		{
+			MethodName: "EpochGroupValidationsAll",
+			Handler:    _Query_EpochGroupValidationsAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

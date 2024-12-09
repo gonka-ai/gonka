@@ -57,7 +57,16 @@ class InferenceAccountingTests : TestermintTest() {
     fun `test post settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
+        val participants = highestFunded.api.getParticipants()
+        participants.forEach {
+            Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
+        }
         verifySettledInferences(highestFunded, 4)
+        val postParticipants = highestFunded.api.getParticipants()
+        postParticipants.forEach {
+            Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
+        }
+
     }
 
     private fun verifySettledInferences(highestFunded: LocalInferencePair, inferenceCount: Int) {
@@ -69,7 +78,7 @@ class InferenceAccountingTests : TestermintTest() {
         val currentHeight = highestFunded.getCurrentBlockHeight()
         val preSettle = highestFunded.api.getParticipants()
         val nextSettleBlock = getNextSettleBlock(currentHeight)
-        highestFunded.node.waitForMinimumBlock(nextSettleBlock)
+        highestFunded.node.waitForMinimumBlock(nextSettleBlock + 10)
 
         val afterSettle = highestFunded.api.getParticipants()
         val coinRewards = calculateCoinRewards(preSettle, EPOCH_NEW_COIN, nextSettleBlock - 1)

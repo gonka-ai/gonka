@@ -3,6 +3,7 @@ package poc
 import (
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -220,6 +222,19 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 		return
 	}
+	// once the new stage has started, request our money!
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight - 1) {
+		go func() {
+			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", PreviousSeed)
+			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
+				Seed:           PreviousSeed.Seed,
+				PocStartHeight: uint64(PreviousSeed.Height),
+			})
+			if err != nil {
+				slog.Error("Failed to send ClaimRewards transaction", "error", err)
+			}
+		}()
+	}
 }
 
 func getBlockHeight(data map[string]interface{}) (int64, error) {
@@ -260,6 +275,15 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
+var CurrentSeed SeedInfo
+var PreviousSeed SeedInfo
+
+type SeedInfo struct {
+	Seed      int64
+	Height    int64
+	Signature string
+}
+
 func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
 	return func(proofs *ProofOfComputeResults) {
 		nonce := make([]string, len(proofs.Results))
@@ -267,18 +291,46 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			nonce[i] = p.Nonce
 		}
 
+		slog.Debug("Old Seed Signature", "seed", CurrentSeed)
+		err := getNextSeedSignature(proofs, transactionRecorder)
+		if err != nil {
+			slog.Error("Failed to get next seed signature", "error", err)
+			return
+		}
+		slog.Debug("New Seed Signature", "seed", CurrentSeed)
+
 		message := inference.MsgSubmitPoC{
-			BlockHeight: proofs.BlockHeight,
-			Nonce:       nonce,
+			BlockHeight:   proofs.BlockHeight,
+			Nonce:         nonce,
+			SeedSignature: CurrentSeed.Signature,
 		}
 
 		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
 
-		err := transactionRecorder.SubmitPoC(&message)
+		err = transactionRecorder.SubmitPoC(&message)
 		if err != nil {
 			log.Printf("Failed to send SubmitPoC transaction. %v", err)
 		}
 	}
+}
+
+func getNextSeedSignature(proofs *ProofOfComputeResults, transactionRecorder cosmosclient.InferenceCosmosClient) error {
+	newSeed := rand.Int63()
+	newHeight := proofs.BlockHeight
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
+	signature, err := transactionRecorder.SignBytes(seedBytes)
+	if err != nil {
+		slog.Error("Failed to sign bytes", "error", err)
+		return err
+	}
+	PreviousSeed = CurrentSeed
+	CurrentSeed = SeedInfo{
+		Seed:      newSeed,
+		Height:    newHeight,
+		Signature: hex.EncodeToString(signature),
+	}
+	return nil
 }
 
 func incrementBytes(nonce []byte) {

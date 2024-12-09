@@ -79,14 +79,14 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.Equal(t, types.Participant{
 		Index:             testutil.Executor,
 		Address:           testutil.Executor,
-		Reputation:        1,
+		Reputation:        0,
 		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
-		Status:            types.ParticipantStatus_RAMPING,
+		Status:            types.ParticipantStatus_ACTIVE,
 		PromptTokenCount: map[string]uint64{
 			"model1": 10,
 			"model2": 0,

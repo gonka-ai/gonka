@@ -26,6 +26,7 @@ service Msg {
   rpc SubmitNewUnfundedParticipant (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
   rpc InvalidateInference          (MsgInvalidateInference         ) returns (MsgInvalidateInferenceResponse         );
   rpc RevalidateInference          (MsgRevalidateInference         ) returns (MsgRevalidateInferenceResponse         );
+  rpc ClaimRewards                 (MsgClaimRewards                ) returns (MsgClaimRewardsResponse                );
   rpc SubmitPocBatch               (MsgSubmitPocBatch              ) returns (MsgSubmitPocBatchResponse              );
   rpc SubmitPocValidation          (MsgSubmitPocValidation         ) returns (MsgSubmitPocValidationResponse         );
 }
@@ -104,9 +105,10 @@ message MsgValidationResponse {}
 
 message MsgSubmitPoC {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator     = 1;
-           int64  blockHeight = 2;
-  repeated string nonce       = 3;
+           string creator       = 1;
+           int64  blockHeight   = 2;
+  repeated string nonce         = 3;
+           string seedSignature = 4;
 }
 
 message MsgSubmitPoCResponse {}
@@ -139,6 +141,18 @@ message MsgRevalidateInference {
 
 message MsgRevalidateInferenceResponse {}
 
+message MsgClaimRewards {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator        = 1;
+  int64  seed           = 2;
+  uint64 pocStartHeight = 3;
+}
+
+message MsgClaimRewardsResponse {
+  uint64 amount = 1;
+  string result = 2;
+}
+
 message MsgSubmitPocBatch {
   option (cosmos.msg.v1.signer) = "creator";
            string creator                  = 1;
@@ -165,4 +179,3 @@ message MsgSubmitPocValidation {
 }
 
 message MsgSubmitPocValidationResponse {}
-

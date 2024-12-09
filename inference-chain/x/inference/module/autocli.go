@@ -72,6 +72,28 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStartBlockHeight"}},
 				},
 				{
+					RpcMethod: "SettleAmountAll",
+					Use:       "list-settle-amount",
+					Short:     "List all settleAmount",
+				},
+				{
+					RpcMethod:      "SettleAmount",
+					Use:            "show-settle-amount [id]",
+					Short:          "Shows a settleAmount",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod: "EpochGroupValidationsAll",
+					Use:       "list-epoch-group-validations",
+					Short:     "List all epochGroupValidations",
+				},
+				{
+					RpcMethod:      "EpochGroupValidations",
+					Use:            "show-epoch-group-validations [id]",
+					Short:          "Shows a epochGroupValidations",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "pocStartBlockHeight"}},
+				},
+				{
 					RpcMethod:      "PocBatchesForStage",
 					Use:            "poc-batches-for-stage [block-height]",
 					Short:          "Query pocBatchesForStage",
@@ -84,8 +106,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query getCurrentEpoch",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
-
-				// this line is used by ignite scaffolding # autocli/query
+                // this line is used by ignite scaffolding # autocli/query
 			},
 		},
 		Tx: &autocliv1.ServiceCommandDescriptor{
@@ -143,6 +164,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "revalidate-inference [inference-id]",
 					Short:          "Send a revalidateInference tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "ClaimRewards",
+					Use:            "claim-rewards [seed] [poc-start-height]",
+					Short:          "Send a claimRewards tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "pocStartHeight"}},
 				},
 				{
 					RpcMethod:      "SubmitPocBatch",

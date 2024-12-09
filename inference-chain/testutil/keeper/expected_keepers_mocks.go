@@ -173,6 +173,20 @@ func (m *MockBankEscrowKeeper) EXPECT() *MockBankEscrowKeeperMockRecorder {
 	return m.recorder
 }
 
+// BurnCoins mocks base method.
+func (m *MockBankEscrowKeeper) BurnCoins(ctx context.Context, moduleName string, amt types.Coins) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BurnCoins", ctx, moduleName, amt)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// BurnCoins indicates an expected call of BurnCoins.
+func (mr *MockBankEscrowKeeperMockRecorder) BurnCoins(ctx, moduleName, amt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BurnCoins", reflect.TypeOf((*MockBankEscrowKeeper)(nil).BurnCoins), ctx, moduleName, amt)
+}
+
 // MintCoins mocks base method.
 func (m *MockBankEscrowKeeper) MintCoins(ctx context.Context, moduleName string, amt types.Coins) error {
 	m.ctrl.T.Helper()
@@ -722,6 +736,21 @@ func (m *MockParticipantKeeper) GetParticipants(ctx context.Context, ids []strin
 func (mr *MockParticipantKeeperMockRecorder) GetParticipants(ctx, ids any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParticipants", reflect.TypeOf((*MockParticipantKeeper)(nil).GetParticipants), ctx, ids)
+}
+
+// ParticipantAll mocks base method.
+func (m *MockParticipantKeeper) ParticipantAll(ctx context.Context, req *types1.QueryAllParticipantRequest) (*types1.QueryAllParticipantResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ParticipantAll", ctx, req)
+	ret0, _ := ret[0].(*types1.QueryAllParticipantResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ParticipantAll indicates an expected call of ParticipantAll.
+func (mr *MockParticipantKeeperMockRecorder) ParticipantAll(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParticipantAll", reflect.TypeOf((*MockParticipantKeeper)(nil).ParticipantAll), ctx, req)
 }
 
 // RemoveParticipant mocks base method.

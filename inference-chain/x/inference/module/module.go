@@ -203,7 +203,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64) {
 	am.LogInfo("onSetNewValidatorsStage start", "blockHeight", blockHeight)
-	err := am.SettleAccounts(ctx)
+	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
+	err := am.keeper.SettleAccounts(ctx, pocHeight)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", "error", err.Error())
 	}

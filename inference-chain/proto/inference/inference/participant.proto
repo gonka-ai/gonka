@@ -14,7 +14,7 @@ enum ParticipantStatus {
 message Participant {
   string index = 1;
   string address = 2;
-  int32 reputation = 3;
+  float reputation = 3;
   int32 weight = 4;
   int64 joinTime = 5;
   int64 joinHeight = 6;
@@ -22,6 +22,7 @@ message Participant {
   string inferenceUrl = 8;
   repeated string models = 9;
   ParticipantStatus status = 10;
+  // TODO: must be removed! maps are not deterministic
   map<string, uint64> promptTokenCount = 11;
   map<string, uint64> completionTokenCount = 12;
   uint64 inferenceCount = 13;

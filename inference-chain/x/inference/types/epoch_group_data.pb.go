@@ -4,6 +4,7 @@
 package types
 
 import (
+	encoding_binary "encoding/binary"
 	fmt "fmt"
 	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
@@ -23,11 +24,14 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type EpochGroupData struct {
-	PocStartBlockHeight  uint64 `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
-	EpochGroupId         uint64 `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
-	EpochPolicy          string `protobuf:"bytes,3,opt,name=epochPolicy,proto3" json:"epochPolicy,omitempty"`
-	EffectiveBlockHeight uint64 `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
-	LastBlockHeight      uint64 `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
+	PocStartBlockHeight  uint64              `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
+	EpochGroupId         uint64              `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
+	EpochPolicy          string              `protobuf:"bytes,3,opt,name=epochPolicy,proto3" json:"epochPolicy,omitempty"`
+	EffectiveBlockHeight uint64              `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
+	LastBlockHeight      uint64              `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
+	MemberSeedSignatures []*SeedSignature    `protobuf:"bytes,6,rep,name=memberSeedSignatures,proto3" json:"memberSeedSignatures,omitempty"`
+	FinishedInferences   []*InferenceDetail  `protobuf:"bytes,7,rep,name=finishedInferences,proto3" json:"finishedInferences,omitempty"`
+	ValidationWeights    []*ValidationWeight `protobuf:"bytes,8,rep,name=validationWeights,proto3" json:"validationWeights,omitempty"`
 }
 
 func (m *EpochGroupData) Reset()         { *m = EpochGroupData{} }
@@ -98,8 +102,196 @@ func (m *EpochGroupData) GetLastBlockHeight() uint64 {
 	return 0
 }
 
+func (m *EpochGroupData) GetMemberSeedSignatures() []*SeedSignature {
+	if m != nil {
+		return m.MemberSeedSignatures
+	}
+	return nil
+}
+
+func (m *EpochGroupData) GetFinishedInferences() []*InferenceDetail {
+	if m != nil {
+		return m.FinishedInferences
+	}
+	return nil
+}
+
+func (m *EpochGroupData) GetValidationWeights() []*ValidationWeight {
+	if m != nil {
+		return m.ValidationWeights
+	}
+	return nil
+}
+
+type InferenceDetail struct {
+	InferenceId        string  `protobuf:"bytes,1,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	Executor           string  `protobuf:"bytes,2,opt,name=executor,proto3" json:"executor,omitempty"`
+	ExecutorReputation float32 `protobuf:"fixed32,3,opt,name=executorReputation,proto3" json:"executorReputation,omitempty"`
+}
+
+func (m *InferenceDetail) Reset()         { *m = InferenceDetail{} }
+func (m *InferenceDetail) String() string { return proto.CompactTextString(m) }
+func (*InferenceDetail) ProtoMessage()    {}
+func (*InferenceDetail) Descriptor() ([]byte, []int) {
+	return fileDescriptor_47040406f6377eb3, []int{1}
+}
+func (m *InferenceDetail) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *InferenceDetail) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_InferenceDetail.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *InferenceDetail) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_InferenceDetail.Merge(m, src)
+}
+func (m *InferenceDetail) XXX_Size() int {
+	return m.Size()
+}
+func (m *InferenceDetail) XXX_DiscardUnknown() {
+	xxx_messageInfo_InferenceDetail.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_InferenceDetail proto.InternalMessageInfo
+
+func (m *InferenceDetail) GetInferenceId() string {
+	if m != nil {
+		return m.InferenceId
+	}
+	return ""
+}
+
+func (m *InferenceDetail) GetExecutor() string {
+	if m != nil {
+		return m.Executor
+	}
+	return ""
+}
+
+func (m *InferenceDetail) GetExecutorReputation() float32 {
+	if m != nil {
+		return m.ExecutorReputation
+	}
+	return 0
+}
+
+type ValidationWeight struct {
+	MemberAddress string `protobuf:"bytes,1,opt,name=memberAddress,proto3" json:"memberAddress,omitempty"`
+	Weight        int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+}
+
+func (m *ValidationWeight) Reset()         { *m = ValidationWeight{} }
+func (m *ValidationWeight) String() string { return proto.CompactTextString(m) }
+func (*ValidationWeight) ProtoMessage()    {}
+func (*ValidationWeight) Descriptor() ([]byte, []int) {
+	return fileDescriptor_47040406f6377eb3, []int{2}
+}
+func (m *ValidationWeight) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ValidationWeight) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ValidationWeight.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ValidationWeight) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ValidationWeight.Merge(m, src)
+}
+func (m *ValidationWeight) XXX_Size() int {
+	return m.Size()
+}
+func (m *ValidationWeight) XXX_DiscardUnknown() {
+	xxx_messageInfo_ValidationWeight.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ValidationWeight proto.InternalMessageInfo
+
+func (m *ValidationWeight) GetMemberAddress() string {
+	if m != nil {
+		return m.MemberAddress
+	}
+	return ""
+}
+
+func (m *ValidationWeight) GetWeight() int64 {
+	if m != nil {
+		return m.Weight
+	}
+	return 0
+}
+
+type SeedSignature struct {
+	MemberAddress string `protobuf:"bytes,1,opt,name=memberAddress,proto3" json:"memberAddress,omitempty"`
+	Signature     string `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+}
+
+func (m *SeedSignature) Reset()         { *m = SeedSignature{} }
+func (m *SeedSignature) String() string { return proto.CompactTextString(m) }
+func (*SeedSignature) ProtoMessage()    {}
+func (*SeedSignature) Descriptor() ([]byte, []int) {
+	return fileDescriptor_47040406f6377eb3, []int{3}
+}
+func (m *SeedSignature) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *SeedSignature) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_SeedSignature.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *SeedSignature) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SeedSignature.Merge(m, src)
+}
+func (m *SeedSignature) XXX_Size() int {
+	return m.Size()
+}
+func (m *SeedSignature) XXX_DiscardUnknown() {
+	xxx_messageInfo_SeedSignature.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SeedSignature proto.InternalMessageInfo
+
+func (m *SeedSignature) GetMemberAddress() string {
+	if m != nil {
+		return m.MemberAddress
+	}
+	return ""
+}
+
+func (m *SeedSignature) GetSignature() string {
+	if m != nil {
+		return m.Signature
+	}
+	return ""
+}
+
 func init() {
 	proto.RegisterType((*EpochGroupData)(nil), "inference.inference.EpochGroupData")
+	proto.RegisterType((*InferenceDetail)(nil), "inference.inference.InferenceDetail")
+	proto.RegisterType((*ValidationWeight)(nil), "inference.inference.ValidationWeight")
+	proto.RegisterType((*SeedSignature)(nil), "inference.inference.SeedSignature")
 }
 
 func init() {
@@ -107,23 +299,36 @@ func init() {
 }
 
 var fileDescriptor_47040406f6377eb3 = []byte{
-	// 251 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xd2, 0xca, 0xcc, 0x4b, 0x4b,
-	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x52, 0x0b, 0xf2, 0x93, 0x33, 0xe2, 0xd3, 0x8b,
-	0xf2, 0x4b, 0x0b, 0xe2, 0x53, 0x12, 0x4b, 0x12, 0xf5, 0x0a, 0x8a, 0xf2, 0x4b, 0xf2, 0x85, 0x84,
-	0xe1, 0x2a, 0xf4, 0xe0, 0x2c, 0xa5, 0x67, 0x8c, 0x5c, 0x7c, 0xae, 0x20, 0xf5, 0xee, 0x20, 0xe5,
-	0x2e, 0x89, 0x25, 0x89, 0x42, 0x06, 0x5c, 0xc2, 0x05, 0xf9, 0xc9, 0xc1, 0x25, 0x89, 0x45, 0x25,
-	0x4e, 0x39, 0xf9, 0xc9, 0xd9, 0x1e, 0xa9, 0x99, 0xe9, 0x19, 0x25, 0x12, 0x8c, 0x0a, 0x8c, 0x1a,
-	0x2c, 0x41, 0xd8, 0xa4, 0x84, 0x94, 0xb8, 0x78, 0x52, 0xe1, 0x66, 0x78, 0xa6, 0x48, 0x30, 0x81,
-	0x95, 0xa2, 0x88, 0x09, 0x29, 0x70, 0x71, 0x83, 0xf9, 0x01, 0xf9, 0x39, 0x99, 0xc9, 0x95, 0x12,
-	0xcc, 0x0a, 0x8c, 0x1a, 0x9c, 0x41, 0xc8, 0x42, 0x42, 0x46, 0x5c, 0x22, 0xa9, 0x69, 0x69, 0xa9,
-	0xc9, 0x25, 0x99, 0x65, 0xa9, 0xc8, 0x16, 0xb3, 0x80, 0x4d, 0xc3, 0x2a, 0x27, 0xa4, 0xc1, 0xc5,
-	0x9f, 0x93, 0x58, 0x8c, 0xe2, 0x4e, 0x56, 0xb0, 0x72, 0x74, 0x61, 0x27, 0xff, 0x13, 0x8f, 0xe4,
-	0x18, 0x2f, 0x3c, 0x92, 0x63, 0x7c, 0xf0, 0x48, 0x8e, 0x71, 0xc2, 0x63, 0x39, 0x86, 0x0b, 0x8f,
-	0xe5, 0x18, 0x6e, 0x3c, 0x96, 0x63, 0x88, 0x32, 0x4d, 0xcf, 0x2c, 0xc9, 0x28, 0x4d, 0xd2, 0x4b,
-	0xce, 0xcf, 0xd5, 0x2f, 0x28, 0xca, 0x4f, 0x29, 0x4d, 0x2e, 0x29, 0x4e, 0xce, 0x44, 0x0b, 0xd3,
-	0x0a, 0x24, 0x76, 0x49, 0x65, 0x41, 0x6a, 0x71, 0x12, 0x1b, 0x38, 0x54, 0x8d, 0x01, 0x01, 0x00,
-	0x00, 0xff, 0xff, 0x15, 0xca, 0x4a, 0x93, 0x83, 0x01, 0x00, 0x00,
+	// 450 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0xc1, 0x6e, 0x13, 0x31,
+	0x10, 0xcd, 0x36, 0x25, 0x34, 0x53, 0x4a, 0xc1, 0xad, 0xd0, 0x0a, 0xa1, 0x55, 0xb4, 0x2a, 0x52,
+	0xc4, 0x61, 0x8b, 0x8a, 0xf8, 0x00, 0xaa, 0x22, 0xc8, 0x89, 0xca, 0x8b, 0x8a, 0xc4, 0xa5, 0x72,
+	0xec, 0x49, 0x62, 0xb1, 0x59, 0xaf, 0x6c, 0x6f, 0x69, 0x4f, 0xfc, 0x02, 0x9f, 0xc5, 0xb1, 0x47,
+	0x8e, 0x28, 0x39, 0xf1, 0x17, 0x28, 0x6e, 0xb2, 0xc9, 0x2e, 0x3e, 0xf4, 0x36, 0x7e, 0xf3, 0xde,
+	0x9b, 0xb1, 0x9f, 0x0c, 0xaf, 0x64, 0x3e, 0x42, 0x8d, 0x39, 0xc7, 0xe3, 0x75, 0x85, 0x85, 0xe2,
+	0x93, 0xcb, 0xb1, 0x56, 0x65, 0x71, 0x29, 0x98, 0x65, 0x49, 0xa1, 0x95, 0x55, 0xe4, 0xa0, 0x62,
+	0x24, 0x55, 0x15, 0xff, 0x6d, 0xc3, 0xe3, 0xf7, 0x0b, 0xfe, 0x87, 0x05, 0xfd, 0x8c, 0x59, 0x46,
+	0x5e, 0xc3, 0x41, 0xa1, 0x78, 0x6a, 0x99, 0xb6, 0xa7, 0x99, 0xe2, 0xdf, 0x3e, 0xa2, 0x1c, 0x4f,
+	0x6c, 0x18, 0xf4, 0x82, 0xfe, 0x36, 0xf5, 0xb5, 0x48, 0x0c, 0x8f, 0xb0, 0xf2, 0x18, 0x88, 0x70,
+	0xcb, 0x51, 0x6b, 0x18, 0xe9, 0xc1, 0xae, 0x3b, 0x9f, 0xab, 0x4c, 0xf2, 0x9b, 0xb0, 0xdd, 0x0b,
+	0xfa, 0x5d, 0xba, 0x09, 0x91, 0x13, 0x38, 0xc4, 0xd1, 0x08, 0xb9, 0x95, 0x57, 0xb8, 0x39, 0x78,
+	0xdb, 0xb9, 0x79, 0x7b, 0xa4, 0x0f, 0xfb, 0x19, 0x33, 0xb5, 0x3d, 0x1f, 0x38, 0x7a, 0x13, 0x26,
+	0x17, 0x70, 0x38, 0xc5, 0xe9, 0x10, 0x75, 0x8a, 0x28, 0x52, 0x39, 0xce, 0x99, 0x2d, 0x35, 0x9a,
+	0xb0, 0xd3, 0x6b, 0xf7, 0x77, 0x4f, 0xe2, 0xc4, 0xf3, 0x38, 0x49, 0x8d, 0x4a, 0xbd, 0x7a, 0xf2,
+	0x19, 0xc8, 0x48, 0xe6, 0xd2, 0x4c, 0x50, 0x0c, 0x56, 0x42, 0x13, 0x3e, 0x74, 0xae, 0x47, 0x5e,
+	0xd7, 0x8a, 0x76, 0x86, 0x96, 0xc9, 0x8c, 0x7a, 0xf4, 0x24, 0x85, 0xa7, 0x57, 0x2c, 0x93, 0x82,
+	0x59, 0xa9, 0xf2, 0x2f, 0xee, 0x06, 0x26, 0xdc, 0x71, 0xa6, 0x2f, 0xbd, 0xa6, 0x17, 0x0d, 0x36,
+	0xfd, 0x5f, 0x1f, 0xff, 0x80, 0xfd, 0xc6, 0xec, 0x45, 0x2a, 0x95, 0xc7, 0x40, 0xb8, 0x8c, 0xbb,
+	0x74, 0x13, 0x22, 0xcf, 0x61, 0x07, 0xaf, 0x91, 0x97, 0x56, 0x69, 0x97, 0x6b, 0x97, 0x56, 0x67,
+	0x92, 0x00, 0x59, 0xd5, 0x14, 0x8b, 0xd2, 0xba, 0x69, 0x2e, 0xda, 0x2d, 0xea, 0xe9, 0xc4, 0xe7,
+	0xf0, 0xa4, 0xb9, 0x27, 0x39, 0x82, 0xbd, 0xbb, 0x77, 0x7d, 0x27, 0x84, 0x46, 0x63, 0x96, 0x3b,
+	0xd4, 0x41, 0xf2, 0x0c, 0x3a, 0xdf, 0xef, 0xe2, 0x5d, 0xec, 0xd0, 0xa6, 0xcb, 0x53, 0x9c, 0xc2,
+	0x5e, 0x2d, 0x8f, 0x7b, 0xda, 0xbd, 0x80, 0xae, 0x59, 0x49, 0x96, 0xb7, 0x5a, 0x03, 0xa7, 0x9f,
+	0x7e, 0xcd, 0xa2, 0xe0, 0x76, 0x16, 0x05, 0x7f, 0x66, 0x51, 0xf0, 0x73, 0x1e, 0xb5, 0x6e, 0xe7,
+	0x51, 0xeb, 0xf7, 0x3c, 0x6a, 0x7d, 0x7d, 0x3b, 0x96, 0x76, 0x52, 0x0e, 0x13, 0xae, 0xa6, 0xc7,
+	0x85, 0x56, 0xa2, 0xe4, 0xd6, 0x70, 0xd9, 0xf8, 0x7e, 0xd7, 0x1b, 0xb5, 0xbd, 0x29, 0xd0, 0x0c,
+	0x3b, 0xee, 0x03, 0xbe, 0xf9, 0x17, 0x00, 0x00, 0xff, 0xff, 0xa0, 0x46, 0x55, 0x7d, 0xae, 0x03,
+	0x00, 0x00,
 }
 
 func (m *EpochGroupData) Marshal() (dAtA []byte, err error) {
@@ -146,6 +351,48 @@ func (m *EpochGroupData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.ValidationWeights) > 0 {
+		for iNdEx := len(m.ValidationWeights) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.ValidationWeights[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintEpochGroupData(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x42
+		}
+	}
+	if len(m.FinishedInferences) > 0 {
+		for iNdEx := len(m.FinishedInferences) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.FinishedInferences[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintEpochGroupData(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x3a
+		}
+	}
+	if len(m.MemberSeedSignatures) > 0 {
+		for iNdEx := len(m.MemberSeedSignatures) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.MemberSeedSignatures[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintEpochGroupData(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x32
+		}
+	}
 	if m.LastBlockHeight != 0 {
 		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.LastBlockHeight))
 		i--
@@ -172,6 +419,121 @@ func (m *EpochGroupData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.PocStartBlockHeight))
 		i--
 		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *InferenceDetail) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *InferenceDetail) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *InferenceDetail) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.ExecutorReputation != 0 {
+		i -= 4
+		encoding_binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(m.ExecutorReputation))))
+		i--
+		dAtA[i] = 0x1d
+	}
+	if len(m.Executor) > 0 {
+		i -= len(m.Executor)
+		copy(dAtA[i:], m.Executor)
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.Executor)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.InferenceId) > 0 {
+		i -= len(m.InferenceId)
+		copy(dAtA[i:], m.InferenceId)
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.InferenceId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *ValidationWeight) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ValidationWeight) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ValidationWeight) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Weight != 0 {
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.Weight))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.MemberAddress) > 0 {
+		i -= len(m.MemberAddress)
+		copy(dAtA[i:], m.MemberAddress)
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.MemberAddress)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *SeedSignature) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *SeedSignature) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *SeedSignature) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Signature) > 0 {
+		i -= len(m.Signature)
+		copy(dAtA[i:], m.Signature)
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.Signature)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.MemberAddress) > 0 {
+		i -= len(m.MemberAddress)
+		copy(dAtA[i:], m.MemberAddress)
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.MemberAddress)))
+		i--
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -208,6 +570,77 @@ func (m *EpochGroupData) Size() (n int) {
 	}
 	if m.LastBlockHeight != 0 {
 		n += 1 + sovEpochGroupData(uint64(m.LastBlockHeight))
+	}
+	if len(m.MemberSeedSignatures) > 0 {
+		for _, e := range m.MemberSeedSignatures {
+			l = e.Size()
+			n += 1 + l + sovEpochGroupData(uint64(l))
+		}
+	}
+	if len(m.FinishedInferences) > 0 {
+		for _, e := range m.FinishedInferences {
+			l = e.Size()
+			n += 1 + l + sovEpochGroupData(uint64(l))
+		}
+	}
+	if len(m.ValidationWeights) > 0 {
+		for _, e := range m.ValidationWeights {
+			l = e.Size()
+			n += 1 + l + sovEpochGroupData(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *InferenceDetail) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.InferenceId)
+	if l > 0 {
+		n += 1 + l + sovEpochGroupData(uint64(l))
+	}
+	l = len(m.Executor)
+	if l > 0 {
+		n += 1 + l + sovEpochGroupData(uint64(l))
+	}
+	if m.ExecutorReputation != 0 {
+		n += 5
+	}
+	return n
+}
+
+func (m *ValidationWeight) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.MemberAddress)
+	if l > 0 {
+		n += 1 + l + sovEpochGroupData(uint64(l))
+	}
+	if m.Weight != 0 {
+		n += 1 + sovEpochGroupData(uint64(m.Weight))
+	}
+	return n
+}
+
+func (m *SeedSignature) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.MemberAddress)
+	if l > 0 {
+		n += 1 + l + sovEpochGroupData(uint64(l))
+	}
+	l = len(m.Signature)
+	if l > 0 {
+		n += 1 + l + sovEpochGroupData(uint64(l))
 	}
 	return n
 }
@@ -355,6 +788,448 @@ func (m *EpochGroupData) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MemberSeedSignatures", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MemberSeedSignatures = append(m.MemberSeedSignatures, &SeedSignature{})
+			if err := m.MemberSeedSignatures[len(m.MemberSeedSignatures)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FinishedInferences", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.FinishedInferences = append(m.FinishedInferences, &InferenceDetail{})
+			if err := m.FinishedInferences[len(m.FinishedInferences)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationWeights", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ValidationWeights = append(m.ValidationWeights, &ValidationWeight{})
+			if err := m.ValidationWeights[len(m.ValidationWeights)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEpochGroupData(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *InferenceDetail) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEpochGroupData
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: InferenceDetail: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: InferenceDetail: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InferenceId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.InferenceId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Executor", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Executor = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 5 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExecutorReputation", wireType)
+			}
+			var v uint32
+			if (iNdEx + 4) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint32(encoding_binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+			iNdEx += 4
+			m.ExecutorReputation = float32(math.Float32frombits(v))
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEpochGroupData(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ValidationWeight) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEpochGroupData
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ValidationWeight: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ValidationWeight: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MemberAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MemberAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
+			}
+			m.Weight = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Weight |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEpochGroupData(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *SeedSignature) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEpochGroupData
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: SeedSignature: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: SeedSignature: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MemberAddress", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MemberAddress = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Signature = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipEpochGroupData(dAtA[iNdEx:])

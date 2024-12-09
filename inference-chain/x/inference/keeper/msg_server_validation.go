@@ -23,6 +23,10 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrInferenceNotFound
 	}
 
+	if !msg.Revalidation {
+		k.addInferenceToEpochGroupValidations(ctx, msg, inference)
+	}
+
 	if inference.Status == types.InferenceStatus_INVALIDATED {
 		k.LogInfo("Validation: Inference already invalidated", "inference", inference)
 		return &types.MsgValidationResponse{}, nil
@@ -82,6 +86,18 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			sdk.NewAttribute("passed", strconv.FormatBool(passed)),
 		))
 	return &types.MsgValidationResponse{}, nil
+}
+
+func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *types.MsgValidation, inference types.Inference) {
+	epochGroupValidations, validationsFound := k.GetEpochGroupValidations(ctx, msg.Creator, inference.EpochGroupId)
+	if !validationsFound {
+		epochGroupValidations = types.EpochGroupValidations{
+			Participant: msg.Creator, PocStartBlockHeight: inference.EpochGroupId,
+		}
+	}
+	k.LogInfo("Validation: Adding inference to epoch group validations", "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochGroupId)
+	epochGroupValidations.ValidatedInferences = append(epochGroupValidations.ValidatedInferences, msg.InferenceId)
+	k.SetEpochGroupValidations(ctx, epochGroupValidations)
 }
 
 func calculateStatus(falsePositiveRate float64, participant types.Participant) (status types.ParticipantStatus) {

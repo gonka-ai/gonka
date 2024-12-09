@@ -24,4 +24,6 @@ var (
 	ErrPocAddressInvalid                     = sdkerrors.Register(ModuleName, 1113, "POC address marked invalid, no longer allowed")
 	ErrNegativeCoinBalance                   = sdkerrors.Register(ModuleName, 1114, "negative coin balance")
 	ErrNegativeRefundBalance                 = sdkerrors.Register(ModuleName, 1115, "negative refund balance")
+	ErrClaimSignatureInvalid                 = sdkerrors.Register(ModuleName, 1116, "claim signature invalid")
+	ErrValidationsMissed                     = sdkerrors.Register(ModuleName, 1117, "validations missed")
 )

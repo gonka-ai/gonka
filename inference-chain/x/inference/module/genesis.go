@@ -22,6 +22,14 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	for _, elem := range genState.EpochGroupDataList {
 		k.SetEpochGroupData(ctx, elem)
 	}
+	// Set all the settleAmount
+	for _, elem := range genState.SettleAmountList {
+		k.SetSettleAmount(ctx, elem)
+	}
+	// Set all the epochGroupValidations
+	for _, elem := range genState.EpochGroupValidationsList {
+		k.SetEpochGroupValidations(ctx, elem)
+	}
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -36,6 +44,8 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.InferenceList = k.GetAllInference(ctx)
 	genesis.ParticipantList = k.GetAllParticipant(ctx)
 	genesis.EpochGroupDataList = k.GetAllEpochGroupData(ctx)
+	genesis.SettleAmountList = k.GetAllSettleAmount(ctx)
+	genesis.EpochGroupValidationsList = k.GetAllEpochGroupValidations(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

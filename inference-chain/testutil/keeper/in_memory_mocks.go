@@ -94,6 +94,9 @@ func NewInMemoryParticipantKeeper() *InMemoryParticipantKeeper {
 		data: make(map[string]types.Participant),
 	}
 }
+func (keeper *InMemoryParticipantKeeper) ParticipantAll(ctx context.Context, req *types.QueryAllParticipantRequest) (*types.QueryAllParticipantResponse, error) {
+	return &types.QueryAllParticipantResponse{Participant: keeper.GetAllParticipant(ctx)}, nil
+}
 
 // SetParticipant stores or updates the given Participant.
 func (keeper *InMemoryParticipantKeeper) SetParticipant(ctx context.Context, participant types.Participant) {

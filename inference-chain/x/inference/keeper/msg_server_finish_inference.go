@@ -25,6 +25,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.RequestedBy)
 	}
+	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		k.LogError("GetCurrentEpochGroup", err)
+		return nil, err
+	}
 
 	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
@@ -35,6 +40,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	existingInference.ActualCost = CalculateCost(existingInference)
+	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
 	k.SetInference(ctx, existingInference)
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
@@ -61,6 +67,14 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			sdk.NewAttribute("inference_id", msg.InferenceId),
 		),
 	)
+
+	currentEpochGroup.GroupData.FinishedInferences = append(currentEpochGroup.GroupData.FinishedInferences,
+		&types.InferenceDetail{
+			InferenceId:        existingInference.InferenceId,
+			Executor:           existingInference.ExecutedBy,
+			ExecutorReputation: executor.Reputation,
+		})
+	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 
 	return &types.MsgFinishInferenceResponse{}, nil
 }

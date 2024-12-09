@@ -33,6 +33,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgRevalidateInference{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgClaimRewards{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitPocBatch{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

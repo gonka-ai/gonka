@@ -70,8 +70,47 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string) error {
+func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string) error {
+	eg.Logger.LogInfo("Adding member", "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
+	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
+	if !found {
+		eg.Logger.LogError("Epoch group not found", "blockHeight", eg.GroupData.PocStartBlockHeight)
+		return types.ErrCurrentEpochGroupNotFound
+	}
+	eg.GroupData = &val
+	if eg.GroupData.MemberSeedSignatures == nil {
+		eg.GroupData.MemberSeedSignatures = []*types.SeedSignature{}
+	}
+	eg.GroupData.MemberSeedSignatures = append(eg.GroupData.MemberSeedSignatures, &types.SeedSignature{
+		MemberAddress: address,
+		Signature:     seedSignature,
+	})
+	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
+		MemberAddress: address,
+		Weight:        int64(weight),
+	})
+	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
+}
+
+type VotingData struct {
+	TotalWeight int64
+	Members     map[string]int64
+}
+
+func (eg *EpochGroup) GetValidationWeights() (VotingData, error) {
+	var totalWeight int64
+	var votingMembers = make(map[string]int64)
+	for _, member := range eg.GroupData.ValidationWeights {
+		weight := member.Weight
+		totalWeight += weight
+		votingMembers[member.MemberAddress] = weight
+	}
+
+	return VotingData{
+		TotalWeight: totalWeight,
+		Members:     votingMembers,
+	}, nil
 }
 
 func (eg *EpochGroup) MarkChanged(ctx context.Context) error {
@@ -83,6 +122,9 @@ func (eg *EpochGroup) MarkUnchanged(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) IsChanged(ctx context.Context) bool {
+	if eg.GroupData.EpochGroupId == 0 {
+		return false
+	}
 	info, err := eg.GroupKeeper.GroupInfo(ctx, &group.QueryGroupInfoRequest{
 		GroupId: eg.GroupData.EpochGroupId,
 	})
@@ -147,7 +189,7 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 			eg.Logger.LogError("Error decoding pubkey", "error", err)
 			continue
 		}
-
+		// The VALIDATOR key, never to be confused with the account key (which is a sekp256k1 key)
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
 		computeResults = append(computeResults, keeper.ComputeResult{

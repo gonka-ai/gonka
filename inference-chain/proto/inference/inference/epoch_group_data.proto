@@ -4,11 +4,29 @@ package inference.inference;
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message EpochGroupData {
-  uint64 pocStartBlockHeight = 1; 
+  uint64 pocStartBlockHeight = 1;
   uint64 epochGroupId = 2;
-  string epochPolicy = 3; 
-  uint64 effectiveBlockHeight = 4; 
-  uint64 lastBlockHeight = 5; 
-  
+  string epochPolicy = 3;
+  uint64 effectiveBlockHeight = 4;
+  uint64 lastBlockHeight = 5;
+  repeated SeedSignature memberSeedSignatures = 6;
+  repeated InferenceDetail finishedInferences = 7;
+  repeated ValidationWeight validationWeights = 8;
+}
+
+message InferenceDetail {
+  string inferenceId = 1;
+  string executor = 2;
+  float executorReputation = 3;
+}
+
+message ValidationWeight {
+  string memberAddress = 1;
+  int64  weight = 2;
+}
+
+message SeedSignature {
+  string memberAddress = 1;
+  string signature = 2;
 }
 

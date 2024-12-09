@@ -95,6 +95,11 @@ func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGro
 	return k.GetEpochGroup(ctx, currentId)
 }
 
+func (k Keeper) GetPreviousEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
+	currentId := k.GetPreviousEpochGroupId(ctx)
+	return k.GetEpochGroup(ctx, currentId)
+}
+
 func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epochgroup.EpochGroup, error) {
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight)
 	if !found {

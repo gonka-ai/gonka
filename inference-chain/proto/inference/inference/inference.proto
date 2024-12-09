@@ -38,5 +38,6 @@ message Inference {
   int64 actualCost = 18;
   int64 escrowAmount = 19;
   ProposalDetails proposalDetails = 20;
+  uint64 epochGroupId = 21;
 }
 

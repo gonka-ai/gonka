@@ -11,7 +11,8 @@ data class Participant(
     val coinsOwed: Long,
     val refundsOwed: Long,
     val balance: Long,
-    val votingPower: Int
+    val votingPower: Int,
+    val reputation: Double
 )
 
 data class InferenceParticipant(
