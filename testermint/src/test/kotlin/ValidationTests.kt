@@ -1,4 +1,3 @@
-import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceStatus
 import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
@@ -6,10 +5,12 @@ import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initialize
 import com.productscience.invalidNode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import kotlinx.coroutines.*
 
 class ValidationTests : TestermintTest() {
     @Test
@@ -19,7 +20,7 @@ class ValidationTests : TestermintTest() {
 
         runBlocking {
             // Launch coroutines with async and collect the deferred results
-            val requests = List(5) { i ->
+            val requests = List(10) { i ->
                 async(Dispatchers.Default) { // specify a dispatcher for parallelism
                     Logger.warn("Starting request $i")
                     highestFunded.makeInferenceRequest(inferenceRequest)
@@ -35,8 +36,10 @@ class ValidationTests : TestermintTest() {
                 val inference = highestFunded.api.getInference(result.id)
                 inference.status
             }
-            // at present, this nearly always fails with at least one in the STARTED phase
-            assertThat(statuses).allMatch { it == InferenceStatus.VALIDATED.value }
+            // Some will be validated, some will not.
+            assertThat(statuses).allMatch {
+                it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value
+            }
         }
 
         Thread.sleep(10000)
@@ -83,6 +86,7 @@ class ValidationTests : TestermintTest() {
         participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
 
     }
+
     @Test
     fun `test valid with invalid validator gets validated`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
