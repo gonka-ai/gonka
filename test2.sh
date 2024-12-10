@@ -1,7 +1,5 @@
 set -e
 
-docker compose -f docker-compose-local-genesis.yml down
-docker compose -f docker-compose-local.yml down -v
 docker compose -p genesis down
 docker compose -p join1 down
 docker compose -p join2 down
