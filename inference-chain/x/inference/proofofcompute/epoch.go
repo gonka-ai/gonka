@@ -65,7 +65,7 @@ func IsZeroEpoch(blockHeight int64) bool {
 	return blockHeight < EpochLength
 }
 
-const shiftVal = 0
+const shiftVal = 95
 
 func shift(blockHeight int64) int64 {
 	// PRTODO: remove the shift!

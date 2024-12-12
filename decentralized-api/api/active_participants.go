@@ -5,6 +5,7 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/merkleproof"
 	"encoding/hex"
 	"github.com/cosmos/gogoproto/proto"
 	"log/slog"
@@ -26,6 +27,7 @@ type ActiveParticipantWithProof struct {
 	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
 	Validators              []*types2.Validator      `json:"validators"`
 	Block                   *types2.Block            `json:"block"`
+	CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
 func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
@@ -94,11 +96,12 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		// /v1/epoch/current/participants
 		epoch = currEpoch.Epoch
 	} else {
+		// PRTODO: remove this!
 		// /v1/epoch/{i}/participants
-		if *epochOrNil > currEpoch.Epoch {
-			http.Error(w, "Epoch not reached", http.StatusBadRequest)
-			return
-		}
+		// if *epochOrNil > currEpoch.Epoch {
+		// 	http.Error(w, "Epoch not reached", http.StatusBadRequest)
+		//	return
+		// }
 		epoch = *epochOrNil
 	}
 
@@ -169,12 +172,25 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 
+	verKey := "inference/" + dataKey
+	slog.Info("Attempting verification", "verKey", verKey)
+	err = merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	if err != nil {
+		slog.Info("VerifyUsingProofRt failed", "error", err)
+	}
+
+	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", dataKey, result.Response.Value)
+	if err != nil {
+		slog.Info("VerifyUsingMerkleProof failed", "error", err)
+	}
+
 	response := ActiveParticipantWithProof{
 		ActiveParticipants:      activeParticipants,
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                *result.Response.ProofOps,
 		Validators:              vals.Validators,
 		Block:                   block.Block,
+		CommitInfo:              commitInfo,
 	}
 
 	RespondWithJson(w, response)

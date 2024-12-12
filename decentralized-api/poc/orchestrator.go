@@ -191,7 +191,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
-		nodePoCOrchestrator.Start(blockHeight, blockHash)
+		// nodePoCOrchestrator.Start(blockHeight, blockHash)
 
 		return
 	}
@@ -200,7 +200,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
-		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
+		// nodePoCOrchestrator.MoveToValidationStage(blockHeight)
 
 		return
 	}
@@ -209,7 +209,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 		slog.Info("IsStartOfPoCValidationStage")
 
 		go func() {
-			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
+			// nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
 
 		return
@@ -218,12 +218,14 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 	if proofofcompute.IsEndOfPoCValidationStage(blockHeight) {
 		slog.Info("IsEndOfPoCValidationStage")
 
-		nodePoCOrchestrator.Stop()
+		// nodePoCOrchestrator.Stop()
 
 		return
 	}
 	// once the new stage has started, request our money!
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight - 1) {
+		return
+
 		go func() {
 			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", PreviousSeed)
 			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{

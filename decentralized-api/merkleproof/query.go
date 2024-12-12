@@ -2,9 +2,12 @@ package merkleproof
 
 import (
 	"context"
+	"cosmossdk.io/store/rootmulti"
 	"fmt"
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
+	ibctypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
 )
 
 func VerifyBlockSignatures(address string, height int64) error {
@@ -51,20 +54,45 @@ func VerifyCommit(chainID string, commit *comettypes.Commit, header *comettypes.
 	return nil
 }
 
-/*func VerifyProof(proofOps *cryptotypes.ProofOps, key, value, appHash []byte) error {
-	// Convert ProofOps to Merkle proof
-	merkleProof, err := merkle.ProofFromProto(proofOps.Ops[0].GetData())
+/*
+	func VerifyProof(proofOps *cryptotypes.ProofOps, key, value, appHash []byte) error {
+		merkleProof, err := ibctypes.ConvertProofs(proofOps)
+		merkleProof.Verify()
+
+		// Important to use runtime from the rootmulti package
+		proofRt := rootmulti.DefaultProofRuntime()
+		proofRt.VerifyValue(proofOps, key, value, appHash)
+
+		proofOperator, err := merkle.ValueOpDecoder(proofOps.Ops[0])
+		if err != nil {
+			return err
+		}
+
+		// Compute the root hash from the proof
+		rootHash := proofOperator.()
+		// OR THIS: merkleProof.Verify(rootHash, value)
+
+		// Compare the computed root hash with the app hash
+		if !bytes.Equal(rootHash, appHash) {
+			return fmt.Errorf("computed root hash does not match app hash")
+		}
+
+		return nil
+	}
+*/
+func VerifyUsingProofRt(proofOps *cryptotypes.ProofOps, root []byte, keypath string, value []byte) error {
+	proofRt := rootmulti.DefaultProofRuntime()
+	return proofRt.VerifyValue(proofOps, root, keypath, value)
+}
+
+func VerifyUsingMerkleProof(proofOps *cryptotypes.ProofOps, root []byte, moduleKey string, valueKey string, value []byte) error {
+	merkleProof, err := ibctypes.ConvertProofs(proofOps)
 	if err != nil {
 		return err
 	}
 
-	// Compute the root hash from the proof
-	rootHash := merkleProof.ComputeRootHash(key, value)
+	merkleRoot := ibctypes.MerkleRoot{Hash: root}
+	path := ibctypes.MerklePath{KeyPath: []string{moduleKey, valueKey}}
 
-	// Compare the computed root hash with the app hash
-	if !bytes.Equal(rootHash, appHash) {
-		return fmt.Errorf("computed root hash does not match app hash")
-	}
-
-	return nil
-}*/
+	return merkleProof.VerifyMembership(ibctypes.GetSDKSpecs(), merkleRoot, path, value)
+}
