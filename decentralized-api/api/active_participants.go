@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/gogoproto/proto"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,7 @@ type ActiveParticipantWithProof struct {
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
 	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
 	Validators              []*types2.Validator      `json:"validators"`
-	Block                   *types2.Block            `json:"block"`
+	Block                   []*types2.Block          `json:"block"`
 	CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
@@ -111,7 +112,8 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 	}
 
 	dataKey := string(types.ActiveParticipantsFullKey(epoch))
-	result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, true)
+	blockHeight := int64(5)
+	result, err := cosmos_client.QueryByKey(rplClient, "inference", dataKey, blockHeight, true)
 	if err != nil {
 		slog.Error("Failed to query active participants", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -144,6 +146,21 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		return
 	}
 
+	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
+	blockP1, err := rplClient.Block(context.Background(), &heightP1)
+	if err != nil {
+		slog.Error("Failed to get block", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
+	blockM1, err := rplClient.Block(context.Background(), &heightM1)
+	if err != nil {
+		slog.Error("Failed to get block", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
 	vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 	if err != nil {
 		slog.Error("Failed to get validators", "error", err)
@@ -172,7 +189,8 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 
-	verKey := "inference/" + dataKey
+	verKey := "/inference/" + url.PathEscape(dataKey)
+	// verKey2 := string(result.Response.Key)
 	slog.Info("Attempting verification", "verKey", verKey)
 	err = merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
@@ -189,7 +207,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                *result.Response.ProofOps,
 		Validators:              vals.Validators,
-		Block:                   block.Block,
+		Block:                   []*types2.Block{block.Block, blockM1.Block, blockP1.Block},
 		CommitInfo:              commitInfo,
 	}
 
