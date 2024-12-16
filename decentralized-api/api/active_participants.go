@@ -2,20 +2,21 @@ package api
 
 import (
 	"context"
-	storetypes "cosmossdk.io/store/types"
+	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
+	"encoding/base64"
 	"encoding/hex"
-	"github.com/cosmos/gogoproto/proto"
+	"github.com/cometbft/cometbft/crypto/tmhash"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	cmcryptoed "github.com/cometbft/cometbft/crypto/ed25519"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
-	rpcclient "github.com/cometbft/cometbft/rpc/client"
 	types2 "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -24,11 +25,12 @@ import (
 
 type ActiveParticipantWithProof struct {
 	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
+	Addresses               []string                 `json:"addresses"`
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
 	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
 	Validators              []*types2.Validator      `json:"validators"`
 	Block                   []*types2.Block          `json:"block"`
-	CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
+	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
 func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
@@ -168,25 +170,6 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		return
 	}
 
-	commitInfoResponse, err := rplClient.ABCIQueryWithOptions(
-		context.Background(),
-		"/commit",
-		nil,
-		rpcclient.ABCIQueryOptions{Height: activeParticipants.CreatedAtBlockHeight, Prove: false},
-	)
-	if err != nil {
-		slog.Error("Failed to get commit", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	var commitInfo storetypes.CommitInfo
-	if err := proto.Unmarshal(commitInfoResponse.Response.Value, &commitInfo); err != nil {
-		slog.Error("Failed to unmarshal active participant", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 
 	verKey := "/inference/" + url.PathEscape(dataKey)
@@ -202,14 +185,67 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		slog.Info("VerifyUsingMerkleProof failed", "error", err)
 	}
 
+	addresses := make([]string, len(activeParticipants.Participants))
+	for i, participant := range activeParticipants.Participants {
+		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
+		if err != nil {
+			slog.Error("Failed to convert public key to address", "error", err)
+		}
+	}
+
 	response := ActiveParticipantWithProof{
 		ActiveParticipants:      activeParticipants,
+		Addresses:               addresses,
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                *result.Response.ProofOps,
 		Validators:              vals.Validators,
 		Block:                   []*types2.Block{block.Block, blockM1.Block, blockP1.Block},
-		CommitInfo:              commitInfo,
 	}
 
 	RespondWithJson(w, response)
+}
+
+func pubKeyToAddress(pubKey string) (string, error) {
+	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
+	if err != nil {
+		return "", err
+	}
+
+	hash := sha256.Sum256(pubKeyBytes)
+
+	valAddr := hash[:20]
+
+	addressHex := strings.ToUpper(hex.EncodeToString(valAddr))
+
+	return addressHex, nil
+}
+
+func pubKeyToAddress2(pubKeyString string) (string, error) {
+	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyString)
+	if err != nil {
+		return "", err
+	}
+
+	slog.Info("PubKey size", "len", len(pubKeyBytes))
+
+	pubKey := cmcryptoed.PubKey(pubKeyBytes)
+
+	valAddr := pubKey.Address()
+
+	valAddrHex := strings.ToUpper(hex.EncodeToString(valAddr))
+
+	return valAddrHex, nil
+}
+
+func pubKeyToAddress3(pubKey string) (string, error) {
+	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
+	if err != nil {
+		return "", err
+	}
+
+	valAddr := tmhash.SumTruncated(pubKeyBytes)
+
+	valAddrHex := strings.ToUpper(hex.EncodeToString(valAddr))
+
+	return valAddrHex, nil
 }
