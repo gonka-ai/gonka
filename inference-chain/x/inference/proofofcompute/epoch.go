@@ -54,7 +54,7 @@ func IsEndOfPoCValidationStage(blockHeight int64) bool {
 func IsSetNewValidatorsStage(blockHeight int64) bool {
 	blockHeight = shift(blockHeight)
 
-	return isNotZeroEpoch(blockHeight) && shift(blockHeight)%EpochLength == setNewValidatorsStage
+	return isNotZeroEpoch(blockHeight) && blockHeight%EpochLength == setNewValidatorsStage
 }
 
 func isNotZeroEpoch(blockHeight int64) bool {

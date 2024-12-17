@@ -22,7 +22,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {
-			am.LogError("No active participants found.")
+			am.LogError("ComputeNewWeights: No active participants found.")
 			return nil, nil
 		}
 	}
@@ -30,18 +30,18 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 		return nil, nil
 	}
 
-	am.LogInfo("Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
+	am.LogInfo("ComputeNewWeights: Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
 
 	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
 
-	am.LogInfo("Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
 
 	var activeParticipants []*types.ActiveParticipant
 	var computeResults []keeper.ComputeResult
@@ -49,30 +49,30 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	for participantAddress, batches := range originalBatches {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
-			am.LogError("Error getting participant", "address", participantAddress)
+			am.LogError("ComputeNewWeights: Error getting participant", "address", participantAddress)
 			continue
 		}
 
 		vals := validations[participantAddress]
 		if vals == nil || len(vals) == 0 {
-			am.LogError("No validations for participant found", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: No validations for participant found", "participant", participantAddress)
 			continue
 		}
 
 		claimedWeight := getParticipantWeight(batches)
 		if claimedWeight < 1 {
-			am.LogWarn("Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
+			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
 			continue
 		}
 
 		if participant.ValidatorKey == "" {
-			am.LogError("Participant hasn't provided their validator key.", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", "participant", participantAddress)
 			continue
 		}
 
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
 		if err != nil {
-			am.LogError("am.ComputeNewWeights. Error decoding pubkey", "error", err)
+			am.LogError("ComputeNewWeights: am.ComputeNewWeights. Error decoding pubkey", "error", err)
 			continue
 		}
 
@@ -81,7 +81,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		if currentActiveParticipants != nil {
 			requiredValidators := (len(currentActiveParticipants.Participants) * 2) / 3
 			if len(vals) < requiredValidators {
-				am.LogWarn("Participant didn't receive enough validations. Defaulting to accepting",
+				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
 					"participant", participantAddress,
 					"validations", len(vals),
 					"required", requiredValidators)
@@ -89,7 +89,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 				validatorCount := getValidatorIntersectionCount(currentValidatorsAddressSet, vals)
 
 				if validatorCount < requiredValidators {
-					am.LogWarn("Participant didn't receive enough validations",
+					am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations",
 						"participant", participantAddress,
 						"validations", validatorCount,
 						"required", requiredValidators)
@@ -103,7 +103,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			ValidatorPubKey: &pubKey,
 			OperatorAddress: participantAddress,
 		}
-		am.LogInfo("Setting compute validator.", "computeResult", r)
+		am.LogInfo("ComputeNewWeights: Setting compute validator.", "computeResult", r)
 		computeResults = append(computeResults, r)
 
 		activeParticipant := &types.ActiveParticipant{
