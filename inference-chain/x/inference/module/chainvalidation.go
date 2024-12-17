@@ -6,7 +6,6 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -18,7 +17,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	//  1. Either get current validators by using staking keeper or smth
 	//  2. Or alter InitGenesis or set validator logic so there's always active participants
 	var currentActiveParticipants *types.ActiveParticipants = nil
-	if !proofofcompute.IsZeroEpoch(epochStartBlockHeight) {
+	if upcomingGroupData.EpochGroupId > 1 {
 		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {

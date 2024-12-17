@@ -54,3 +54,9 @@ func WrapVerifyProof() http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 	}
 }
+
+func WrapVerifyBlock() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO: IMPLEMENT BLOCK VERIFICATION HERE
+	}
+}
