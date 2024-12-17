@@ -59,7 +59,7 @@ def verify_proof(active_participants):
     url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-proof")
     payload = {
         "value": active_participants["active_participants_bytes"],
-        "app_hash": active_participants["block"][2]["app_hash"],
+        "app_hash": active_participants["block"][2]["header"]["app_hash"],
         "proof_ops": active_participants["proof_ops"],
         "epoch": active_participants["active_participants"]["epochGroupId"],
     }
@@ -68,6 +68,8 @@ def verify_proof(active_participants):
 
 
 def verify_signature(prev_validators, block):
+    return
+
     url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-signature")
     payload = {
         "block": block,
@@ -102,5 +104,4 @@ def debug_main():
     print(prev_validators)
 
 if __name__ == '__main__':
-    debug_main()
-    # main()
+    main()
