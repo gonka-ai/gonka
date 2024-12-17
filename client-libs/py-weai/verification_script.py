@@ -13,8 +13,8 @@ TRUSTED_VERIFIER_NODE_API_PORT = "8080"
 @dataclass
 class Validator:
     #address: str
-    public_key: str
-    weight: int
+    pub_key: str
+    voting_power: int
 
 def get_url(host: str, port: str, path: str) -> str:
     return f"http://{host}:{port}/{path}"
@@ -22,7 +22,10 @@ def get_url(host: str, port: str, path: str) -> str:
 
 def get_genesis_validators() -> list[Validator]:
     genesis = get_genesis()
+    return extract_validators_from_genesis(genesis)
 
+
+def extract_validators_from_genesis(genesis):
     validators = []
     for tx in genesis["app_state"]["genutil"]["gen_txs"]:
         for msg in tx["body"]["messages"]:
@@ -30,10 +33,22 @@ def get_genesis_validators() -> list[Validator]:
                 continue
 
             v = Validator(
-                public_key=msg["pubkey"]["key"],
-                weight=int(msg["value"]["amount"]),
+                pub_key=msg["pubkey"]["key"],
+                voting_power=int(msg["value"]["amount"]),
             )
             validators.append(v)
+
+    return validators
+
+
+def extract_validators_from_active_participants(active_participants):
+    validators = []
+    for val in active_participants["active_participants"]["participants"]:
+        v = Validator(
+            public_key=val["validatorKey"],
+            voting_power=int(val["weight"]),
+        )
+        validators.append(v)
 
     return validators
 
@@ -94,7 +109,8 @@ def main():
         verify_proof(active_participants)
         # verify_signature(prev_validators, active_participants["block"])
 
-        prev_validators = active_participants
+        prev_validators = extract_validators_from_active_participants(active_participants)
+        print(f"Verified epoch {i}. prev_validators: {prev_validators}")
 
 
 def debug_main():

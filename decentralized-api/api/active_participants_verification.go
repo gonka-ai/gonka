@@ -2,9 +2,12 @@ package api
 
 import (
 	"decentralized-api/merkleproof"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	cmcryptoed "github.com/cometbft/cometbft/crypto/ed25519"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
@@ -55,8 +58,47 @@ func WrapVerifyProof() http.HandlerFunc {
 	}
 }
 
+type VerifyBlockRequest struct {
+	Block      comettypes.Block `json:"block"`
+	Validators []Validator      `json:"validators"`
+}
+
+type Validator struct {
+	PubKey      string `json:"pub_key"`
+	VotingPower int64  `json:"voting_power"`
+}
+
 func WrapVerifyBlock() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// TODO: IMPLEMENT BLOCK VERIFICATION HERE
+		var blockVerificationRequest VerifyBlockRequest
+		if err := json.NewDecoder(r.Body).Decode(&blockVerificationRequest); err != nil {
+			slog.Error("Error decoding request", "error", err)
+			http.Error(w, "Error decoding request", http.StatusBadRequest)
+			return
+		}
+
+		block := &blockVerificationRequest.Block
+
+		valSet := make([]*comettypes.Validator, len(blockVerificationRequest.Validators))
+		for i, validator := range blockVerificationRequest.Validators {
+			pubKeyBytes, err := base64.StdEncoding.DecodeString(validator.PubKey)
+			if err != nil {
+				slog.Error("Error decoding public key", "error", err)
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			pubKey := cmcryptoed.PubKey(pubKeyBytes)
+			valSet[i] = comettypes.NewValidator(pubKey, validator.VotingPower)
+		}
+
+		err := merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
+		if err != nil {
+			slog.Error("Block signature verification failed", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
 	}
 }

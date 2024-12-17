@@ -19,7 +19,7 @@ import (
 	cmcryptoed "github.com/cometbft/cometbft/crypto/ed25519"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
-	types2 "github.com/cometbft/cometbft/types"
+	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -30,8 +30,8 @@ type ActiveParticipantWithProof struct {
 	Addresses               []string                 `json:"addresses"`
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
 	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
-	Validators              []*types2.Validator      `json:"validators"`
-	Block                   []*types2.Block          `json:"block"`
+	Validators              []*comettypes.Validator  `json:"validators"`
+	Block                   []*comettypes.Block      `json:"block"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
@@ -199,7 +199,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		ActiveParticipantsBytes: activeParticipantsBytes,
 		ProofOps:                *result.Response.ProofOps,
 		Validators:              vals.Validators,
-		Block:                   []*types2.Block{block.Block, blockM1.Block, blockP1.Block},
+		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
 	}
 
 	RespondWithJson(w, response)
