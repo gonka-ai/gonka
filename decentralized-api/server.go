@@ -71,6 +71,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(nodeBroker, config))
 	mux.HandleFunc("/v1/epochs/", api.WrapGetParticipantsByEpoch(transactionRecorder, config))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
+	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")

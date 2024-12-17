@@ -43,6 +43,18 @@ def get_active_participants(epoch: str) -> dict[str, any]:
 
 
 def verify_proof(active_participants):
+    url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "verify-proof")
+    payload = {
+        "value": active_participants["active_participants_bytes"],
+        "app_hash": active_participants["block"][2]["app_hash"],
+        "proof_ops": active_participants["proof_ops"],
+        "epoch": active_participants["active_participants"]["epochGroupId"],
+    }
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+
+
+def verify_signature(prev_validators, block):
     pass
 
 
@@ -53,8 +65,6 @@ def main():
 
     print(f"Current epoch: {current_epoch}")
 
-    return
-
     prev_validators = None
     for i in range(1, current_epoch + 1):
         if i == 1:
@@ -63,7 +73,7 @@ def main():
         active_participants = get_active_participants(epoch=str(i))
 
         verify_proof(active_participants)
-        verify_signature(prev_validators, block)
+        verify_signature(prev_validators, active_participants["block"])
 
         prev_validators = active_participants
 
