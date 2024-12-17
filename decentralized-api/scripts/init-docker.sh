@@ -18,9 +18,13 @@ if [ -n "$NODE_HOST" ]; then
   sed -i "s/url: .*:26657/url: http:\/\/$NODE_HOST:26657/" "$yaml_file"
 fi
 
+echo "Setting account_name address to $KEY_NAME in $yaml_file"
 sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
+
+echo "Setting keyring_backend to test in $yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
+echo "Setting host to $PUBLIC_IP in $yaml_file"
 sed -i "s/host: .*/host: \"$PUBLIC_IP\"/" "$yaml_file"
 
 echo "The final api config:"
