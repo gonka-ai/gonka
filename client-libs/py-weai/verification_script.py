@@ -12,17 +12,30 @@ TRUSTED_VERIFIER_NODE_API_PORT = "8080"
 
 @dataclass
 class Validator:
-    address: str
+    #address: str
     public_key: str
+    weight: int
 
 def get_url(host: str, port: str, path: str) -> str:
     return f"http://{host}:{port}/{path}"
 
 
-def get_genesis_active_participants():
+def get_genesis_validators() -> list[Validator]:
     genesis = get_genesis()
-    # TODO: get validators from genesis
-    return genesis["active_participants"]
+
+    validators = []
+    for tx in genesis["app_state"]["genutil"]["gen_txs"]:
+        for msg in tx["body"]["messages"]:
+            if msg["@type"] != "/cosmos.staking.v1beta1.MsgCreateValidator":
+                continue
+
+            v = Validator(
+                public_key=msg["pubkey"]["key"],
+                weight=int(msg["value"]["amount"]),
+            )
+            validators.append(v)
+
+    return validators
 
 
 def get_genesis():
@@ -74,7 +87,7 @@ def main():
     prev_validators = None
     for i in range(1, current_epoch + 1):
         if i == 1:
-            prev_validators = get_genesis_active_participants()
+            prev_validators = get_genesis_validators()
 
         active_participants = get_active_participants(epoch=str(i))
 
@@ -85,8 +98,8 @@ def main():
 
 
 def debug_main():
-    prev_validators = get_genesis_active_participants()
-    pass
+    prev_validators = get_genesis_validators()
+    print(prev_validators)
 
 if __name__ == '__main__':
     debug_main()
