@@ -68,9 +68,7 @@ def verify_proof(active_participants):
 
 
 def verify_signature(prev_validators, block):
-    return
-
-    url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-signature")
+    url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-block")
     payload = {
         "block": block,
         "prev_validators": prev_validators,
@@ -94,7 +92,7 @@ def main():
         active_participants = get_active_participants(epoch=str(i))
 
         verify_proof(active_participants)
-        verify_signature(prev_validators, active_participants["block"])
+        # verify_signature(prev_validators, active_participants["block"])
 
         prev_validators = active_participants
 
