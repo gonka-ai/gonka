@@ -2,7 +2,7 @@ package proofofcompute
 
 const (
 	Multiplier            = 1
-	EpochLength           = 100 * Multiplier
+	EpochLength           = 25 * Multiplier
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 10 * Multiplier
 	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier
@@ -65,15 +65,13 @@ func IsZeroEpoch(blockHeight int64) bool {
 	return blockHeight < EpochLength
 }
 
-const shiftVal = 95
+const shiftVal = 0
 
 func shift(blockHeight int64) int64 {
-	// PRTODO: remove the shift!
 	return blockHeight + shiftVal
 }
 
 func unshift(blockHeight int64) int64 {
-	// PRTODO: remove the shift!
 	return blockHeight - shiftVal
 }
 

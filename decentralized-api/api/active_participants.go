@@ -99,12 +99,11 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig
 		// /v1/epoch/current/participants
 		epoch = currEpoch.Epoch
 	} else {
-		// PRTODO: remove this!
 		// /v1/epoch/{i}/participants
-		// if *epochOrNil > currEpoch.Epoch {
-		// 	http.Error(w, "Epoch not reached", http.StatusBadRequest)
-		//	return
-		// }
+		if *epochOrNil > currEpoch.Epoch {
+			http.Error(w, "Epoch not reached", http.StatusBadRequest)
+			return
+		}
 		epoch = *epochOrNil
 	}
 

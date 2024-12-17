@@ -34,6 +34,7 @@ type NodePoCOrchestrator struct {
 	callbackHost string
 	chainNodeUrl string
 	cosmosClient *cosmos_client.InferenceCosmosClient
+	noOp         bool
 }
 
 func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient) *NodePoCOrchestrator {
@@ -46,6 +47,7 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 		callbackHost: callbackHost,
 		chainNodeUrl: chainNodeUrl,
 		cosmosClient: cosmosClient,
+		noOp:         false,
 	}
 }
 
@@ -113,6 +115,11 @@ var DevTestParams = Params{
 }
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
+	if o.noOp {
+		slog.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.")
+		return
+	}
+
 	slog.Info("Starting PoC on nodes", "blockHeight", blockHeight, "blockHash", blockHash)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
@@ -159,6 +166,11 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, 
 }
 
 func (o *NodePoCOrchestrator) Stop() {
+	if o.noOp {
+		slog.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.")
+		return
+	}
+
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
 		// PRTODO: log error
@@ -255,6 +267,11 @@ func sendPostRequest(client *http.Client, url string, payload any) (*http.Respon
 }
 
 func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
+	if o.noOp {
+		slog.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.")
+		return
+	}
+
 	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {
@@ -284,6 +301,11 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 }
 
 func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
+	if o.noOp {
+		slog.Info("NodePoCOrchestrator.ValidateReceivedBatches. NoOp is set. Skipping validation.")
+		return
+	}
+
 	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromStartOfValStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {

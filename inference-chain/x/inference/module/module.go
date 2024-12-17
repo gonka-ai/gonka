@@ -180,7 +180,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
 
 		// PRTODO: remove this stub!
-		am.setStubActiveParticipants(ctx, blockHeight)
+		// am.setStubActiveParticipants(ctx, blockHeight)
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
