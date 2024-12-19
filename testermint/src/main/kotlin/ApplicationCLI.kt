@@ -285,7 +285,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
         } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
             // We map this to debug as there is a LOT of info level logs
             Logger.debug(logEntry)
-        } else if (logEntry.contains("ERR ") || logEntry.contains(" ERROR ")) {
+        } else if (logEntry.contains("ERR") || logEntry.contains(" ERROR ")) {
             Logger.error(logEntry)
         } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
             Logger.debug(logEntry)

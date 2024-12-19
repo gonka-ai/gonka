@@ -223,8 +223,10 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 		return
 	}
 	// once the new stage has started, request our money!
-	if proofofcompute.IsSetNewValidatorsStage(blockHeight - 1) {
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		go func() {
+			PreviousSeed = CurrentSeed
+			CurrentSeed = UpcomingSeed
 			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", PreviousSeed)
 			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
 				Seed:           PreviousSeed.Seed,
@@ -275,6 +277,7 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
+var UpcomingSeed SeedInfo
 var CurrentSeed SeedInfo
 var PreviousSeed SeedInfo
 
@@ -297,12 +300,12 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			slog.Error("Failed to get next seed signature", "error", err)
 			return
 		}
-		slog.Debug("New Seed Signature", "seed", CurrentSeed)
+		slog.Debug("New Seed Signature", "seed", UpcomingSeed)
 
 		message := inference.MsgSubmitPoC{
 			BlockHeight:   proofs.BlockHeight,
 			Nonce:         nonce,
-			SeedSignature: CurrentSeed.Signature,
+			SeedSignature: UpcomingSeed.Signature,
 		}
 
 		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
@@ -324,8 +327,7 @@ func getNextSeedSignature(proofs *ProofOfComputeResults, transactionRecorder cos
 		slog.Error("Failed to sign bytes", "error", err)
 		return err
 	}
-	PreviousSeed = CurrentSeed
-	CurrentSeed = SeedInfo{
+	UpcomingSeed = SeedInfo{
 		Seed:      newSeed,
 		Height:    newHeight,
 		Signature: hex.EncodeToString(signature),

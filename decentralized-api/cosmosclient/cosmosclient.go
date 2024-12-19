@@ -5,8 +5,11 @@ import (
 	"decentralized-api/apiconfig"
 	"errors"
 	"fmt"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
@@ -104,6 +107,19 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 	}, nil
 }
 
+type CosmosMessageClient interface {
+	SignBytes(seed []byte) ([]byte, error)
+	StartInference(transaction *inference.MsgStartInference) error
+	FinishInference(transaction *inference.MsgFinishInference) error
+	ReportValidation(transaction *inference.MsgValidation) error
+	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
+	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
+	SubmitPoC(transaction *inference.MsgSubmitPoC) error
+	ClaimRewards(transaction *inference.MsgClaimRewards) error
+	NewInferenceQueryClient() types.QueryClient
+	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
+}
+
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 	name := icc.Account.Name
 	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
@@ -151,6 +167,10 @@ func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRe
 	return icc.sendTransaction(transaction)
 }
 
+func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
+	return icc.Client.BankBalances(ctx, address, nil)
+}
+
 func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
 	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
@@ -162,6 +182,69 @@ func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.Msg
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
+var accountRetriever = authtypes.AccountRetriever{}
+var highestSequence int64 = -1
+
+func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
+	factory, err := c.getFactory()
+	if err != nil {
+		return nil, err
+	}
+	unsignedTx, err := factory.BuildUnsignedTx(msg)
+	if err != nil {
+		return nil, err
+	}
+	txBytes, err := c.getSignedBytes(ctx, unsignedTx, factory)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.Client.Context().BroadcastTxSync(txBytes)
+	if err == nil && response.Code == 0 {
+		highestSequence = int64(factory.Sequence())
+	}
+	return response, err
+}
+
+func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, error) {
+	// Gas is not charged, but without a high gas limit the transactions fail
+	unsignedTx.SetGasLimit(1000000000)
+	unsignedTx.SetFeeAmount(sdk.Coins{})
+	name := c.Account.Name
+	slog.Debug("Signing transaction", "name", name)
+	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
+	if err != nil {
+		slog.Error("Failed to sign transaction", "error", err)
+		return nil, err
+	}
+	txBytes, err := c.Client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
+	if err != nil {
+		slog.Error("Failed to encode transaction", "error", err)
+		return nil, err
+	}
+	return txBytes, nil
+}
+
+func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
+	address, err := c.Account.Record.GetAddress()
+	if err != nil {
+		slog.Error("Failed to get account address", "error", err)
+		return nil, err
+	}
+	accountNumber, sequence, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
+	if err != nil {
+		slog.Error("Failed to get account number and sequence", "error", err)
+		return nil, err
+	}
+	if int64(sequence) <= highestSequence {
+		slog.Info("Sequence is lower than highest sequence", "sequence", sequence, "highestSequence", highestSequence)
+		sequence = uint64(highestSequence + 1)
+	}
+	slog.Debug("Transaction sequence", "sequence", sequence, "accountNumber", accountNumber)
+	factory := c.Client.TxFactory.
+		WithSequence(sequence).
+		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0)
+	return &factory, nil
+}
 
 func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	// create a guid
@@ -170,14 +253,12 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	defer sendTransactionMutex.Unlock()
 
 	slog.Debug("Start Broadcast", "id", id)
-	response, err := icc.Client.BroadcastTx(icc.Context, *icc.Account, msg)
+	response, err := icc.BroadcastMessage(icc.Context, msg)
 	slog.Debug("Finish broadcast", "id", id)
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
 		return err
 	}
-	// TODO: maybe check response for success?
-	_ = response
 	slog.Debug("Transaction broadcast successfully", "response", response.Data)
 	if response.Code != 0 {
 		slog.Error("Transaction failed", "response", response)
