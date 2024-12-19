@@ -245,6 +245,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		}
 	}
 
+	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
 }
 

@@ -45,7 +45,7 @@ def extract_validators_from_active_participants(active_participants):
     validators = []
     for val in active_participants["active_participants"]["participants"]:
         v = Validator(
-            public_key=val["validatorKey"],
+            pub_key=val["validatorKey"],
             voting_power=int(val["weight"]),
         )
         validators.append(v)
