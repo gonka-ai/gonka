@@ -66,4 +66,5 @@ fi
 echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
 
-$APP_NAME start
+cosmovisor init /usr/bin/inferenced
+cosmovisor run start

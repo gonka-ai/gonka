@@ -4,11 +4,18 @@ FROM alpine:edge
 RUN apk add --update ca-certificates
 WORKDIR /root
 
+ENV DAEMON_HOME=/root/.inference
+ENV DAEMON_NAME=inferenced
+ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
+ENV DAEMON_RESTART_AFTER_UPGRADE=true
+
 # Copy over binaries from the build-env
 COPY ./build/inferenced /usr/bin/inferenced
 COPY ./scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
+COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 
 RUN chmod +x /root/init-docker-genesis.sh
+RUN chmod +x /usr/bin/cosmovisor
 
 EXPOSE 26656 26657 1317 9090
 

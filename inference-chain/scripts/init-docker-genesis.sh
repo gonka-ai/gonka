@@ -44,5 +44,6 @@ $APP_NAME keys \
 $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis gentx "$KEY_NAME" "10000000$COIN_DENOM" --chain-id "$CHAIN_ID"
 $APP_NAME genesis collect-gentxs
+cosmovisor init /usr/bin/inferenced
 
-$APP_NAME start
+cosmovisor run start
