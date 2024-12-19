@@ -185,9 +185,6 @@ func (o *NodePoCOrchestrator) Stop() {
 		}
 		_ = respStop
 
-		// PRTODO: don't skip calling inference/up
-		continue
-
 		respUp, err := o.sendInferenceUpRequest(n.Node)
 		if err != nil {
 			slog.Error("Failed to send inference/up request to node", "node", n.Node.Url, "error", err)
@@ -223,8 +220,8 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode)
 	model := node.Models[0]
 	inferenceUpDto := InferenceUpDto{
 		Model: model,
-		Dtype: "float32",
-		Args:  []string{},
+		Dtype: "float16",
+		Args:  []string{"--enforce-eager"},
 	}
 
 	slog.Info("Sending inference/up request to node", "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
