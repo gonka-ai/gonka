@@ -21,5 +21,5 @@ func main() {
 		StartEventListener(nodeBroker, *recorder, config)
 	}()
 
-	StartInferenceServerWrapper(nodeBroker, *recorder, config)
+	StartInferenceServerWrapper(nodeBroker, recorder, config)
 }

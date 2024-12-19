@@ -54,7 +54,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) {
+func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.CosmosMessageClient, config apiconfig.Config) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
 	nodes := config.Nodes
@@ -108,7 +108,7 @@ func logUnknownRequest() func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func wrapGetInferenceParticipant(recorder cosmos_client.InferenceCosmosClient) func(http.ResponseWriter, *http.Request) {
+func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			slog.Warn("Invalid method", "method", request.Method)
@@ -200,7 +200,7 @@ type ResponseWithBody struct {
 	BodyBytes []byte
 }
 
-func wrapGetCompletion(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+func wrapGetCompletion(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Debug("GetCompletion received")
 
@@ -259,7 +259,7 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 	}, nil
 }
 
-func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Debug("wrapChat. Received request", "method", request.Method, "path", request.URL.Path)
 		chatRequest, err := readRequest(request)
@@ -284,7 +284,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosC
 			return
 		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
 			slog.Info("Transfer request", "requesterAddress", chatRequest.RequesterAddress)
-			handleTransferRequest(w, chatRequest, recorder)
+			handleTransferRequest(request.Context(), w, chatRequest, recorder)
 			return
 		} else {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -306,11 +306,13 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*ExecutorDestination, error) {
-	executor, err := recorder.QueryRandomExecutor()
+func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient) (*ExecutorDestination, error) {
+	queryClient := recorder.NewInferenceQueryClient()
+	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{})
 	if err != nil {
 		return nil, err
 	}
+	executor := response.Executor
 	slog.Info("Executor selected", "address", executor.Address, "url", executor.InferenceUrl)
 	return &ExecutorDestination{
 		Url:     executor.InferenceUrl,
@@ -318,12 +320,12 @@ func getExecutorForRequest(recorder cosmos_client.InferenceCosmosClient) (*Execu
 	}, nil
 }
 
-func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.InferenceCosmosClient) bool {
+func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.CosmosMessageClient) bool {
 	var pubkey = ""
 	if !request.FundedByTransferNode {
 		queryClient := recorder.NewInferenceQueryClient()
 		slog.Debug("GET inference participant for transfer", "address", request.RequesterAddress)
-		client, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+		client, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
 		if err != nil {
 			slog.Error("Failed to get inference participant", "address", request.RequesterAddress, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -337,7 +339,7 @@ func handleTransferRequest(w http.ResponseWriter, request *ChatRequest, recorder
 		pubkey = client.Pubkey
 	}
 
-	executor, err := getExecutorForRequest(recorder)
+	executor, err := getExecutorForRequest(ctx, recorder)
 	if err != nil {
 		slog.Error("Failed to get executor", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -517,7 +519,7 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 	return false
 }
 
-func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) bool {
+func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config apiconfig.Config) bool {
 	if !request.FundedByTransferNode {
 		err := validateRequestAgainstPubKey(request, request.PubKey)
 		if err != nil {
@@ -609,7 +611,7 @@ func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
 	return nil
 }
 
-func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *http.Request, recorder cosmos_client.InferenceCosmosClient) {
+func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *http.Request, recorder cosmos_client.CosmosMessageClient) {
 	// Manually extract the {id} from the URL path
 	address := strings.TrimPrefix(request.URL.Path, "/v1/participants/")
 	if address == "" {
@@ -619,7 +621,7 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 
 	slog.Debug("GET inference participant", "address", address)
 	queryClient := recorder.NewInferenceQueryClient()
-	response, err := queryClient.InferenceParticipant(recorder.Context, &types.QueryInferenceParticipantRequest{Address: address})
+	response, err := queryClient.InferenceParticipant(request.Context(), &types.QueryInferenceParticipantRequest{Address: address})
 	if err != nil {
 		slog.Error("Failed to get inference participant", "address", address, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -647,7 +649,7 @@ func respondWithJson(w http.ResponseWriter, response interface{}) {
 	w.Write(respBytes)
 }
 
-func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder cosmos_client.InferenceCosmosClient) {
+func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder cosmos_client.CosmosMessageClient) {
 	// Manually extract the {id} from the URL path
 	id := strings.TrimPrefix(request.URL.Path, "/v1/chat/completions/")
 	if id == "" {
@@ -657,7 +659,7 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 
 	slog.Debug("GET inference", "id", id)
 	queryClient := recorder.NewInferenceQueryClient()
-	response, err := queryClient.Inference(recorder.Context, &types.QueryGetInferenceRequest{Index: id})
+	response, err := queryClient.Inference(request.Context(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
 		slog.Error("Failed to get inference", "id", id, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -696,7 +698,7 @@ func writeResponseBody(body any, w http.ResponseWriter) {
 	w.Write(respBytes)
 }
 
-func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.InferenceCosmosClient, accountName string, seed int32) (*ResponseWithBody, error) {
+func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.CosmosMessageClient, accountName string, seed int32) (*ResponseWithBody, error) {
 	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
 		return nil, err
@@ -744,7 +746,7 @@ func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_clien
 	return result, nil
 }
 
-func sendInferenceTransaction(inferenceId string, responseBodyBytes []byte, modifiedRequestBodyBytes []byte, recorder *cosmos_client.InferenceCosmosClient, accountName string) error {
+func sendInferenceTransaction(inferenceId string, responseBodyBytes []byte, modifiedRequestBodyBytes []byte, recorder *cosmos_client.CosmosMessageClient, accountName string) error {
 	hash, response, err := getResponseHash(responseBodyBytes)
 	if err != nil {
 		return err
@@ -800,7 +802,7 @@ func ReadRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func createInferenceFinishedTransaction(id string, recorder cosmos_client.InferenceCosmosClient, transaction InferenceTransaction, accountName string) {
+func createInferenceFinishedTransaction(id string, recorder cosmos_client.CosmosMessageClient, transaction InferenceTransaction, accountName string) {
 	message := &inference.MsgFinishInference{
 		Creator:              accountName,
 		InferenceId:          id,
@@ -859,7 +861,7 @@ type ValidationRequest struct {
 	Id string `json:"id"`
 }
 
-func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		var validationRequest ValidationRequest
 		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
@@ -894,7 +896,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.InferenceC
 	}
 }
 
-func wrapSubmitNewParticipant(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+func wrapSubmitNewParticipant(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Debug("SubmitNewParticipant received", "method", request.Method)
 		if request.Method == "POST" {
@@ -938,7 +940,7 @@ type ParticipantDto struct {
 	Reputation  float32  `json:"reputation"`
 }
 
-func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
+func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,
@@ -956,7 +958,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.InferenceCosmosClient, 
 	}
 }
 
-func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func submitNewParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	// Parse the request body into a SubmitNewParticipantDto
 	var body SubmitUnfundedNewParticipantDto
 
@@ -1001,9 +1003,9 @@ func submitNewParticipant(recorder cosmos_client.InferenceCosmosClient, w http.R
 	w.Write(responseJson)
 }
 
-func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func getParticipants(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	queryClient := recorder.NewInferenceQueryClient()
-	r, err := queryClient.ParticipantAll(recorder.Context, &types.QueryAllParticipantRequest{})
+	r, err := queryClient.ParticipantAll(request.Context(), &types.QueryAllParticipantRequest{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1011,7 +1013,7 @@ func getParticipants(recorder cosmos_client.InferenceCosmosClient, w http.Respon
 
 	participants := make([]ParticipantDto, len(r.Participant))
 	for i, p := range r.Participant {
-		balances, err := recorder.Client.BankBalances(recorder.Context, p.Address, nil)
+		balances, err := recorder.BankBalances(request.Context(), p.Address)
 		pBalance := int64(0)
 		if err == nil {
 			for _, balance := range balances {

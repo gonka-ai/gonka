@@ -82,12 +82,13 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		if inferenceWithExecutor.Executor.Address == transactionRecorder.Address {
 			continue
 		}
-		shouldValidate := keeper.ShouldValidate(
+		shouldValidate, message := keeper.ShouldValidate(
 			poc.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
 			inferenceWithExecutor.CurrentPower)
+		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", poc.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
@@ -150,7 +151,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	slog.Info("Validation: Successfully validated inference", "id", inf.InferenceId)
 }
 
-func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.InferenceCosmosClient) (ValidationResult, error) {
+func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {

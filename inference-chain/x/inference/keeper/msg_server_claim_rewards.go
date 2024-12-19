@@ -172,18 +172,21 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			k.LogWarn("Executor not found in weight map", "executor", inference.Executor)
 			continue
 		}
-		if ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower)) {
+		shouldValidate, s := ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower))
+		k.LogDebug("ValidationDecision", "text", s, "inference", inference.InferenceId, "seed", msg.Seed)
+		if shouldValidate {
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
 		}
 	}
 	return mustBeValidated, nil
 }
 
-func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32, executorPower uint32) bool {
+func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32, executorPower uint32) (bool, string) {
 	targetValidations := 1 - (inferenceDetails.ExecutorReputation * 0.9)
 	ourProbability := targetValidations * (float32(validatorPower) / float32(totalPower-executorPower))
 	randFloat := deterministicFloat(seed, inferenceDetails.InferenceId)
-	return randFloat < float64(ourProbability)
+	shouldValidate := randFloat < float64(ourProbability)
+	return shouldValidate, "Should Validate: " + fmt.Sprintf("%v", shouldValidate) + " randFloat: " + fmt.Sprintf("%v", randFloat) + " ourProbability: " + fmt.Sprintf("%v", ourProbability)
 }
 
 // In lieu of a real random number generator, we use a deterministic function that takes a seed and an inferenceId
