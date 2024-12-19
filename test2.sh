@@ -15,7 +15,7 @@ NODE_CONFIG=node_payload.json
 BASE_DIR="prod-genesis"
 rm -r "$BASE_DIR" || true
 
-docker compose -f docker-compose-genesis.yml up -d
+docker compose -f docker-compose-genesis.yml -f docker-compose-http-files.yml up -d
 sleep 20
 
 # Add inference nodes

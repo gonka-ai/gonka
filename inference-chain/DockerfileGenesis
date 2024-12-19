@@ -16,6 +16,7 @@ COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 
 RUN chmod +x /root/init-docker-genesis.sh
 RUN chmod +x /usr/bin/cosmovisor
+RUN cosmovisor init /usr/bin/inferenced
 
 EXPOSE 26656 26657 1317 9090
 
