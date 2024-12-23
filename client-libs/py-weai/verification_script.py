@@ -1,5 +1,5 @@
 import requests
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 
 HISTORY_NODE_HOST = "localhost"
@@ -15,6 +15,7 @@ class Validator:
     #address: str
     pub_key: str
     voting_power: int
+
 
 def get_url(host: str, port: str, path: str) -> str:
     return f"http://{host}:{port}/{path}"
@@ -41,7 +42,7 @@ def extract_validators_from_genesis(genesis):
     return validators
 
 
-def extract_validators_from_active_participants(active_participants):
+def extract_validators_from_active_participants(active_participants) -> list[Validator]:
     validators = []
     for val in active_participants["active_participants"]["participants"]:
         v = Validator(
@@ -82,11 +83,11 @@ def verify_proof(active_participants):
     response.raise_for_status()
 
 
-def verify_signature(prev_validators, block):
+def verify_block(prev_validators: list[Validator], block):
     url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-block")
     payload = {
         "block": block,
-        "prev_validators": prev_validators,
+        "prev_validators": [asdict(v) for v in prev_validators],
     }
     response = requests.post(url, json=payload)
     response.raise_for_status()
@@ -107,7 +108,7 @@ def main():
         active_participants = get_active_participants(epoch=str(i))
 
         verify_proof(active_participants)
-        # verify_signature(prev_validators, active_participants["block"])
+        verify_block(prev_validators, active_participants["block"][0])
 
         prev_validators = extract_validators_from_active_participants(active_participants)
         print(f"Verified epoch {i}. prev_validators: {prev_validators}")
@@ -116,6 +117,7 @@ def main():
 def debug_main():
     prev_validators = get_genesis_validators()
     print(prev_validators)
+
 
 if __name__ == '__main__':
     main()

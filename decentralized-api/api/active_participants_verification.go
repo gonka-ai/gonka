@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	cmcryptoed "github.com/cometbft/cometbft/crypto/ed25519"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
@@ -68,7 +71,7 @@ type Validator struct {
 	VotingPower int64  `json:"voting_power"`
 }
 
-func WrapVerifyBlock() http.HandlerFunc {
+func WrapVerifyBlock(config apiconfig.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var blockVerificationRequest VerifyBlockRequest
 		if err := json.NewDecoder(r.Body).Decode(&blockVerificationRequest); err != nil {
@@ -92,7 +95,16 @@ func WrapVerifyBlock() http.HandlerFunc {
 			valSet[i] = comettypes.NewValidator(pubKey, validator.VotingPower)
 		}
 
-		err := merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
+		err := debug(config.ChainNode.Url, block)
+		if err != nil {
+			slog.Error("Debug block verification failed!", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("Received validators", "height", block.Height, "valSet", valSet)
+
+		err = merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
 		if err != nil {
 			slog.Error("Block signature verification failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -101,4 +113,21 @@ func WrapVerifyBlock() http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func debug(address string, block *comettypes.Block) error {
+	rpcClient, err := rpcclient.New(address, "/websocket")
+	if err != nil {
+		return err
+	}
+
+	valSetRes, err := rpcClient.Validators(context.Background(), &block.Height, nil, nil)
+	if err != nil {
+		return err
+	}
+	valSet := valSetRes.Validators
+
+	slog.Info("Ground truth validators", "height", block.Height, "valSet", valSet)
+
+	return merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
 }
