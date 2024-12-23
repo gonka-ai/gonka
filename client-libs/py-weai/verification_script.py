@@ -87,7 +87,7 @@ def verify_block(prev_validators: list[Validator], block):
     url = get_url(TRUSTED_VERIFIER_NODE_HOST, TRUSTED_VERIFIER_NODE_API_PORT, "v1/verify-block")
     payload = {
         "block": block,
-        "prev_validators": [asdict(v) for v in prev_validators],
+        "validators": [asdict(v) for v in prev_validators],
     }
     response = requests.post(url, json=payload)
     response.raise_for_status()
@@ -108,7 +108,7 @@ def main():
         active_participants = get_active_participants(epoch=str(i))
 
         verify_proof(active_participants)
-        verify_block(prev_validators, active_participants["block"][0])
+        verify_block(prev_validators, active_participants["block"][2])
 
         prev_validators = extract_validators_from_active_participants(active_participants)
         print(f"Verified epoch {i}. prev_validators: {prev_validators}")
