@@ -115,9 +115,16 @@ type CosmosMessageClient interface {
 	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
 	SubmitPoC(transaction *inference.MsgSubmitPoC) error
+	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
+	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
+	GetContext() *context.Context
+}
+
+func (icc *InferenceCosmosClient) GetContext() *context.Context {
+	return &icc.Context
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {

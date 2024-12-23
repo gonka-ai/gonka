@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-func WrapPoCBatches(recorder cosmos_client.InferenceCosmosClient) func(w http.ResponseWriter, request *http.Request) {
+func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodPost:
@@ -27,7 +27,7 @@ func WrapPoCBatches(recorder cosmos_client.InferenceCosmosClient) func(w http.Re
 	}
 }
 
-func postPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func postPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	suffix := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
 	slog.Debug("postPoCBatches", "suffix", suffix)
 
@@ -39,7 +39,7 @@ func postPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Respons
 	}
 }
 
-func submitPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func submitPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	var body poc.ProofBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -65,7 +65,7 @@ func submitPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Respo
 	w.WriteHeader(http.StatusOK)
 }
 
-func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	var body poc.ValidatedBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -107,7 +107,7 @@ func submitValidatedPoCBatches(recorder cosmos_client.InferenceCosmosClient, w h
 	return
 }
 
-func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.ResponseWriter, request *http.Request) {
+func getPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	// Get what's after /v1/poc/batches/
 	epoch := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
 	slog.Debug("getPoCBatches", "epoch", epoch)
@@ -124,7 +124,7 @@ func getPoCBatches(recorder cosmos_client.InferenceCosmosClient, w http.Response
 
 	queryClient := recorder.NewInferenceQueryClient()
 	// ignite scaffold query pocBatchesForStage blockHeight:int
-	response, err := queryClient.PocBatchesForStage(recorder.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: value})
+	response, err := queryClient.PocBatchesForStage(*recorder.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: value})
 	if err != nil {
 		slog.Error("Failed to get PoC batches.", "epoch", value)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

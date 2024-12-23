@@ -35,7 +35,7 @@ type ActiveParticipantWithProof struct {
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
-func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmosClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
@@ -80,9 +80,9 @@ func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.InferenceCosmo
 	}
 }
 
-func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig.Config, transactionRecorder cosmos_client.InferenceCosmosClient) {
+func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig.Config, transactionRecorder cosmos_client.CosmosMessageClient) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
-	currEpoch, err := queryClient.GetCurrentEpoch(transactionRecorder.Context, &types.QueryGetCurrentEpochRequest{})
+	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		slog.Error("Failed to get current epoch", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
