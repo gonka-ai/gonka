@@ -54,7 +54,8 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
-			slog.Warn("Failed to read a websocket message", "error", err)
+			slog.Warn("Failed to read a websocket message", "errorType", fmt.Sprintf("%T", err), "error", err)
+			continue
 		}
 
 		var event chainevents.JSONRPCResponse
@@ -84,11 +85,11 @@ func handleMessage(nodeBroker *broker.Broker, transactionRecorder cosmosclient.I
 	var action = event.Result.Events["message.action"][0]
 	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
 	// Get the keys of the map event.Result.Events:
-	for key := range event.Result.Events {
-		for i, attr := range event.Result.Events[key] {
-			slog.Debug("EventValue", "key", key, "attr", attr, "index", i)
-		}
-	}
+	//for key := range event.Result.Events {
+	//	for i, attr := range event.Result.Events[key] {
+	//		slog.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
+	//	}
+	//}
 	switch action {
 	case finishInferenceAction:
 		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)

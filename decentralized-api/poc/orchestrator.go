@@ -169,6 +169,12 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		return
 	}
 
+	//for key := range event.Result.Events {
+	//	for i, attr := range event.Result.Events[key] {
+	//		slog.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
+	//	}
+	//}
+
 	data := event.Result.Data.Value
 
 	blockHeight, err := getBlockHeight(data)

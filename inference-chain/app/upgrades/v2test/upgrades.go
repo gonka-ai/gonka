@@ -17,6 +17,7 @@ func CreateUpgradeHandler(
 		}
 		fmt.Printf("OrderMigrations: %v\n", mm.OrderMigrations)
 		// Literally do nothing for the test upgrade
-		return mm.RunMigrations(ctx, configurator, vm)
+		//return mm.RunMigrations(ctx, configurator, vm)
+		return vm, nil
 	}
 }
