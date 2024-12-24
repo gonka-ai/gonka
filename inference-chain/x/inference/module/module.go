@@ -224,7 +224,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(computeResult)", len(computeResult), "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
