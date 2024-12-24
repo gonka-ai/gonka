@@ -29,6 +29,7 @@ service Msg {
   rpc ClaimRewards                 (MsgClaimRewards                ) returns (MsgClaimRewardsResponse                );
   rpc SubmitPocBatch               (MsgSubmitPocBatch              ) returns (MsgSubmitPocBatchResponse              );
   rpc SubmitPocValidation          (MsgSubmitPocValidation         ) returns (MsgSubmitPocValidationResponse         );
+  rpc SubmitSeed                   (MsgSubmitSeed                  ) returns (MsgSubmitSeedResponse                  );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -179,3 +180,14 @@ message MsgSubmitPocValidation {
 }
 
 message MsgSubmitPocValidationResponse {}
+
+message MsgSubmitSeed {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64  seed = 2;
+  int64  blockHeight = 3;
+  string signature = 4;
+}
+
+message MsgSubmitSeedResponse {}
+
