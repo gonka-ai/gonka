@@ -67,4 +67,9 @@ echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
 
 cosmovisor init /usr/bin/inferenced
-cosmovisor run start
+
+# Idle the container in the event that cosmovisor fails
+cosmovisor run start || {
+  echo "Cosmovisor failed, idling the container..."
+  tail -f /dev/null
+}

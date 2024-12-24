@@ -17,16 +17,22 @@ data class TxResponse(
     val gasUsed: Long,
     val tx: JsonElement?,  // Capture raw JSON for the "tx" field
     val timestamp: Instant?,
-    val events: List<Event>
-)
+    val events: List<Event>,
+) {
+    fun getProposalId(): String? {
+        val proposalEvent = events.firstOrNull { it.type == "submit_proposal" }
+        val proposalId = proposalEvent?.attributes?.firstOrNull { it.key == "proposal_id" }
+        return proposalId?.value
+    }
+}
 
 data class Event(
     val type: String,
-    val attributes: List<Attribute>
+    val attributes: List<Attribute>,
 )
 
 data class Attribute(
     val key: String,
     val value: String,
-    val index: Boolean
+    val index: Boolean,
 )

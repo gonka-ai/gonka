@@ -49,13 +49,27 @@ $APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000000$COIN_DENOM" --key
 $APP_NAME genesis gentx "$KEY_NAME" "10000000$COIN_DENOM" --chain-id "$CHAIN_ID"
 $APP_NAME genesis collect-gentxs
 
+modify_genesis_file() {
+  local json_file="$HOME/.inference/config/genesis.json"
+  local jq_filter="$1"
+
+  echo "Checking if jq is installed"
+  which jq
+  jq "$jq_filter" "$json_file" > "${json_file}.tmp"
+  mv "${json_file}.tmp" "$json_file"
+  echo "Modified $json_file with filter: $jq_filter"
+  cat "$json_file"
+}
+
+# Usage
+modify_genesis_file '.app_state.gov.params.voting_period |= "30s"'
+
 echo "Genesis file created"
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced
 
 echo "Starting cosmovisor and the chain"
-cosmovisor run start
-
-# In case the chain fails, let's idle the container so we can debug
-# while keeping the container running
-tail -f /dev/null
+cosmovisor run start || {
+  echo "Cosmovisor failed, idling the container..."
+  tail -f /dev/null
+}

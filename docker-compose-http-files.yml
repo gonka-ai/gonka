@@ -7,6 +7,9 @@ services:
       - '8781:80'
     volumes:
       - ./public-html:/usr/local/apache2/htdocs/
+    networks:
+      - chain-public
+
 networks:
   chain-public:
-    name: chain-public
+#    external: true

@@ -187,24 +187,133 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
         val sourceAccount = this.getKeys()[0].address
         val destAccount = destinationNode.getKeys()[0].address
-        val response = this.execAndParse<TxResponse>(
+        val response = this.submitTransaction(
             listOf(
-                "tx",
                 "bank",
                 "send",
                 sourceAccount,
                 destAccount,
                 "$amount${config.denom}",
+            )
+        )
+        response
+    }
+
+    fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {
+        execAndParse(listOf("query", "tx", "--type=hash", txHash))
+    }
+
+    fun submitUpgradeProposal(
+        title: String,
+        description: String,
+        binaryPath: String,
+        height: Long,
+    ): TxResponse = wrapLog("submitUpgradeProposal", true) {
+        val proposer = this.getKeys()[0].address
+        val binariesJson = """{"binaries":{"linux/amd64":"$binaryPath"}}"""
+        this.submitTransaction(
+            listOf(
+                "upgrade",
+                "software-upgrade",
+                title,
+                "--title",
+                title,
+                "--upgrade-height",
+                "$height",
+                "--upgrade-info",
+                binariesJson,
+                "--summary",
+                description,
+                "--deposit",
+                "100000icoin",
+                "--from",
+                proposer,
+            )
+        )
+    }
+
+    fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
+        val depositor = this.getKeys()[0].address
+        this.submitTransaction(
+            listOf(
+                "gov",
+                "deposit",
+                proposalId,
+                "$amount${config.denom}",
+                "--from",
+                depositor,
+            )
+        )
+    }
+
+    fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
+        val voter = this.getKeys()[0].address
+        this.submitTransaction(
+            listOf(
+                "gov",
+                "vote",
+                proposalId,
+                option,
+                "--from",
+                voter,
+            )
+        )
+    }
+
+    fun submitTransaction(args: List<String>): TxResponse {
+        val finalArgs =
+            listOf("tx") + args + listOf(
                 "--keyring-backend",
                 "test",
                 "--chain-id=${config.chainId}",
                 "--keyring-dir=/root/${config.stateDirName}",
                 "--yes",
-                "--output",
-                "json"
+                "--broadcast-mode",
+                "sync"
             )
-        )
-        response
+        val response = sendTransaction(finalArgs)
+        if (response.height == 0L) {
+            Thread.sleep(1000)
+            val newResponse = this.waitForTxProcessed(response.txhash)
+            check(newResponse.code == 0) {
+                "Transaction failed: ${newResponse.rawLog}"
+            }
+            return newResponse
+        }
+        return response
+
+    }
+
+    private fun sendTransaction(finalArgs: List<String>): TxResponse {
+        var response = this.execAndParse<TxResponse>(finalArgs)
+        while (response.code == 32) {
+            Logger.warn("Transaction account sequence mismatch, retrying")
+            Thread.sleep(1000)
+            response = this.execAndParse(finalArgs)
+        }
+        check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
+        return response
+    }
+
+    fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {
+        var currentWait = 0
+        while (true) {
+            try {
+                val response = this.getTxStatus(txHash)
+                if (response.height != 0L) {
+                    return response
+                }
+                Thread.sleep(500)
+                currentWait++
+                check(currentWait < maxWait) {
+                    "Transaction not processed after $maxWait seconds"
+                }
+            } catch (e: IllegalArgumentException) {
+                Logger.warn("Unable to find transaction with hash: {}. Exception: {}", txHash, e)
+                currentWait++
+            }
+        }
+
     }
 
 }

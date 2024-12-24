@@ -2,6 +2,8 @@ FROM alpine:edge
 
 # Install ca-certificates
 RUN apk add --update ca-certificates
+RUN apk update && apk add --no-cache jq
+
 WORKDIR /root
 
 ENV DAEMON_HOME=/root/.inference
