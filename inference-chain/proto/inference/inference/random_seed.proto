@@ -6,7 +6,6 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message RandomSeed {
   string participant = 1;
   int64 blockHeight = 2;
-  int64 seed = 3;
-  string signature = 4;
+  string signature = 3;
   // epoch group id?
 }

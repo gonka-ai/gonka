@@ -184,9 +184,8 @@ message MsgSubmitPocValidationResponse {}
 message MsgSubmitSeed {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  int64  seed = 2;
-  int64  blockHeight = 3;
-  string signature = 4;
+  int64  blockHeight = 2;
+  string signature = 3;
 }
 
 message MsgSubmitSeedResponse {}
