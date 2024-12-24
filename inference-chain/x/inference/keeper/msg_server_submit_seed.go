@@ -14,11 +14,12 @@ func (k msgServer) SubmitSeed(goCtx context.Context, msg *types.MsgSubmitSeed) (
 
 	seed := types.RandomSeed{
 		Participant: msg.Creator,
-		Seed:        msg.Seed,
 		BlockHeight: msg.BlockHeight,
+		Seed:        msg.Seed,
+		Signature:   msg.Signature,
 	}
 
-	k.SetSeed(ctx, seed)
+	k.SetRandomSeed(ctx, seed)
 
 	return &types.MsgSubmitSeedResponse{}, nil
 }

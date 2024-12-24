@@ -15,16 +15,18 @@ import (
 var (
 	md_RandomSeed             protoreflect.MessageDescriptor
 	fd_RandomSeed_participant protoreflect.FieldDescriptor
-	fd_RandomSeed_seed        protoreflect.FieldDescriptor
 	fd_RandomSeed_blockHeight protoreflect.FieldDescriptor
+	fd_RandomSeed_seed        protoreflect.FieldDescriptor
+	fd_RandomSeed_signature   protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_random_seed_proto_init()
 	md_RandomSeed = File_inference_inference_random_seed_proto.Messages().ByName("RandomSeed")
 	fd_RandomSeed_participant = md_RandomSeed.Fields().ByName("participant")
-	fd_RandomSeed_seed = md_RandomSeed.Fields().ByName("seed")
 	fd_RandomSeed_blockHeight = md_RandomSeed.Fields().ByName("blockHeight")
+	fd_RandomSeed_seed = md_RandomSeed.Fields().ByName("seed")
+	fd_RandomSeed_signature = md_RandomSeed.Fields().ByName("signature")
 }
 
 var _ protoreflect.Message = (*fastReflection_RandomSeed)(nil)
@@ -98,15 +100,21 @@ func (x *fastReflection_RandomSeed) Range(f func(protoreflect.FieldDescriptor, p
 			return
 		}
 	}
+	if x.BlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.BlockHeight)
+		if !f(fd_RandomSeed_blockHeight, value) {
+			return
+		}
+	}
 	if x.Seed != int64(0) {
 		value := protoreflect.ValueOfInt64(x.Seed)
 		if !f(fd_RandomSeed_seed, value) {
 			return
 		}
 	}
-	if x.BlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_RandomSeed_blockHeight, value) {
+	if x.Signature != "" {
+		value := protoreflect.ValueOfString(x.Signature)
+		if !f(fd_RandomSeed_signature, value) {
 			return
 		}
 	}
@@ -127,10 +135,12 @@ func (x *fastReflection_RandomSeed) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.RandomSeed.participant":
 		return x.Participant != ""
-	case "inference.inference.RandomSeed.seed":
-		return x.Seed != int64(0)
 	case "inference.inference.RandomSeed.blockHeight":
 		return x.BlockHeight != int64(0)
+	case "inference.inference.RandomSeed.seed":
+		return x.Seed != int64(0)
+	case "inference.inference.RandomSeed.signature":
+		return x.Signature != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -149,10 +159,12 @@ func (x *fastReflection_RandomSeed) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.RandomSeed.participant":
 		x.Participant = ""
-	case "inference.inference.RandomSeed.seed":
-		x.Seed = int64(0)
 	case "inference.inference.RandomSeed.blockHeight":
 		x.BlockHeight = int64(0)
+	case "inference.inference.RandomSeed.seed":
+		x.Seed = int64(0)
+	case "inference.inference.RandomSeed.signature":
+		x.Signature = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -172,12 +184,15 @@ func (x *fastReflection_RandomSeed) Get(descriptor protoreflect.FieldDescriptor)
 	case "inference.inference.RandomSeed.participant":
 		value := x.Participant
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.RandomSeed.seed":
-		value := x.Seed
-		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.RandomSeed.blockHeight":
 		value := x.BlockHeight
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.RandomSeed.seed":
+		value := x.Seed
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.RandomSeed.signature":
+		value := x.Signature
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -200,10 +215,12 @@ func (x *fastReflection_RandomSeed) Set(fd protoreflect.FieldDescriptor, value p
 	switch fd.FullName() {
 	case "inference.inference.RandomSeed.participant":
 		x.Participant = value.Interface().(string)
-	case "inference.inference.RandomSeed.seed":
-		x.Seed = value.Int()
 	case "inference.inference.RandomSeed.blockHeight":
 		x.BlockHeight = value.Int()
+	case "inference.inference.RandomSeed.seed":
+		x.Seed = value.Int()
+	case "inference.inference.RandomSeed.signature":
+		x.Signature = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -226,10 +243,12 @@ func (x *fastReflection_RandomSeed) Mutable(fd protoreflect.FieldDescriptor) pro
 	switch fd.FullName() {
 	case "inference.inference.RandomSeed.participant":
 		panic(fmt.Errorf("field participant of message inference.inference.RandomSeed is not mutable"))
-	case "inference.inference.RandomSeed.seed":
-		panic(fmt.Errorf("field seed of message inference.inference.RandomSeed is not mutable"))
 	case "inference.inference.RandomSeed.blockHeight":
 		panic(fmt.Errorf("field blockHeight of message inference.inference.RandomSeed is not mutable"))
+	case "inference.inference.RandomSeed.seed":
+		panic(fmt.Errorf("field seed of message inference.inference.RandomSeed is not mutable"))
+	case "inference.inference.RandomSeed.signature":
+		panic(fmt.Errorf("field signature of message inference.inference.RandomSeed is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -245,10 +264,12 @@ func (x *fastReflection_RandomSeed) NewField(fd protoreflect.FieldDescriptor) pr
 	switch fd.FullName() {
 	case "inference.inference.RandomSeed.participant":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.RandomSeed.seed":
-		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.RandomSeed.blockHeight":
 		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.RandomSeed.seed":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.RandomSeed.signature":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.RandomSeed"))
@@ -322,11 +343,15 @@ func (x *fastReflection_RandomSeed) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.BlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.BlockHeight))
+		}
 		if x.Seed != 0 {
 			n += 1 + runtime.Sov(uint64(x.Seed))
 		}
-		if x.BlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.BlockHeight))
+		l = len(x.Signature)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -357,13 +382,20 @@ func (x *fastReflection_RandomSeed) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.BlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockHeight))
+		if len(x.Signature) > 0 {
+			i -= len(x.Signature)
+			copy(dAtA[i:], x.Signature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Signature)))
 			i--
-			dAtA[i] = 0x18
+			dAtA[i] = 0x22
 		}
 		if x.Seed != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Seed))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.BlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockHeight))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -457,25 +489,6 @@ func (x *fastReflection_RandomSeed) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
-				}
-				x.Seed = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Seed |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 3:
-				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockHeight", wireType)
 				}
 				x.BlockHeight = 0
@@ -493,6 +506,57 @@ func (x *fastReflection_RandomSeed) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+				}
+				x.Seed = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Seed |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Signature", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Signature = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -547,8 +611,9 @@ type RandomSeed struct {
 	unknownFields protoimpl.UnknownFields
 
 	Participant string `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
-	Seed        int64  `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
-	BlockHeight int64  `protobuf:"varint,3,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"` // epoch group id?
+	BlockHeight int64  `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	Seed        int64  `protobuf:"varint,3,opt,name=seed,proto3" json:"seed,omitempty"`
+	Signature   string `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"` // epoch group id?
 }
 
 func (x *RandomSeed) Reset() {
@@ -578,6 +643,13 @@ func (x *RandomSeed) GetParticipant() string {
 	return ""
 }
 
+func (x *RandomSeed) GetBlockHeight() int64 {
+	if x != nil {
+		return x.BlockHeight
+	}
+	return 0
+}
+
 func (x *RandomSeed) GetSeed() int64 {
 	if x != nil {
 		return x.Seed
@@ -585,11 +657,11 @@ func (x *RandomSeed) GetSeed() int64 {
 	return 0
 }
 
-func (x *RandomSeed) GetBlockHeight() int64 {
+func (x *RandomSeed) GetSignature() string {
 	if x != nil {
-		return x.BlockHeight
+		return x.Signature
 	}
-	return 0
+	return ""
 }
 
 var File_inference_inference_random_seed_proto protoreflect.FileDescriptor
@@ -598,26 +670,28 @@ var file_inference_inference_random_seed_proto_rawDesc = []byte{
 	0x0a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x72, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x5f, 0x73, 0x65, 0x65,
 	0x64, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x64, 0x0a, 0x0a,
-	0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x12, 0x0a, 0x04,
-	0x73, 0x65, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x65, 0x65, 0x64,
-	0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x42, 0xbd, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0f,
-	0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
-	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x82, 0x01, 0x0a,
+	0x0a, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x12, 0x20, 0x0a, 0x0b, 0x70,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x20, 0x0a,
+	0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12,
+	0x12, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x73,
+	0x65, 0x65, 0x64, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
+	0x65, 0x42, 0xbd, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0f, 0x52,
+	0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
+	0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
+	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47,
+	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

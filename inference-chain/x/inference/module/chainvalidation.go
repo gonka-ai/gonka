@@ -105,12 +105,19 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		am.LogInfo("ComputeNewWeights: Setting compute validator.", "computeResult", r)
 		computeResults = append(computeResults, r)
 
+		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
+		if !found {
+			am.LogError("ComputeNewWeights: Error getting seed", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			// TODO: What should we do?
+		}
+
 		activeParticipant := &types.ActiveParticipant{
 			Index:        participantAddress,
 			ValidatorKey: participant.ValidatorKey,
 			Weight:       claimedWeight,
 			InferenceUrl: participant.InferenceUrl,
 			Models:       participant.Models,
+			Seed:         &seed,
 		}
 		activeParticipants = append(activeParticipants, activeParticipant)
 	}
