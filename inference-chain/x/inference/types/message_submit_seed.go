@@ -8,11 +8,11 @@ import (
 
 var _ sdk.Msg = &MsgSubmitSeed{}
 
-func NewMsgSubmitSeed(creator string, seed int32, height int32, signature string) *MsgSubmitSeed {
+func NewMsgSubmitSeed(creator string, seed int64, blockHeight int64, signature string) *MsgSubmitSeed {
 	return &MsgSubmitSeed{
 		Creator:     creator,
 		Seed:        seed,
-		BlockHeight: height,
+		BlockHeight: blockHeight,
 		Signature:   signature,
 	}
 }

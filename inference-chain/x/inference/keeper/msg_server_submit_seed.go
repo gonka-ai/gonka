@@ -9,7 +9,6 @@ import (
 
 func (k msgServer) SubmitSeed(goCtx context.Context, msg *types.MsgSubmitSeed) (*types.MsgSubmitSeedResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-
 	// TODO: Handling the message
 	_ = ctx
 

@@ -18,22 +18,41 @@ type SeedInfo struct {
 	Signature string
 }
 
+func (s *SeedInfo) IsEmpty() bool {
+	return s.Seed == 0 && s.Height == 0 && s.Signature == ""
+}
+
 func GenerateSeed(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient) {
 	slog.Debug("Old Seed Signature", "seed", CurrentSeed)
-	err := getNextSeedSignature(blockHeight, transactionRecorder)
+	seedInfo, err := getNextSeedSignature(blockHeight, transactionRecorder)
 	if err != nil {
 		slog.Error("Failed to get next seed signature", "error", err)
 		return
 	}
 	slog.Debug("New Seed Signature", "seed", UpcomingSeed)
 
-	// TODO: submit message
+	err = transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
+		Seed:        seedInfo.Seed,
+		BlockHeight: seedInfo.Height,
+		Signature:   seedInfo.Signature,
+	})
+	if err != nil {
+		slog.Error("Failed to send SubmitSeed transaction", "error", err)
+	}
+
+	UpcomingSeed = *seedInfo
 }
 
-// once the new stage has started, request our money!
-// if proofofcompute.IsSetNewValidatorsStage(blockHeight)
 func RequestMoney(transactionRecorder *cosmosclient.InferenceCosmosClient) {
 	defer func() { CurrentSeed = UpcomingSeed }()
+
+	// FIXME: we can also imagine a scenario where we weren't updating the seed for a few epochs
+	//  e.g. generation fails a few times in a row for some reason
+	//  Solution: query seed here?
+	if CurrentSeed.IsEmpty() {
+		slog.Info("IsSetNewValidatorsStage: CurrentSeed is empty, skipping ClaimRewards")
+		return
+	}
 
 	slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", CurrentSeed)
 	err := transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
@@ -45,7 +64,7 @@ func RequestMoney(transactionRecorder *cosmosclient.InferenceCosmosClient) {
 	}
 }
 
-func getNextSeedSignature(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient) error {
+func getNextSeedSignature(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient) (*SeedInfo, error) {
 	newSeed := rand.Int63()
 	newHeight := blockHeight
 	seedBytes := make([]byte, 8)
@@ -53,12 +72,12 @@ func getNextSeedSignature(blockHeight int64, transactionRecorder *cosmosclient.I
 	signature, err := transactionRecorder.SignBytes(seedBytes)
 	if err != nil {
 		slog.Error("Failed to sign bytes", "error", err)
-		return err
+		return nil, err
 	}
-	UpcomingSeed = SeedInfo{
+	seedInfo := SeedInfo{
 		Seed:      newSeed,
 		Height:    newHeight,
 		Signature: hex.EncodeToString(signature),
 	}
-	return nil
+	return &seedInfo, nil
 }

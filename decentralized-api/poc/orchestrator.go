@@ -275,11 +275,12 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 
 		// Deprecated
 		slog.Debug("Old Seed Signature", "seed", CurrentSeed)
-		err := getNextSeedSignature(proofs.BlockHeight, &transactionRecorder)
+		seedInfo, err := getNextSeedSignature(proofs.BlockHeight, &transactionRecorder)
 		if err != nil {
 			slog.Error("Failed to get next seed signature", "error", err)
 			return
 		}
+		UpcomingSeed = *seedInfo
 		slog.Debug("New Seed Signature", "seed", UpcomingSeed)
 
 		message := inference.MsgSubmitPoC{
