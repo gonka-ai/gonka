@@ -32,7 +32,6 @@ func GenerateSeed(blockHeight int64, transactionRecorder *cosmosclient.Inference
 	slog.Debug("New Seed Signature", "seed", UpcomingSeed)
 
 	err = transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
-		Seed:        seedInfo.Seed,
 		BlockHeight: seedInfo.Height,
 		Signature:   seedInfo.Signature,
 	})

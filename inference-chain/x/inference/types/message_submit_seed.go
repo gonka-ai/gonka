@@ -11,7 +11,6 @@ var _ sdk.Msg = &MsgSubmitSeed{}
 func NewMsgSubmitSeed(creator string, seed int64, blockHeight int64, signature string) *MsgSubmitSeed {
 	return &MsgSubmitSeed{
 		Creator:     creator,
-		Seed:        seed,
 		BlockHeight: blockHeight,
 		Signature:   signature,
 	}

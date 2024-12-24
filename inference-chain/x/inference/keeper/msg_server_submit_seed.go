@@ -15,7 +15,6 @@ func (k msgServer) SubmitSeed(goCtx context.Context, msg *types.MsgSubmitSeed) (
 	seed := types.RandomSeed{
 		Participant: msg.Creator,
 		BlockHeight: msg.BlockHeight,
-		Seed:        msg.Seed,
 		Signature:   msg.Signature,
 	}
 
