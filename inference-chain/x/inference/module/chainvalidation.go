@@ -86,8 +86,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
 		if !found {
-			am.LogError("ComputeNewWeights: Error getting seed", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
-			// TODO: What should we do?
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			continue
 		}
 
 		activeParticipant := &types.ActiveParticipant{
