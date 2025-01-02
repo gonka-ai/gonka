@@ -210,7 +210,7 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         height: Long,
     ): TxResponse = wrapLog("submitUpgradeProposal", true) {
         val proposer = this.getKeys()[0].address
-        val binariesJson = """{"binaries":{"linux/amd64":"$binaryPath"}}"""
+        val binariesJson = """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$binaryPath"}}"""
         this.submitTransaction(
             listOf(
                 "upgrade",

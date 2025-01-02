@@ -1,6 +1,7 @@
 package poc
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
 	"encoding/binary"
@@ -161,12 +162,18 @@ func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
-var CurrentHeight = int64(0)
-
 func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return
+	}
+
+	// Check for any upcoming upgrade plan
+	plan, err := transactionRecorder.GetUpgradePlan()
+	if err != nil {
+		slog.Error("Unable to get upgrade plan", "error", err)
+	} else {
+		slog.Info("Upgrade plan", "plan", plan.Plan)
 	}
 
 	//for key := range event.Result.Events {
@@ -182,7 +189,10 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		slog.Error("Failed to get blockHeight from event data", "error", err)
 		return
 	}
-	CurrentHeight = blockHeight
+	err = apiconfig.SetHeight(blockHeight)
+	if err != nil {
+		slog.Warn("Failed to write config", "error", err)
+	}
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
@@ -207,12 +217,21 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 	// once the new stage has started, request our money!
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		go func() {
-			PreviousSeed = CurrentSeed
-			CurrentSeed = UpcomingSeed
-			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", PreviousSeed)
+			err := apiconfig.SetPreviousSeed(apiconfig.GetCurrentSeed())
+			if err != nil {
+				slog.Error("Failed to set previous seed", "error", err)
+				return
+			}
+			err = apiconfig.SetCurrentSeed(apiconfig.GetUpcomingSeed())
+			if err != nil {
+				slog.Error("Failed to set current seed", "error", err)
+				return
+			}
+			previousSeed := apiconfig.GetPreviousSeed()
+			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", previousSeed)
 			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
-				Seed:           PreviousSeed.Seed,
-				PocStartHeight: uint64(PreviousSeed.Height),
+				Seed:           previousSeed.Seed,
+				PocStartHeight: uint64(previousSeed.Height),
 			})
 			if err != nil {
 				slog.Error("Failed to send ClaimRewards transaction", "error", err)
@@ -259,16 +278,6 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
-var UpcomingSeed SeedInfo
-var CurrentSeed SeedInfo
-var PreviousSeed SeedInfo
-
-type SeedInfo struct {
-	Seed      int64
-	Height    int64
-	Signature string
-}
-
 func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
 	return func(proofs *ProofOfComputeResults) {
 		nonce := make([]string, len(proofs.Results))
@@ -276,18 +285,18 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			nonce[i] = p.Nonce
 		}
 
-		slog.Debug("Old Seed Signature", "seed", CurrentSeed)
+		slog.Debug("Old Seed Signature", "seed", apiconfig.GetCurrentSeed())
 		err := getNextSeedSignature(proofs, transactionRecorder)
 		if err != nil {
 			slog.Error("Failed to get next seed signature", "error", err)
 			return
 		}
-		slog.Debug("New Seed Signature", "seed", UpcomingSeed)
+		slog.Debug("New Seed Signature", "seed", apiconfig.GetUpcomingSeed())
 
 		message := inference.MsgSubmitPoC{
 			BlockHeight:   proofs.BlockHeight,
 			Nonce:         nonce,
-			SeedSignature: UpcomingSeed.Signature,
+			SeedSignature: apiconfig.GetUpcomingSeed().Signature,
 		}
 
 		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
@@ -309,10 +318,14 @@ func getNextSeedSignature(proofs *ProofOfComputeResults, transactionRecorder cos
 		slog.Error("Failed to sign bytes", "error", err)
 		return err
 	}
-	UpcomingSeed = SeedInfo{
+	err = apiconfig.SetUpcomingSeed(apiconfig.SeedInfo{
 		Seed:      newSeed,
 		Height:    newHeight,
 		Signature: hex.EncodeToString(signature),
+	})
+	if err != nil {
+		slog.Error("Failed to set upcoming seed", "error", err)
+		return err
 	}
 	return nil
 }

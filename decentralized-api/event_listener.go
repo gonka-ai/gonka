@@ -105,8 +105,8 @@ func waitForEventHeight(event chainevents.JSONRPCResponse) bool {
 		slog.Error("Failed to parse height", "error", err)
 		return true
 	}
-	for poc.CurrentHeight < expectedHeight {
-		slog.Info("Height race condition! Waiting for height to catch up", "currentHeight", poc.CurrentHeight, "expectedHeight", expectedHeight)
+	for apiconfig.GetHeight() < expectedHeight {
+		slog.Info("Height race condition! Waiting for height to catch up", "currentHeight", apiconfig.GetHeight(), "expectedHeight", expectedHeight)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false

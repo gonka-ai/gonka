@@ -3,6 +3,7 @@ module decentralized-api
 go 1.22.2
 
 require (
+	cosmossdk.io/x/upgrade v0.1.1
 	github.com/cometbft/cometbft v0.38.11
 	github.com/cosmos/cosmos-sdk v0.50.8
 	github.com/google/uuid v1.6.0
