@@ -19,7 +19,7 @@ services:
       - node
     environment:
       - KEY_NAME=${KEY_NAME}
-      - PUBLIC_IP=${PUBLIC_IP}
+      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
       - PORT=${PORT}
     ports:
       - "${PORT}:8080"
