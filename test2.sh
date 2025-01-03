@@ -15,6 +15,7 @@ BASE_DIR="prod-genesis"
 rm -r "$BASE_DIR" || true
 
 docker compose -f docker-compose-genesis.yml -f docker-compose-http-files.yml up -d
+
 sleep 20
 
 # Add inference nodes
@@ -47,7 +48,6 @@ echo "$post_data"
 
 # Make the final POST request to the genesis endpoint
 curl -X POST "http://0.0.0.0:8080/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-
 
 sleep 10
 genesis_node_id=$(docker exec genesis-node inferenced tendermint show-node-id)

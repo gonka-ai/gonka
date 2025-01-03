@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
-	"decentralized-api/poc"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,12 +83,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			continue
 		}
 		shouldValidate, message := keeper.ShouldValidate(
-			poc.CurrentSeed.Seed,
+			apiconfig.GetCurrentSeed().Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
 			inferenceWithExecutor.CurrentPower)
-		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", poc.CurrentSeed.Seed)
+		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", apiconfig.GetCurrentSeed().Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}

@@ -107,3 +107,16 @@ docker-push-join:
 	@docker push gcr.io/decentralized-ai/inferenced-join
 
 build-and-push-docker: build-docker-amd docker-push
+
+build-v2-test:
+	$(eval PLATFORM=linux/amd64)
+	$(DOCKER_BUILD)
+	@echo "--> clearing out ../public-html/v2"
+	@rm -rf ../public-html/v2/*
+	@mkdir -p ../public-html/v2
+	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced"
+	@cp ./build/inferenced ../public-html/v2/inferenced
+	@echo "--> zipping inferenced binary"
+	@zip -j ../public-html/v2/inferenced.zip ../public-html/v2/inferenced
+	@echo "--> generating shasum for inferenced.zip"
+	@shasum -a 256 ../public-html/v2/inferenced.zip

@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"errors"
 	"fmt"
@@ -253,6 +254,14 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 		slog.Error("Transaction failed", "response", response)
 	}
 	return nil
+}
+
+func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
+	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
+}
+
+func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
+	return upgradetypes.NewQueryClient(icc.Client.Context())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {

@@ -12,11 +12,14 @@ class UpgradeTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val height = highestFunded.getCurrentBlockHeight()
-        val path = "http://binary-server/v2/inferenced.zip?checksum=sha256:a39a573678a2e29227c3aa1ce3f8fb2e913b43679680366a427a91cbd5d3f8d3"
+        val checksum = "2067b6d330ef1d1d0037a769ebec146788a2e006c4c88d709ff0fbec6f13daef"
+        val path = "http://binary-server/v2/inferenced.zip?checksum=sha256:$checksum"
         val response = highestFunded.node.submitUpgradeProposal(
             title = "v0.0.2test",
             description = "For testing",
             binaryPath = path,
+            // TODO: This should not be the same binary, duh
+            apiBinaryPath = path,
             height = height + 20
         )
         val proposalId = response.getProposalId()
