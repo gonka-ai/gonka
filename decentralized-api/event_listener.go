@@ -6,6 +6,7 @@ import (
 	"decentralized-api/chainevents"
 	cosmosclient "decentralized-api/cosmosclient"
 	"decentralized-api/poc"
+	"decentralized-api/upgrade"
 	"encoding/json"
 	fmt "fmt"
 	"github.com/gorilla/websocket"
@@ -55,6 +56,15 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		_, message, err := ws.ReadMessage()
 		if err != nil {
 			slog.Warn("Failed to read a websocket message", "errorType", fmt.Sprintf("%T", err), "error", err)
+
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				slog.Warn("Websocket connection closed", "errorType", fmt.Sprintf("%T", err), "error", err)
+				if upgrade.CheckForUpgrade() {
+					slog.Error("Upgrade required! Exiting...")
+					panic("Upgrade required")
+				}
+				continue
+			}
 			continue
 		}
 
@@ -67,6 +77,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		case "tendermint/event/NewBlock":
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
 			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
+			upgrade.ProcessNewBlockEvent(&event, transactionRecorder)
 		case "tendermint/event/Tx":
 			go func() {
 				handleMessage(nodeBroker, transactionRecorder, event)

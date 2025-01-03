@@ -19,6 +19,13 @@ type Config struct {
 	CurrentSeed   SeedInfo               `koanf:"current_seed"`
 	PreviousSeed  SeedInfo               `koanf:"previous_seed"`
 	CurrentHeight int64                  `koanf:"current_height"`
+	UpgradePlan   UpgradePlan            `koanf:"upgrade_plan"`
+}
+
+type UpgradePlan struct {
+	Name     string            `koanf:"name"`
+	Height   int64             `koanf:"height"`
+	Binaries map[string]string `koanf:"binaries"`
 }
 
 type SeedInfo struct {
@@ -36,6 +43,16 @@ type ChainNodeConfig struct {
 	AccountName    string `koanf:"account_name"`
 	KeyringBackend string `koanf:"keyring_backend"`
 	KeyringDir     string `koanf:"keyring_dir"`
+}
+
+func SetUpgradePlan(plan UpgradePlan) error {
+	lastSavedConfig.UpgradePlan = plan
+	slog.Info("Setting upgrade plan", "plan", plan)
+	return WriteConfig(lastSavedConfig)
+}
+
+func GetUpgradePlan() UpgradePlan {
+	return lastSavedConfig.UpgradePlan
 }
 
 func SetHeight(height int64) error {
@@ -148,6 +165,11 @@ func WriteConfig(config Config) error {
 	err = k.Set("current_height", config.CurrentHeight)
 	if err != nil {
 		slog.Error("error setting config", "error", err)
+		return err
+	}
+	err = k.Set("upgrade_plan", config.UpgradePlan)
+	if err != nil {
+		slog.Error("error setting upgrade_plan", "error", err)
 		return err
 	}
 	output, err := k.Marshal(parser)

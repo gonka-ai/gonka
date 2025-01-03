@@ -16,4 +16,13 @@ fi
 sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
-exec decentralized-api
+echo "init for cosmovisor"
+mkdir -p /root/.dapi
+mkdir -p /root/.dapi/data
+
+cosmovisor init /usr/bin/decentralized-api
+
+cosmovisor run start || {
+  echo "Failed to start decentralized-api"
+  tail -f /dev/null
+}

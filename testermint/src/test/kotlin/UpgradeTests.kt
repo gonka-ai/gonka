@@ -18,6 +18,8 @@ class UpgradeTests : TestermintTest() {
             title = "v0.0.2test",
             description = "For testing",
             binaryPath = path,
+            // TODO: This should not be the same binary, duh
+            apiBinaryPath = path,
             height = height + 20
         )
         val proposalId = response.getProposalId()

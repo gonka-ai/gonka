@@ -174,6 +174,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, event *chainevents.JSON
 		slog.Error("Unable to get upgrade plan", "error", err)
 	} else {
 		slog.Info("Upgrade plan", "plan", plan.Plan)
+
 	}
 
 	//for key := range event.Result.Events {
