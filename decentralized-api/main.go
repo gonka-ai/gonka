@@ -7,6 +7,7 @@ import (
 	cosmosclient "decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/exp/slog"
 	"os"
 	"strconv"
 	"time"
@@ -25,7 +26,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
+	slog.Info("Starting decentralized API, v2")
 	nodeBroker := broker.NewBroker()
 
 	go func() {
