@@ -130,7 +130,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	for _, n := range nodes {
 		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
 		if err != nil {
-			slog.Error("Failed to send init-generate request to node", "node", n.Node.Url, "error", err)
+			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
 			continue
 		}
 
@@ -142,7 +142,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocBatchesCallbackUrl())
 
-	initUrl, err := url.JoinPath(node.Url, InitGeneratePath)
+	initUrl, err := url.JoinPath(node.PoCUrl(), InitGeneratePath)
 	if err != nil {
 		return nil, err
 	}
@@ -180,14 +180,14 @@ func (o *NodePoCOrchestrator) Stop() {
 	for _, n := range nodes {
 		respStop, err := o.sendStopRequest(n.Node)
 		if err != nil {
-			slog.Error("Failed to send stop request to node", "node", n.Node.Url, "error", err)
+			slog.Error("Failed to send stop request to node", "node", n.Node.Host, "error", err)
 			continue
 		}
 		_ = respStop
 
 		respUp, err := o.sendInferenceUpRequest(n.Node)
 		if err != nil {
-			slog.Error("Failed to send inference/up request to node", "node", n.Node.Url, "error", err)
+			slog.Error("Failed to send inference/up request to node", "node", n.Node.Host, "error", err)
 			continue
 		}
 		_ = respUp
@@ -195,7 +195,7 @@ func (o *NodePoCOrchestrator) Stop() {
 }
 
 func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.Url, StopPath)
+	stopUrl, err := url.JoinPath(node.PoCUrl(), StopPath)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ type InferenceUpDto struct {
 }
 
 func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode) (*http.Response, error) {
-	inferenceUpUrl, err := url.JoinPath(node.Url, InferenceUpPath)
+	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode)
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocValidateCallbackUrl())
 
-	initUrl, err := url.JoinPath(node.Url, InitValidatePath)
+	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +288,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	for _, n := range nodes {
 		resp, err := o.sendInitValidateRequest(n.Node, startOfPoCBlockHeight, blockHash)
 		if err != nil {
-			slog.Error("Failed to send init-generate request to node", "node", n.Node.Url, "error", err)
+			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
 			continue
 		}
 
@@ -350,10 +350,10 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 		node := nodes[i%len(nodes)]
 
 		slog.Debug("ValidateReceivedBatches. pubKey", "pubKey", batch.HexPubKey)
-		slog.Debug("ValidateReceivedBatches. sending batch", "node", node.Node.Url, "batch", joinedBatch)
+		slog.Debug("ValidateReceivedBatches. sending batch", "node", node.Node.Host, "batch", joinedBatch)
 		resp, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
 		if err != nil {
-			slog.Error("Failed to send validate batch request to node", "node", node.Node.Url, "error", err)
+			slog.Error("Failed to send validate batch request to node", "node", node.Node.Host, "error", err)
 			continue
 		}
 
@@ -363,7 +363,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 
 // FIXME: copying ;( doesn't look good for large PoCBatch structures
 func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.InferenceNode, batch ProofBatch) (*http.Response, error) {
-	validateBatchUrl, err := url.JoinPath(node.Url, ValidateBatchPath)
+	validateBatchUrl, err := url.JoinPath(node.PoCUrl(), ValidateBatchPath)
 	if err != nil {
 		return nil, err
 	}

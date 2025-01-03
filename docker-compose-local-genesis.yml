@@ -23,7 +23,7 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=chain-node
-      - PUBLIC_IP=${PUBLIC_IP}
+      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
     networks:
       - chain-public
 
