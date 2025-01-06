@@ -20,9 +20,14 @@ echo "init for cosmovisor"
 mkdir -p /root/.dapi
 mkdir -p /root/.dapi/data
 
-cosmovisor init /usr/bin/decentralized-api
+cosmovisor init /usr/bin/decentralized-api || {
+  echo "Failed to initialize cosmovisor"
+  tail -f /dev/null
+}
 
-cosmovisor run start || {
+echo "starting cosmovisor over dapi"
+
+cosmovisor run || {
   echo "Failed to start decentralized-api"
   tail -f /dev/null
 }

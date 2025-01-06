@@ -13,14 +13,16 @@ import (
 )
 
 func main() {
-	config := apiconfig.ReadConfig()
 
-	if len(os.Args) == 2 && os.Args[1] == "status" {
+	if len(os.Args) >= 2 && os.Args[1] == "status" {
+		apiconfig.ReadConfig(false)
 		returnStatus()
 	}
-	if len(os.Args) == 2 && os.Args[1] == "pre-upgrade" {
+	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
+	config := apiconfig.ReadConfig(true)
+
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(context.Background(), "cosmos", 5, 5*time.Second, config)
 	if err != nil {
 		panic(err)

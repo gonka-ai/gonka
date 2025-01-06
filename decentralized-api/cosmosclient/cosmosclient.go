@@ -42,7 +42,7 @@ func NewInferenceCosmosClientWithRetry(
 ) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
-
+	slog.Info("Connecting to cosmos sdk node", "config", config, "height", config.CurrentHeight)
 	for i := 0; i < maxRetries; i++ {
 		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
 		if err == nil {
