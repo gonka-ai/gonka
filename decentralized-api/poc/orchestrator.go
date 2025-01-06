@@ -3,7 +3,6 @@ package poc
 import (
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -193,6 +191,8 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 		nodePoCOrchestrator.Start(blockHeight, blockHash)
 
+		GenerateSeed(blockHeight, &transactionRecorder)
+
 		return
 	}
 
@@ -222,20 +222,9 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 		return
 	}
-	// once the new stage has started, request our money!
+
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-		go func() {
-			PreviousSeed = CurrentSeed
-			CurrentSeed = UpcomingSeed
-			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", PreviousSeed)
-			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
-				Seed:           PreviousSeed.Seed,
-				PocStartHeight: uint64(PreviousSeed.Height),
-			})
-			if err != nil {
-				slog.Error("Failed to send ClaimRewards transaction", "error", err)
-			}
-		}()
+		go func() { RequestMoney(&transactionRecorder) }()
 	}
 }
 
@@ -277,16 +266,6 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	return hash, nil
 }
 
-var UpcomingSeed SeedInfo
-var CurrentSeed SeedInfo
-var PreviousSeed SeedInfo
-
-type SeedInfo struct {
-	Seed      int64
-	Height    int64
-	Signature string
-}
-
 func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
 	return func(proofs *ProofOfComputeResults) {
 		nonce := make([]string, len(proofs.Results))
@@ -294,12 +273,14 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			nonce[i] = p.Nonce
 		}
 
+		// Deprecated
 		slog.Debug("Old Seed Signature", "seed", CurrentSeed)
-		err := getNextSeedSignature(proofs, transactionRecorder)
+		seedInfo, err := getNextSeedSignature(proofs.BlockHeight, &transactionRecorder)
 		if err != nil {
 			slog.Error("Failed to get next seed signature", "error", err)
 			return
 		}
+		UpcomingSeed = *seedInfo
 		slog.Debug("New Seed Signature", "seed", UpcomingSeed)
 
 		message := inference.MsgSubmitPoC{
@@ -315,24 +296,6 @@ func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosCli
 			log.Printf("Failed to send SubmitPoC transaction. %v", err)
 		}
 	}
-}
-
-func getNextSeedSignature(proofs *ProofOfComputeResults, transactionRecorder cosmosclient.InferenceCosmosClient) error {
-	newSeed := rand.Int63()
-	newHeight := proofs.BlockHeight
-	seedBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
-	signature, err := transactionRecorder.SignBytes(seedBytes)
-	if err != nil {
-		slog.Error("Failed to sign bytes", "error", err)
-		return err
-	}
-	UpcomingSeed = SeedInfo{
-		Seed:      newSeed,
-		Height:    newHeight,
-		Signature: hex.EncodeToString(signature),
-	}
-	return nil
 }
 
 func incrementBytes(nonce []byte) {

@@ -1,6 +1,8 @@
 syntax = "proto3";
 package inference.inference;
 
+import "inference/inference/random_seed.proto";
+
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Not added to the Genesis, because at genesis it's constructed based on Participants
@@ -18,4 +20,5 @@ message ActiveParticipant {
   int64  weight = 3;
   string inferenceUrl = 4;
   repeated string models = 5;
+  RandomSeed seed = 6;
 }

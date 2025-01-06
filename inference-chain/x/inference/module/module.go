@@ -6,7 +6,6 @@ import (
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -219,13 +218,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	computeResult, activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
-	if computeResult == nil && activeParticipants == nil {
+	activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
+	if activeParticipants == nil {
 		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(computeResult)", len(computeResult), "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
@@ -235,10 +234,9 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		CreatedAtBlockHeight: blockHeight,
 	})
 
-	for _, result := range computeResult {
+	for _, p := range activeParticipants {
 		// FIXME: add some centralized way that'd govern key enc/dec rules
-		validatorPubKey := base64.StdEncoding.EncodeToString(result.ValidatorPubKey.Bytes())
-		err := upcomingEg.AddMember(ctx, result.OperatorAddress, uint64(result.Power), validatorPubKey, "seedSignature")
+		err := upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", "error", err.Error())
 			continue

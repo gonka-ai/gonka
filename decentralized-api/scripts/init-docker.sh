@@ -24,8 +24,8 @@ sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
 echo "Setting keyring_backend to test in $yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
-echo "Setting host to $PUBLIC_IP in $yaml_file"
-sed -i "s/host: .*/host: \"$PUBLIC_IP\"/" "$yaml_file"
+echo "Setting poc_callback_host to $POC_CALLBACK_HOST in $yaml_file"
+sed -i "s/poc_callback_host: .*/poc_callback_host: \"$POC_CALLBACK_HOST\"/" "$yaml_file"
 
 echo "The final api config:"
 cat "$yaml_file"

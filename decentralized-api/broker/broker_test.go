@@ -7,7 +7,9 @@ import (
 func TestSingleNode(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,
@@ -31,7 +33,9 @@ func TestSingleNode(t *testing.T) {
 func TestNodeRemoval(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,
@@ -60,7 +64,9 @@ func TestNodeRemoval(t *testing.T) {
 func TestModelMismatch(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,
@@ -76,7 +82,9 @@ func TestModelMismatch(t *testing.T) {
 func TestHighConcurrency(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 100,
@@ -94,13 +102,17 @@ func TestHighConcurrency(t *testing.T) {
 func TestMultipleNodes(t *testing.T) {
 	broker := NewBroker()
 	node1 := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
 	node2 := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node2",
 		MaxConcurrent: 1,
@@ -138,7 +150,9 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 func TestReleaseNode(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,
@@ -168,7 +182,9 @@ func TestReleaseNode(t *testing.T) {
 func TestCapacityCheck(t *testing.T) {
 	broker := NewBroker()
 	node := InferenceNode{
-		Url:           "http://localhost:8080",
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
 		Models:        []string{"model1"},
 		Id:            "node1",
 		MaxConcurrent: 1,

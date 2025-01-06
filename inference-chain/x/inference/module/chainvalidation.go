@@ -2,14 +2,10 @@ package inference
 
 import (
 	"context"
-	"encoding/base64"
-
-	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) ([]keeper.ComputeResult, []*types.ActiveParticipant) {
+func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
 	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
 	am.LogInfo("ComputeNewWeights: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
 
@@ -22,7 +18,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		currentActiveParticipants = &val
 		if !found {
 			am.LogError("ComputeNewWeights: No active participants found.")
-			return nil, nil
+			return nil
 		}
 	}
 	currentValidatorsAddressSet := getActiveAddressSet(currentActiveParticipants)
@@ -30,7 +26,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
 		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
-		return nil, nil
+		return nil
 	}
 
 	am.LogInfo("ComputeNewWeights: Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
@@ -43,7 +39,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
 
 	var activeParticipants []*types.ActiveParticipant
-	var computeResults []keeper.ComputeResult
 
 	for participantAddress, batches := range originalBatches {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
@@ -69,14 +64,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			continue
 		}
 
-		pubKeyBytes, err := base64.StdEncoding.DecodeString(participant.ValidatorKey)
-		if err != nil {
-			am.LogError("ComputeNewWeights: am.ComputeNewWeights. Error decoding pubkey", "error", err)
-			continue
-		}
-
-		pubKey := ed25519.PubKey{Key: pubKeyBytes}
-
 		if currentActiveParticipants != nil {
 			requiredValidators := (len(currentActiveParticipants.Participants) * 2) / 3
 			if len(vals) < requiredValidators {
@@ -97,13 +84,11 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			}
 		}
 
-		r := keeper.ComputeResult{
-			Power:           claimedWeight,
-			ValidatorPubKey: &pubKey,
-			OperatorAddress: participantAddress,
+		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
+		if !found {
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			continue
 		}
-		am.LogInfo("ComputeNewWeights: Setting compute validator.", "computeResult", r)
-		computeResults = append(computeResults, r)
 
 		activeParticipant := &types.ActiveParticipant{
 			Index:        participantAddress,
@@ -111,11 +96,13 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			Weight:       claimedWeight,
 			InferenceUrl: participant.InferenceUrl,
 			Models:       participant.Models,
+			Seed:         &seed,
 		}
 		activeParticipants = append(activeParticipants, activeParticipant)
+		am.LogInfo("ComputeNewWeights: Setting compute validator.", "activeParticipant", activeParticipant)
 	}
 
-	return computeResults, activeParticipants
+	return activeParticipants
 }
 
 func getParticipantWeight(batches []types.PoCBatch) int64 {

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -495,8 +496,12 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	}
 
 	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*http.Response, error) {
+		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
+		if err != nil {
+			return nil, err
+		}
 		return http.Post(
-			node.Url+"v1/chat/completions",
+			completionsUrl,
 			request.Request.Header.Get("Content-Type"),
 			bytes.NewReader(modifiedRequestBody.NewBody),
 		)

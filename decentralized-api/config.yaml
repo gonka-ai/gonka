@@ -1,9 +1,10 @@
 api:
   port: 8080
-  host: localhost
+  poc_callback_host: localhost
 nodes:
   - id: node1
-    url: http://localhost:2020/
+    host: localhost
+    inference_port: 2020
     max_concurrent: 1
     models:
       - unsloth/llama-3-8b-Instruct
