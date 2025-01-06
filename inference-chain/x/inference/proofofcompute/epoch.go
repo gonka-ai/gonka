@@ -6,7 +6,7 @@ const (
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 10 * Multiplier
 	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier
-	startOfPocValStage    = (endOfPocStage + 1) * Multiplier
+	startOfPocValStage    = (endOfPocStage + 2) * Multiplier
 	endOfPocValStage      = (startOfPocValStage + 4) * Multiplier
 	setNewValidatorsStage = (endOfPocValStage + 1) * Multiplier
 )
