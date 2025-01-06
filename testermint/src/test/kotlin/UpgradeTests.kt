@@ -13,14 +13,15 @@ class UpgradeTests : TestermintTest() {
         val highestFunded = initialize(pairs)
         val height = highestFunded.getCurrentBlockHeight()
         val checksum = "2067b6d330ef1d1d0037a769ebec146788a2e006c4c88d709ff0fbec6f13daef"
-        val path = "http://binary-server/v2/inferenced.zip?checksum=sha256:$checksum"
+        val path = getBinaryPath("v2/inferenced.zip", checksum)
+        val apiCheckshum = "76c0767c1e3b1635e7860b58d594e82daccf0a0786a1b99782e4ca7f4ae3a3e8"
+        val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
         val response = highestFunded.node.submitUpgradeProposal(
             title = "v0.0.2test",
             description = "For testing",
             binaryPath = path,
-            // TODO: This should not be the same binary, duh
-            apiBinaryPath = path,
-            height = height + 20
+            apiBinaryPath = apiPath,
+            height = height + 15
         )
         val proposalId = response.getProposalId()
         if (proposalId == null) {
@@ -34,5 +35,9 @@ class UpgradeTests : TestermintTest() {
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
+    }
+
+    fun getBinaryPath(path: String, sha: String): String {
+        return "http://binary-server/$path?checksum=sha256:$sha"
     }
 }
