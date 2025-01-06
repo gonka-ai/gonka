@@ -9,24 +9,24 @@ import (
 	strings "strings"
 )
 
-func wrapNodes(nodeBroker *broker.Broker, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+func wrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Info("Request to nodes endpoint", "method", request.Method)
 		switch {
 		case request.Method == http.MethodGet:
-			getNodesResponse(nodeBroker, w, request, config)
+			getNodesResponse(nodeBroker, w, request, configManager.GetConfig())
 			return
 		case request.Method == http.MethodPost:
 			if request.URL.Path == "/v1/nodes" {
-				createNewNode(nodeBroker, w, request, config)
+				createNewNode(nodeBroker, w, request, configManager)
 			} else if request.URL.Path == "/v1/nodes/batch" {
-				createNewNodes(nodeBroker, w, request, config)
+				createNewNodes(nodeBroker, w, request, configManager)
 			} else {
 				http.Error(w, "Invalid path", http.StatusNotFound)
 			}
 			return
 		case request.Method == http.MethodDelete:
-			deleteNode(nodeBroker, w, request, config)
+			deleteNode(nodeBroker, w, request, configManager)
 			return
 		default:
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
@@ -34,7 +34,7 @@ func wrapNodes(nodeBroker *broker.Broker, config apiconfig.Config) func(http.Res
 	}
 }
 
-func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config apiconfig.Config) {
+func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, configManager *apiconfig.ConfigManager) {
 	// extract nodeid from url (not query params)
 	nodeId := strings.TrimPrefix(request.URL.Path, "/v1/nodes/")
 	slog.Info("Deleting node", "node", nodeId)
@@ -50,25 +50,24 @@ func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.
 		return
 	}
 	node := <-response
-	SyncNodesWithConfig(nodeBroker, config)
+	SyncNodesWithConfig(nodeBroker, configManager)
 
 	respondWithJson(w, node)
 }
 
-func SyncNodesWithConfig(nodeBroker *broker.Broker, config apiconfig.Config) {
+func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
 	nodes, err := nodeBroker.GetNodes()
 	iNodes := make([]broker.InferenceNode, len(nodes))
 	for i, n := range nodes {
 		iNodes[i] = *n.Node
 	}
-	config.Nodes = iNodes
-	err = apiconfig.WriteConfig(config)
+	err = config.SetNodes(iNodes)
 	if err != nil {
 		slog.Error("Error writing config", "error", err)
 	}
 }
 
-func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config apiconfig.Config) {
+func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
 	var newNodes []broker.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNodes); err != nil {
 		slog.Error("Error decoding request", "error", err)
@@ -86,7 +85,7 @@ func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *h
 	respondWithJson(w, outputNodes)
 }
 
-func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config apiconfig.Config) {
+func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
 	var newNode broker.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNode); err != nil {
 		slog.Error("Error decoding request", "error", err)
@@ -100,7 +99,12 @@ func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *ht
 	respondWithJson(w, node)
 }
 
-func addNode(nodeBroker *broker.Broker, w http.ResponseWriter, newNode broker.InferenceNode, config apiconfig.Config) (broker.InferenceNode, bool) {
+func addNode(
+	nodeBroker *broker.Broker,
+	w http.ResponseWriter,
+	newNode broker.InferenceNode,
+	configManager *apiconfig.ConfigManager,
+) (broker.InferenceNode, bool) {
 	response := make(chan broker.InferenceNode, 2)
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     newNode,
@@ -112,15 +116,16 @@ func addNode(nodeBroker *broker.Broker, w http.ResponseWriter, newNode broker.In
 		return broker.InferenceNode{}, true
 	}
 	node := <-response
-	config.Nodes = append(config.Nodes, node)
-	err = apiconfig.WriteConfig(config)
+	config := configManager.GetConfig()
+	newNodes := append(config.Nodes, node)
+	err = configManager.SetNodes(newNodes)
 	if err != nil {
 		slog.Error("Error writing config", "error", err)
 	}
 	return node, false
 }
 
-func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config apiconfig.Config) {
+func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.Config) {
 	nodes, err := nodeBroker.GetNodes()
 	if err != nil {
 		slog.Error("Error getting nodes", "error", err)

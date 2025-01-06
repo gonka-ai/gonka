@@ -54,7 +54,7 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 	}
 }
 
-func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker, config *apiconfig.Config) {
 	if ids == nil {
 		slog.Debug("Validation: No inferences to validate")
 		return
@@ -83,12 +83,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			continue
 		}
 		shouldValidate, message := keeper.ShouldValidate(
-			apiconfig.GetCurrentSeed().Seed,
+			config.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
 			inferenceWithExecutor.CurrentPower)
-		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", apiconfig.GetCurrentSeed().Seed)
+		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", config.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
