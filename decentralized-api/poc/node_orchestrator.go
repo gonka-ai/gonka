@@ -61,31 +61,6 @@ func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
 }
 
-type InitDto struct {
-	ChainHash      string  `json:"chain_hash"`
-	ChainHeight    int64   `json:"chain_height"`
-	PublicKey      string  `json:"public_key"`
-	BatchSize      int     `json:"batch_size"`
-	RTarget        float64 `json:"r_target"`
-	FraudThreshold float64 `json:"fraud_threshold"`
-	Params         *Params `json:"params"`
-	URL            string  `json:"url"`
-}
-
-type Params struct {
-	Dim              int     `json:"dim"`
-	NLayers          int     `json:"n_layers"`
-	NHeads           int     `json:"n_heads"`
-	NKVHeads         int     `json:"n_kv_heads"`
-	VocabSize        int     `json:"vocab_size"`
-	FFNDimMultiplier float64 `json:"ffn_dim_multiplier"`
-	MultipleOf       int     `json:"multiple_of"`
-	NormEps          float64 `json:"norm_eps"`
-	RopeTheta        int     `json:"rope_theta"`
-	UseScaledRope    bool    `json:"use_scaled_rope"`
-	SeqLen           int     `json:"seq_len"`
-}
-
 var DefaultParams = Params{
 	Dim:              512,
 	NLayers:          64,
@@ -154,8 +129,8 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 
 func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, callbackUrl string) InitDto {
 	return InitDto{
-		ChainHeight:    blockHeight,
-		ChainHash:      blockHash,
+		BlockHeight:    blockHeight,
+		BlockHash:      blockHash,
 		PublicKey:      o.pubKey,
 		BatchSize:      DefaultBatchSize,
 		RTarget:        DefaultRTarget,
@@ -203,12 +178,6 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
-}
-
-type InferenceUpDto struct {
-	Model string   `json:"model"`
-	Dtype string   `json:"dtype"`
-	Args  []string `json:"additional_args"`
 }
 
 func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode) (*http.Response, error) {
@@ -336,8 +305,8 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 
 		joinedBatch := ProofBatch{
 			PublicKey:   batch.HexPubKey,
-			ChainHash:   blockHash,
-			ChainHeight: startOfPoCBlockHeight,
+			BlockHash:   blockHash,
+			BlockHeight: startOfPoCBlockHeight,
 			Nonces:      nil,
 			Dist:        nil,
 		}
