@@ -3,7 +3,7 @@ module github.com/productscience/inference
 go 1.22.2
 
 replace (
-	github.com/cosmos/cosmos-sdk => ../../ps-fork/cosmos-sdk
+	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk 4f35f6aa59c92ed928828eacb7d9a9f1d644a8e9
 	// fix upstream GHSA-h395-qcrw-5vmq vulnerability.
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.7.0
 	// replace broken goleveldb
