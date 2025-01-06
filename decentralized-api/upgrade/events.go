@@ -72,8 +72,9 @@ func CheckForUpgrade() bool {
 			return false
 		}
 		output := UpgradeOutput{
-			Name:   upgradePlan.Name,
-			Height: upgradePlan.Height,
+			Name: upgradePlan.Name,
+			// We add one, because the chain quits ON the upgrade height before it sends the new block event
+			Height: upgradePlan.Height - 1,
 			Info:   string(jsonData),
 		}
 		jsonData, err = json.Marshal(output)

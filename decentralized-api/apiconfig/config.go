@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"decentralized-api/broker"
+	"fmt"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
@@ -94,7 +95,7 @@ func GetUpcomingSeed() SeedInfo {
 var lastSavedConfig Config
 var configFileMutex = &sync.Mutex{}
 
-func ReadConfig() Config {
+func ReadConfig(fullLog bool) Config {
 	configFileMutex.Lock()
 	defer configFileMutex.Unlock()
 	k := koanf.New(".")
@@ -103,6 +104,10 @@ func ReadConfig() Config {
 	configPath := os.Getenv("API_CONFIG_PATH")
 	if configPath == "" {
 		configPath = "config.yaml" // Default value if the environment variable is not set
+	}
+
+	if fullLog {
+		fmt.Printf("configPath set to %s\n", configPath)
 	}
 
 	// Load the configuration
@@ -115,6 +120,9 @@ func ReadConfig() Config {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
 	lastSavedConfig = config
+	if fullLog {
+		fmt.Printf("config loaded: %v\n", config)
+	}
 	return config
 }
 
