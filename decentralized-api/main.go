@@ -4,26 +4,38 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"time"
 )
 
 func main() {
-
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
-		apiconfig.ReadConfig(false)
-		returnStatus()
+		config, err := apiconfig.LoadDefaultConfigManager()
+		if err != nil {
+			log.Fatalf("Error loading config: %v", err)
+		}
+		returnStatus(config)
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
-	config := apiconfig.ReadConfig(true)
+	config, err := apiconfig.LoadDefaultConfigManager()
+	if err != nil {
+		log.Fatalf("Error loading config: %v", err)
+	}
 
-	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(context.Background(), "cosmos", 5, 5*time.Second, config)
+	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
+		context.Background(),
+		"cosmos",
+		5,
+		5*time.Second,
+		config.GetConfig(),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -37,8 +49,8 @@ func main() {
 	StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
 
-func returnStatus() {
-	height := apiconfig.GetHeight()
+func returnStatus(config *apiconfig.ConfigManager) {
+	height := config.GetHeight()
 	status := map[string]interface{}{
 		"sync_info": map[string]string{
 			"latest_block_height": strconv.FormatInt(height, 10),

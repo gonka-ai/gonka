@@ -10,7 +10,11 @@ import (
 	"path/filepath"
 )
 
-func ProcessNewBlockEvent(event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func ProcessNewBlockEvent(
+	event *chainevents.JSONRPCResponse,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	configManager *apiconfig.ConfigManager,
+) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		slog.Error("Expected tendermint/event/NewBlock event", "event", event.Result.Data.Type)
 		return
@@ -24,7 +28,7 @@ func ProcessNewBlockEvent(event *chainevents.JSONRPCResponse, transactionRecorde
 	}
 
 	if upgradePlan != nil && upgradePlan.Plan != nil {
-		if upgradePlan.Plan.Name == apiconfig.GetUpgradePlan().Name {
+		if upgradePlan.Plan.Name == configManager.GetUpgradePlan().Name {
 			slog.Info("Upgrade already ready", "name", upgradePlan.Plan.Name)
 			return
 		}
@@ -37,7 +41,7 @@ func ProcessNewBlockEvent(event *chainevents.JSONRPCResponse, transactionRecorde
 			slog.Error("Error unmarshalling upgrade plan info", "error", err)
 			return
 		}
-		err = apiconfig.SetUpgradePlan(apiconfig.UpgradePlan{
+		err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
 			Name:     upgradePlan.Plan.Name,
 			Height:   upgradePlan.Plan.Height,
 			Binaries: planInfo.Binaries,
@@ -50,14 +54,14 @@ func ProcessNewBlockEvent(event *chainevents.JSONRPCResponse, transactionRecorde
 
 }
 
-func CheckForUpgrade() bool {
-	upgradePlan := apiconfig.GetUpgradePlan()
+func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
+	upgradePlan := configManager.GetUpgradePlan()
 	if upgradePlan.Name == "" {
 		slog.Warn("Websocket closed with no upgrade")
 		return false
 	}
 
-	if apiconfig.GetHeight() >= upgradePlan.Height-1 {
+	if configManager.GetHeight() >= upgradePlan.Height-1 {
 		slog.Info("Upgrade height reached", "height", upgradePlan.Height)
 		// Upgrade
 		// Write out upgrade-info.json
@@ -98,7 +102,7 @@ func CheckForUpgrade() bool {
 		return true
 	}
 
-	slog.Warn("Websocket closed with no upgrade", "height", apiconfig.GetHeight(), "upgradeHeight", upgradePlan.Height)
+	slog.Warn("Websocket closed with no upgrade", "height", configManager.GetHeight(), "upgradeHeight", upgradePlan.Height)
 	return false
 }
 

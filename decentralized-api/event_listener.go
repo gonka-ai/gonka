@@ -23,8 +23,12 @@ const (
 	validationAction      = "/inference.inference.MsgValidation"
 )
 
-func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, config apiconfig.Config) {
-	websocketUrl := getWebsocketUrl(config)
+func StartEventListener(
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	configManager *apiconfig.ConfigManager,
+) {
+	websocketUrl := getWebsocketUrl(configManager.GetConfig())
 	slog.Info("Connecting to websocket at", "url", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
 	if err != nil {
@@ -59,7 +63,7 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				slog.Warn("Websocket connection closed", "errorType", fmt.Sprintf("%T", err), "error", err)
-				if upgrade.CheckForUpgrade() {
+				if upgrade.CheckForUpgrade(configManager) {
 					slog.Error("Upgrade required! Exiting...")
 					panic("Upgrade required")
 				}
@@ -76,11 +80,11 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
-			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder)
-			upgrade.ProcessNewBlockEvent(&event, transactionRecorder)
+			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder, configManager)
+			upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
 		case "tendermint/event/Tx":
 			go func() {
-				handleMessage(nodeBroker, transactionRecorder, event)
+				handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
 			}()
 		default:
 			slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
@@ -88,8 +92,13 @@ func StartEventListener(nodeBroker *broker.Broker, transactionRecorder cosmoscli
 	}
 }
 
-func handleMessage(nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, event chainevents.JSONRPCResponse) {
-	if waitForEventHeight(event) {
+func handleMessage(
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	event chainevents.JSONRPCResponse,
+	currentConfig *apiconfig.Config,
+) {
+	if waitForEventHeight(event, currentConfig) {
 		return
 	}
 
@@ -103,21 +112,22 @@ func handleMessage(nodeBroker *broker.Broker, transactionRecorder cosmosclient.I
 	//}
 	switch action {
 	case finishInferenceAction:
-		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker)
+		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
 		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
 	}
 }
 
-func waitForEventHeight(event chainevents.JSONRPCResponse) bool {
+// currentConfig must be a pointer, or it won't update
+func waitForEventHeight(event chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
 		slog.Error("Failed to parse height", "error", err)
 		return true
 	}
-	for apiconfig.GetHeight() < expectedHeight {
-		slog.Info("Height race condition! Waiting for height to catch up", "currentHeight", apiconfig.GetHeight(), "expectedHeight", expectedHeight)
+	for currentConfig.CurrentHeight < expectedHeight {
+		slog.Info("Height race condition! Waiting for height to catch up", "currentHeight", currentConfig.CurrentHeight, "expectedHeight", expectedHeight)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
@@ -131,7 +141,7 @@ func subscribeToEvents(ws *websocket.Conn, query string) {
 	}
 }
 
-func getWebsocketUrl(config apiconfig.Config) string {
+func getWebsocketUrl(config *apiconfig.Config) string {
 	// Parse the input URL
 	u, err := url.Parse(config.ChainNode.Url)
 	if err != nil {

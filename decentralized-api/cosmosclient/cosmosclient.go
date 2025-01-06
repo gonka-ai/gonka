@@ -33,13 +33,7 @@ type InferenceCosmosClient struct {
 	Context context.Context
 }
 
-func NewInferenceCosmosClientWithRetry(
-	ctx context.Context,
-	addressPrefix string,
-	maxRetries int,
-	delay time.Duration,
-	config apiconfig.Config,
-) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.Config) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
 	slog.Info("Connecting to cosmos sdk node", "config", config, "height", config.CurrentHeight)

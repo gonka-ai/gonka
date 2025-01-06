@@ -54,10 +54,14 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.CosmosMessageClient, config apiconfig.Config) {
+func StartInferenceServerWrapper(
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmos_client.CosmosMessageClient,
+	configManager *apiconfig.ConfigManager,
+) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
-	nodes := config.Nodes
+	nodes := configManager.GetConfig().Nodes
 	for _, node := range nodes {
 		loadNodeToBroker(nodeBroker, &node)
 	}
@@ -66,13 +70,13 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 
 	// Create an HTTP server
 	mux.HandleFunc("/v1/chat/completions/", wrapGetCompletion(transactionRecorder))
-	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, config))
+	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, configManager))
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
 	mux.HandleFunc("/v1/participants", wrapSubmitNewParticipant(transactionRecorder))
 	mux.HandleFunc("/v1/participants/", wrapGetInferenceParticipant(transactionRecorder))
-	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, config))
-	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, config))
-	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(config))
+	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, configManager))
+	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, configManager))
+	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(configManager))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
@@ -83,7 +87,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 		}
 
 		slog.Debug("Verifying block signatures", "height", height)
-		if err := merkleproof.VerifyBlockSignatures(config.ChainNode.Url, height); err != nil {
+		if err := merkleproof.VerifyBlockSignatures(configManager.GetConfig().ChainNode.Url, height); err != nil {
 			slog.Error("Failed to verify block signatures", "error", err)
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
@@ -93,7 +97,7 @@ func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder 
 		writer.Write([]byte("Block signatures verified"))
 	})
 
-	addr := fmt.Sprintf(":%d", config.Api.Port)
+	addr := fmt.Sprintf(":%d", configManager.GetConfig().Api.Port)
 
 	slog.Info("Starting the server", "address", addr)
 	loggedMux := LoggingMiddleware(mux)
@@ -126,14 +130,14 @@ type ActiveParticipantWithProof struct {
 	Block              *types2.Block            `json:"block"`
 }
 
-func wrapGetActiveParticipants(config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+func wrapGetActiveParticipants(config *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		rplClient, err := merkleproof.NewRpcClient(config.ChainNode.Url)
+		rplClient, err := merkleproof.NewRpcClient(config.GetConfig().ChainNode.Url)
 		if err != nil {
 			slog.Error("Failed to create rpc client", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -259,7 +263,7 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 	}, nil
 }
 
-func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config apiconfig.Config) func(w http.ResponseWriter, request *http.Request) {
+func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, configManager *apiconfig.ConfigManager) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Debug("wrapChat. Received request", "method", request.Method, "path", request.URL.Path)
 		chatRequest, err := readRequest(request)
@@ -280,7 +284,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 		// Is this a Transfer request or an Executor call?
 		if (chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "") || (chatRequest.FundedByTransferNode && chatRequest.InferenceId != "" && chatRequest.Seed != "") {
 			slog.Info("Executor request", "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed, "pubKey", chatRequest.PubKey)
-			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, config)
+			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, configManager.GetConfig())
 			return
 		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
 			slog.Info("Transfer request", "requesterAddress", chatRequest.RequesterAddress)
@@ -519,7 +523,7 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 	return false
 }
 
-func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config apiconfig.Config) bool {
+func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config *apiconfig.Config) bool {
 	if !request.FundedByTransferNode {
 		err := validateRequestAgainstPubKey(request, request.PubKey)
 		if err != nil {
