@@ -7,9 +7,7 @@ require (
 	github.com/cometbft/cometbft v0.38.11
 	github.com/cosmos/btcutil v1.0.5
 	github.com/cosmos/cosmos-sdk v0.50.8
-	github.com/cosmos/gogoproto v1.7.0
 	github.com/cosmos/ibc-go/v8 v8.2.0
-	github.com/cosmos/ics23/go v0.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/ignite/cli/v28 v28.5.0
@@ -54,8 +52,10 @@ require (
 	github.com/cosmos/cosmos-proto v1.0.0-beta.5 // indirect
 	github.com/cosmos/go-bip39 v1.0.0 // indirect
 	github.com/cosmos/gogogateway v1.2.0 // indirect
+	github.com/cosmos/gogoproto v1.7.0 // indirect
 	github.com/cosmos/iavl v1.1.2 // indirect
 	github.com/cosmos/ibc-go/modules/capability v1.0.0 // indirect
+	github.com/cosmos/ics23/go v0.10.0 // indirect
 	github.com/cosmos/ledger-cosmos-go v0.13.3 // indirect
 	github.com/danieljoos/wincred v1.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -170,7 +170,7 @@ require (
 )
 
 replace (
-	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk 4f35f6aa59c92ed928828eacb7d9a9f1d644a8e9
+	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.0.0-20240830220859-4f35f6aa59c9
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain
 )
