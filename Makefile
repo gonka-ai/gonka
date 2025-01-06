@@ -1,14 +1,6 @@
 all: build-docker
 
-build-docker-old: api-build-docker-old node-build-docker-old
-
 build-docker: api-build-docker node-build-docker
-
-api-build-docker-old:
-	@make -C decentralized-api build-docker-old
-
-node-build-docker-old:
-	@make -C inference-chain build-docker-old
 
 api-build-docker:
 	@make -C decentralized-api build-docker

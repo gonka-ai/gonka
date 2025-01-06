@@ -1,13 +1,43 @@
-FROM alpine:edge
+################################################################################
+# Build the application
+################################################################################
+FROM golang:alpine AS builder
+
+ARG BUILD_FLAGS
+ARG GOOS
+ARG GOARCH
+
+ENV BUILD_FLAGS=${BUILD_FLAGS}
+ENV GOOS=${GOOS}
+ENV GOARCH=${GOARCH}
+
+RUN apk add --no-cache make gcc musl-dev git
+
+COPY decentralized-api/ /app/decentralized-api
+COPY inference-chain/ /app/inference-chain
+
+WORKDIR /app/decentralized-api
+RUN go mod download
+
+RUN make build BUILD_FLAGS="${BUILD_FLAGS}"
+
+################################################################################
+# Final image
+################################################################################
+FROM alpine:edge AS final
 
 WORKDIR /root
 
 # Copy over binaries from the build-env
-COPY ./build/dapi /usr/bin/decentralized-api
-# TODO: VERIFY IF NEEDED
-COPY ./config.yaml /root/config.yaml
-COPY ./config-docker.yaml /root/config-docker.yaml
+COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
+COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
+ENV API_CONFIG_PATH=/root/api-config.yaml
+COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
+
+RUN chmod +x /root/init-docker.sh
+RUN apk update && \
+    apk add --no-cache sed
 
 EXPOSE 8080
 
-CMD ["decentralized-api"]
+CMD ["sh", "./init-docker.sh"]

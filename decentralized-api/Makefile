@@ -16,15 +16,22 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 	-X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
 	-X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
-BUILD_FLAGS := -ldflags '$(ldflags)'
+BUILD_FLAGS ?= -ldflags '$(ldflags)'
 
 define DOCKER_BUILD
-    @echo "--> deleting old ./build/dapi"
-	@rm -f ./build/dapi
-	@echo "--> building dapi binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/dapi
-	@echo "--> building decentralized-api docker image. platform: $(PLATFORM). dockerfile: $(DOCKER_FILE). tag: $(DOCKER_TAG)"
-	@docker build --platform $(PLATFORM) -f $(DOCKER_FILE) . -t $(DOCKER_TAG)
+	@echo "--> building decentralized-api docker image"
+	@echo "    	platform: $(PLATFORM)"
+	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
+	@echo "    	GOOS: $(GOOS)"
+	@echo "    	GOARCH: $(GOARCH)"
+	@docker build \
+		--platform $(PLATFORM) \
+		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
+		-f $(DOCKER_FILE) \
+		.. \
+		-t $(DOCKER_TAG)
 endef
 
 all:
@@ -44,15 +51,11 @@ build:
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/dapi
 
-build-docker-old:
-	$(eval PLATFORM=linux/amd64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=decentralized-api)
-	$(DOCKER_BUILD)
-
 build-docker:
 	$(eval PLATFORM=linux/amd64)
-	$(eval DOCKER_FILE=DockerfileJoin)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
+	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=dapi-join)
 	$(DOCKER_BUILD)
 

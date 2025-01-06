@@ -16,15 +16,22 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
 	-X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
 	-X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
-BUILD_FLAGS := -ldflags '$(ldflags)'
+BUILD_FLAGS ?= -ldflags '$(ldflags)'
 
 define DOCKER_BUILD
-    @echo "--> deleting old ./build/inferenced"
-	@rm -f ./build/inferenced
-	@echo "--> building inferenced binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
-	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
-	@docker build -f $(DOCKER_FILE) --platform $(PLATFORM) . -t $(DOCKER_TAG)
+	@echo "--> building inferenced docker image"
+	@echo "    	platform: $(PLATFORM)"
+	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
+	@echo "    	GOOS: $(GOOS)"
+	@docker build \
+		--platform $(PLATFORM) \
+		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
+		-f $(DOCKER_FILE) \
+		.. \
+		-t $(DOCKER_TAG)
 endef
 
 all:
@@ -45,15 +52,11 @@ build:
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 
-build-docker-old:
-	$(eval PLATFORM=linux/arm64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=inferenced)
-	$(DOCKER_BUILD)
-
 build-docker:
 	$(eval PLATFORM=linux/amd64)
-	$(eval DOCKER_FILE=DockerfileJoin)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
+	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=inferenced-join)
 	$(DOCKER_BUILD)
 
