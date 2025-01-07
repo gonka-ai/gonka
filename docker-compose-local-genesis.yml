@@ -24,6 +24,7 @@ services:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=chain-node
       - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
+      - PUBLIC_URL=${PUBLIC_URL}
     networks:
       - chain-public
 
