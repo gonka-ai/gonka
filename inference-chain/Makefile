@@ -50,8 +50,8 @@ build:
 	@go mod tidy
 	@echo "--> building inferenced"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	$(eval CC=musl-gcc)
-	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
+	@CGO_ENABLED=1 CC=musl-gcc \
+		go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 
 build-docker:
 	$(eval PLATFORM=linux/amd64)

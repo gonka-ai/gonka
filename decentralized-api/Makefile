@@ -49,8 +49,8 @@ build:
 	@go mod verify
 	@echo "--> building decentralized-api"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	$(eval CC=musl-gcc)
-	@go build $(BUILD_FLAGS) -o ./build/dapi
+	@CGO_ENABLED=1 CC=musl-gcc \
+		go build $(BUILD_FLAGS) -o ./build/dapi
 
 build-docker:
 	$(eval PLATFORM=linux/amd64)
