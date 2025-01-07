@@ -56,10 +56,6 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 func StartInferenceServerWrapper(nodeBroker *broker.Broker, transactionRecorder cosmos_client.CosmosMessageClient, config apiconfig.Config) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
-	nodes := config.Nodes
-	for _, node := range nodes {
-		loadNodeToBroker(nodeBroker, &node)
-	}
 
 	mux := http.NewServeMux()
 

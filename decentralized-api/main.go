@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmosclient "decentralized-api/cosmosclient"
+	"log/slog"
 	"time"
 )
 
@@ -16,6 +17,19 @@ func main() {
 	}
 
 	nodeBroker := broker.NewBroker()
+	nodes := config.Nodes
+	for _, node := range nodes {
+		loadNodeToBroker(nodeBroker, &node)
+	}
+
+	if config.ChainNode.IsGenesis {
+		slog.Info("Registering genesis participant")
+		// FIXME: don't register if already exists?
+		if err := cosmosclient.RegisterGenesisParticipant(recorder, &config); err != nil {
+			slog.Error("Failed to register genesis participant", "error", err)
+			return
+		}
+	}
 
 	go func() {
 		StartEventListener(nodeBroker, *recorder, config)

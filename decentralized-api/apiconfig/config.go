@@ -18,6 +18,7 @@ type Config struct {
 
 type ApiConfig struct {
 	Port           int    `koanf:"port"`
+	PublicUrl      string `koanf:"public_url"`
 	PoCCallbackUrl string `koanf:"poc_callback_url"`
 }
 
@@ -26,6 +27,7 @@ type ChainNodeConfig struct {
 	AccountName    string `koanf:"account_name"`
 	KeyringBackend string `koanf:"keyring_backend"`
 	KeyringDir     string `koanf:"keyring_dir"`
+	IsGenesis      bool   `koanf:"is_genesis"`
 }
 
 func ReadConfig() Config {
