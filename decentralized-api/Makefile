@@ -53,6 +53,7 @@ build:
 		go build $(BUILD_FLAGS) -o ./build/dapi
 
 build-docker:
+	rm -rf build/
 	$(eval PLATFORM=linux/amd64)
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)

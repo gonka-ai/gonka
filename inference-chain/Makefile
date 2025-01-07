@@ -54,6 +54,7 @@ build:
 		go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
 
 build-docker:
+	rm -rf build/
 	$(eval PLATFORM=linux/amd64)
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
