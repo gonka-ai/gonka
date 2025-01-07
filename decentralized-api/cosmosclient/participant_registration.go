@@ -6,10 +6,32 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 )
 
+func ParticipantExists(recorder CosmosMessageClient) (bool, error) {
+	queryClient := recorder.NewInferenceQueryClient()
+	request := &types.QueryInferenceParticipantRequest{Address: recorder.GetAddress()}
+
+	// TODO: check participant state, compute diff and update?
+	// 	Or implement some ways to periodically (or by request) update the participant state
+	_, err := queryClient.InferenceParticipant(*recorder.GetContext(), request)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config) error {
+	if exists, err := ParticipantExists(recorder); exists {
+		slog.Info("Genesis participant already exists")
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("Failed to check if genesis participant exists: %w", err)
+	}
+
 	// Get validator key through RPC
 	client, err := NewRpcClient(config.ChainNode.Url)
 	if err != nil {
