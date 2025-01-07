@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"encoding/base64"
 	"fmt"
+	"github.com/cometbft/cometbft/crypto"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
@@ -32,32 +33,13 @@ func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 		return fmt.Errorf("Failed to check if genesis participant exists: %w", err)
 	}
 
-	// Get validator key through RPC
-	client, err := NewRpcClient(config.ChainNode.Url)
+	validatorKey, err := getValidatorKey(config)
 	if err != nil {
-		return fmt.Errorf("failed to create tendermint RPC client: %w", err)
+		return err
 	}
-
-	// Get validator info
-	result, err := client.Status(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to get status from tendermint RPC client: %w", err)
-	}
-
-	validatorKey := result.ValidatorInfo.PubKey
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 
-	// Get unique model list
-	uniqueModelsSet := map[string]bool{}
-	for _, node := range config.Nodes {
-		for _, model := range node.Models {
-			uniqueModelsSet[model] = true
-		}
-	}
-	var uniqueModelsList []string
-	for model := range uniqueModelsSet {
-		uniqueModelsList = append(uniqueModelsList, model)
-	}
+	uniqueModelsList := getUniqueModels(config)
 
 	slog.Info("Registering genesis participant", "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
 
@@ -68,4 +50,72 @@ func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 	}
 
 	return recorder.SubmitNewParticipant(msg)
+}
+
+func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config) error {
+	// Probably move into an upper-level function
+	if exists, err := ParticipantExists(recorder); exists {
+		slog.Info("Participant already exists, skipping registration")
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("Failed to check if participant exists: %w", err)
+	}
+
+	validatorKey, err := getValidatorKey(config)
+	if err != nil {
+		return err
+	}
+	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
+
+	uniqueModelsList := getUniqueModels(config)
+	address := recorder.GetAddress()
+	pubKey, err := recorder.GetAccount().Record.GetPubKey()
+	if err != nil {
+		return fmt.Errorf("Failed to get public key: %w", err)
+	}
+	pubKeyString := base64.StdEncoding.EncodeToString(pubKey.Bytes())
+
+	slog.Info(
+		"Registering joining participant",
+		"validatorKey", validatorKeyString,
+		"Url", config.Api.PublicUrl,
+		"Models", uniqueModelsList,
+		"Address", address,
+		"PubKey", pubKeyString,
+	)
+
+	// TODO: do an http request to existing seed node
+
+	return nil
+}
+
+func getUniqueModels(config *apiconfig.Config) []string {
+	uniqueModelsSet := map[string]bool{}
+	for _, node := range config.Nodes {
+		for _, model := range node.Models {
+			uniqueModelsSet[model] = true
+		}
+	}
+	var uniqueModelsList []string
+	for model := range uniqueModelsSet {
+		uniqueModelsList = append(uniqueModelsList, model)
+	}
+	return uniqueModelsList
+}
+
+func getValidatorKey(config *apiconfig.Config) (crypto.PubKey, error) {
+	// Get validator key through RPC
+	client, err := NewRpcClient(config.ChainNode.Url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tendermint RPC client: %w", err)
+	}
+
+	// Get validator info
+	result, err := client.Status(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get status from tendermint RPC client: %w", err)
+	}
+
+	validatorKey := result.ValidatorInfo.PubKey
+	return validatorKey, nil
 }
