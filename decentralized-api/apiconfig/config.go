@@ -83,7 +83,7 @@ func setEnvVars(config *Config) {
 	if nodeHost, found := os.LookupEnv("NODE_HOST"); found {
 		value := fmt.Sprintf("http://%s:26657", nodeHost)
 		slog.Info("Setting config.ChainNode.Url based on NODE_HOST env var", "Url", value)
-		config.ChainNode.Url = nodeHost
+		config.ChainNode.Url = value
 	} else {
 		slog.Warn("NODE_HOST not set. Config value will be used", "Url", config.ChainNode.Url)
 	}
