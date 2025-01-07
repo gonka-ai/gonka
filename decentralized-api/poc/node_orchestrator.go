@@ -31,20 +31,20 @@ type NodePoCOrchestrator struct {
 	pubKey       string
 	HTTPClient   *http.Client
 	nodeBroker   *broker.Broker
-	callbackHost string
+	callbackUrl  string
 	chainNodeUrl string
 	cosmosClient *cosmos_client.InferenceCosmosClient
 	noOp         bool
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHost string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
 		nodeBroker:   nodeBroker,
-		callbackHost: callbackHost,
+		callbackUrl:  callbackUrl,
 		chainNodeUrl: chainNodeUrl,
 		cosmosClient: cosmosClient,
 		noOp:         false,
@@ -52,13 +52,13 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("%s/v1/poc-batches", o.callbackHost)
+	return fmt.Sprintf("%s/v1/poc-batches", o.callbackUrl)
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// For now the URl is the same, the node inference server appends "/validated" to the URL
 	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s/v1/poc-batches", o.callbackHost)
+	return fmt.Sprintf("%s/v1/poc-batches", o.callbackUrl)
 }
 
 var DefaultParams = Params{

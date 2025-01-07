@@ -1,6 +1,6 @@
 api:
   port: 8080
-  poc_callback_host: localhost
+  poc_callback_url: localhost
 nodes:
   - id: node1
     host:  34.171.235.205 # Deployed inference node

@@ -17,8 +17,8 @@ type Config struct {
 }
 
 type ApiConfig struct {
-	Port            int    `koanf:"port"`
-	PoCCallbackHost string `koanf:"poc_callback_host"`
+	Port           int    `koanf:"port"`
+	PoCCallbackUrl string `koanf:"poc_callback_url"`
 }
 
 type ChainNodeConfig struct {
