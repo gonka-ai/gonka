@@ -49,7 +49,7 @@ build:
 	@go mod verify
 	@echo "--> building decentralized-api"
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	@CGO_ENABLED=1 CC=musl-gcc \
+	@CGO_ENABLED=1 CC=gcc \
 		go build $(BUILD_FLAGS) -o ./build/dapi
 
 build-docker:
