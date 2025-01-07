@@ -11,7 +11,7 @@ ENV BUILD_FLAGS=${BUILD_FLAGS}
 ENV GOOS=${GOOS}
 ENV GOARCH=${GOARCH}
 
-RUN apk add --no-cache make gcc musl-dev musl-gcc git
+RUN apk add --no-cache make gcc musl-dev git
 
 COPY inference-chain/ /app/inference-chain
 
