@@ -58,15 +58,9 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=dapi-join)
+	$(eval DOCKER_TAG=gcr.io/decentralized-ai/api)
 	$(DOCKER_BUILD)
 
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
-	@docker tag decentralized-api gcr.io/decentralized-ai/api
 	@docker push gcr.io/decentralized-ai/api
-
-docker-push-release:
-	@echo "--> pushing decentralized-api docker image"
-	@docker tag dapi-join gcr.io/decentralized-ai/api-join
-	@docker push gcr.io/decentralized-ai/api-join

@@ -59,7 +59,7 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=inferenced-join)
+	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced)
 	$(DOCKER_BUILD)
 
 init:
@@ -75,10 +75,4 @@ mock-expected-keepers:
 
 docker-push:
 	@echo "--> pushing inferenced docker image"
-	@docker tag inferenced gcr.io/decentralized-ai/inferenced
 	@docker push gcr.io/decentralized-ai/inferenced
-
-docker-push-join:
-	@echo "--> pushing inferenced-genesis docker image"
-	@docker tag inferenced-join gcr.io/decentralized-ai/inferenced-join
-	@docker push gcr.io/decentralized-ai/inferenced-join
