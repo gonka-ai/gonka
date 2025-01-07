@@ -8,24 +8,25 @@ FROM golang:alpine AS builder
 ARG GOOS=linux
 ARG GOARCH=amd64
 
-ENV GOOS=${GOOS}
-ENV GOARCH=${GOARCH}
-ENV GO111MODULE=on
-ENV GOCACHE=/root/.cache/go-build
+ENV GOOS=${GOOS} \
+    GOARCH=${GOARCH} \
+    CGO_ENABLED=1 \
+    GO111MODULE=on \
+    GOCACHE=/root/.cache/go-build
 
 RUN apk add --no-cache make gcc musl-dev git
 
 WORKDIR /app/inference-chain
 
 COPY inference-chain/go.mod inference-chain/go.sum ./
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go mod download
 
 COPY inference-chain/. .
 
-ARG LDFLAGS
-RUN --mount=type=cache,target=/root/.cache/go-build \
+# ARG LDFLAGS
+RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -ldflags "$LDFLAGS" \
     -o ./build/inferenced \
@@ -36,7 +37,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 ################################################################################
 FROM alpine:3.18 AS final
 
-RUN apk add --no-cache ca-certificates
+RUN apk update && \
+    apk add --no-cache sed ca-certificates && \
+    rm -rf /var/cache/apk/*
 
 WORKDIR /root
 
