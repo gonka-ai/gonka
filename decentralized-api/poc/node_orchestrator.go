@@ -52,13 +52,13 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackHo
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
+	return fmt.Sprintf("%s/v1/poc-batches", o.callbackHost)
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// For now the URl is the same, the node inference server appends "/validated" to the URL
 	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("https://%s/v1/poc-batches", o.callbackHost)
+	return fmt.Sprintf("%s/v1/poc-batches", o.callbackHost)
 }
 
 var DefaultParams = Params{
