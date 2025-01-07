@@ -23,14 +23,13 @@ if [ -n "$NODE_HOST" ]; then
   sed -i "s/url: .*:26657/url: http:\/\/$NODE_HOST:26657/" "$yaml_file"
 fi
 
-echo "Setting account_name address to $KEY_NAME in $yaml_file"
-sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
-
 echo "Setting keyring_backend to test in $yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
-echo "Setting poc_callback_url to $POC_CALLBACK_URL in $yaml_file"
-sed -i "s/poc_callback_url: .*/poc_callback_url: \"$POC_CALLBACK_URL\"/" "$yaml_file"
+if [ "$IS_GENESIS" = "true" ]; then
+  echo "Setting IS_GENESIS to $IS_GENESIS in $yaml_file"
+  sed -i "s/is_genesis: .*/is_genesis: \"$IS_GENESIS\"/" "$yaml_file"
+fi
 
 echo "Setting public_url to $PUBLIC_URL in $yaml_file"
 sed -i "s/public_url: .*/public_url: \"$PUBLIC_URL\"/" "$yaml_file"

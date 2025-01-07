@@ -48,6 +48,7 @@ if [ -z "$PUBLIC_IP" ]; then
 fi
 
 export PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+echo "PUBLIC_URL=$PUBLIC_URL"
 
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
