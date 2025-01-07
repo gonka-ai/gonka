@@ -25,6 +25,7 @@ services:
       - NODE_HOST=chain-node
       - POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - PUBLIC_URL=${PUBLIC_URL}
+      - IS_GENESIS=true
     networks:
       - chain-public
 

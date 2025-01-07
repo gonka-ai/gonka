@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"decentralized-api/broker"
+	"fmt"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
@@ -77,6 +78,21 @@ func setEnvVars(config *Config) {
 		config.Api.PublicUrl = publicUrl
 	} else {
 		slog.Warn("PUBLIC_URL not set. Config value will be used", "PublicUrl", config.Api.PublicUrl)
+	}
+
+	if nodeHost, found := os.LookupEnv("NODE_HOST"); found {
+		value := fmt.Sprintf("http://%s:26657", nodeHost)
+		slog.Info("Setting config.ChainNode.Url based on NODE_HOST env var", "Url", value)
+		config.ChainNode.Url = nodeHost
+	} else {
+		slog.Warn("NODE_HOST not set. Config value will be used", "Url", config.ChainNode.Url)
+	}
+
+	if isGenesis, found := os.LookupEnv("IS_GENESIS"); found {
+		slog.Info("Setting config.ChainNode.IsGenesis to env var", "IsGenesis", isGenesis)
+		config.ChainNode.IsGenesis = isGenesis == "true"
+	} else {
+		slog.Warn("IS_GENESIS not set. Config value will be used", "IsGenesis", config.ChainNode.IsGenesis)
 	}
 }
 
