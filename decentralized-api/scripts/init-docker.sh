@@ -6,8 +6,8 @@ if [ -z "$KEY_NAME" ]; then
   exit 1
 fi
 
-if [ -z "$PUBLIC_IP" ]; then
-  echo "Error: PUBLIC_IP is required."
+if [ -z "$POC_CALLBACK_HOST" ]; then
+  echo "Error: POC_CALLBACK_HOST is required."
   exit 1
 fi
 

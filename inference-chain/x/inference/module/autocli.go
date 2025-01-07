@@ -185,9 +185,9 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "SubmitSeed",
-					Use:            "submit-seed [seed] [block-height] [signature]",
+					Use:            "submit-seed [block-height] [signature]",
 					Short:          "Send a submit-seed tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "blockHeight"}, {ProtoField: "signature"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "signature"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

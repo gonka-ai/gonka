@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+// /v1/poc-batches/generated
+// /v1/poc-batches/validated
 func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
@@ -51,7 +53,7 @@ func submitPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.Respons
 	slog.Info("ProofBatch received", "body", body)
 
 	msg := &inference.MsgSubmitPocBatch{
-		PocStageStartBlockHeight: body.ChainHeight,
+		PocStageStartBlockHeight: body.BlockHeight,
 		Nonces:                   body.Nonces,
 		Dist:                     body.Dist,
 	}
@@ -85,7 +87,7 @@ func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w htt
 
 	msg := &inference.MsgSubmitPocValidation{
 		ParticipantAddress:       address,
-		PocStageStartBlockHeight: body.ChainHeight,
+		PocStageStartBlockHeight: body.BlockHeight,
 		Nonces:                   body.Nonces,
 		Dist:                     body.Dist,
 		ReceivedDist:             body.ReceivedDist,
