@@ -3,7 +3,7 @@ package broker
 import "fmt"
 
 type InferenceNode struct {
-	Host          string   `koanf:"url" json:"url"`
+	Host          string   `koanf:"host" json:"host"`
 	InferencePort int      `koanf:"inference_port" json:"inference_port"`
 	PoCPort       int      `koanf:"poc_port" json:"poc_port"`
 	Models        []string `koanf:"models" json:"models"`
