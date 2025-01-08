@@ -25,7 +25,7 @@ func main() {
 	if config.ChainNode.IsGenesis {
 		slog.Info("Registering genesis participant")
 		// FIXME: don't register if already exists?
-		if err := cosmosclient.RegisterGenesisParticipant(recorder, &config); err != nil {
+		if err := cosmosclient.RegisterGenesisParticipant(recorder, &config, nodeBroker); err != nil {
 			slog.Error("Failed to register genesis participant", "error", err)
 			return
 		}

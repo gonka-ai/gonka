@@ -55,6 +55,8 @@ func ReadConfig() Config {
 
 	setEnvVars(&config)
 
+	loadNodeConfig(&config)
+
 	return config
 }
 
@@ -94,6 +96,10 @@ func setEnvVars(config *Config) {
 	} else {
 		slog.Warn("IS_GENESIS not set. Config value will be used", "IsGenesis", config.ChainNode.IsGenesis)
 	}
+}
+
+func loadNodeConfig(config *Config) {
+	// TODO:
 }
 
 func WriteConfig(config Config) error {
