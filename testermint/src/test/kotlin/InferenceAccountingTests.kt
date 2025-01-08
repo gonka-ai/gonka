@@ -131,7 +131,7 @@ class InferenceAccountingTests : TestermintTest() {
             val participants = genesis.api.getParticipants()
             val consumerParticipant = participants.first { it.id == newKey.address }
             assertThat(consumerParticipant.balance).isGreaterThan(100_000_000)
-            val consumerPair = LocalInferencePair(consumer, genesis.api, consumerKey)
+            val consumerPair = LocalInferencePair(consumer, genesis.api, null, consumerKey)
             val result = consumerPair.makeInferenceRequest(inferenceRequest, newKey.address)
             assertThat(result).isNotNull
             val inference = generateSequence {

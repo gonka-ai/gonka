@@ -21,6 +21,7 @@ dependencies {
     testImplementation(kotlin("test"))
     // Add AssertJ for fluent assertions
     testImplementation("org.assertj:assertj-core:3.26.3")
+    implementation("org.wiremock:wiremock:3.10.0")
 }
 
 tasks.test {

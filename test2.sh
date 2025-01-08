@@ -14,7 +14,9 @@ NODE_CONFIG=node_payload.json
 BASE_DIR="prod-genesis"
 rm -r "$BASE_DIR" || true
 
-docker compose -f docker-compose-genesis.yml -f docker-compose-http-files.yml up -d
+docker compose -f docker-compose-genesis.yml up -d
+#docker compose -f docker-compose-http-files.yml up -d
+#docker compose -f docker-compose-genesis.yml -f docker-compose-http-files.yml up -d
 
 sleep 20
 
@@ -68,11 +70,13 @@ export NODE_CONFIG=$NODE_CONFIG
 export ADD_ENDPOINT="http://0.0.0.0:$PORT"
 export PUBLIC_URL="http://join1-api:8080"
 export PORT=8081
+export WIREMOCK_PORT=8091
 export SEED_IP="genesis-node"
 export EXTERNAL_SEED_IP="0.0.0.0"
 ./launch_chain.sh
 export KEY_NAME=join2
 export PORT=8082
+export WIREMOCK_PORT=8092
 export PUBLIC_URL="http://join2-api:8080"
 ./launch_chain.sh
 

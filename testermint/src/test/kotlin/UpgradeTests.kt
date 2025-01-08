@@ -14,7 +14,7 @@ class UpgradeTests : TestermintTest() {
         val height = highestFunded.getCurrentBlockHeight()
         val checksum = "2067b6d330ef1d1d0037a769ebec146788a2e006c4c88d709ff0fbec6f13daef"
         val path = getBinaryPath("v2/inferenced.zip", checksum)
-        val apiCheckshum = "3333d0b0e3a088aaf9ced861687b9b8694ccfe9c79b826a973d7b408426f5daa"
+        val apiCheckshum = "652bb61e49003238f6af0b26cc41b93c38a9595e9e752e24097b9be3d7095a3a"
         val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
         val response = highestFunded.node.submitUpgradeProposal(
             title = "v0.0.2test",

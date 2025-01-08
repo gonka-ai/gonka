@@ -1,6 +1,6 @@
 version: '3.9'
 services:
-  web:
+  binary-server:
     image: httpd:latest
     container_name: binary-server
     ports:
@@ -9,7 +9,3 @@ services:
       - ./public-html:/usr/local/apache2/htdocs/
     networks:
       - chain-public
-
-networks:
-  chain-public:
-#    external: true
