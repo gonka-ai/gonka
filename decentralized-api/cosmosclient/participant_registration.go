@@ -152,7 +152,7 @@ func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
 		return nil, fmt.Errorf("failed to get nodes from broker: %w", err)
 	}
 
-	uniqueModelsSet := map[string]bool{}
+	uniqueModelsSet := make(map[string]bool)
 	for _, node := range nodes {
 		for _, model := range node.Node.Models {
 			uniqueModelsSet[model] = true

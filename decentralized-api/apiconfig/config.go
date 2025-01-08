@@ -54,7 +54,10 @@ func ReadConfig() Config {
 
 	setEnvVars(&config)
 
-	loadNodeConfig(&config)
+	err = loadNodeConfig(&config)
+	if err != nil {
+		log.Fatalf("error while loading nodes from node config: %v", err)
+	}
 
 	return config
 }
