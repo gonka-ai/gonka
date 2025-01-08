@@ -47,8 +47,8 @@ if [ -z "$PUBLIC_IP" ]; then
   exit 1
 fi
 
-export PUBLIC_URL="http://$PUBLIC_IP:$PORT"
-echo "PUBLIC_URL=$PUBLIC_URL"
+export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+echo "DAPI_API__PUBLIC_URL=$DAPI_API__PUBLIC_URL"
 
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
@@ -91,7 +91,7 @@ echo "Unique models: $unique_models"
 
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
-  --arg url "$PUBLIC_URL" \
+  --arg url "$DAPI_API__PUBLIC_URL" \
   --argjson models "$unique_models" \
   --arg validator_key "$validator_key" \
   '{

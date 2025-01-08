@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/stretchr/testify/require"
+	"os"
 	"testing"
 )
 
@@ -18,6 +19,28 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "join1", testManager.GetConfig().ChainNode.AccountName)
 	require.Equal(t, "test", testManager.GetConfig().ChainNode.KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetConfig().ChainNode.KeyringDir)
+}
+
+func TestConfigLoadEnvOverride(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testYaml)),
+	}
+
+	os.Setenv("DAPI_API__PORT", "9000")
+	os.Setenv("KEY_NAME", "join2")
+	os.Setenv("DAPI_CHAIN_NODE__URL", "http://join1-node:26658")
+	os.Setenv("DAPI_API__POC_CALLBACK_URL", "http://callback")
+	os.Setenv("DAPI_API__PUBLIC_URL", "http://public")
+	err := testManager.Load()
+	require.NoError(t, err)
+	require.Equal(t, 9000, testManager.GetConfig().Api.Port)
+	require.Equal(t, "http://join1-node:26658", testManager.GetConfig().ChainNode.Url)
+	require.Equal(t, "join2", testManager.GetConfig().ChainNode.AccountName)
+	require.Equal(t, "http://callback", testManager.GetConfig().Api.PoCCallbackUrl)
+	require.Equal(t, "http://public", testManager.GetConfig().Api.PublicUrl)
+	require.Equal(t, "test", testManager.GetConfig().ChainNode.KeyringBackend)
+	require.Equal(t, "/root/.inference", testManager.GetConfig().ChainNode.KeyringDir)
+
 }
 
 type CaptureWriterProvider struct {

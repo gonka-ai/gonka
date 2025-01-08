@@ -23,8 +23,8 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=chain-node
-      - POC_CALLBACK_URL=${POC_CALLBACK_URL}
-      - PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
     networks:
       - chain-public
 

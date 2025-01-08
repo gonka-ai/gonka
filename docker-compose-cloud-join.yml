@@ -21,7 +21,7 @@ services:
       - node
     environment:
       - KEY_NAME=${KEY_NAME}
-      - POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - PORT=${PORT}
     ports:
       - "${PORT}:8080"

@@ -3,12 +3,14 @@ package apiconfig
 import (
 	"decentralized-api/broker"
 	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"golang.org/x/exp/slog"
 	"log"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -149,10 +151,22 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err := k.Load(provider, parser); err != nil {
 		log.Fatalf("error loading config: %v", err)
 	}
+	err := k.Load(env.Provider("DAPI_", ".", func(s string) string {
+		return strings.Replace(strings.ToLower(
+			strings.TrimPrefix(s, "DAPI_")), "__", ".", -1)
+	}), nil)
+
+	if err != nil {
+		log.Fatalf("error loading env: %v", err)
+	}
 	var config Config
-	err := k.Unmarshal("", &config)
+	err = k.Unmarshal("", &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling config: %v", err)
+	}
+	if keyName, found := os.LookupEnv("KEY_NAME"); found {
+		slog.Info("Setting config.ChainNode.AccountName to env var", "AccountName", keyName)
+		config.ChainNode.AccountName = keyName
 	}
 	return config, nil
 }

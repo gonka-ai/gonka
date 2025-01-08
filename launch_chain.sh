@@ -124,11 +124,11 @@ unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
 # Print the unique models
 echo "Unique models: $unique_models"
 
-PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
   --arg address "$address" \
-  --arg url "$PUBLIC_URL" \
+  --arg url "$DAPI_API__PUBLIC_URL" \
   --argjson models "$unique_models" \
   --arg validator_key "$validator_key" \
   --arg pub_key "$raw_key" \

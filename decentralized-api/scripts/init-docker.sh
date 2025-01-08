@@ -6,13 +6,13 @@ if [ -z "$KEY_NAME" ]; then
   exit 1
 fi
 
-if [ -z "$POC_CALLBACK_URL" ]; then
-  echo "Error: POC_CALLBACK_URL is required."
+if [ -z "$DAPI_API__POC_CALLBACK_URL" ]; then
+  echo "Error: DAPI_API__POC_CALLBACK_URL is required."
   exit 1
 fi
 
-if [ -z "$PUBLIC_URL" ]; then
-  echo "Error: PUBLIC_URL is required."
+if [ -z "$DAPI_API__PUBLIC_URL" ]; then
+  echo "Error: DAPI_API__PUBLIC_URL is required."
   exit 1
 fi
 
