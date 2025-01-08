@@ -19,35 +19,41 @@ class ClientV1:
             raise
         return response.json()
 
-    def init(self, url, chain_hash, public_key, batch_size, r_target, params=Params()):
+    def init(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=Params()):
         return self._request("post", "/pow/init", json={
             "url": url,
-            "chain_hash": chain_hash,
+            "block_hash": block_hash,
+            "block_height": block_height,
             "public_key": public_key,
             "batch_size": batch_size,
             "r_target": r_target,
+            "fraud_threshold": fraud_threshold,
             "params": params.__dict__,
         })
 
-    def init_generate(self, url, chain_hash, public_key, batch_size, r_target, params=None):
+    def init_generate(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=None):
         if params is None:
             params = Params()
         return self._request("post", "/pow/init/generate", json={
             "url": url,
-            "chain_hash": chain_hash,
+            "block_hash": block_hash,
+            "block_height": block_height,
             "public_key": public_key,
             "batch_size": batch_size,
             "r_target": r_target,
+            "fraud_threshold": fraud_threshold,
             "params": params.__dict__,
         })
 
-    def init_validate(self, url, chain_hash, public_key, batch_size, r_target, params=Params()):
+    def init_validate(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=Params()):
         return self._request("post", "/pow/init/validate", json={
             "url": url,
-            "chain_hash": chain_hash,
+            "block_hash": block_hash,
+            "block_height": block_height,
             "public_key": public_key,
             "batch_size": batch_size,
             "r_target": r_target,
+            "fraud_threshold": fraud_threshold,
             "params": params.__dict__,
         })
 

@@ -41,7 +41,8 @@ class GpuManager:
         self.init_request = init_request
         self.pow_controller = ParallelController(
             params=init_request.params,
-            chain_hash=init_request.chain_hash,
+            block_hash=init_request.block_hash,
+            block_height=init_request.block_height,
             public_key=init_request.public_key,
             batch_size=init_request.batch_size,
             r_target=init_request.r_target,
@@ -53,6 +54,7 @@ class GpuManager:
             validation_queue=self.pow_controller.validated_batch_queue,
             phase=self.pow_controller.phase,
             r_target=self.pow_controller.r_target,
+            fraud_threshold=init_request.fraud_threshold,
         )
 
     def start_pow(self):

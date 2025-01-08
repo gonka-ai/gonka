@@ -26,10 +26,12 @@ class PowState(Enum):
 
 
 class PowInitRequest(BaseModel):
-    chain_hash: str
+    block_hash: str
+    block_height: int
     public_key: str
     batch_size: int
     r_target: float
+    fraud_threshold: float
     params: Params = Params()
 
 
@@ -45,15 +47,16 @@ class InferenceInitRequest(BaseModel):
 
 def create_sender(
     app,
-    url: str,
+    init_request: PowInitRequest,
     controller: ParallelController,
 ):
     sender = Sender(
-        url=url,
+        url=init_request.url,
         generation_queue=controller.generated_batch_queue,
         validation_queue=controller.validated_batch_queue,
         phase=controller.phase,
-        r_target=controller.r_target,
+        r_target=init_request.r_target,
+        fraud_threshold=init_request.fraud_threshold,
     )
     return sender
 
@@ -69,13 +72,14 @@ def _initiate(
         )
     app.state.controller = ParallelController(
         params=init_request.params,
-        chain_hash=init_request.chain_hash,
+        block_hash=init_request.block_hash,
+        block_height=init_request.block_height,
         public_key=init_request.public_key,
         batch_size=init_request.batch_size,
         r_target=init_request.r_target,
         devices=None,
     )
-    sender = create_sender(app, init_request.url, app.state.controller)
+    sender = create_sender(app, init_request, app.state.controller)
     app.state.sender = sender
     logger.info("Starting controller with params: %s", init_request)
 

@@ -37,10 +37,10 @@ if URL_2 is None:
     print("URL_2 is not set, using default")
     URL_2 = "http://34.45.171.196:8080"
 
-CHAIN_HASH = os.getenv("CHAIN_HASH", None)
-if CHAIN_HASH is None:
-    print("CHAIN_HASH is not set, using default")
-    CHAIN_HASH = hashlib.sha256(date_str.encode()).hexdigest()
+BLOCK_HASH = os.getenv("BLOCK_HASH", None)
+if BLOCK_HASH is None:
+    print("BLOCK_HASH is not set, using default")
+    BLOCK_HASH = hashlib.sha256(date_str.encode()).hexdigest()
 
 BATCH_SIZE_1 = os.getenv("BATCH_SIZE_1", None)
 if BATCH_SIZE_1 is None:
@@ -65,8 +65,8 @@ def init():
         ffn_dim_multiplier=16,
         seq_len=4
     )
-    init_gen(URL_1, CHAIN_HASH, PUBLIC_KEY_1, BATCH_SIZE_1, R_TARGET, params)
-    init_val(URL_2, CHAIN_HASH, PUBLIC_KEY_2, BATCH_SIZE_2, R_TARGET, params)
+    init_gen(URL_1, BLOCK_HASH, PUBLIC_KEY_1, BATCH_SIZE_1, R_TARGET, params)
+    init_val(URL_2, BLOCK_HASH, PUBLIC_KEY_2, BATCH_SIZE_2, R_TARGET, params)
 
 def stop_all():
     try:

@@ -21,7 +21,8 @@ class Controller:
         self,
         idx: int,
         params: Params,
-        chain_hash: str,
+        block_hash: str,
+        block_height: int,
         public_key: str,
         batch_size: int,
         r_target: float,
@@ -52,7 +53,8 @@ class Controller:
                 self.validated_batch_queue,
                 self.model_init_event,
                 params,
-                chain_hash,
+                block_hash,
+                block_height,
                 public_key,
                 batch_size,
                 r_target,
@@ -71,7 +73,8 @@ class Controller:
         validated_batch_queue: Queue,
         model_init_event: Event,
         params: Params,
-        chain_hash: str,
+        block_hash: str,
+        block_height: int,
         public_key: str,
         batch_size: int,
         r_target: float,
@@ -86,7 +89,8 @@ class Controller:
             validated_batch_queue,
             model_init_event,
             params,
-            chain_hash,
+            block_hash,
+            block_height,
             public_key,
             batch_size,
             r_target,
@@ -137,7 +141,8 @@ class ParallelController:
     def __init__(
         self,
         params: Params,
-        chain_hash: str,
+        block_hash: str,
+        block_height: int,
         public_key: str,
         batch_size: int,
         r_target: float,
@@ -156,7 +161,8 @@ class ParallelController:
 
         self.r_target = r_target
         self.params = params
-        self.chain_hash = chain_hash
+        self.block_hash = block_hash
+        self.block_height = block_height
         self.public_key = public_key
         self.batch_size = batch_size
 
@@ -164,7 +170,8 @@ class ParallelController:
             Controller(
                 idx=idx,
                 params=params,
-                chain_hash=chain_hash,
+                block_hash=block_hash,
+                block_height=block_height,
                 public_key=public_key,
                 batch_size=batch_size,
                 r_target=r_target,

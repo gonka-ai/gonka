@@ -27,7 +27,8 @@ class Worker(multiprocessing.Process):
         validated_batch_queue: Queue,
         model_init_event: Event,
         params: Params,
-        chain_hash: str,
+        block_hash: str,
+        block_height: int,
         public_key: str,
         batch_size: int,
         r_target: float,
@@ -41,7 +42,8 @@ class Worker(multiprocessing.Process):
         self.validated_batch_queue = validated_batch_queue
         self.model_init_event = model_init_event
         self.params = params
-        self.chain_hash = chain_hash
+        self.block_hash = block_hash
+        self.block_height = block_height
         self.public_key = public_key
         self.batch_size = batch_size
         self.r_target = r_target
@@ -55,7 +57,8 @@ class Worker(multiprocessing.Process):
     def run(self):
         self.compute = Compute(
             params=self.params,
-            chain_hash=self.chain_hash,
+            block_hash=self.block_hash,
+            block_height=self.block_height,
             public_key=self.public_key,
             r_target=self.r_target,
             devices=self.devices,
@@ -164,6 +167,7 @@ class Worker(multiprocessing.Process):
             merged_batches = self._prepare_next_batch(self.to_validate_batch_queue)
 
             if not merged_batches:
+                #TODO check later for a better way to do this
                 time.sleep(0.01)
                 continue
 

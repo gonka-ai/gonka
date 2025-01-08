@@ -52,7 +52,7 @@ async def inference_setup(
 
 
 @router.post("/pow/init")
-async def init_generate(
+async def init(
     request: Request,
     init_request: PowInitRequestUrl
 ):
@@ -84,7 +84,7 @@ async def init_generate(
 
 
 @router.post("/pow/init/validate")
-async def init_generate(
+async def init_validate(
     request: Request,
     init_request: PowInitRequestUrl
 ):
@@ -103,7 +103,7 @@ async def init_generate(
 
 
 @router.post("/pow/phase/generate")
-async def init_generate(request: Request):
+async def start_generate(request: Request):
     manager: GpuManager = request.app.state.manager
     if not manager.is_pow_running():
         raise HTTPException(
@@ -118,7 +118,7 @@ async def init_generate(request: Request):
 
 
 @router.post("/pow/phase/validate")
-async def init_generate(request: Request):
+async def start_validate(request: Request):
     manager: GpuManager = request.app.state.manager
     if not manager.is_pow_running():
         raise HTTPException(
@@ -145,7 +145,7 @@ async def validate(
         )
 
     manager.pow_controller.to_validate(proof_batch)
-    manager.sender.in_validation_queue.put(proof_batch)
+    manager.pow_sender.in_validation_queue.put(proof_batch)
 
 
 @router.get("/pow/status")

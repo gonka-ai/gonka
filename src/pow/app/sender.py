@@ -26,6 +26,7 @@ class Sender(Process):
         validation_queue: Queue,
         phase: Phase,
         r_target: float,
+        fraud_threshold: float,
     ):
         super().__init__()
         self.url = url
@@ -34,6 +35,7 @@ class Sender(Process):
         self.validation_queue = validation_queue
         self.in_validation_queue = Queue()
         self.r_target = r_target
+        self.fraud_threshold = fraud_threshold
 
         self.in_validation: List[InValidation] = []
         self.generated_not_sent: List[ProofBatch] = []
@@ -98,7 +100,7 @@ class Sender(Process):
                 in_val.process(batch)
 
         in_validation_ready = [
-            in_val.validated(self.r_target)
+            in_val.validated(self.r_target, self.fraud_threshold)
             for in_val in in_validation
             if in_val.is_ready()
         ]

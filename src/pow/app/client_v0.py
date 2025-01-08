@@ -7,7 +7,7 @@ from pow.models.utils import Params
 
 def initiate(
     url, 
-    chain_hash, 
+    block_hash, 
     public_key, 
     batch_size, 
     r_target,
@@ -16,7 +16,7 @@ def initiate(
     resp = requests.post(
         f"{url}/api/v0/initiate",
         json={
-            "chain_hash": chain_hash,
+            "block_hash": block_hash,
             "public_key": public_key,
             "batch_size": batch_size,
             "r_target": r_target,
@@ -104,13 +104,13 @@ def get_validated(url):
 
 def init_gen(
     url, 
-    chain_hash, 
+    block_hash, 
     public_key, 
     batch_size, 
     r_target,
     params = Params()
 ):
-    initiate(url, chain_hash, public_key, batch_size, r_target, params)
+    initiate(url, block_hash, public_key, batch_size, r_target, params)
     start_generation(url)
     wait_for_status(url, "GENERATING")
     return get_generated(url)
@@ -118,13 +118,13 @@ def init_gen(
 
 def init_val(
     url, 
-    chain_hash, 
+    block_hash, 
     public_key, 
     batch_size, 
     r_target,
     params = Params()
 ):
-    initiate(url, chain_hash, public_key, batch_size, r_target, params)
+    initiate(url, block_hash, public_key, batch_size, r_target, params)
     start_validation(url)
     wait_for_status(url, "VALIDATING")
     return get_validated(url)

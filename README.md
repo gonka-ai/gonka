@@ -1,12 +1,43 @@
 # Proof of Work v2
 
+## Usage Example
+
+### Starting the Server
+
+1. **Launch the Server:**
+   - Use Docker Compose to start the server application. By default, it runs on port 8080.
+   ```bash
+   docker compose up app
+   ```
+
+### Starting the Client (Batch Receiver)
+
+1. **Launch the Batch Receiver:**
+   - This is a separate application that stores all received batches. You can later access these batches from a Jupyter notebook.
+   - Use the following command to start the batch receiver. Adjust the host and port as needed, but ensure to update these values in the notebook accordingly.
+   ```bash
+   uvicorn tests.batch_receiver:app --host 172.18.120.148 --port 8081
+   ```
+
+### Using the Jupyter Notebook
+
+1. **Open the Notebook:**
+   - Access the notebook at the following URL: [rest-usage.ipynb](https://github.com/product-science/proof-of-work/blob/tg/for_dima/notebooks/rest-usage.ipynb).
+
+2. **Follow the Instructions:**
+   - The notebook guides you through the process of initiating batch generation.
+   - It demonstrates how to create a batch of 2000 valid nonces based on one correct batch.
+   - It also shows how to create a second batch of 2000 nonces, with 10 intentionally incorrect ones.
+   - Finally, it walks you through the validation process for both batches and prints the results.
+
+
 ## Build
 
 The image is built on top of vLLM's fork image, which is available on GCP as `decentralized-ai/vllm:<VLLM_VERSION>`. 
 Changes in the current repository don't require rebuilding the vLLM's fork image.
 
 
-### Build vLLM's fork
+#### Build vLLM's fork
 
 If you need to build the vLLM's fork image, you can do it with the following command:
 
@@ -32,7 +63,7 @@ Then you need to update the `VLLM_VERSION` in the `Dockerfile` to the new versio
 Current vLLM version is `0.5.0.post1`.  
 Current latest version of vLLM's fork can be found in `productscience/dev` branch.
 
-### Build the Proof of Work image
+#### Build the Proof of Work image
 
 ```bash
 DOCKER_BUILDKIT=1 \
@@ -48,7 +79,7 @@ docker push gcr.io/decentralized-ai/inference-runner:<VERSION>
 `<VERSION>` is the version of the Proof of Work image.
 
 
-## Development
+### Development
 
 Everything is dockerized, so you can run the development environment from container.  
 The `scripts` and `notebooks` folders are mounted into the container, 
@@ -65,7 +96,7 @@ volumes:
 ```
 
 
-### User and Group
+#### User and Group
 For convenience, the user and group are created in the container with the same UID and GID as the host user.
 It allows the container to write to the `scripts` and `notebooks` folders without changing the permissions on your local machine.  
 
@@ -75,7 +106,7 @@ echo "HOST_UID=$(id -u)" >> .env
 echo "HOST_GID=$(id -g)" >> .env
 ```
 
-### Jupyter
+#### Jupyter
 
 ```bash
 docker compose up --build
@@ -95,7 +126,7 @@ Or with gcloud:
 gcloud compute start-iap-tunnel pow-test 8080 --project=<PROJECT_ID> --local-host-port=localhost:8080
 ```
 
-### Scripts
+#### Scripts
 
 ```bash
 docker compose run --rm pow python scripts/check_operations.py

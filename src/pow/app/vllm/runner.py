@@ -27,7 +27,7 @@ class VLLMRunner:
         self.model = model
         self.dtype = dtype
         self.additional_args = additional_args or []
-
+        
         self.process: Optional[subprocess.Popen] = None
 
     def start(self):

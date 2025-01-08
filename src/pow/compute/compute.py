@@ -50,25 +50,27 @@ class Compute:
     def __init__(
         self,
         params: Params,
-        chain_hash: str,
+        block_hash: str,
+        block_height: int,
         public_key: str,
         r_target: float,
         devices: str,
     ):
         self.public_key = public_key
-        self.chain_hash = chain_hash
+        self.block_hash = block_hash
+        self.block_height = block_height
         self.r_target = r_target
         self.params = params
         self.stats = Stats()
         self.devices = devices
         self.model = ModelWrapper.build(
-            hash_=self.chain_hash,
+            hash_=self.block_hash,
             params=params,
             stats=self.stats.time_stats,
             devices=self.devices,
         )
         self.target = get_target(
-            self.chain_hash,
+            self.block_hash,
             self.params.vocab_size
         )
         
@@ -91,7 +93,7 @@ class Compute:
 
         def get_inputs_batch(nonce_batch):
             return get_inputs(
-                self.chain_hash,
+                self.block_hash,
                 public_key,
                 nonce_batch,
                 dim=self.params.dim,
@@ -100,7 +102,7 @@ class Compute:
 
         def get_permutations_batch(nonce_batch):
             return get_permutations(
-                self.chain_hash,
+                self.block_hash,
                 public_key,
                 nonce_batch,
                 dim=self.params.vocab_size
@@ -162,7 +164,8 @@ class Compute:
                 )
                 batch = ProofBatch(
                     public_key=public_key,
-                    chain_hash=self.chain_hash,
+                    block_hash=self.block_hash,
+                    block_height=self.block_height,
                     nonces=nonces,
                     dist=distances,
                 )
@@ -210,10 +213,10 @@ class Compute:
         nonces = proof_batch.nonces
 
         assert (
-            proof_batch.chain_hash == self.chain_hash
-        ), "Chain hash must be the same as the one used to create the model"
+            proof_batch.block_hash == self.block_hash
+        ), "Block hash must be the same as the one used to create the model"
 
-        target_to_validate = get_target(proof_batch.chain_hash, self.params.vocab_size)
+        target_to_validate = get_target(proof_batch.block_hash, self.params.vocab_size)
         proof_batch = self(
             nonces=nonces,
             public_key=proof_batch.public_key,
