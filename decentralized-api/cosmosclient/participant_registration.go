@@ -19,7 +19,22 @@ import (
 	"time"
 )
 
-func ParticipantExists(recorder CosmosMessageClient) (bool, error) {
+func participantExistsWithWait(recorder CosmosMessageClient, config *apiconfig.Config) (bool, error) {
+	// Create RPC client
+	client, err := NewRpcClient(config.ChainNode.Url)
+	if err != nil {
+		return false, fmt.Errorf("failed to create tendermint RPC client: %w", err)
+	}
+
+	// Wait for chain to start
+	if err := waitForFirstBlock(client, 1*time.Minute); err != nil {
+		return false, fmt.Errorf("chain failed to start: %w", err)
+	}
+
+	return participantExists(recorder)
+}
+
+func participantExists(recorder CosmosMessageClient) (bool, error) {
 	queryClient := recorder.NewInferenceQueryClient()
 	request := &types.QueryGetParticipantRequest{Index: recorder.GetAddress()}
 
@@ -77,18 +92,7 @@ func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig
 }
 
 func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
-	// Create RPC client
-	client, err := NewRpcClient(config.ChainNode.Url)
-	if err != nil {
-		return fmt.Errorf("failed to create tendermint RPC client: %w", err)
-	}
-
-	// Wait for chain to start
-	if err := waitForFirstBlock(client, 1*time.Minute); err != nil {
-		return fmt.Errorf("chain failed to start: %w", err)
-	}
-
-	if exists, err := ParticipantExists(recorder); exists {
+	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Genesis participant already exists")
 		return nil
 	} else if err != nil {
@@ -129,8 +133,7 @@ type submitUnfundedNewParticipantDto struct {
 }
 
 func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
-	// Probably move into an upper-level function
-	if exists, err := ParticipantExists(recorder); exists {
+	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Participant already exists, skipping registration")
 		return nil
 	} else if err != nil {
