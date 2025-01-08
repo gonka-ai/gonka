@@ -1,6 +1,6 @@
 services:
   genesis-node:
-    image: inferenced-genesis
+    image: gcr.io/decentralized-ai/inferenced
     container_name: genesis-node
     volumes:
       - ./prod-genesis:/root/.inference
@@ -11,7 +11,7 @@ services:
       - "26657:26657" #rpc
 
   genesis-api:
-    image: dapi-join
+    image: gcr.io/decentralized-ai/api
     container_name: genesis-api
     volumes:
       - ./prod-genesis:/root/.inference

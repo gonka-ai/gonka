@@ -2,7 +2,7 @@ package proofofcompute
 
 const (
 	Multiplier            = 1
-	EpochLength           = 25 * Multiplier
+	EpochLength           = 40
 	startOfPocStage       = 0 * Multiplier
 	endOfPocStage         = 10 * Multiplier
 	pocExchangeDeadline   = (endOfPocStage + 2) * Multiplier

@@ -1,3 +1,5 @@
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push
+
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
@@ -10,73 +12,53 @@ ifeq (,$(VERSION))
   endif
 endif
 
-# Update the ldflags with the app, client & server names
-ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
-	-X github.com/cosmos/cosmos-sdk/version.AppName=inference-chaind \
-	-X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
-	-X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
-
-BUILD_FLAGS := -ldflags '$(ldflags)'
-
-define DOCKER_BUILD
-    @echo "--> deleting old ./build/inferenced"
-	@rm -f ./build/inferenced
-	@echo "--> building inferenced binary locally, outside of docker"
-	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
-	@echo "--> building inferenced docker image. platform: $(PLATFORM)"
-	@docker build -f $(DOCKER_FILE) --platform $(PLATFORM) . -t $(DOCKER_TAG)
-endef
-
-all:
-	install
+ldflags = \
+  -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
+  -X github.com/cosmos/cosmos-sdk/version.AppName=inference-chaind \
+  -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
+  -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
 install:
-	@echo "--> ensure dependencies have not been modified"
-	@go mod verify
-	@echo "--> installing inferenced"
-	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	@go install $(BUILD_FLAGS) -mod=readonly ./cmd/inferenced/main.go
+	@echo "Installing locally with ldflags..."
+	@go install -ldflags "$(ldflags)" -mod=readonly ./cmd/inferenced/main.go
 
 build:
-	@echo "--> ensure dependencies have not been modified"
-	@go mod verify
-	@go mod tidy
-	@echo "--> building inferenced"
-	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
-	@go build $(BUILD_FLAGS) -o ./build/inferenced ./cmd/inferenced/main.go
+	@echo "Building locally with ldflags..."
+	@CGO_ENABLED=1 CC=gcc \
+		go build -ldflags "$(ldflags)" -o ./build/inferenced ./cmd/inferenced/main.go
 
-build-docker-old:
-	$(eval PLATFORM=linux/arm64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=inferenced)
-	$(DOCKER_BUILD)
+define DOCKER_BUILD
+	@echo "--> building inferenced docker image"
+	@echo "platform:  $(PLATFORM)"
+	@echo "GOARCH:    $(GOARCH)"
+	@echo "LDFLAGS:   $(ldflags)"
+	@echo "GOOS:      $(GOOS)"
+
+	@DOCKER_BUILDKIT=1 \
+	docker build \
+		--platform $(PLATFORM) \
+		--build-arg LDFLAGS='$(ldflags)' \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
+		-f $(DOCKER_FILE) \
+		.. \
+		-t $(DOCKER_TAG)
+endef
 
 build-docker:
+	rm -rf build/
 	$(eval PLATFORM=linux/amd64)
-	$(eval DOCKER_FILE=DockerfileJoin)
-	$(eval DOCKER_TAG=inferenced-join)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced)
 	$(DOCKER_BUILD)
-
-init:
-	./scripts/init.sh
 
 clean-state:
 	rm -rf "$$HOME/.inference"
 
-mock-expected-keepers:
-	@mockgen -source=x/inference/types/expected_keepers.go \
-		-package keeper \
-		-destination=testutil/keeper/expected_keepers_mocks.go
-
 docker-push:
-	@echo "--> pushing inferenced docker image"
-	@docker tag inferenced gcr.io/decentralized-ai/inferenced
-	@docker push gcr.io/decentralized-ai/inferenced
-
-docker-push-join:
-	@echo "--> pushing inferenced-genesis docker image"
-	@docker tag inferenced-join gcr.io/decentralized-ai/inferenced-join
-	@docker push gcr.io/decentralized-ai/inferenced-join
+	docker push gcr.io/decentralized-ai/inferenced
 
 build-v2-test:
 	$(eval PLATFORM=linux/amd64)

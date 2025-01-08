@@ -60,7 +60,7 @@ func StartEventListener(
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
 		nodeBroker,
-		configManager.GetConfig().Api.PoCCallbackHost,
+		configManager.GetConfig().Api.PoCCallbackUrl,
 		configManager.GetConfig().ChainNode.Url,
 		&transactionRecorder,
 	)

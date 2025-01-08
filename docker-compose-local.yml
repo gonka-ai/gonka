@@ -1,7 +1,7 @@
 services:
   chain-node:
     container_name: ${KEY_NAME}-node
-    image: inferenced-join
+    image: gcr.io/decentralized-ai/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -12,7 +12,7 @@ services:
 
   api:
     container_name: ${KEY_NAME}-api
-    image: dapi-join
+    image: gcr.io/decentralized-ai/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     ports:
@@ -20,7 +20,8 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
-      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
+      - POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - PUBLIC_URL=${PUBLIC_URL}
     networks:
       - chain-public
 
