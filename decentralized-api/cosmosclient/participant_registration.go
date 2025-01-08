@@ -3,6 +3,7 @@ package cosmosclient
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/broker"
 	"encoding/base64"
 	"fmt"
 	"github.com/cometbft/cometbft/crypto"
@@ -63,7 +64,7 @@ func waitForFirstBlock(client *http.HTTP, timeout time.Duration) error {
 	}
 }
 
-func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config) error {
+func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
 	// Create RPC client
 	client, err := NewRpcClient(config.ChainNode.Url)
 	if err != nil {
@@ -88,7 +89,10 @@ func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 	}
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 
-	uniqueModelsList := getUniqueModels(config)
+	uniqueModelsList, err := getUniqueModels(nodeBroker)
+	if err != nil {
+		return fmt.Errorf("Failed to get unique models: %w", err)
+	}
 
 	slog.Info("Registering genesis participant", "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
 
@@ -101,7 +105,7 @@ func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 	return recorder.SubmitNewParticipant(msg)
 }
 
-func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config) error {
+func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
 	// Probably move into an upper-level function
 	if exists, err := ParticipantExists(recorder); exists {
 		slog.Info("Participant already exists, skipping registration")
@@ -116,7 +120,11 @@ func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.
 	}
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 
-	uniqueModelsList := getUniqueModels(config)
+	uniqueModelsList, err := getUniqueModels(nodeBroker)
+	if err != nil {
+		return fmt.Errorf("Failed to get unique models: %w", err)
+	}
+
 	address := recorder.GetAddress()
 	pubKey, err := recorder.GetAccount().Record.GetPubKey()
 	if err != nil {
@@ -138,10 +146,15 @@ func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.
 	return nil
 }
 
-func getUniqueModels(config *apiconfig.Config) []string {
+func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
+	nodes, err := nodeBroker.GetNodes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get nodes from broker: %w", err)
+	}
+
 	uniqueModelsSet := map[string]bool{}
-	for _, node := range config.Nodes {
-		for _, model := range node.Models {
+	for _, node := range nodes {
+		for _, model := range node.Node.Models {
 			uniqueModelsSet[model] = true
 		}
 	}
@@ -149,7 +162,7 @@ func getUniqueModels(config *apiconfig.Config) []string {
 	for model := range uniqueModelsSet {
 		uniqueModelsList = append(uniqueModelsList, model)
 	}
-	return uniqueModelsList
+	return uniqueModelsList, nil
 }
 
 func getValidatorKey(config *apiconfig.Config) (crypto.PubKey, error) {
