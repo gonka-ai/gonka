@@ -88,9 +88,9 @@ docker compose -p "$project_name" -f "$compose_file" up -d
 # Some time to join chain
 sleep 20
 
-echo "setting node config"
+# echo "setting node config"
 # Set node config
-curl -X POST "http://0.0.0.0:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
+# curl -X POST "http://0.0.0.0:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
   node_container_name="$KEY_NAME-node"

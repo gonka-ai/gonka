@@ -15,6 +15,7 @@ services:
     image: gcr.io/decentralized-ai/api
     volumes:
         - ./prod-local/${KEY_NAME}:/root/.inference
+        - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PORT}:8080"
     environment:
@@ -22,6 +23,7 @@ services:
       - NODE_HOST=${KEY_NAME}-node
       - POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - PUBLIC_URL=${PUBLIC_URL}
+      - NODE_CONFIG_PATH=/root/node_config.json
     networks:
       - chain-public
 
