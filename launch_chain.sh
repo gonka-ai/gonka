@@ -75,24 +75,12 @@ fi
 
 export DOWNLOAD_GENESIS_NODE_URL="http://$SEED_IP:26657"
 
-# GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
-# export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
-
-# mkdir -p "$(dirname "$GENESIS_FILE")"
-
-# echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
-# wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
-
 echo "project_name=$project_name"
 
 docker compose -p "$project_name" -f "$compose_file" up -d
 
 # Some time to join chain
 sleep 20
-
-# echo "setting node config"
-# Set node config
-# curl -X POST "http://0.0.0.0:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
   node_container_name="$KEY_NAME-node"
