@@ -58,10 +58,9 @@ $APP_NAME keys \
 # Need to join network? Or is that solely from the compose file?
 
 GENESIS_FILE="./.inference/genesis.json"
-if [ ! -f "$GENESIS_FILE" ]; then
-  echo "Genesis file not found at $GENESIS_FILE"
-  exit 1
-fi
+$APP_NAME download-genesis "$DOWNLOAD_GENESIS_NODE_URL" "$GENESIS_FILE"
+
+cat $GENESIS_FILE
 
 echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json

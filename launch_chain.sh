@@ -73,13 +73,15 @@ else
   project_name="inferenced"
 fi
 
-GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
-export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
+export DOWNLOAD_GENESIS_NODE_URL="http://$SEED_IP:26657"
 
-mkdir -p "$(dirname "$GENESIS_FILE")"
+# GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
+# export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
 
-echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
-wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
+# mkdir -p "$(dirname "$GENESIS_FILE")"
+
+# echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
+# wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
 
 echo "project_name=$project_name"
 

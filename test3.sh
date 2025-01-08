@@ -13,7 +13,7 @@ export NODE_CONFIG=node_payload_2.json
 export PUBLIC_IP="${KEY_NAME}-api"
 # FIXME: provide different one for each node
 export POC_CALLBACK_URL=https://f791-76-22-27-160.ngrok-free.app
-export PUBLIC_URL=https://f791-76-22-27-160.ngrok-free.ap
+export PUBLIC_URL=https://f791-76-22-27-160.ngrok-free.app
 rm -r "prod-local" || true
 
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
