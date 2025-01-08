@@ -159,7 +159,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 
-	if proofofcompute.IsSetNewValidatorsStage(blockHeiπght) {
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
 		pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
 		err := am.keeper.SettleAccounts(ctx, pocHeight)
