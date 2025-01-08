@@ -3,7 +3,6 @@ package cosmosclient
 import (
 	"bytes"
 	"context"
-	"decentralized-api/api"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"encoding/base64"
@@ -118,6 +117,17 @@ func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 	return recorder.SubmitNewParticipant(msg)
 }
 
+// FIXME: duplicating code, temp solution to avoid cycle import:
+//
+//	api > cosmosclient > api
+type submitUnfundedNewParticipantDto struct {
+	Address      string   `json:"address"`
+	Url          string   `json:"url"`
+	Models       []string `json:"models"`
+	ValidatorKey string   `json:"validator_key"`
+	PubKey       string   `json:"pub_key"`
+}
+
 func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
 	// Probably move into an upper-level function
 	if exists, err := ParticipantExists(recorder); exists {
@@ -154,7 +164,7 @@ func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.
 		"PubKey", pubKeyString,
 	)
 
-	requestBody := api.SubmitUnfundedNewParticipantDto{
+	requestBody := submitUnfundedNewParticipantDto{
 		Address:      address,
 		Url:          config.Api.PublicUrl,
 		Models:       uniqueModelsList,
