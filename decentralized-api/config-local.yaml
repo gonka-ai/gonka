@@ -1,8 +1,9 @@
 api:
   port: 8080
+  poc_callback_host: localhost
 nodes:
   - id: node1
-    url:  http://34.171.235.205:8080/ # Deployed inference node
+    host:  34.171.235.205:8080/ # Deployed inference node
     max_concurrent: 500
     models:
       - unsloth/llama-3-8b-Instruct

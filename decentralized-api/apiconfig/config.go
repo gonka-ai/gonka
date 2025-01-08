@@ -28,7 +28,8 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port int `koanf:"port"`
+	Port            int    `koanf:"port"`
+	PoCCallbackHost string `koanf:"poc_callback_host"`
 }
 
 type ChainNodeConfig struct {

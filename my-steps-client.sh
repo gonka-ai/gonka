@@ -1,5 +1,5 @@
 # 1. [Optional] Build a node's docker image or use
-make node-release-docker
+make node-build-docker
 
 # 2. Reset the local state
 rm -rf ~/.inference

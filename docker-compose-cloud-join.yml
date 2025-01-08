@@ -21,8 +21,10 @@ services:
       - node
     environment:
       - KEY_NAME=${KEY_NAME}
+      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
+      - PORT=${PORT}
     ports:
-      - "8080:8080"
+      - "${PORT}:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       - .inference:/root/.inference

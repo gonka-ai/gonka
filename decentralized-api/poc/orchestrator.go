@@ -4,7 +4,6 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -209,40 +207,46 @@ func ProcessNewBlockEvent(
 	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
-		slog.Info("IsStartOfPoCStage: sending StartPoCEvent to the PoC orchestrator")
-		pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
-		orchestrator.StartProcessing(pocEvent)
+		slog.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
+		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
+		//orchestrator.StartProcessing(pocEvent)
+
+		nodePoCOrchestrator.Start(blockHeight, blockHash)
+
+		GenerateSeed(blockHeight, &transactionRecorder)
+
 		return
 	}
 
 	if proofofcompute.IsEndOfPoCStage(blockHeight) {
-		slog.Info("IsEndOfPoCStage: sending StopPoCEvent to the PoC orchestrator")
-		orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder, configManager))
+		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
+		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
+
+		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
+
 		return
 	}
-	// once the new stage has started, request our money!
-	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+
+	if proofofcompute.IsStartOfPoCValidationStage(blockHeight) {
+		slog.Info("IsStartOfPoCValidationStage")
+
 		go func() {
-			err := configManager.SetPreviousSeed(configManager.GetCurrentSeed())
-			if err != nil {
-				slog.Error("Failed to set previous seed", "error", err)
-				return
-			}
-			err = configManager.SetCurrentSeed(configManager.GetUpcomingSeed())
-			if err != nil {
-				slog.Error("Failed to set current seed", "error", err)
-				return
-			}
-			previousSeed := configManager.GetPreviousSeed()
-			slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", previousSeed)
-			err = transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
-				Seed:           previousSeed.Seed,
-				PocStartHeight: uint64(previousSeed.Height),
-			})
-			if err != nil {
-				slog.Error("Failed to send ClaimRewards transaction", "error", err)
-			}
+			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
+
+		return
+	}
+
+	if proofofcompute.IsEndOfPoCValidationStage(blockHeight) {
+		slog.Info("IsEndOfPoCValidationStage")
+
+		nodePoCOrchestrator.Stop()
+
+		return
+	}
+
+	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+		go func() { RequestMoney(&transactionRecorder) }()
 	}
 }
 

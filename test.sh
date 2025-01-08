@@ -21,7 +21,7 @@ if [ -d "chain-venv" ]; then
     source chain-venv/bin/activate
 fi
 
-make release-docker
+make build-docker
 # If FUND_ACCOUNTS env var is set
 if [ -n "$FUND_ACCOUNTS" ]; then
     # Fund accounts

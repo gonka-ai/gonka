@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -201,8 +202,14 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
+	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrl(), "v1/chat/completions")
+	if err != nil {
+		slog.Error("Validation: Failed to join url", "url", inferenceNode.InferenceUrl(), "error", err)
+		return nil, err
+	}
+
 	resp, err := http.Post(
-		inferenceNode.Url+"v1/chat/completions",
+		completionsUrl,
 		"application/json",
 		bytes.NewReader(requestBody),
 	)

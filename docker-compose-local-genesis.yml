@@ -1,0 +1,32 @@
+services:
+  chain-node:
+    container_name: ${KEY_NAME}-node
+    command: ["sh", "./init-docker-genesis.sh"]
+    image: inferenced-join
+    volumes:
+      - ./prod-local/${KEY_NAME}:/root/.inference
+    environment:
+      - KEY_NAME=${KEY_NAME}
+    networks:
+      - chain-public
+    ports:
+      - "26656:26656" #p2p
+      - "26657:26657" #rpc
+
+  api:
+    container_name: ${KEY_NAME}-api
+    image: dapi-join
+    volumes:
+        - ./prod-local/${KEY_NAME}:/root/.inference
+    ports:
+      - "${PORT}:8080"
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - NODE_HOST=chain-node
+      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    name: chain-public

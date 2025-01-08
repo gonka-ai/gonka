@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"decentralized-api/api"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
@@ -13,17 +14,10 @@ import (
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
-	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
-	types2 "github.com/cometbft/cometbft/types"
-	"github.com/cosmos/cosmos-sdk/codec"
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"net/url"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/types"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"io"
 	"log"
 	"log/slog"
@@ -31,6 +25,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type InferenceTransaction struct {
@@ -77,7 +76,23 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/nodes", wrapNodes(nodeBroker, configManager))
 	mux.HandleFunc("/v1/nodes/", wrapNodes(nodeBroker, configManager))
 	mux.HandleFunc("/v1/active-participants", wrapGetActiveParticipants(configManager))
+	mux.HandleFunc("/v1/epochs/", api.WrapGetParticipantsByEpoch(transactionRecorder, config))
+	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
+	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
+	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(config))
 	mux.HandleFunc("/", logUnknownRequest())
+	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
+		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
+		addr, err := cosmos_client.PubKeyToAddress(pubkey)
+		if err != nil {
+			slog.Error("Failed to convert pubkey to address", "error", err)
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte(addr))
+	})
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
 		if err != nil {
@@ -95,6 +110,10 @@ func StartInferenceServerWrapper(
 
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte("Block signatures verified"))
+	})
+	mux.HandleFunc("/v1/status", func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		writer.Write([]byte("{\"status\": \"ok\"}"))
 	})
 
 	addr := fmt.Sprintf(":%d", configManager.GetConfig().Api.Port)
@@ -120,71 +139,6 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 			return
 		}
 		processGetInferenceParticipantByAddress(w, request, recorder)
-	}
-}
-
-type ActiveParticipantWithProof struct {
-	ActiveParticipants types.ActiveParticipants `json:"active_participants"`
-	ProofOps           cryptotypes.ProofOps     `json:"proof_ops"`
-	Validators         []*types2.Validator      `json:"validators"`
-	Block              *types2.Block            `json:"block"`
-}
-
-func wrapGetActiveParticipants(config *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		rplClient, err := merkleproof.NewRpcClient(config.GetConfig().ChainNode.Url)
-		if err != nil {
-			slog.Error("Failed to create rpc client", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-		result, err := merkleproof.QueryWithProof(rplClient, "inference", "ActiveParticipants/value/")
-		if err != nil {
-			slog.Error("Failed to query active participants", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		interfaceRegistry := codectypes.NewInterfaceRegistry()
-		// Register interfaces used in your types
-		types.RegisterInterfaces(interfaceRegistry)
-		// Create the codec
-		cdc := codec.NewProtoCodec(interfaceRegistry)
-
-		var activeParticipants types.ActiveParticipants
-		if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-			slog.Error("Failed to unmarshal active participant", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		block, err := rplClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-		if err != nil {
-			slog.Error("Failed to get block", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		vals, err := rplClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-		if err != nil {
-			slog.Error("Failed to get validators", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		response := ActiveParticipantWithProof{
-			ActiveParticipants: activeParticipants,
-			ProofOps:           *result.Response.ProofOps,
-			Validators:         vals.Validators,
-			Block:              block.Block,
-		}
-
-		writeResponseBody(response, w)
 	}
 }
 
@@ -547,8 +501,12 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 	}
 
 	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*http.Response, error) {
+		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
+		if err != nil {
+			return nil, err
+		}
 		return http.Post(
-			node.Url+"v1/chat/completions",
+			completionsUrl,
 			request.Request.Header.Get("Content-Type"),
 			bytes.NewReader(modifiedRequestBody.NewBody),
 		)
@@ -638,19 +596,7 @@ func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *htt
 		return
 	}
 
-	respondWithJson(w, response)
-}
-
-func respondWithJson(w http.ResponseWriter, response interface{}) {
-	respBytes, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	api.RespondWithJson(w, response)
 }
 
 func processGetCompletionById(w http.ResponseWriter, request *http.Request, recorder cosmos_client.CosmosMessageClient) {
@@ -687,19 +633,6 @@ func processGetCompletionById(w http.ResponseWriter, request *http.Request, reco
 	w.Write(respBytes)
 
 	return
-}
-
-func writeResponseBody(body any, w http.ResponseWriter) {
-	respBytes, err := json.Marshal(body)
-	if err != nil {
-		slog.Error("Failed to marshal response", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
 }
 
 func getInference(request *ChatRequest, serverUrl string, recorder *cosmos_client.CosmosMessageClient, accountName string, seed int32) (*ResponseWithBody, error) {

@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"decentralized-api/apiconfig"
@@ -9,7 +9,7 @@ import (
 	strings "strings"
 )
 
-func wrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
+func WrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		slog.Info("Request to nodes endpoint", "method", request.Method)
 		switch {
@@ -52,7 +52,7 @@ func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.
 	node := <-response
 	SyncNodesWithConfig(nodeBroker, configManager)
 
-	respondWithJson(w, node)
+	RespondWithJson(w, node)
 }
 
 func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
@@ -82,7 +82,7 @@ func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *h
 		}
 		outputNodes = append(outputNodes, newNode)
 	}
-	respondWithJson(w, outputNodes)
+	RespondWithJson(w, outputNodes)
 }
 
 func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
@@ -96,7 +96,7 @@ func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *ht
 	if done {
 		return
 	}
-	respondWithJson(w, node)
+	RespondWithJson(w, node)
 }
 
 func addNode(
@@ -132,5 +132,5 @@ func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter, request 
 		http.Error(w, "Error getting nodes", http.StatusInternalServerError)
 		return
 	}
-	respondWithJson(w, nodes)
+	RespondWithJson(w, nodes)
 }

@@ -110,9 +110,17 @@ type CosmosMessageClient interface {
 	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
 	SubmitPoC(transaction *inference.MsgSubmitPoC) error
+	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
+	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
+	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
+	GetContext() *context.Context
+}
+
+func (icc *InferenceCosmosClient) GetContext() *context.Context {
+	return &icc.Context
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
@@ -164,6 +172,21 @@ func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRe
 
 func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
 	return icc.Client.BankBalances(ctx, address, nil)
+}
+
+func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -235,10 +258,11 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
+	defer sendTransactionMutex.Unlock()
+
 	slog.Debug("Start Broadcast", "id", id)
 	response, err := icc.BroadcastMessage(icc.Context, msg)
 	slog.Debug("Finish broadcast", "id", id)
-	sendTransactionMutex.Unlock()
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
 		return err

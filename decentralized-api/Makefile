@@ -23,15 +23,9 @@ define DOCKER_BUILD
 	@rm -f ./build/dapi
 	@echo "--> building dapi binary locally, outside of docker"
 	@env GOOS=linux GOARCH=amd64 go build $(BUILD_FLAGS) -o ./build/dapi
-	@echo "--> building decentralized-api docker image. platform: $(PLATFORM)"
-	@docker build --platform $(PLATFORM) . -t decentralized-api
+	@echo "--> building decentralized-api docker image. platform: $(PLATFORM). dockerfile: $(DOCKER_FILE). tag: $(DOCKER_TAG)"
+	@docker build --platform $(PLATFORM) -f $(DOCKER_FILE) . -t $(DOCKER_TAG)
 endef
-
-define DOCKER_RELEASE_BUILD
-    @echo "--> building decentralized-api join docker image. platform: $(PLATFORM)"
-    @docker build --platform $(PLATFORM) -f DockerfileJoin . -t dapi-join
-endef
-
 
 all:
 	install
@@ -50,15 +44,16 @@ build:
 	@echo "BUILD_FLAGS = $(BUILD_FLAGS)"
 	@go build $(BUILD_FLAGS) -o ./build/dapi
 
-build-docker:
+build-docker-old:
 	$(eval PLATFORM=linux/amd64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(eval DOCKER_TAG=decentralized-api)
 	$(DOCKER_BUILD)
 
-release-docker: build-docker
-	$(DOCKER_RELEASE_BUILD)
-
-build-docker-amd:
+build-docker:
 	$(eval PLATFORM=linux/amd64)
+	$(eval DOCKER_FILE=DockerfileJoin)
+	$(eval DOCKER_TAG=dapi-join)
 	$(DOCKER_BUILD)
 
 docker-push:
@@ -70,8 +65,6 @@ docker-push-release:
 	@echo "--> pushing decentralized-api docker image"
 	@docker tag dapi-join gcr.io/decentralized-ai/api-join
 	@docker push gcr.io/decentralized-ai/api-join
-
-build-and-push-docker: build-docker-amd docker-push
 
 build-v2-test:
 	$(eval PLATFORM=linux/amd64)

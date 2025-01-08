@@ -12,6 +12,7 @@ import "inference/inference/participant.proto";
 import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
+import "inference/inference/pocbatch.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -71,25 +72,37 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-  
+
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-  
+
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-  
+
   }
-  
+
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{pocStartBlockHeight}";
-  
+
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-  
+
+  }
+
+  // Queries a list of PocBatchesForStage items.
+  rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{blockHeight}";
+
+  }
+
+  // Queries a list of GetCurrentEpoch items.
+  rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
+
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -221,5 +234,26 @@ message QueryAllEpochGroupValidationsRequest {
 message QueryAllEpochGroupValidationsResponse {
   repeated EpochGroupValidations                  epochGroupValidations = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination            = 2;
+}
+
+message QueryPocBatchesForStageRequest {
+  int64 blockHeight = 1;
+}
+
+message QueryPocBatchesForStageResponse {
+  repeated PoCBatchesWithParticipants pocBatch = 1 [(gogoproto.nullable) = false];
+}
+
+message PoCBatchesWithParticipants {
+           string   participant = 1;
+           string   pubKey      = 2;
+           string   hexPubKey   = 3;
+  repeated PoCBatch pocBatch    = 4 [(gogoproto.nullable) = false];
+}
+
+message QueryGetCurrentEpochRequest {}
+
+message QueryGetCurrentEpochResponse {
+    uint64 epoch = 1;
 }
 

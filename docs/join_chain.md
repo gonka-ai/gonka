@@ -20,7 +20,7 @@ To start, you will need to create a file with the following environment variable
 * NODE_CONFIG - This is a path to a file that contains information about your inference nodes (see below)
 * ADD_ENDPOINT - This is the public url for an endpoint that is already in the chain, that will be used to add your account to the chain.
 * PORT - This is the local port that will be exposed for your API endpoint
-* PUBLIC_URL - This is the url you will use to expose your own endpoint. It will need to map ultimately to the API container created during this process.
+* PUBLIC_IP - This is the host you will use to expose your own endpoint. It will need to map ultimately to the API container created during this process.
 
 ## NODE_CONFIG
 

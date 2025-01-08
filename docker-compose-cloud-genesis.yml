@@ -17,10 +17,12 @@ services:
     image: gcr.io/decentralized-ai/api-join # Probably should be renamed, we don't need to have 2 different images for the api
     depends_on:
       - node
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - POC_CALLBACK_HOST=${POC_CALLBACK_HOST}
+      - PORT=${PORT}
+    ports:
+      - "${PORT}:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       - .inference:/root/.inference
-    environment:
-      - KEY_NAME=${KEY_NAME}
-    ports:
-      - "8080:8080"

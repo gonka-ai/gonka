@@ -93,6 +93,19 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a epochGroupValidations",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "pocStartBlockHeight"}},
 				},
+				{
+					RpcMethod:      "PocBatchesForStage",
+					Use:            "poc-batches-for-stage [block-height]",
+					Short:          "Query pocBatchesForStage",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}},
+				},
+
+				{
+					RpcMethod:      "GetCurrentEpoch",
+					Use:            "get-current-epoch",
+					Short:          "Query getCurrentEpoch",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -157,6 +170,24 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "claim-rewards [seed] [poc-start-height]",
 					Short:          "Send a claimRewards tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "seed"}, {ProtoField: "pocStartHeight"}},
+				},
+				{
+					RpcMethod:      "SubmitPocBatch",
+					Use:            "submit-poc-batch [poc-stage-start-block-height] [nonces] [dist]",
+					Short:          "Send a SubmitPocBatch tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "pocStageStartBlockHeight"}, {ProtoField: "nonces"}, {ProtoField: "dist"}},
+				},
+				{
+					RpcMethod:      "SubmitPocValidation",
+					Use:            "submit-poc-validation [participant-address] [poc-stage-start-block-height] [nonces] [dist] [received-dist] [r-target] [fraud-threshold] [n-invalid] [probability-honest] [fraud-detected]",
+					Short:          "Send a SubmitPocValidation tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participantAddress"}, {ProtoField: "pocStageStartBlockHeight"}, {ProtoField: "nonces"}, {ProtoField: "dist"}, {ProtoField: "receivedDist"}, {ProtoField: "rTarget"}, {ProtoField: "fraudThreshold"}, {ProtoField: "nInvalid"}, {ProtoField: "probabilityHonest"}, {ProtoField: "fraudDetected"}},
+				},
+				{
+					RpcMethod:      "SubmitSeed",
+					Use:            "submit-seed [block-height] [signature]",
+					Short:          "Send a submit-seed tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "signature"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

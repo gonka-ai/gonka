@@ -1,23 +1,19 @@
 set -e
 
-docker compose -f docker-compose-genesis.yml down
-docker compose -f docker-compose-local.yml down -v
+docker compose -p genesis down
 docker compose -p join1 down
 docker compose -p join2 down
-make node-build-genesis
-make api-build-docker
-make api-release-docker
 
-PORT=8080
-KEY_NAME=genesis
+make build-docker
+
+export PORT=8080
+export KEY_NAME=genesis
 NODE_CONFIG=node_payload.json
-BASE_DIR="prod-genesis"
-rm -r "$BASE_DIR" || true
+# BASE_DIR="prod-local/${KEY_NAME}"
+export PUBLIC_IP="${KEY_NAME}-api"
+rm -r "prod-local" || true
 
-docker compose -f docker-compose-genesis.yml up -d
-#docker compose -f docker-compose-http-files.yml up -d
-#docker compose -f docker-compose-genesis.yml -f docker-compose-http-files.yml up -d
-
+docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 20
 
 # Add inference nodes
@@ -51,34 +47,23 @@ echo "$post_data"
 # Make the final POST request to the genesis endpoint
 curl -X POST "http://0.0.0.0:8080/v1/participants" -H "Content-Type: application/json" -d "$post_data"
 
-sleep 10
-genesis_node_id=$(docker exec genesis-node inferenced tendermint show-node-id)
-echo "genesis_node_id=$genesis_node_id"
-cp $BASE_DIR/config/genesis.json ./inference-chain/build/genesis.json
-echo "Genesis file copied"
-export SEEDS="$genesis_node_id@genesis-node:26656"
-echo SEEDS="$genesis_node_id@genesis-node:26656" > ./inference-chain/build/config.env
-echo "Genesis node id added to config.env"
-echo "ADD_ENDPOINT=\"http://genesis-node:$PORT\"" >> ./inference-chain/build/config.env
-echo "Genesis node endpoint added to config.env"
 
-make node-release-docker
-make node-build-docker
-#
+sleep 10
+
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG
 export ADD_ENDPOINT="http://0.0.0.0:$PORT"
-export PUBLIC_URL="http://join1-api:8080"
+export PUBLIC_IP="join1-api"
 export PORT=8081
 export WIREMOCK_PORT=8091
 export SEED_IP="genesis-node"
 export EXTERNAL_SEED_IP="0.0.0.0"
-./launch_chain.sh
+./launch_chain.sh local
 export KEY_NAME=join2
 export PORT=8082
 export WIREMOCK_PORT=8092
-export PUBLIC_URL="http://join2-api:8080"
-./launch_chain.sh
+export PUBLIC_IP="join2-api"
+./launch_chain.sh local
 
 
 if [ "$(whoami)" = "johnlong" ]; then

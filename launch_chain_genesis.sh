@@ -6,7 +6,6 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  # TODO: there's no such file yet
   compose_file="docker-compose-local-genesis.yml"
 elif [ "$mode" == "cloud" ]; then
   compose_file="docker-compose-cloud-genesis.yml"
@@ -18,10 +17,8 @@ fi
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
-# ADD_ENDPOINT - the endpoint to use for adding unfunded participant
 # PORT - the port to use for the API
-# PUBLIC_URL - the access point for getting to your API node from the public
-# SEEDS - the list of seed nodes to connect to
+# PUBLIC_IP - the access point for getting to your API node from the public
 
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
@@ -45,8 +42,8 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-if [ -z "$PUBLIC_URL" ]; then
-  echo "PUBLIC_URL is not set"
+if [ -z "$PUBLIC_IP" ]; then
+  echo "PUBLIC_IP is not set"
   exit 1
 fi
 
@@ -60,7 +57,7 @@ else
 fi
 
 echo "project_name=$project_name"
-
+echo "compose_file=$compose_file"
 docker compose -p "$project_name" -f "$compose_file" up -d
 
 # Some time to join chain
@@ -89,6 +86,7 @@ unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
 # Print the unique models
 echo "Unique models: $unique_models"
 
+PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 # Prepare the data structure for the final POST
 post_data=$(jq -n \
   --arg url "$PUBLIC_URL" \

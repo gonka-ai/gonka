@@ -1,0 +1,30 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message PoCBatch {
+  string participantAddress = 1;
+  int64 pocStageStartBlockHeight = 2;
+  int64 receivedAtBlockHeight = 3;
+  repeated int64 nonces = 4;
+  repeated double dist = 5;
+}
+
+/*
+ignite scaffold message SubmitPocValidation participantAddress pocStageStartBlockHeight:int nonces:array.int dist:array.int receivedDist:array.int rTarget:int fraudThreshold:int nInvalid:int probabilityHonest:int fraudDetected:bool
+ */
+message PoCValidation {
+  string participantAddress = 1;
+  string validatorParticipantAddress = 2;
+  int64 pocStageStartBlockHeight = 3;
+  int64 validatedAtBlockHeight = 4;
+  repeated int64 nonces = 5;
+  repeated double dist = 6;
+  repeated double receivedDist = 7;
+  double rTarget = 8;
+  double fraudThreshold = 9;
+  int64 nInvalid = 10;
+  double probabilityHonest = 11;
+  bool fraudDetected = 12;
+}

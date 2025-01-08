@@ -11,6 +11,7 @@ import (
 	fmt "fmt"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"log/slog"
 	"net/url"
@@ -42,17 +43,22 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 
-	pubKey, err := transactionRecorder.Account.PubKey()
+	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
 		slog.Error("Failed to get public key", "error", err)
 		return
 	}
+	pubKeyString := utils.PubKeyToHexString(pubKey)
 
 	slog.Debug("Initializing PoC orchestrator",
 		"name", transactionRecorder.Account.Name,
 		"address", transactionRecorder.Address,
-		"pubkey", pubKey)
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKey, proofofcompute.DefaultDifficulty)
+		"pubkey", pubKeyString)
+
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, proofofcompute.DefaultDifficulty)
+	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKeyString, nodeBroker, config.Api.PoCCallbackHost, config.ChainNode.Url, &transactionRecorder)
+	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
 	// Listen for events
@@ -80,7 +86,7 @@ func StartEventListener(
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
-			poc.ProcessNewBlockEvent(pocOrchestrator, &event, transactionRecorder, configManager)
+			poc.ProcessNewBlockEvent(pocOrchestrator, nodePocOrchestrator, &event, transactionRecorder, configManager)
 			upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
 		case "tendermint/event/Tx":
 			go func() {

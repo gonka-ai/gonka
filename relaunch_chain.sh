@@ -7,6 +7,8 @@ fi
 
 if [ "$mode" == "local" ]; then
   compose_file="docker-compose-local.yml"
+elif [ "$mode" == "local-genesis" ]; then
+  compose_file="docker-compose-local-genesis.yml"
 elif [ "$mode" == "cloud" ]; then
   compose_file="docker-compose-cloud-join.yml"
 elif [ "$mode" == "cloud-genesis" ]; then
@@ -37,6 +39,7 @@ if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
 
   docker compose -p "$project_name" down -v
+  # FIXME: Why remove??
   rm -r ./prod-local/"$project_name" || true
 else
   project_name="inferenced"

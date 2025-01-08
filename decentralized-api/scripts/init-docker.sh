@@ -6,6 +6,11 @@ if [ -z "$KEY_NAME" ]; then
   exit 1
 fi
 
+if [ -z "$POC_CALLBACK_HOST" ]; then
+  echo "Error: POC_CALLBACK_HOST is required."
+  exit 1
+fi
+
 yaml_file="/root/api-config.yaml"
 
 if [ -n "$NODE_HOST" ]; then
@@ -13,8 +18,17 @@ if [ -n "$NODE_HOST" ]; then
   sed -i "s/url: .*:26657/url: http:\/\/$NODE_HOST:26657/" "$yaml_file"
 fi
 
+echo "Setting account_name address to $KEY_NAME in $yaml_file"
 sed -i "s/account_name: .*/account_name: \"$KEY_NAME\"/" "$yaml_file"
+
+echo "Setting keyring_backend to test in $yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
+
+echo "Setting poc_callback_host to $POC_CALLBACK_HOST in $yaml_file"
+sed -i "s/poc_callback_host: .*/poc_callback_host: \"$POC_CALLBACK_HOST\"/" "$yaml_file"
+
+echo "The final api config:"
+cat "$yaml_file"
 
 echo "init for cosmovisor"
 mkdir -p /root/.dapi

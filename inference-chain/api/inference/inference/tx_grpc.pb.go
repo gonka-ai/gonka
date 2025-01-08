@@ -29,6 +29,9 @@ const (
 	Msg_InvalidateInference_FullMethodName          = "/inference.inference.Msg/InvalidateInference"
 	Msg_RevalidateInference_FullMethodName          = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                 = "/inference.inference.Msg/ClaimRewards"
+	Msg_SubmitPocBatch_FullMethodName               = "/inference.inference.Msg/SubmitPocBatch"
+	Msg_SubmitPocValidation_FullMethodName          = "/inference.inference.Msg/SubmitPocValidation"
+	Msg_SubmitSeed_FullMethodName                   = "/inference.inference.Msg/SubmitSeed"
 )
 
 // MsgClient is the client API for Msg service.
@@ -47,6 +50,9 @@ type MsgClient interface {
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
+	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
+	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
+	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
 }
 
 type msgClient struct {
@@ -147,6 +153,33 @@ func (c *msgClient) ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts 
 	return out, nil
 }
 
+func (c *msgClient) SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error) {
+	out := new(MsgSubmitPocBatchResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitPocBatch_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error) {
+	out := new(MsgSubmitPocValidationResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitPocValidation_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error) {
+	out := new(MsgSubmitSeedResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitSeed_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -163,6 +196,9 @@ type MsgServer interface {
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
+	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
+	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
+	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -199,6 +235,15 @@ func (UnimplementedMsgServer) RevalidateInference(context.Context, *MsgRevalidat
 }
 func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimRewards not implemented")
+}
+func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocBatch not implemented")
+}
+func (UnimplementedMsgServer) SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocValidation not implemented")
+}
+func (UnimplementedMsgServer) SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitSeed not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -393,6 +438,60 @@ func _Msg_ClaimRewards_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitPocBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitPocBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitPocBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitPocBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitPocBatch(ctx, req.(*MsgSubmitPocBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SubmitPocValidation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitPocValidation)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitPocValidation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitPocValidation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitPocValidation(ctx, req.(*MsgSubmitPocValidation))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SubmitSeed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitSeed)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitSeed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitSeed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitSeed(ctx, req.(*MsgSubmitSeed))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -439,6 +538,18 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimRewards",
 			Handler:    _Msg_ClaimRewards_Handler,
+		},
+		{
+			MethodName: "SubmitPocBatch",
+			Handler:    _Msg_SubmitPocBatch_Handler,
+		},
+		{
+			MethodName: "SubmitPocValidation",
+			Handler:    _Msg_SubmitPocValidation_Handler,
+		},
+		{
+			MethodName: "SubmitSeed",
+			Handler:    _Msg_SubmitSeed_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
