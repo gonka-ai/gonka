@@ -15,14 +15,17 @@ import (
 
 func ParticipantExists(recorder CosmosMessageClient) (bool, error) {
 	queryClient := recorder.NewInferenceQueryClient()
-	request := &types.QueryInferenceParticipantRequest{Address: recorder.GetAddress()}
+	request := &types.QueryGetParticipantRequest{Index: recorder.GetAddress()}
 
 	// TODO: check participant state, compute diff and update?
 	// 	Or implement some ways to periodically (or by request) update the participant state
-	_, err := queryClient.InferenceParticipant(*recorder.GetContext(), request)
+	response, err := queryClient.Participant(*recorder.GetContext(), request)
 	if err != nil {
 		return false, err
 	}
+
+	// FIXME: ABSENCE OF ERROR DOESN'T MEAN PARTICIPANT EXISTS!
+	_ = response
 
 	return true, nil
 }
