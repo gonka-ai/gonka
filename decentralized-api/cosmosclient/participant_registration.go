@@ -10,6 +10,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -21,10 +22,14 @@ func ParticipantExists(recorder CosmosMessageClient) (bool, error) {
 	// 	Or implement some ways to periodically (or by request) update the participant state
 	response, err := queryClient.Participant(*recorder.GetContext(), request)
 	if err != nil {
-		return false, err
+		if strings.Contains(err.Error(), "code = NotFound") {
+			slog.Info("Participant does not exist", "address", recorder.GetAddress(), "err", err)
+			return false, nil
+		} else {
+			return false, err
+		}
 	}
 
-	// FIXME: ABSENCE OF ERROR DOESN'T MEAN PARTICIPANT EXISTS!
 	_ = response
 
 	return true, nil
