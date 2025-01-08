@@ -145,7 +145,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
 // To avoid wrong/empty versions, the initial version should be set to 1.
-func (AppModule) ConsensusVersion() uint64 { return 2 }
+func (AppModule) ConsensusVersion() uint64 { return 1 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
@@ -159,7 +159,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 
-	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+	if proofofcompute.IsSetNewValidatorsStage(blockHeiπght) {
 		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
 		pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
 		err := am.keeper.SettleAccounts(ctx, pocHeight)
