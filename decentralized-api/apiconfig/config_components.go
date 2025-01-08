@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 )
 
 func setEnvVars(config *Config) {
@@ -49,10 +50,12 @@ func setEnvVars(config *Config) {
 
 func loadNodeConfig(config *Config) error {
 	nodeConfigPath, found := os.LookupEnv("NODE_CONFIG_PATH")
-	if !found {
+	if !found || strings.TrimSpace(nodeConfigPath) == "" {
 		slog.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config")
 		return nil
 	}
+
+	slog.Info("Loading and merging node configuration", "path", nodeConfigPath)
 
 	newNodes, err := parseInferenceNodesFromNodeConfigJson(nodeConfigPath)
 	if err != nil {
