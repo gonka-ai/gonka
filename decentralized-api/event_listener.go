@@ -57,7 +57,13 @@ func StartEventListener(
 
 	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, proofofcompute.DefaultDifficulty)
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(pubKeyString, nodeBroker, config.Api.PoCCallbackHost, config.ChainNode.Url, &transactionRecorder)
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
+		pubKeyString,
+		nodeBroker,
+		configManager.GetConfig().Api.PoCCallbackHost,
+		configManager.GetConfig().ChainNode.Url,
+		&transactionRecorder,
+	)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
@@ -86,7 +92,7 @@ func StartEventListener(
 		switch event.Result.Data.Type {
 		case "tendermint/event/NewBlock":
 			slog.Debug("New block event received", "type", event.Result.Data.Type)
-			poc.ProcessNewBlockEvent(pocOrchestrator, nodePocOrchestrator, &event, transactionRecorder, configManager)
+			poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
 			upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
 		case "tendermint/event/Tx":
 			go func() {

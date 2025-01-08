@@ -71,7 +71,7 @@ type Validator struct {
 	VotingPower int64  `json:"voting_power"`
 }
 
-func WrapVerifyBlock(config apiconfig.Config) http.HandlerFunc {
+func WrapVerifyBlock(config *apiconfig.ConfigManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var blockVerificationRequest VerifyBlockRequest
 		if err := json.NewDecoder(r.Body).Decode(&blockVerificationRequest); err != nil {
@@ -95,7 +95,7 @@ func WrapVerifyBlock(config apiconfig.Config) http.HandlerFunc {
 			valSet[i] = comettypes.NewValidator(pubKey, validator.VotingPower)
 		}
 
-		err := debug(config.ChainNode.Url, block)
+		err := debug(config.GetConfig().ChainNode.Url, block)
 		if err != nil {
 			slog.Error("Debug block verification failed!", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

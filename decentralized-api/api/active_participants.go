@@ -35,7 +35,7 @@ type ActiveParticipantWithProof struct {
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
 
-func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageClient, config apiconfig.Config) func(http.ResponseWriter, *http.Request) {
+func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageClient, config *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
@@ -61,7 +61,7 @@ func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageC
 		}
 
 		if epochIdStr == "current" {
-			getParticipants(nil, w, config, transactionRecorder)
+			getParticipants(nil, w, config.GetConfig(), transactionRecorder)
 		} else {
 			epochInt, err := strconv.Atoi(epochIdStr)
 			if err != nil {
@@ -75,12 +75,12 @@ func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageC
 			}
 
 			epochUint := uint64(epochInt)
-			getParticipants(&epochUint, w, config, transactionRecorder)
+			getParticipants(&epochUint, w, config.GetConfig(), transactionRecorder)
 		}
 	}
 }
 
-func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config apiconfig.Config, transactionRecorder cosmos_client.CosmosMessageClient) {
+func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfig.Config, transactionRecorder cosmos_client.CosmosMessageClient) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {

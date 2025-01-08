@@ -3,8 +3,8 @@ module decentralized-api
 go 1.22.2
 
 require (
-	cosmossdk.io/x/upgrade v0.1.1
 	cosmossdk.io/store v1.1.0
+	cosmossdk.io/x/upgrade v0.1.1
 	github.com/cometbft/cometbft v0.38.11
 	github.com/cosmos/btcutil v1.0.5
 	github.com/cosmos/cosmos-sdk v0.50.8
@@ -22,8 +22,8 @@ require (
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
 	github.com/sagikazarmark/slog-shim v0.1.0
 	github.com/stretchr/testify v1.9.0
-	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
 	golang.org/x/crypto v0.25.0
+	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
 )
 
 require (
@@ -154,7 +154,6 @@ require (
 	github.com/zondax/ledger-go v0.14.3 // indirect
 	go.etcd.io/bbolt v1.3.9 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
