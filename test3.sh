@@ -25,7 +25,7 @@ export ADD_ENDPOINT="http://0.0.0.0:$PORT"
 export PUBLIC_IP="join1-api"
 export PORT=8081
 export SEED_IP="genesis-node"
-export EXTERNAL_SEED_IP="0.0.0.0"
+export SEED_API_URL="http://$SEED_IP:8080"
 export IS_GENESIS=false
 ./launch_chain.sh local
 

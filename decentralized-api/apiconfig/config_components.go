@@ -46,6 +46,13 @@ func setEnvVars(config *Config) {
 	} else {
 		slog.Warn("IS_GENESIS not set. Config value will be used", "IsGenesis", config.ChainNode.IsGenesis)
 	}
+
+	if seedApiUrl, found := os.LookupEnv("SEED_API_URL"); found {
+		slog.Info("Setting config.ChainNode.SeedApiUrl to env var", "SeedApi", seedApiUrl)
+		config.ChainNode.SeedApiUrl = seedApiUrl
+	} else {
+		slog.Warn("SEED_API_URL not set. Config value will be used", "SeedApiUrl", config.ChainNode.SeedApiUrl)
+	}
 }
 
 func loadNodeConfig(config *Config) error {

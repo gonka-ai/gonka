@@ -28,6 +28,7 @@ type ChainNodeConfig struct {
 	KeyringBackend string `koanf:"keyring_backend"`
 	KeyringDir     string `koanf:"keyring_dir"`
 	IsGenesis      bool   `koanf:"is_genesis"`
+	SeedApiUrl     string `koanf:"seed_api_url"`
 }
 
 func ReadConfig() Config {

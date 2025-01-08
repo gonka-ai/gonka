@@ -1,16 +1,21 @@
 package cosmosclient
 
 import (
+	"bytes"
 	"context"
+	"decentralized-api/api"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/cometbft/cometbft/crypto"
-	"github.com/cometbft/cometbft/rpc/client/http"
+	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -41,7 +46,7 @@ func ParticipantExists(recorder CosmosMessageClient) (bool, error) {
 //	and let the chain decide if it's a new or existing participant?
 //
 // Or if it's a genesis participant just submit it again if error is "block < 0"?
-func waitForFirstBlock(client *http.HTTP, timeout time.Duration) error {
+func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -64,7 +69,15 @@ func waitForFirstBlock(client *http.HTTP, timeout time.Duration) error {
 	}
 }
 
-func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
+func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
+	if config.ChainNode.IsGenesis {
+		return registerGenesisParticipant(recorder, config, nodeBroker)
+	} else {
+		return registerJoiningParticipant(recorder, config, nodeBroker)
+	}
+}
+
+func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
 	// Create RPC client
 	client, err := NewRpcClient(config.ChainNode.Url)
 	if err != nil {
@@ -105,7 +118,7 @@ func RegisterGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 	return recorder.SubmitNewParticipant(msg)
 }
 
-func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
+func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
 	// Probably move into an upper-level function
 	if exists, err := ParticipantExists(recorder); exists {
 		slog.Info("Participant already exists, skipping registration")
@@ -141,7 +154,44 @@ func RegisterJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.
 		"PubKey", pubKeyString,
 	)
 
-	// TODO: do an http request to existing seed node
+	requestBody := api.SubmitUnfundedNewParticipantDto{
+		Address:      address,
+		Url:          config.Api.PublicUrl,
+		Models:       uniqueModelsList,
+		ValidatorKey: validatorKeyString,
+		PubKey:       pubKeyString,
+	}
+
+	requestUrl, err := url.JoinPath(config.ChainNode.SeedApiUrl, "/v1/participants")
+	if err != nil {
+		return fmt.Errorf("Failed to join URL path: %w", err)
+	}
+
+	// Serialize request body to JSON
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Create the POST request
+	req, err := http.NewRequest(http.MethodPost, requestUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle the response
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-OK response: %s", resp.Status)
+	}
 
 	return nil
 }

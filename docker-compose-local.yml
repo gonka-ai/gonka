@@ -25,6 +25,7 @@ services:
       - POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - PUBLIC_URL=${PUBLIC_URL}
       - NODE_CONFIG_PATH=/root/node_config.json
+      - SEED_API_URL=${SEED_API_URL}
     networks:
       - chain-public
 
