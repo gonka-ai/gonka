@@ -12,7 +12,8 @@ NODE_CONFIG=node_payload.json
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
-
+export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 20
 

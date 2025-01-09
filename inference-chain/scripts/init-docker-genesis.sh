@@ -66,7 +66,10 @@ modify_genesis_file '.app_state.gov.params.voting_period |= "30s"'
 
 echo "Genesis file created"
 echo "Init for cosmovisor"
-cosmovisor init /usr/bin/inferenced
+cosmovisor init /usr/bin/inferenced || {
+  echo "Cosmovisor failed, idling the container..."
+  tail -f /dev/null
+}
 
 echo "Starting cosmovisor and the chain"
 cosmovisor run start || {

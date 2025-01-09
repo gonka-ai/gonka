@@ -44,10 +44,16 @@ RUN apk update && \
 
 WORKDIR /root
 
+ENV DAEMON_HOME=/root/.dapi
+ENV DAEMON_NAME=decentralized-api
+ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
+ENV DAEMON_RESTART_AFTER_UPGRADE=true
+
 # Copy over binaries from the build-env
 COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
+COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 
 ENV API_CONFIG_PATH=/root/api-config.yaml
 

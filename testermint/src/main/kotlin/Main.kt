@@ -1,6 +1,5 @@
 package com.productscience
 
-import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.google.gson.GsonBuilder
 import com.productscience.data.InferenceNode
 import com.productscience.data.InferencePayload
@@ -97,7 +96,7 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
-        it.api.setNodesTo(validNode.copy(url = "http:/${it.name}-wiremock:8080/"))
+        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.node.waitForMinimumBlock(1)
     }
@@ -187,10 +186,10 @@ val gsonCamelCase = GsonBuilder()
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
     chainId = "prod-sim",
-    nodeImageName = "inferenced-join",
-    genesisNodeImage = "inferenced-genesis",
+    nodeImageName = "gcr.io/decentralized-ai/inferenced",
+    genesisNodeImage = "gcr.io/decentralized-ai/inferenced",
     wireMockImageName = "wiremock/wiremock:latest",
-    apiImageName = "dapi-join",
+    apiImageName = "gcr.io/decentralized-ai/api",
     denom = "icoin",
     stateDirName = ".inference",
 )
@@ -233,18 +232,12 @@ val inferenceRequestStream = """
 const val defaultModel = "unsloth/llama-3-8b-Instruct"
 
 val validNode = InferenceNode(
-    url = "http://36.189.234.237:19009/",
+    host = "36.189.234.237:19009/",
+    pocPort = 19009,
+    inferencePort = 19009,
     models = listOf(defaultModel),
-    id = "validnode",
+    id = "wiremock2",
     maxConcurrent = 10
-)
-
-val invalidNode = InferenceNode(
-    url = "http://36.189.234.237:19011/",
-    models = listOf(defaultModel),
-    id = "invalidnode",
-    maxConcurrent = 10
-
 )
 
 val defaultInferenceResponse = """
