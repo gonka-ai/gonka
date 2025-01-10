@@ -10,7 +10,10 @@ release/
 prod-sim/
 gcp-prod-sim/
 decentralized-api/build/
+decentralized-api/dist/
+decentralized-api/responses/
 inference-chain/build/
+inference-chain/dist/
 /decentralized-api/decentralized-api
 chain-venv/
 .inference/
@@ -18,3 +21,4 @@ prod-genesis/
 prod-local/
 /payload.json
 /genesis
+/prod-local/genesis

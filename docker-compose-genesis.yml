@@ -1,6 +1,6 @@
 services:
   genesis-node:
-    image: inferenced-genesis
+    image: gcr.io/decentralized-ai/inferenced
     container_name: genesis-node
     volumes:
       - ./prod-genesis:/root/.inference
@@ -11,7 +11,7 @@ services:
       - "26657:26657" #rpc
 
   genesis-api:
-    image: dapi-join
+    image: gcr.io/decentralized-ai/api
     container_name: genesis-api
     volumes:
       - ./prod-genesis:/root/.inference
@@ -20,6 +20,23 @@ services:
     environment:
       - KEY_NAME=genesis
       - NODE_HOST=genesis-node
+    networks:
+      - chain-public
+  wiremock:
+    container_name: genesis-wiremock
+    image: "wiremock/wiremock:latest"
+    ports:
+      - "8090:8080"
+    entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
+    networks:
+      - chain-public
+  binary-server:
+    image: httpd:latest
+    container_name: binary-server
+    ports:
+      - '8781:80'
+    volumes:
+      - ./public-html:/usr/local/apache2/htdocs/
     networks:
       - chain-public
 

@@ -74,7 +74,12 @@ func (k Keeper) GetInferencesWithExecutors(goCtx context.Context, req *types.Que
 		}
 	}
 
-	numValidators := k.GetParticipantCounter(ctx)
+	currEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	numValidators := k.GetParticipantCounter(ctx, currEpochGroup.GroupData.EpochGroupId)
+
 	validatorPower, ok := votingData.Members[req.Requester]
 	if !ok {
 		k.LogWarn("GetInferencesWithExecutors: Error getting validator power", "error", err)

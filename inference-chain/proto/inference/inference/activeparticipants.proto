@@ -1,12 +1,17 @@
 syntax = "proto3";
 package inference.inference;
 
+import "inference/inference/random_seed.proto";
+
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Not added to the Genesis, because at genesis it's constructed based on Participants
 message ActiveParticipants {
   repeated ActiveParticipant participants = 1;
-  int64 createdAtBlockHeight = 2;
+  uint64 epochGroupId = 2;
+  int64 pocStartBlockHeight = 3;
+  int64 effectiveBlockHeight = 4;
+  int64 createdAtBlockHeight = 5; // Same as effectiveBlockHeight???
 }
 
 message ActiveParticipant {
@@ -15,4 +20,5 @@ message ActiveParticipant {
   int64  weight = 3;
   string inferenceUrl = 4;
   repeated string models = 5;
+  RandomSeed seed = 6;
 }

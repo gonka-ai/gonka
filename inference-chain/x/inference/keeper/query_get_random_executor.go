@@ -20,6 +20,7 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+
 	return &types.QueryGetRandomExecutorResponse{
 		Executor: *participant,
 	}, nil

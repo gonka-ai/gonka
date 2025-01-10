@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
-	"decentralized-api/poc"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -54,7 +55,7 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 	}
 }
 
-func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker, config *apiconfig.Config) {
 	if ids == nil {
 		slog.Debug("Validation: No inferences to validate")
 		return
@@ -83,12 +84,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			continue
 		}
 		shouldValidate, message := keeper.ShouldValidate(
-			poc.CurrentSeed.Seed,
+			config.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
 			inferenceWithExecutor.CurrentPower)
-		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", poc.CurrentSeed.Seed)
+		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", config.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}
@@ -201,8 +202,14 @@ func validate(inference types.Inference, inferenceNode *broker.InferenceNode) (V
 		return nil, err
 	}
 
+	completionsUrl, err := url.JoinPath(inferenceNode.InferenceUrl(), "v1/chat/completions")
+	if err != nil {
+		slog.Error("Validation: Failed to join url", "url", inferenceNode.InferenceUrl(), "error", err)
+		return nil, err
+	}
+
 	resp, err := http.Post(
-		inferenceNode.Url+"v1/chat/completions",
+		completionsUrl,
 		"application/json",
 		bytes.NewReader(requestBody),
 	)

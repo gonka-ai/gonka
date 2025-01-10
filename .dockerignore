@@ -1,0 +1,11 @@
+build/
+decentralized-api/build/
+inference-chain/build/
+.idea/
+.vscode/
+.git/
+.github/
+.DS_Store
+**/.DS_Store
+
+**/*.env

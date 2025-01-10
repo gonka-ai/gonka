@@ -18,6 +18,7 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"math/rand"
 
 	// this line is used by starport scaffolding # 1
 
@@ -160,14 +161,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-		am.LogInfo("IsSetNewValidatorsStage: sending NewValidatorWeights to staking")
-		pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
-		err := am.keeper.SettleAccounts(ctx, pocHeight)
-		if err != nil {
-			am.LogError("Unable to settle accounts", "error", err.Error())
-		}
-		am.SetActiveParticipants(ctx, blockHeight)
-		am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+		am.onSetNewValidatorsStage(ctx, blockHeight)
 	}
 
 	if proofofcompute.IsStartOfPoCStage(blockHeight) {
@@ -183,6 +177,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
+
+		// PRTODO: remove this stub!
+		// am.setStubActiveParticipants(ctx, blockHeight)
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
@@ -207,6 +204,49 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	return nil
 }
 
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64) {
+	am.LogInfo("onSetNewValidatorsStage start", "blockHeight", blockHeight)
+	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
+	err := am.keeper.SettleAccounts(ctx, pocHeight)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", "error", err.Error())
+	}
+
+	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", "error", err.Error())
+		return
+	}
+
+	activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
+	if activeParticipants == nil {
+		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
+		return
+	}
+
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
+
+	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		Participants:         activeParticipants,
+		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
+		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
+		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
+		CreatedAtBlockHeight: blockHeight,
+	})
+
+	for _, p := range activeParticipants {
+		// FIXME: add some centralized way that'd govern key enc/dec rules
+		err := upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to add member", "error", err.Error())
+			continue
+		}
+	}
+
+	// TODO: Move this so active participants are set 1 block before new validators
+	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+}
+
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {
 	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
@@ -229,6 +269,37 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
+}
+
+func (am AppModule) setStubActiveParticipants(ctx context.Context, blockHeight int64) {
+	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
+	if err != nil {
+		am.LogError("setMockActiveParticipants: Unable to get upcoming epoch group", "error", err.Error())
+		return
+	}
+
+	var activeParticipants = make([]*types.ActiveParticipant, 0)
+
+	participants := am.keeper.GetAllParticipant(ctx)
+	for _, p := range participants {
+		activeParticipant := &types.ActiveParticipant{
+			Index:        p.Index,
+			ValidatorKey: p.ValidatorKey,
+			Weight:       rand.Int63(),
+			InferenceUrl: p.InferenceUrl,
+			Models:       p.Models,
+		}
+		activeParticipants = append(activeParticipants, activeParticipant)
+	}
+
+	am.LogInfo("setMockActiveParticipants", "blockHeight", blockHeight, "len(activeParticipants)", len(activeParticipants))
+	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		Participants:         activeParticipants,
+		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
+		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
+		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
+		CreatedAtBlockHeight: blockHeight,
+	})
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.

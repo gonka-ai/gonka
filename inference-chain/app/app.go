@@ -342,6 +342,7 @@ func New(
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
 
+	app.setupUpgradeHandlers()
 	// A custom InitChainer can be set if extra pre-init-genesis logic is required.
 	// By default, when using app wiring enabled module, this is not required.
 	// For instance, the upgrade module will set automatically the module version map in its init genesis thanks to app wiring.

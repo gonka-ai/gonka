@@ -3,7 +3,7 @@ version: "3.7"
 services:
   node:
     container_name: node
-    image: gcr.io/decentralized-ai/inferenced-join
+    image: gcr.io/decentralized-ai/inferenced
     command: ["sh", "./init-docker-genesis.sh"]
     volumes:
       - .inference:/root/.inference
@@ -14,13 +14,15 @@ services:
       - "26657:26657" #rpc
   api:
     container_name: api
-    image: gcr.io/decentralized-ai/api-join # Probably should be renamed, we don't need to have 2 different images for the api
+    image: gcr.io/decentralized-ai/api
     depends_on:
       - node
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - PORT=${PORT}
+    ports:
+      - "${PORT}:8080"
     # It shares the volume with the node, because it needs access to the keyring
     volumes:
       - .inference:/root/.inference
-    environment:
-      - KEY_NAME=${KEY_NAME}
-    ports:
-      - "8080:8080"

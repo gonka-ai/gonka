@@ -66,6 +66,9 @@ func (x *_ActiveParticipants_1_list) IsValid() bool {
 var (
 	md_ActiveParticipants                      protoreflect.MessageDescriptor
 	fd_ActiveParticipants_participants         protoreflect.FieldDescriptor
+	fd_ActiveParticipants_epochGroupId         protoreflect.FieldDescriptor
+	fd_ActiveParticipants_pocStartBlockHeight  protoreflect.FieldDescriptor
+	fd_ActiveParticipants_effectiveBlockHeight protoreflect.FieldDescriptor
 	fd_ActiveParticipants_createdAtBlockHeight protoreflect.FieldDescriptor
 )
 
@@ -73,6 +76,9 @@ func init() {
 	file_inference_inference_activeparticipants_proto_init()
 	md_ActiveParticipants = File_inference_inference_activeparticipants_proto.Messages().ByName("ActiveParticipants")
 	fd_ActiveParticipants_participants = md_ActiveParticipants.Fields().ByName("participants")
+	fd_ActiveParticipants_epochGroupId = md_ActiveParticipants.Fields().ByName("epochGroupId")
+	fd_ActiveParticipants_pocStartBlockHeight = md_ActiveParticipants.Fields().ByName("pocStartBlockHeight")
+	fd_ActiveParticipants_effectiveBlockHeight = md_ActiveParticipants.Fields().ByName("effectiveBlockHeight")
 	fd_ActiveParticipants_createdAtBlockHeight = md_ActiveParticipants.Fields().ByName("createdAtBlockHeight")
 }
 
@@ -147,6 +153,24 @@ func (x *fastReflection_ActiveParticipants) Range(f func(protoreflect.FieldDescr
 			return
 		}
 	}
+	if x.EpochGroupId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochGroupId)
+		if !f(fd_ActiveParticipants_epochGroupId, value) {
+			return
+		}
+	}
+	if x.PocStartBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocStartBlockHeight)
+		if !f(fd_ActiveParticipants_pocStartBlockHeight, value) {
+			return
+		}
+	}
+	if x.EffectiveBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EffectiveBlockHeight)
+		if !f(fd_ActiveParticipants_effectiveBlockHeight, value) {
+			return
+		}
+	}
 	if x.CreatedAtBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.CreatedAtBlockHeight)
 		if !f(fd_ActiveParticipants_createdAtBlockHeight, value) {
@@ -170,6 +194,12 @@ func (x *fastReflection_ActiveParticipants) Has(fd protoreflect.FieldDescriptor)
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipants.participants":
 		return len(x.Participants) != 0
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		return x.EpochGroupId != uint64(0)
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		return x.PocStartBlockHeight != int64(0)
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		return x.EffectiveBlockHeight != int64(0)
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		return x.CreatedAtBlockHeight != int64(0)
 	default:
@@ -190,6 +220,12 @@ func (x *fastReflection_ActiveParticipants) Clear(fd protoreflect.FieldDescripto
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipants.participants":
 		x.Participants = nil
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		x.EpochGroupId = uint64(0)
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		x.PocStartBlockHeight = int64(0)
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		x.EffectiveBlockHeight = int64(0)
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		x.CreatedAtBlockHeight = int64(0)
 	default:
@@ -214,6 +250,15 @@ func (x *fastReflection_ActiveParticipants) Get(descriptor protoreflect.FieldDes
 		}
 		listValue := &_ActiveParticipants_1_list{list: &x.Participants}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		value := x.EpochGroupId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		value := x.PocStartBlockHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		value := x.EffectiveBlockHeight
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		value := x.CreatedAtBlockHeight
 		return protoreflect.ValueOfInt64(value)
@@ -241,6 +286,12 @@ func (x *fastReflection_ActiveParticipants) Set(fd protoreflect.FieldDescriptor,
 		lv := value.List()
 		clv := lv.(*_ActiveParticipants_1_list)
 		x.Participants = *clv.list
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		x.EpochGroupId = value.Uint()
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		x.PocStartBlockHeight = value.Int()
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		x.EffectiveBlockHeight = value.Int()
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		x.CreatedAtBlockHeight = value.Int()
 	default:
@@ -269,6 +320,12 @@ func (x *fastReflection_ActiveParticipants) Mutable(fd protoreflect.FieldDescrip
 		}
 		value := &_ActiveParticipants_1_list{list: &x.Participants}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		panic(fmt.Errorf("field epochGroupId of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		panic(fmt.Errorf("field effectiveBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		panic(fmt.Errorf("field createdAtBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
 	default:
@@ -287,6 +344,12 @@ func (x *fastReflection_ActiveParticipants) NewField(fd protoreflect.FieldDescri
 	case "inference.inference.ActiveParticipants.participants":
 		list := []*ActiveParticipant{}
 		return protoreflect.ValueOfList(&_ActiveParticipants_1_list{list: &list})
+	case "inference.inference.ActiveParticipants.epochGroupId":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
@@ -364,6 +427,15 @@ func (x *fastReflection_ActiveParticipants) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if x.EpochGroupId != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochGroupId))
+		}
+		if x.PocStartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocStartBlockHeight))
+		}
+		if x.EffectiveBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.EffectiveBlockHeight))
+		}
 		if x.CreatedAtBlockHeight != 0 {
 			n += 1 + runtime.Sov(uint64(x.CreatedAtBlockHeight))
 		}
@@ -398,6 +470,21 @@ func (x *fastReflection_ActiveParticipants) ProtoMethods() *protoiface.Methods {
 		}
 		if x.CreatedAtBlockHeight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.CreatedAtBlockHeight))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.EffectiveBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EffectiveBlockHeight))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.PocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStartBlockHeight))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.EpochGroupId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochGroupId))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -501,6 +588,63 @@ func (x *fastReflection_ActiveParticipants) ProtoMethods() *protoiface.Methods {
 				}
 				iNdEx = postIndex
 			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupId", wireType)
+				}
+				x.EpochGroupId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochGroupId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStartBlockHeight", wireType)
+				}
+				x.PocStartBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocStartBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EffectiveBlockHeight", wireType)
+				}
+				x.EffectiveBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EffectiveBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CreatedAtBlockHeight", wireType)
 				}
@@ -607,6 +751,7 @@ var (
 	fd_ActiveParticipant_weight       protoreflect.FieldDescriptor
 	fd_ActiveParticipant_inferenceUrl protoreflect.FieldDescriptor
 	fd_ActiveParticipant_models       protoreflect.FieldDescriptor
+	fd_ActiveParticipant_seed         protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -617,6 +762,7 @@ func init() {
 	fd_ActiveParticipant_weight = md_ActiveParticipant.Fields().ByName("weight")
 	fd_ActiveParticipant_inferenceUrl = md_ActiveParticipant.Fields().ByName("inferenceUrl")
 	fd_ActiveParticipant_models = md_ActiveParticipant.Fields().ByName("models")
+	fd_ActiveParticipant_seed = md_ActiveParticipant.Fields().ByName("seed")
 }
 
 var _ protoreflect.Message = (*fastReflection_ActiveParticipant)(nil)
@@ -714,6 +860,12 @@ func (x *fastReflection_ActiveParticipant) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
+	if x.Seed != nil {
+		value := protoreflect.ValueOfMessage(x.Seed.ProtoReflect())
+		if !f(fd_ActiveParticipant_seed, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -739,6 +891,8 @@ func (x *fastReflection_ActiveParticipant) Has(fd protoreflect.FieldDescriptor) 
 		return x.InferenceUrl != ""
 	case "inference.inference.ActiveParticipant.models":
 		return len(x.Models) != 0
+	case "inference.inference.ActiveParticipant.seed":
+		return x.Seed != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -765,6 +919,8 @@ func (x *fastReflection_ActiveParticipant) Clear(fd protoreflect.FieldDescriptor
 		x.InferenceUrl = ""
 	case "inference.inference.ActiveParticipant.models":
 		x.Models = nil
+	case "inference.inference.ActiveParticipant.seed":
+		x.Seed = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -799,6 +955,9 @@ func (x *fastReflection_ActiveParticipant) Get(descriptor protoreflect.FieldDesc
 		}
 		listValue := &_ActiveParticipant_5_list{list: &x.Models}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.ActiveParticipant.seed":
+		value := x.Seed
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -831,6 +990,8 @@ func (x *fastReflection_ActiveParticipant) Set(fd protoreflect.FieldDescriptor, 
 		lv := value.List()
 		clv := lv.(*_ActiveParticipant_5_list)
 		x.Models = *clv.list
+	case "inference.inference.ActiveParticipant.seed":
+		x.Seed = value.Message().Interface().(*RandomSeed)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -857,6 +1018,11 @@ func (x *fastReflection_ActiveParticipant) Mutable(fd protoreflect.FieldDescript
 		}
 		value := &_ActiveParticipant_5_list{list: &x.Models}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.ActiveParticipant.seed":
+		if x.Seed == nil {
+			x.Seed = new(RandomSeed)
+		}
+		return protoreflect.ValueOfMessage(x.Seed.ProtoReflect())
 	case "inference.inference.ActiveParticipant.index":
 		panic(fmt.Errorf("field index of message inference.inference.ActiveParticipant is not mutable"))
 	case "inference.inference.ActiveParticipant.validatorKey":
@@ -889,6 +1055,9 @@ func (x *fastReflection_ActiveParticipant) NewField(fd protoreflect.FieldDescrip
 	case "inference.inference.ActiveParticipant.models":
 		list := []string{}
 		return protoreflect.ValueOfList(&_ActiveParticipant_5_list{list: &list})
+	case "inference.inference.ActiveParticipant.seed":
+		m := new(RandomSeed)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -979,6 +1148,10 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if x.Seed != nil {
+			l = options.Size(x.Seed)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1007,6 +1180,20 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Seed != nil {
+			encoded, err := options.Marshal(x.Seed)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x32
 		}
 		if len(x.Models) > 0 {
 			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
@@ -1239,6 +1426,42 @@ func (x *fastReflection_ActiveParticipant) ProtoMethods() *protoiface.Methods {
 				}
 				x.Models = append(x.Models, string(dAtA[iNdEx:postIndex]))
 				iNdEx = postIndex
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.Seed == nil {
+					x.Seed = &RandomSeed{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Seed); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1294,7 +1517,10 @@ type ActiveParticipants struct {
 	unknownFields protoimpl.UnknownFields
 
 	Participants         []*ActiveParticipant `protobuf:"bytes,1,rep,name=participants,proto3" json:"participants,omitempty"`
-	CreatedAtBlockHeight int64                `protobuf:"varint,2,opt,name=createdAtBlockHeight,proto3" json:"createdAtBlockHeight,omitempty"`
+	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
+	PocStartBlockHeight  int64                `protobuf:"varint,3,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
+	EffectiveBlockHeight int64                `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
+	CreatedAtBlockHeight int64                `protobuf:"varint,5,opt,name=createdAtBlockHeight,proto3" json:"createdAtBlockHeight,omitempty"` // Same as effectiveBlockHeight???
 }
 
 func (x *ActiveParticipants) Reset() {
@@ -1324,6 +1550,27 @@ func (x *ActiveParticipants) GetParticipants() []*ActiveParticipant {
 	return nil
 }
 
+func (x *ActiveParticipants) GetEpochGroupId() uint64 {
+	if x != nil {
+		return x.EpochGroupId
+	}
+	return 0
+}
+
+func (x *ActiveParticipants) GetPocStartBlockHeight() int64 {
+	if x != nil {
+		return x.PocStartBlockHeight
+	}
+	return 0
+}
+
+func (x *ActiveParticipants) GetEffectiveBlockHeight() int64 {
+	if x != nil {
+		return x.EffectiveBlockHeight
+	}
+	return 0
+}
+
 func (x *ActiveParticipants) GetCreatedAtBlockHeight() int64 {
 	if x != nil {
 		return x.CreatedAtBlockHeight
@@ -1336,11 +1583,12 @@ type ActiveParticipant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index        string   `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,2,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
-	Weight       int64    `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
-	InferenceUrl string   `protobuf:"bytes,4,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
-	Models       []string `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
+	Index        string      `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	ValidatorKey string      `protobuf:"bytes,2,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	Weight       int64       `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	InferenceUrl string      `protobuf:"bytes,4,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	Models       []string    `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
+	Seed         *RandomSeed `protobuf:"bytes,6,opt,name=seed,proto3" json:"seed,omitempty"`
 }
 
 func (x *ActiveParticipant) Reset() {
@@ -1398,6 +1646,13 @@ func (x *ActiveParticipant) GetModels() []string {
 	return nil
 }
 
+func (x *ActiveParticipant) GetSeed() *RandomSeed {
+	if x != nil {
+		return x.Seed
+	}
+	return nil
+}
+
 var File_inference_inference_activeparticipants_proto protoreflect.FileDescriptor
 
 var file_inference_inference_activeparticipants_proto_rawDesc = []byte{
@@ -1405,39 +1660,54 @@ var file_inference_inference_activeparticipants_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x61, 0x63, 0x74, 0x69, 0x76, 0x65, 0x70, 0x61, 0x72, 0x74,
 	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x22, 0x94, 0x01, 0x0a, 0x12, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x4a, 0x0a, 0x0c, 0x70, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72,
-	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63,
-	0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x32, 0x0a, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65,
-	0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xa1, 0x01, 0x0a, 0x11, 0x41,
+	0x6e, 0x63, 0x65, 0x1a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x72, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x5f,
+	0x73, 0x65, 0x65, 0x64, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x9e, 0x02, 0x0a, 0x12, 0x41,
 	0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
-	0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
-	0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x55,
-	0x72, 0x6c, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73,
-	0x18, 0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x42, 0xc5,
-	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x17, 0x41, 0x63, 0x74, 0x69,
-	0x76, 0x65, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x73, 0x12, 0x4a, 0x0a, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x41, 0x63,
+	0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
+	0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x22, 0x0a,
+	0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49,
+	0x64, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13,
+	0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x32, 0x0a, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x03, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63,
+	0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x32, 0x0a, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74,
+	0x65, 0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
+	0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xd6, 0x01, 0x0a, 0x11,
+	0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x77,
+	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x55, 0x72, 0x6c, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c,
+	0x73, 0x18, 0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12,
+	0x33, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x52, 0x04,
+	0x73, 0x65, 0x65, 0x64, 0x42, 0xc5, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x42, 0x17, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
+	0x61, 0x6e, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
 	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1456,14 +1726,16 @@ var file_inference_inference_activeparticipants_proto_msgTypes = make([]protoimp
 var file_inference_inference_activeparticipants_proto_goTypes = []interface{}{
 	(*ActiveParticipants)(nil), // 0: inference.inference.ActiveParticipants
 	(*ActiveParticipant)(nil),  // 1: inference.inference.ActiveParticipant
+	(*RandomSeed)(nil),         // 2: inference.inference.RandomSeed
 }
 var file_inference_inference_activeparticipants_proto_depIdxs = []int32{
 	1, // 0: inference.inference.ActiveParticipants.participants:type_name -> inference.inference.ActiveParticipant
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 1: inference.inference.ActiveParticipant.seed:type_name -> inference.inference.RandomSeed
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_activeparticipants_proto_init() }
@@ -1471,6 +1743,7 @@ func file_inference_inference_activeparticipants_proto_init() {
 	if File_inference_inference_activeparticipants_proto != nil {
 		return
 	}
+	file_inference_inference_random_seed_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_inference_inference_activeparticipants_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ActiveParticipants); i {

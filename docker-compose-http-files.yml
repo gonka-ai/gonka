@@ -1,0 +1,11 @@
+version: '3.9'
+services:
+  binary-server:
+    image: httpd:latest
+    container_name: binary-server
+    ports:
+      - '8781:80'
+    volumes:
+      - ./public-html:/usr/local/apache2/htdocs/
+    networks:
+      - chain-public

@@ -1,7 +1,9 @@
 [
   {
     "id": "node1",
-    "url": "http://34.171.235.205:8080/",
+    "host": "34.171.235.205",
+    "inference_port": 8080,
+    "poc_port": 5000,
     "max_concurrent": 500,
     "models": [
       "unsloth/llama-3-8b-Instruct"

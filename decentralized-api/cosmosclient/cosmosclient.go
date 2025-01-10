@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"errors"
 	"fmt"
@@ -32,16 +33,10 @@ type InferenceCosmosClient struct {
 	Context context.Context
 }
 
-func NewInferenceCosmosClientWithRetry(
-	ctx context.Context,
-	addressPrefix string,
-	maxRetries int,
-	delay time.Duration,
-	config apiconfig.Config,
-) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.Config) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
-
+	slog.Info("Connecting to cosmos sdk node", "config", config, "height", config.CurrentHeight)
 	for i := 0; i < maxRetries; i++ {
 		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
 		if err == nil {
@@ -115,9 +110,17 @@ type CosmosMessageClient interface {
 	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
 	SubmitPoC(transaction *inference.MsgSubmitPoC) error
+	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
+	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
+	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
+	GetContext() *context.Context
+}
+
+func (icc *InferenceCosmosClient) GetContext() *context.Context {
+	return &icc.Context
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
@@ -169,6 +172,21 @@ func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRe
 
 func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
 	return icc.Client.BankBalances(ctx, address, nil)
+}
+
+func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -240,10 +258,11 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
+	defer sendTransactionMutex.Unlock()
+
 	slog.Debug("Start Broadcast", "id", id)
 	response, err := icc.BroadcastMessage(icc.Context, msg)
 	slog.Debug("Finish broadcast", "id", id)
-	sendTransactionMutex.Unlock()
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
 		return err
@@ -253,6 +272,14 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 		slog.Error("Transaction failed", "response", response)
 	}
 	return nil
+}
+
+func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
+	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
+}
+
+func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
+	return upgradetypes.NewQueryClient(icc.Client.Context())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {

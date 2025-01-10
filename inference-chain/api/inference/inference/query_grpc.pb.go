@@ -33,6 +33,8 @@ const (
 	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
 	Query_EpochGroupValidations_FullMethodName      = "/inference.inference.Query/EpochGroupValidations"
 	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName         = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName            = "/inference.inference.Query/GetCurrentEpoch"
 )
 
 // QueryClient is the client API for Query service.
@@ -62,6 +64,10 @@ type QueryClient interface {
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error)
+	// Queries a list of PocBatchesForStage items.
+	PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error)
+	// Queries a list of GetCurrentEpoch items.
+	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
 }
 
 type queryClient struct {
@@ -198,6 +204,24 @@ func (c *queryClient) EpochGroupValidationsAll(ctx context.Context, in *QueryAll
 	return out, nil
 }
 
+func (c *queryClient) PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error) {
+	out := new(QueryPocBatchesForStageResponse)
+	err := c.cc.Invoke(ctx, Query_PocBatchesForStage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error) {
+	out := new(QueryGetCurrentEpochResponse)
+	err := c.cc.Invoke(ctx, Query_GetCurrentEpoch_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -225,6 +249,10 @@ type QueryServer interface {
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error)
+	// Queries a list of PocBatchesForStage items.
+	PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error)
+	// Queries a list of GetCurrentEpoch items.
+	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -273,6 +301,12 @@ func (UnimplementedQueryServer) EpochGroupValidations(context.Context, *QueryGet
 }
 func (UnimplementedQueryServer) EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidationsAll not implemented")
+}
+func (UnimplementedQueryServer) PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PocBatchesForStage not implemented")
+}
+func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -539,6 +573,42 @@ func _Query_EpochGroupValidationsAll_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PocBatchesForStage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPocBatchesForStageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PocBatchesForStage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PocBatchesForStage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PocBatchesForStage(ctx, req.(*QueryPocBatchesForStageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetCurrentEpoch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetCurrentEpochRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetCurrentEpoch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetCurrentEpoch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetCurrentEpoch(ctx, req.(*QueryGetCurrentEpochRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -601,6 +671,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochGroupValidationsAll",
 			Handler:    _Query_EpochGroupValidationsAll_Handler,
+		},
+		{
+			MethodName: "PocBatchesForStage",
+			Handler:    _Query_PocBatchesForStage_Handler,
+		},
+		{
+			MethodName: "GetCurrentEpoch",
+			Handler:    _Query_GetCurrentEpoch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
