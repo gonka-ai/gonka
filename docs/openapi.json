@@ -50,8 +50,8 @@
         "tags": [
           "API v1"
         ],
-        "summary": "Init Generate",
-        "operationId": "init_generate_api_v1_pow_init_post",
+        "summary": "Init",
+        "operationId": "init_api_v1_pow_init_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -128,8 +128,8 @@
         "tags": [
           "API v1"
         ],
-        "summary": "Init Generate",
-        "operationId": "init_generate_api_v1_pow_init_validate_post",
+        "summary": "Init Validate",
+        "operationId": "init_validate_api_v1_pow_init_validate_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -167,8 +167,8 @@
         "tags": [
           "API v1"
         ],
-        "summary": "Init Generate",
-        "operationId": "init_generate_api_v1_pow_phase_generate_post",
+        "summary": "Start Generate",
+        "operationId": "start_generate_api_v1_pow_phase_generate_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -186,8 +186,8 @@
         "tags": [
           "API v1"
         ],
-        "summary": "Init Generate",
-        "operationId": "init_generate_api_v1_pow_phase_validate_post",
+        "summary": "Start Validate",
+        "operationId": "start_validate_api_v1_pow_phase_validate_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -384,11 +384,11 @@
         "properties": {
           "block_hash": {
             "type": "string",
-            "title": "Chain Hash"
+            "title": "Block Hash"
           },
-          "chain_height": {
+          "block_height": {
             "type": "integer",
-            "title": "Chain Height"
+            "title": "Block Height"
           },
           "public_key": {
             "type": "string",
@@ -430,7 +430,7 @@
         "type": "object",
         "required": [
           "block_hash",
-          "chain_height",
+          "block_height",
           "public_key",
           "batch_size",
           "r_target",
@@ -447,11 +447,11 @@
           },
           "block_hash": {
             "type": "string",
-            "title": "Chain Hash"
+            "title": "Block Hash"
           },
-          "chain_height": {
+          "block_height": {
             "type": "integer",
-            "title": "Chain Height"
+            "title": "Block Height"
           },
           "nonces": {
             "items": {
@@ -472,7 +472,7 @@
         "required": [
           "public_key",
           "block_hash",
-          "chain_height",
+          "block_height",
           "nonces",
           "dist"
         ],
