@@ -8,7 +8,7 @@ make build-docker
 
 export PORT=8080
 export KEY_NAME=genesis
-exporr NODE_CONFIG=node_payload_2.json
+export NODE_CONFIG=node_payload_2.json
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
