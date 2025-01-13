@@ -6,7 +6,11 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  compose_file="docker-compose-local.yml"
+  if [ "$KEY_NAME" == "genesis" ]; then
+    compose_file="docker-compose-local-genesis.yml"
+  else
+    compose_file="docker-compose-local.yml"
+  fi
 elif [ "$mode" == "cloud" ]; then
   compose_file="docker-compose-cloud-join.yml"
 else
@@ -38,12 +42,12 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$SEED_IP" ]; then
-  echo "SEED_IP is not set"
+if [ -z "$SEED_IP" ] && [ "$KEY_NAME" != "genesis" ]; then
+  echo "SEED_IP is not set and KEY_NAME is not 'genesis'"
   exit 1
 fi
 
-if [ -z "$EXTERNAL_SEED_IP" ]; then
+if [ -z "$EXTERNAL_SEED_IP" ] && [ "$KEY_NAME" != "genesis" ]; then
   echo "EXTERNAL_SEED_IP is not set, using SEED_IP"
   export EXTERNAL_SEED_IP="$SEED_IP"
 fi
@@ -53,16 +57,17 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-if [ -z "$PUBLIC_IP" ]; then
-  echo "PUBLIC_IP is not set"
-  exit 1
+if [ -z "$WIREMOCK_PORT" ]; then
+  WIREMOCK_PORT=$((PORT + 10))
+  echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"
 fi
 
-SEED_STATUS_URL="http://$EXTERNAL_SEED_IP:26657/status"
-SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
-echo "SEED_ID=$SEED_ID"
-export SEEDS="$SEED_ID@$SEED_IP:26656"
-echo "SEEDS=$SEEDS"
+if [ -z "$PUBLIC_IP" ]; then
+  PUBLIC_IP="${KEY_NAME}-api"
+fi
+
+export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:8080"
+export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
@@ -73,24 +78,57 @@ else
   project_name="inferenced"
 fi
 
-GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
-export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
+if [ "$KEY_NAME" != "genesis" ]; then
+  SEED_STATUS_URL="http://$EXTERNAL_SEED_IP:26657/status"
+  SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
+  echo "SEED_ID=$SEED_ID"
+  export SEEDS="$SEED_ID@$SEED_IP:26656"
+  echo "SEEDS=$SEEDS"
 
-mkdir -p "$(dirname "$GENESIS_FILE")"
+  GENESIS_URL="http://$EXTERNAL_SEED_IP:26657/genesis"
+  export GENESIS_FILE="./prod-local/$KEY_NAME/genesis.json"
 
-echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
-wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
+  mkdir -p "$(dirname "$GENESIS_FILE")"
 
-echo "project_name=$project_name"
+  echo "Downloading the genesis file from $GENESIS_URL to $GENESIS_FILE"
+  wget -q -O - "$GENESIS_URL" | jq -r '.result.genesis' > "$GENESIS_FILE"
 
+  echo "project_name=$project_name"
+fi
+
+#!!!
 docker compose -p "$project_name" -f "$compose_file" up -d
+
+# Copy the mappings to the wiremock container
+#!!!
+mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
+cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
 
 # Some time to join chain
 sleep 20
 
 echo "setting node config"
+node_post_data=$(jq -n \
+  --arg id "wiremock" \
+  --arg host "$KEY_NAME-wiremock" \
+  --argjson inference_port 8080 \
+  --argjson poc_port 8080 \
+  --argjson max_concurrent 10 \
+  --argjson models '["unsloth/llama-3-8b-Instruct"]' \
+  '{
+    id: $id,
+    host: $host,
+    inference_port: $inference_port,
+    poc_port: $poc_port,
+    max_concurrent: $max_concurrent,
+    models: $models
+  }')
+echo "node data:"
+echo "$node_post_data"
+
 # Set node config
-curl -X POST "http://0.0.0.0:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
+#!!!
+curl -X POST "http://0.0.0.0:$PORT/v1/nodes" -H "Content-Type: application/json" -d "$node_post_data"
 
 if [ "$mode" == "local" ]; then
   node_container_name="$KEY_NAME-node"
@@ -100,6 +138,7 @@ fi
 echo "node_container_name=$node_container_name"
 
 # Now get info for adding self
+#???
 keys_output=$(docker exec "$node_container_name" inferenced keys show $KEY_NAME --output json)
 
 pubkey=$(echo $keys_output | jq -r '.pubkey')
@@ -111,6 +150,7 @@ echo "pubkey=$pubkey"
 echo "raw_key=$raw_key"
 
 # Run the docker exec command and capture the validator_output
+#???
 validator_output=$(docker exec "$node_container_name" inferenced tendermint show-validator)
 
 # Use jq to parse the JSON and extract the "key" value
@@ -123,26 +163,37 @@ unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
 
 # Print the unique models
 echo "Unique models: $unique_models"
-
-DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+if [ "$KEY_NAME" != "genesis" ]; then
 # Prepare the data structure for the final POST
-post_data=$(jq -n \
-  --arg address "$address" \
-  --arg url "$DAPI_API__PUBLIC_URL" \
-  --argjson models "$unique_models" \
-  --arg validator_key "$validator_key" \
-  --arg pub_key "$raw_key" \
-  '{
-    address: $address,
-    url: $url,
-    models: $models,
-    validator_key: $validator_key,
-    pub_key: $pub_key
-  }')
+  post_data=$(jq -n \
+    --arg address "$address" \
+    --arg url "$DAPI_API__PUBLIC_URL" \
+    --argjson models "$unique_models" \
+    --arg validator_key "$validator_key" \
+    --arg pub_key "$raw_key" \
+    '{
+      address: $address,
+      url: $url,
+      models: $models,
+      validator_key: $validator_key,
+      pub_key: $pub_key
+    }')
+else
+  post_data=$(jq -n \
+    --arg url "$DAPI_API__PUBLIC_URL" \
+    --argjson models "$unique_models" \
+    --arg validator_key "$validator_key" \
+    '{
+      url: $url,
+      models: $models,
+      validator_key: $validator_key,
+    }')
+fi
 
 ADD_ENDPOINT="http://$EXTERNAL_SEED_IP:8080"
 echo "POST request sent to $ADD_ENDPOINT with the following data:"
 echo "$post_data"
 
 # Make the final POST request to the ADD_ENDPOINT
+#!!!
 curl -X POST "$ADD_ENDPOINT/v1/participants" -H "Content-Type: application/json" -d "$post_data"

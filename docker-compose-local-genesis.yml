@@ -1,7 +1,7 @@
 services:
   chain-node:
     container_name: ${KEY_NAME}-node
-    command: ["sh", "./init-docker-genesis.sh"]
+    command: [ "sh", "./init-docker-genesis.sh" ]
     image: gcr.io/decentralized-ai/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
@@ -17,12 +17,12 @@ services:
     container_name: ${KEY_NAME}-api
     image: gcr.io/decentralized-ai/api
     volumes:
-        - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./prod-local/${KEY_NAME}:/root/.inference
     ports:
       - "${PORT}:8080"
     environment:
       - KEY_NAME=${KEY_NAME}
-      - NODE_HOST=chain-node
+      - NODE_HOST=${KEY_NAME}-node
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
     networks:
@@ -32,10 +32,13 @@ services:
     container_name: ${KEY_NAME}-wiremock
     image: "wiremock/wiremock:latest"
     ports:
-      - "8090:8080"
+      - "${WIREMOCK_PORT}:8080"
+    volumes:
+      - ./prod-local/wiremock/${KEY_NAME}:/home/wiremock
     entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
     networks:
       - chain-public
+
   binary-server:
     image: httpd:latest
     container_name: binary-server

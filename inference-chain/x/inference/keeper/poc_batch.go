@@ -13,7 +13,7 @@ import (
 func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocBatchKeyPrefix))
-	key := types.PoCBatchKey(batch.PocStageStartBlockHeight, batch.ParticipantAddress, types.GenerateBatchID())
+	key := types.PoCBatchKey(batch.PocStageStartBlockHeight, batch.ParticipantAddress, batch.BatchId)
 
 	k.LogInfo("PoC: Storing batch", "key", key, "batch", batch)
 

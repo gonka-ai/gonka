@@ -9,6 +9,7 @@ message PoCBatch {
   int64 receivedAtBlockHeight = 3;
   repeated int64 nonces = 4;
   repeated double dist = 5;
+  string batchId = 6;
 }
 
 /*

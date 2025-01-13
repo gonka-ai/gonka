@@ -1,0 +1,27 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/pow/init/validate"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": ""
+  },
+  "postServeActions": {
+    "webhook": {
+      "method": "POST",
+      "url": "{{jsonPath originalRequest.body '$.url'}}/validated",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "delay": {
+        "type": "fixed",
+        "milliseconds": 5000
+      },
+      "body": "{\n        \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\",\n        \"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\",\n        \"block_height\": {{jsonPath originalRequest.body '$.block_height'}},\n        \"nonces\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],\n        \"dist\": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],\n        \"received_dist\": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],\n        \"r_target\": {{jsonPath originalRequest.body '$.r_target'}},\n        \"fraud_threshold\": {{jsonPath originalRequest.body '$.fraud_threshold'}},\n        \"n_invalid\": 0,\n        \"probability_honest\": 0.99,\n        \"fraud_detected\": false\n      }"
+    }
+  }
+}

@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"github.com/productscience/inference/x/inference/types"
+	"sort"
 )
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
@@ -40,7 +41,13 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	var activeParticipants []*types.ActiveParticipant
 
-	for participantAddress, batches := range originalBatches {
+	var sortedBatchKeys []string
+	for key := range originalBatches {
+		sortedBatchKeys = append(sortedBatchKeys, key)
+	}
+	sort.Strings(sortedBatchKeys)
+
+	for _, participantAddress := range sortedBatchKeys {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
 			am.LogError("ComputeNewWeights: Error getting participant", "address", participantAddress)
@@ -53,7 +60,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			continue
 		}
 
-		claimedWeight := getParticipantWeight(batches)
+		claimedWeight := getParticipantWeight(originalBatches[participantAddress])
 		if claimedWeight < 1 {
 			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
 			continue
