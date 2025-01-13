@@ -19,9 +19,11 @@ class NodeManagementTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val node = highestFunded.api.addNode(InferenceNode(
-            url = "http://localhost:8080",
+            host = "http://localhost:8080",
             models = listOf("model1"),
             id = "node2",
+            pocPort = 100,
+            inferencePort = 200,
             maxConcurrent = 1
         ))
         assertThat(node).isNotNull
@@ -34,7 +36,9 @@ class NodeManagementTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val node = highestFunded.api.addNode(InferenceNode(
-            url = "http://localhost:8080",
+            host = "http://localhost:8080",
+            pocPort = 100,
+            inferencePort = 200,
             models = listOf("model1"),
             id = "nodeToRemove",
             maxConcurrent = 1
@@ -55,12 +59,16 @@ class NodeManagementTests : TestermintTest() {
         val node1Name = "multinode1"
         val node2Name = "multinode2"
         val (node1, node2) = highestFunded.api.addNodes(listOf(InferenceNode(
-            url = "http://localhost:8080",
+            host = "http://localhost:8080",
+            pocPort = 100,
+            inferencePort = 200,
             models = listOf("model1"),
             id = node1Name,
             maxConcurrent = 1
         ), InferenceNode(
-            url = "http://localhost:8080",
+            host = "http://localhost:8080",
+            pocPort = 100,
+            inferencePort = 200,
             models = listOf("model1"),
             id = node2Name,
             maxConcurrent = 1

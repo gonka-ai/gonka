@@ -59,3 +59,16 @@ clean-state:
 
 docker-push:
 	docker push gcr.io/decentralized-ai/inferenced
+
+build-v2-test:
+	$(eval PLATFORM=linux/amd64)
+	$(DOCKER_BUILD)
+	@echo "--> clearing out ../public-html/v2/inferenced"
+	@rm -rf ../public-html/v2/inferenced/*
+	@mkdir -p ../public-html/v2/inferenced
+	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
+	@cp ./build/inferenced ../public-html/v2/inferenced/inferenced
+	@echo "--> zipping inferenced binary"
+	@zip -j ../public-html/v2/inferenced/inferenced.zip ../public-html/v2/inferenced/inferenced
+	@echo "--> generating shasum for inferenced.zip"
+	@shasum -a 256 ../public-html/v2/inferenced/inferenced.zip

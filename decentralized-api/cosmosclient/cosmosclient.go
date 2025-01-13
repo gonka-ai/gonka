@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"errors"
 	"fmt"
@@ -32,16 +33,10 @@ type InferenceCosmosClient struct {
 	Context context.Context
 }
 
-func NewInferenceCosmosClientWithRetry(
-	ctx context.Context,
-	addressPrefix string,
-	maxRetries int,
-	delay time.Duration,
-	config apiconfig.Config,
-) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.Config) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
-
+	slog.Info("Connecting to cosmos sdk node", "config", config, "height", config.CurrentHeight)
 	for i := 0; i < maxRetries; i++ {
 		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
 		if err == nil {
@@ -287,6 +282,14 @@ func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
 		slog.Error("Transaction failed", "response", response)
 	}
 	return nil
+}
+
+func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
+	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
+}
+
+func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
+	return upgradetypes.NewQueryClient(icc.Client.Context())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {

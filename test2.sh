@@ -12,7 +12,8 @@ NODE_CONFIG=node_payload.json
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
-
+export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 20
 
@@ -55,11 +56,13 @@ export NODE_CONFIG=$NODE_CONFIG
 export ADD_ENDPOINT="http://0.0.0.0:$PORT"
 export PUBLIC_IP="join1-api"
 export PORT=8081
+export WIREMOCK_PORT=8091
 export SEED_IP="genesis-node"
 export EXTERNAL_SEED_IP="0.0.0.0"
 ./launch_chain.sh local
 export KEY_NAME=join2
 export PORT=8082
+export WIREMOCK_PORT=8092
 export PUBLIC_IP="join2-api"
 ./launch_chain.sh local
 

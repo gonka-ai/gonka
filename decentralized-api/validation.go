@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	cosmosclient "decentralized-api/cosmosclient"
-	"decentralized-api/poc"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,7 +55,7 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 	}
 }
 
-func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker, config *apiconfig.Config) {
 	if ids == nil {
 		slog.Debug("Validation: No inferences to validate")
 		return
@@ -84,12 +84,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			continue
 		}
 		shouldValidate, message := keeper.ShouldValidate(
-			poc.CurrentSeed.Seed,
+			config.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
 			inferenceWithExecutor.CurrentPower)
-		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", poc.CurrentSeed.Seed)
+		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", config.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
 		}

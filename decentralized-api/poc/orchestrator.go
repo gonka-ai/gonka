@@ -1,12 +1,12 @@
 package poc
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
@@ -159,13 +159,26 @@ func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
 	o.stopChan <- StopPoCEvent{action: action}
 }
 
-var CurrentHeight = int64(0)
-
-func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return
 	}
+
+	// Check for any upcoming upgrade plan
+	plan, err := transactionRecorder.GetUpgradePlan()
+	if err != nil {
+		slog.Error("Unable to get upgrade plan", "error", err)
+	} else {
+		slog.Info("Upgrade plan", "plan", plan.Plan)
+
+	}
+
+	//for key := range event.Result.Events {
+	//	for i, attr := range event.Result.Events[key] {
+	//		slog.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
+	//	}
+	//}
 
 	data := event.Result.Data.Value
 
@@ -174,7 +187,10 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 		slog.Error("Failed to get blockHeight from event data", "error", err)
 		return
 	}
-	CurrentHeight = blockHeight
+	err = configManager.SetHeight(blockHeight)
+	if err != nil {
+		slog.Warn("Failed to write config", "error", err)
+	}
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
@@ -191,7 +207,7 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 
 		nodePoCOrchestrator.Start(blockHeight, blockHash)
 
-		GenerateSeed(blockHeight, &transactionRecorder)
+		GenerateSeed(blockHeight, &transactionRecorder, configManager)
 
 		return
 	}
@@ -224,7 +240,10 @@ func ProcessNewBlockEvent(orchestrator *PoCOrchestrator, nodePoCOrchestrator *No
 	}
 
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
-		go func() { RequestMoney(&transactionRecorder) }()
+		go func() {
+			ChangeCurrentSeed(configManager)
+			RequestMoney(&transactionRecorder)
+		}()
 	}
 }
 
@@ -264,38 +283,6 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	}
 
 	return hash, nil
-}
-
-func createSubmitPoCCallback(transactionRecorder cosmosclient.InferenceCosmosClient) func(proofs *ProofOfComputeResults) {
-	return func(proofs *ProofOfComputeResults) {
-		nonce := make([]string, len(proofs.Results))
-		for i, p := range proofs.Results {
-			nonce[i] = p.Nonce
-		}
-
-		// Deprecated
-		slog.Debug("Old Seed Signature", "seed", CurrentSeed)
-		seedInfo, err := getNextSeedSignature(proofs.BlockHeight, &transactionRecorder)
-		if err != nil {
-			slog.Error("Failed to get next seed signature", "error", err)
-			return
-		}
-		UpcomingSeed = *seedInfo
-		slog.Debug("New Seed Signature", "seed", UpcomingSeed)
-
-		message := inference.MsgSubmitPoC{
-			BlockHeight:   proofs.BlockHeight,
-			Nonce:         nonce,
-			SeedSignature: UpcomingSeed.Signature,
-		}
-
-		log.Printf("Submitting PoC transaction. BlockHeight = %d. len(Nonce) = %d", message.BlockHeight, len(message.Nonce))
-
-		err = transactionRecorder.SubmitPoC(&message)
-		if err != nil {
-			log.Printf("Failed to send SubmitPoC transaction. %v", err)
-		}
-	}
 }
 
 func incrementBytes(nonce []byte) {

@@ -1,6 +1,8 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
+import com.github.dockerjava.api.model.Container
+import com.github.dockerjava.api.model.DockerObject
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
@@ -18,6 +20,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val containers = dockerClient.listContainersCmd().exec()
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
+    val mocks = containers.filter {it.image == config.wireMockImageName }
     return nodes.mapNotNull {
         val nameMatch = nameExtractor.find(it.names.first())
         if (nameMatch == null) {
@@ -26,6 +29,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         }
         val name = nameMatch.groupValues[1]
         val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
+        val matchingMock: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
         attachLogs(dockerClient, name, "node", it.id)
         attachLogs(dockerClient, name, "api", matchingApi.id)
@@ -33,29 +37,14 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
             ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
+            matchingMock?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name
         )
     }
 }
 
-fun createLocalGenesisPair(config: ApplicationConfig): LocalInferencePair {
-    val containerName = "genesis-node"
-    val cli = ApplicationCLI(containerName, config)
-    cli.createContainer()
-
-    val dockerClient = DockerClientBuilder.getInstance()
-        .build()
-
-
-    // Use the docker image to create the setup files in the volume mount
-    dockerClient.initNode(config)
-    return LocalInferencePair(
-        cli,
-        ApplicationAPI("http://localhost:8080", config),
-        config.pairName
-    )
-
-}
+private fun Container.getMappedPort(internalPort:Int) =
+    this.ports.find { it.privatePort == internalPort }?.publicPort
 
 private fun DockerClient.getNodeId(
     config: ApplicationConfig
@@ -113,6 +102,7 @@ private fun attachLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
+    val mock: InferenceMock?,
     val name: String,
 ) {
     fun addSelfAsParticipant(models: List<String>) {
@@ -144,6 +134,7 @@ data class ApplicationConfig(
     val nodeImageName: String,
     val genesisNodeImage: String,
     val apiImageName: String,
+    val wireMockImageName: String,
     val denom: String,
     val stateDirName: String,
     val pairName: String = "",

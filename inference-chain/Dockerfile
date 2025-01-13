@@ -40,12 +40,19 @@ FROM alpine:3.18 AS final
 RUN apk update && \
     apk add --no-cache sed ca-certificates && \
     rm -rf /var/cache/apk/*
+RUN apk update && apk add --no-cache jq
 
 WORKDIR /root
+
+ENV DAEMON_HOME=/root/.inference
+ENV DAEMON_NAME=inferenced
+ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
+ENV DAEMON_RESTART_AFTER_UPGRADE=true
 
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/prod/init-docker.sh /root/init-docker.sh
+COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 
 RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
 

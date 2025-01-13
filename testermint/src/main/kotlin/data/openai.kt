@@ -23,35 +23,35 @@ data class RequestModel(
     val parallelToolCalls: Boolean,
     val user: String,
     val functionCall: String,
-    val functions: List<Function>
+    val functions: List<Function>,
 )
 
 data class Message(
     val content: String,
     val role: String,
-    val name: String
+    val name: String,
 )
 
 data class ResponseFormat(
-    val type: String
+    val type: String,
 )
 
 data class Tool(
     val type: String,
-    val function: FunctionDetails
+    val function: FunctionDetails,
 )
 
 data class FunctionDetails(
     val name: String,
     val description: String,
     val parameters: Map<String, Any>,
-    val strict: Boolean
+    val strict: Boolean,
 )
 
 data class Function(
     val name: String,
     val description: String,
-    val parameters: Map<String, Any>
+    val parameters: Map<String, Any>,
 )
 
 // Response
@@ -62,42 +62,62 @@ data class OpenAIResponse(
     val id: String,
     val model: String,
     val `object`: String,
-    val usage: Usage
-)
+    val usage: Usage,
+) {
+    fun withMissingLogit(): OpenAIResponse {
+        return this.copy(
+            choices = listOf(
+                this.choices.first().copy(
+                    logprobs = this.choices.first().logprobs?.copy(
+                        content = this.choices.first().logprobs?.content?.drop(1) ?: listOf()
+                    )
+                )
+            )
+        )
+    }
+
+    fun withResponse(response: String): OpenAIResponse {
+        return this.copy(
+            choices = listOf(
+                this.choices.first().copy(message = ResponseMessage(response, "system", listOf()))
+            )
+        )
+    }
+}
 
 data class Choice(
     val finishReason: String,
     val index: Int,
     val logprobs: Logprobs?,
     val message: ResponseMessage,
-    val stopReason: Any?
+    val stopReason: Any?,
 )
 
 data class Logprobs(
-    val content: List<Content>
+    val content: List<Content>,
 )
 
 data class Content(
     val bytes: List<Int>,
     val logprob: Double,
     val token: String,
-    val topLogprobs: List<TopLogprob>
+    val topLogprobs: List<TopLogprob>,
 )
 
 data class TopLogprob(
     val bytes: List<Int>,
     val logprob: Double,
-    val token: String
+    val token: String,
 )
 
 data class ResponseMessage(
     val content: String,
     val role: String,
-    val toolCalls: List<Any>
+    val toolCalls: List<Any>,
 )
 
 data class Usage(
     val completionTokens: Int,
     val promptTokens: Int,
-    val totalTokens: Int
+    val totalTokens: Int,
 )

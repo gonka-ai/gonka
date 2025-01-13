@@ -22,10 +22,19 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
-      - POC_CALLBACK_URL=${POC_CALLBACK_URL}
-      - PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
       - NODE_CONFIG_PATH=/root/node_config.json
       - SEED_API_URL=${SEED_API_URL}
+    networks:
+      - chain-public
+
+  wiremock:
+    container_name: ${KEY_NAME}-wiremock
+    image: "wiremock/wiremock:latest"
+    ports:
+      - "${WIREMOCK_PORT}:8080"
+    entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
     networks:
       - chain-public
 

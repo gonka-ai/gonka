@@ -1,10 +1,10 @@
 import com.productscience.data.InferenceStatus
+import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initialize
-import com.productscience.invalidNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -50,7 +50,8 @@ class ValidationTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
-        oddPair.api.setNodesTo(invalidNode)
+        val badResponse = defaultInferenceResponseObject.withMissingLogit()
+        oddPair.mock?.setInferenceResponse(badResponse)
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
                 .first {
@@ -58,7 +59,10 @@ class ValidationTests : TestermintTest() {
                     it.executorBefore.id == oddPair.node.addresss
                 }
 
-        Logger.warn("Got invalid result, waiting for invalidation.")
+        Logger.warn(
+            "Got invalid result, waiting for invalidation. " +
+                    "Output was:${invalidResult.inference.responsePayload}"
+        )
 
         highestFunded.node.waitForNextBlock(10)
         val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
@@ -70,7 +74,7 @@ class ValidationTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
-        oddPair.api.setNodesTo(invalidNode)
+        oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
                 .filter {
@@ -92,7 +96,7 @@ class ValidationTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
-        oddPair.api.setNodesTo(invalidNode)
+        oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
                 .first { it.executorBefore.id != oddPair.node.addresss }

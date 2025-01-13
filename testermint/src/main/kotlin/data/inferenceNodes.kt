@@ -3,7 +3,9 @@ package com.productscience.data
 data class NodeResponse(val node:InferenceNode, val state: NodeState)
 
 data class InferenceNode(
-    val url: String,
+    val host: String,
+    val inferencePort: Int,
+    val pocPort: Int,
     val models: List<String>,
     val id: String,
     val maxConcurrent: Int

@@ -64,3 +64,16 @@ build-docker:
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
 	@docker push gcr.io/decentralized-ai/api
+
+build-v2-test:
+	$(eval PLATFORM=linux/amd64)
+	$(DOCKER_BUILD)
+	@echo "--> clearing out ../public-html/v2/dapi"
+	@rm -rf ../public-html/v2/dapi/*
+	@mkdir -p ../public-html/v2/dapi
+	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
+	@cp ./build/dapi ../public-html/v2/dapi/decentralized-api
+	@echo "--> zipping decentralized-api binary"
+	@zip -j ../public-html/v2/dapi/decentralized-api.zip ../public-html/v2/dapi/decentralized-api
+	@echo "--> generating shasum for decentralized-api.zip"
+	@shasum -a 256 ../public-html/v2/dapi/decentralized-api.zip
