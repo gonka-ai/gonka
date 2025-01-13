@@ -51,6 +51,7 @@ func initRootCmd(
 		SignatureCommands(),
 		CreateClientCommand(),
 		DownloadGenesisCommand(),
+		SetSeedCommand(),
 	)
 }
 
