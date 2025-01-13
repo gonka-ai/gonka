@@ -21,4 +21,16 @@ When iterating over a Go map, the order is **indeterminate**. It may be the same
 It _should_ be pretty obvious when this happens, because you _just_ made some code changes and ran tests, and saw the failure. Then you smack your forehead, say "Oh yeah, don't use maps", and fix the issue.
 
 **However**, if you're not sure, you can debug the state:
-1. Exec into a container that's 
+1. Note the block height of the failure.
+1. Exec into a container that's running the node.
+2. Run `inferenced export --height <block height>`.
+3. The state will be in json on stdout.
+4. Repeat this same process with other nodes
+
+Now you can compare the json (after formatting it) and you'll see where the states of each node differed. That should be enough to zero in on the issue.
+
+## Fixes
+1. **Don't use maps**. Use slices or arrays. If we *need* maps, we'll need to implement a deterministic map.
+2. **Don't use randomness** in state calculations. If you need randomness, it should be calculated outside of the state calculation. Passing it in from the API when creating a message, for example.
+3. **Don't use map iteration to generate lists or maps**. If you need to do this, you'll need to implement a deterministic map, or you'll need to iterate on a sorted list of keys.
+
