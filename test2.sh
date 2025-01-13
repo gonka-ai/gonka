@@ -1,55 +1,22 @@
-set -e
-
 docker compose -p genesis down
 docker compose -p join1 down
 docker compose -p join2 down
+
+set -e
 
 make build-docker
 
 export PORT=8080
 export KEY_NAME=genesis
-NODE_CONFIG=node_payload.json
+exporr NODE_CONFIG=node_payload_2.json
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
 export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
+
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 20
-
-# Add inference nodes
-curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
-
-echo "Adding self as participant"
-# Run the docker exec command and capture the validator_output
-validator_output=$(docker exec "$KEY_NAME-node" inferenced tendermint show-validator)
-
-# Use jq to parse the JSON and extract the "key" value
-validator_key=$(echo $validator_output | jq -r '.key')
-
-echo "validator_key=$validator_key"
-
-unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
-
-# Prepare the data structure for the final POST
-post_data=$(jq -n \
-  --arg url "http://$KEY_NAME-api:8080" \
-  --argjson models "$unique_models" \
-  --arg validator_key "$validator_key" \
-  '{
-    url: $url,
-    models: $models,
-    validator_key: $validator_key,
-  }')
-
-echo "POST request sent to $ADD_ENDPOINT with the following data:"
-echo "$post_data"
-
-# Make the final POST request to the genesis endpoint
-curl -X POST "http://0.0.0.0:8080/v1/participants" -H "Content-Type: application/json" -d "$post_data"
-
-
-sleep 10
 
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG
