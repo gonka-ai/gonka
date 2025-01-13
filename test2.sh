@@ -18,11 +18,10 @@ export IS_GENESIS=true
 
 echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
-sleep 30
+sleep 40
 
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG
-export ADD_ENDPOINT="http://0.0.0.0:$PORT"
 export PUBLIC_IP="join1-api"
 export PORT=8081
 export WIREMOCK_PORT=8091

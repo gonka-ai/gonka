@@ -5,7 +5,6 @@ services:
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
-      - SEEDS=${SEEDS}
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_PORT=${SEED_NODE_P2P_PORT}
       - KEY_NAME=${KEY_NAME}

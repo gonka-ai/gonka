@@ -12,10 +12,13 @@ if [ -z "$KEYRING_BACKEND" ]; then
   KEYRING_BACKEND="test"
 fi
 
-if [ -z "$SEEDS" ]; then
-  echo "Seeds not specified, SEEDS are required."
-  # This needs to be set BEFORE the build to the actual seed values for the chain we want
-  # the dockerfile to point to
+if [ -z "$SEED_NODE_RPC_URL" ]; then
+  echo "SEED_NODE_RPC_URL env var is required"
+  exit 1
+fi
+
+if [ -z "$SEED_NODE_P2P_PORT" ]; then
+  echo "SEED_NODE_P2P_PORT env var is required"
   exit 1
 fi
 
