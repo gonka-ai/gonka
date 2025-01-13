@@ -33,7 +33,7 @@ func main() {
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"cosmos",
-		5,
+		10,
 		5*time.Second,
 		config.GetConfig(),
 	)

@@ -43,11 +43,6 @@ if [ -z "$SEED_IP" ]; then
   exit 1
 fi
 
-if [ -z "$EXTERNAL_SEED_IP" ]; then
-  echo "EXTERNAL_SEED_IP is not set, using SEED_IP"
-  export EXTERNAL_SEED_IP="$SEED_IP"
-fi
-
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1
@@ -58,13 +53,6 @@ if [ -z "$PUBLIC_IP" ]; then
   exit 1
 fi
 
-SEED_STATUS_URL="http://$EXTERNAL_SEED_IP:26657/status"
-echo "SEED_STATUS_URL=$SEED_STATUS_URL"
-SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
-echo "SEED_ID=$SEED_ID"
-export SEEDS="$SEED_ID@$SEED_IP:26656"
-echo "SEEDS=$SEEDS"
-
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
 
@@ -74,7 +62,6 @@ else
   project_name="inferenced"
 fi
 
-export SEED_NODE_RPC_URL="http://$SEED_IP:26657"
 
 echo "project_name=$project_name"
 
