@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/spf13/cobra"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 )
 
 type statusResponse struct {
@@ -24,14 +24,15 @@ type nodeInfo struct {
 
 func SetSeedCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set-seeds [node-host] [node-p2p-port]",
+		Use:   "set-seeds [config-file-path] [node-host] [node-p2p-port]",
 		Short: "Set seeds to the node address. RIGHT NOW ONLY SUPPORTS SINGLE NODE ADDRESS!",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			nodeRpcUrl := args[0]
-			nodeP2PPort := args[1]
+			configFilePath := args[0]
+			nodeRpcUrl := args[1]
+			nodeP2PPort := args[2]
 
-			err := setSeeds(nodeRpcUrl, nodeP2PPort)
+			err := setSeeds(configFilePath, nodeRpcUrl, nodeP2PPort)
 			if err != nil {
 				return fmt.Errorf("Failed to set seed: %w", err)
 			}
@@ -43,7 +44,7 @@ func SetSeedCommand() *cobra.Command {
 	return cmd
 }
 
-func setSeeds(nodeRpcUrl string, nodeP2PPort string) error {
+func setSeeds(configFilePath string, nodeRpcUrl string, nodeP2PPort string) error {
 	statusUrl := fmt.Sprintf("%s/status", nodeRpcUrl)
 
 	resp, err := http.Get(statusUrl)
@@ -70,9 +71,12 @@ func setSeeds(nodeRpcUrl string, nodeP2PPort string) error {
 
 	seedString := fmt.Sprintf("%s@%s:%s", genResp.Result.NodeInfo.ID, seedHostAndPort.Host, nodeP2PPort)
 
-	fmt.Printf("Seed string = %s", seedString)
+	fmt.Printf("Seed string = %s\n", seedString)
 
-	listCwd()
+	fmt.Printf("Updating config. configFilePaht = %s\n", configFilePath)
+	if err := updateSeeds(seedString, configFilePath); err != nil {
+		return fmt.Errorf("failed to update config with the a new seed string: %w", err)
+	}
 
 	return nil
 }
@@ -109,25 +113,27 @@ func parseURL(rawURL string) (*urlParseResult, error) {
 	}, nil
 }
 
-func listCwd() {
-	cwd, err := os.Getwd()
+// Config path: /root/.inference/
+func updateSeeds(seeString, configPath string) error {
+	// Read the entire config file into memory
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Fatalf("Failed to get current working directory: %v", err)
-	}
-	fmt.Printf("Current Working Directory: %s\n", cwd)
-
-	// List the contents of the current working directory
-	contents, err := os.ReadDir(cwd)
-	if err != nil {
-		log.Fatalf("Failed to read directory contents: %v", err)
+		return fmt.Errorf("error reading file %s: %w", configPath, err)
 	}
 
-	fmt.Println("Contents:")
-	for _, entry := range contents {
-		if entry.IsDir() {
-			fmt.Printf("[DIR]  %s\n", entry.Name())
-		} else {
-			fmt.Printf("[FILE] %s\n", entry.Name())
-		}
+	// Compile a regex that looks for a line starting with:
+	// seeds = "anything"
+	// Using (?m) to enable multiline matching of ^ and $
+	re := regexp.MustCompile(`(?m)^seeds\s*=\s*".*"$`)
+
+	// Replace the entire line with the new seeds value
+	replaced := re.ReplaceAllString(string(data), fmt.Sprintf(`seeds = "%s"`, seeString))
+
+	// Write the updated content back to the file
+	err = os.WriteFile(configPath, []byte(replaced), 0644)
+	if err != nil {
+		return fmt.Errorf("error writing file %s: %w", configPath, err)
 	}
+
+	return nil
 }

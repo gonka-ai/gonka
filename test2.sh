@@ -16,8 +16,9 @@ export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 export IS_GENESIS=true
 
+echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
-sleep 20
+sleep 30
 
 export KEY_NAME=join1
 export NODE_CONFIG=$NODE_CONFIG
