@@ -23,7 +23,7 @@ services:
       - "${PORT}:8080"
     environment:
       - KEY_NAME=${KEY_NAME}
-      - NODE_HOST=chain-node
+      - NODE_HOST=${KEY_NAME}-node
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
       - DAPI_API__CHAIN_NODE__IS_GENESIS=true
