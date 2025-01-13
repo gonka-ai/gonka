@@ -38,11 +38,6 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$SEED_IP" ]; then
-  echo "SEED_IP is not set"
-  exit 1
-fi
-
 if [ -z "$PORT" ]; then
   echo "PORT is not set"
   exit 1

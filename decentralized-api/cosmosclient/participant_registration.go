@@ -193,6 +193,8 @@ func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	slog.Info("Sending request to seed node", "url", requestUrl)
+
 	// Send the request
 	client := &http.Client{}
 	resp, err := client.Do(req)
