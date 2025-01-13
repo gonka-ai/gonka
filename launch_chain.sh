@@ -59,6 +59,7 @@ if [ -z "$PUBLIC_IP" ]; then
 fi
 
 SEED_STATUS_URL="http://$EXTERNAL_SEED_IP:26657/status"
+echo "SEED_STATUS_URL=$SEED_STATUS_URL"
 SEED_ID=$(curl -s "$SEED_STATUS_URL" | jq -r '.result.node_info.id')
 echo "SEED_ID=$SEED_ID"
 export SEEDS="$SEED_ID@$SEED_IP:26656"
@@ -73,7 +74,7 @@ else
   project_name="inferenced"
 fi
 
-export DOWNLOAD_GENESIS_NODE_URL="http://$SEED_IP:26657"
+export SEED_NODE_RPC_URL="http://$SEED_IP:26657"
 
 echo "project_name=$project_name"
 

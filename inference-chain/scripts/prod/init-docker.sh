@@ -45,8 +45,12 @@ $APP_NAME init \
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
+
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
+
+$APP_NAME set-seeds "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_PORT"
+
 sed -Ei "s/^seeds = .*$/seeds = \"$SEEDS\"/g" \
   $STATE_DIR/config/config.toml
 
@@ -58,7 +62,7 @@ $APP_NAME keys \
 # Need to join network? Or is that solely from the compose file?
 
 GENESIS_FILE="./.inference/genesis.json"
-$APP_NAME download-genesis "$DOWNLOAD_GENESIS_NODE_URL" "$GENESIS_FILE"
+$APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
 
 cat $GENESIS_FILE
 

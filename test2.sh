@@ -28,6 +28,8 @@ export WIREMOCK_PORT=8091
 export SEED_IP="genesis-node"
 export EXTERNAL_SEED_IP="0.0.0.0"
 export SEED_API_URL="http://$SEED_IP:8080"
+export SEED_NODE_RPC_URL="http://$SEED_IP:26657"
+export SEED_NODE_P2P_PORT=26656
 export IS_GENESIS=false
 ./launch_chain.sh local
 
