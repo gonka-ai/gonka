@@ -242,7 +242,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
 		go func() {
 			ChangeCurrentSeed(configManager)
-			RequestMoney(&transactionRecorder)
+			RequestMoney(&transactionRecorder, configManager)
 		}()
 	}
 }
