@@ -5,10 +5,10 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmosclient "decentralized-api/cosmosclient"
-	"log/slog"
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -42,12 +42,12 @@ func main() {
 	}
 
 	nodeBroker := broker.NewBroker()
-	nodes := config.Nodes
+	nodes := config.GetConfig().Nodes
 	for _, node := range nodes {
 		loadNodeToBroker(nodeBroker, &node)
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, &config, nodeBroker); err != nil {
+	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config.GetConfig(), nodeBroker); err != nil {
 		slog.Error("Failed to register participant", "error", err)
 		return
 	}

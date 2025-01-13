@@ -26,7 +26,10 @@ export PORT=8081
 export WIREMOCK_PORT=8091
 export SEED_IP="genesis-node"
 export EXTERNAL_SEED_IP="0.0.0.0"
+export SEED_API_URL="http://$SEED_IP:8080"
+export IS_GENESIS=false
 ./launch_chain.sh local
+
 export KEY_NAME=join2
 export PORT=8082
 export WIREMOCK_PORT=8092
