@@ -20,7 +20,7 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
-      - PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - PORT=${PORT}
     ports:
       - "${PORT}:8080"

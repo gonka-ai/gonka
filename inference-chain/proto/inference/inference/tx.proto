@@ -158,8 +158,9 @@ message MsgSubmitPocBatch {
   option (cosmos.msg.v1.signer) = "creator";
            string creator                  = 1;
            int64  pocStageStartBlockHeight = 2;
-  repeated int64  nonces                   = 3;
-  repeated double dist                     = 4;
+           string batchId                  = 3;
+  repeated int64  nonces                   = 4;
+  repeated double dist                     = 5;
 }
 
 message MsgSubmitPocBatchResponse {}

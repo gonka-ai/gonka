@@ -5,6 +5,7 @@ import (
 	"decentralized-api/poc"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
@@ -56,6 +57,7 @@ func submitPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.Respons
 		PocStageStartBlockHeight: body.BlockHeight,
 		Nonces:                   body.Nonces,
 		Dist:                     body.Dist,
+		BatchId:                  uuid.New().String(),
 	}
 	err := recorder.SubmitPocBatch(msg)
 	if err != nil {

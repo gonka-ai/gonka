@@ -6,9 +6,17 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  compose_file="docker-compose-local.yml"
+  if [ "$KEY_NAME" == "genesis" ]; then
+    compose_file="docker-compose-local-genesis.yml"
+  else
+    compose_file="docker-compose-local.yml"
+  fi
 elif [ "$mode" == "cloud" ]; then
-  compose_file="docker-compose-cloud-join.yml"
+    if [ "$KEY_NAME" == "genesis" ]; then
+      compose_file="docker-compose-cloud-genesis.yml"
+    else
+      compose_file="docker-compose-cloud-join.yml"
+    fi
 else
   echo "Unknown mode: $mode"
   exit 1
@@ -43,9 +51,13 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
+if [ -z "$WIREMOCK_PORT" ]; then
+  WIREMOCK_PORT=$((PORT + 10))
+  echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"
+fi
+
 if [ -z "$PUBLIC_IP" ]; then
-  echo "PUBLIC_IP is not set"
-  exit 1
+  PUBLIC_IP="${KEY_NAME}-api"
 fi
 
 if [ "$mode" == "local" ]; then
@@ -57,7 +69,8 @@ else
   project_name="inferenced"
 fi
 
+  echo "project_name=$project_name"
+fi
 
-echo "project_name=$project_name"
-
+#!!!
 docker compose -p "$project_name" -f "$compose_file" up -d

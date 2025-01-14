@@ -8,7 +8,7 @@ make build-docker
 
 export PORT=8080
 export KEY_NAME=genesis
-export NODE_CONFIG=node_payload_2.json
+export NODE_CONFIG=node_payload.json
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
@@ -33,8 +33,6 @@ export IS_GENESIS=false
 
 export KEY_NAME=join2
 export PORT=8082
-export WIREMOCK_PORT=8092
-export PUBLIC_IP="join2-api"
 ./launch_chain.sh local
 
 
