@@ -69,8 +69,7 @@ else
   project_name="inferenced"
 fi
 
-  echo "project_name=$project_name"
-fi
+echo "project_name=$project_name"
 
 #!!!
 docker compose -p "$project_name" -f "$compose_file" up -d
