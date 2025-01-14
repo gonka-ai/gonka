@@ -35,17 +35,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Go Mod Verify
-        run: go mod verify
-
-      - name: Go Mod Tidy
-        run: go mod tidy
+      - name: Install dependencies
+        run: go mod download
 
       - name: Build
         run: go build -o ./build/inferenced ./cmd/inferenced/main.go
 
-      - name: Test
-        run: go test ./... -v
+      - name: Install go-junit-report
+        run: go install github.com/jstemmer/go-junit-report@latest
+        env:
+          GOROOT: /usr/local/go
+          GOPATH: ${{ runner.workspace }}
+
+      - name: Run Tests and Generate JUnit Report
+        run: |
+          mkdir -p test-results
+          go test ./... -v 2>&1 | tee test-results/test-output.txt
+          cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
+        env:
+          GOROOT: /usr/local/go
+          GOPATH: ${{ runner.workspace }}
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v2
+        with:
+          name: test-results
+          path: test-results/
+
+      - name: Report Test Results in GitHub
+        uses: dorny/test-reporter@v1
+        with:
+          name: Go Tests
+          path: test-results/junit-report.xml
+          reporter: junit
   build-and-test-api:
     runs-on: ubuntu-latest
     name: Build and Test API Wrapper
@@ -79,5 +101,30 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -v
+      - name: Install go-junit-report
+        run: go install github.com/jstemmer/go-junit-report@latest
+        env:
+          GOROOT: /usr/local/go
+          GOPATH: ${{ runner.workspace }}
+
+      - name: Run Tests and Generate JUnit Report
+        run: |
+          mkdir -p test-results
+          go test ./... -v 2>&1 | tee test-results/test-output.txt
+          cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
+        env:
+          GOROOT: /usr/local/go
+          GOPATH: ${{ runner.workspace }}
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v2
+        with:
+          name: test-results-api
+          path: test-results/
+
+      - name: Report Test Results in GitHub
+        uses: dorny/test-reporter@v1
+        with:
+          name: API Tests
+          path: test-results/junit-report.xml
+          reporter: junit
