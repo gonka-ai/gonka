@@ -20,10 +20,9 @@ services:
       - node
     environment:
       - KEY_NAME=${KEY_NAME}
-      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_CHAIN_NODE__IS_GENESIS=true
-      - PORT=${PORT}
       - NODE_CONFIG_PATH=/root/node_config.json
     ports:
       - "${PORT}:8080"
