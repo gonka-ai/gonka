@@ -45,21 +45,19 @@ jobs:
         run: go install github.com/jstemmer/go-junit-report/v2@latest
 
       - name: Run Tests and Generate JUnit Report
-        run: |
-          mkdir -p test-results
-          go test ./... -v 2>&1 | go-junit-report -set-exit-code > test-results/junit-report.xml
+        run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
         with:
-          name: test-results
-          path: test-results/
+          name: junit-report.xml
+          path: junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
           name: Go Tests
-          path: test-results/junit-report.xml
+          path: junit-report.xml
           reporter: java-junit
   build-and-test-api:
     runs-on: ubuntu-latest
@@ -99,18 +97,17 @@ jobs:
 
       - name: Run Tests and Generate JUnit Report
         run: |
-          mkdir -p test-results
-          go test ./... -v 2>&1 | go-junit-report -set-exit-code > test-results/junit-report.xml
+          go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
         with:
-          name: test-results-api
-          path: test-results/
+          name: junit-report.xml
+          path: junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
           name: API Tests
-          path: test-results/junit-report.xml
+          path: junit-report.xml
           reporter: java-junit
