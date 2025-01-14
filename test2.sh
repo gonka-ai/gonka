@@ -17,6 +17,9 @@ export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 
+mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
+cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
+
 echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 40

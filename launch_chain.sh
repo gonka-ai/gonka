@@ -63,5 +63,9 @@ fi
 
 echo "project_name=$project_name"
 
+# Set up wiremock
+mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
+cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
+
 #!!!
 docker compose -p "$project_name" -f "$compose_file" up -d
