@@ -61,6 +61,11 @@ func (c *CaptureWriterProvider) GetWriter() apiconfig.WriteCloser {
 }
 
 func TestConfigRoundTrip(t *testing.T) {
+	os.Unsetenv("DAPI_API__PORT")
+	os.Unsetenv("KEY_NAME")
+	os.Unsetenv("DAPI_CHAIN_NODE__URL")
+	os.Unsetenv("DAPI_API__POC_CALLBACK_URL")
+	os.Unsetenv("DAPI_API__PUBLIC_URL")
 	writeCapture := &CaptureWriterProvider{}
 	testManager := &apiconfig.ConfigManager{
 		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
@@ -78,6 +83,7 @@ func TestConfigRoundTrip(t *testing.T) {
 		KoanProvider: rawbytes.Provider([]byte(writeCapture.CapturedData)),
 	}
 	err = testManager2.Load()
+
 	require.NoError(t, err)
 	require.Equal(t, 8080, testManager2.GetConfig().Api.Port)
 	require.Equal(t, "http://join1-node:26657", testManager2.GetConfig().ChainNode.Url)

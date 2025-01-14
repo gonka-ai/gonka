@@ -49,9 +49,6 @@ jobs:
           mkdir -p test-results
           go test ./... -v 2>&1 | tee test-results/test-output.txt
           cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
-        env:
-          GOROOT: /usr/local/go
-          GOPATH: ${{ runner.workspace }}
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
@@ -64,7 +61,7 @@ jobs:
         with:
           name: Go Tests
           path: test-results/junit-report.xml
-          reporter: junit
+          reporter: java-junit
   build-and-test-api:
     runs-on: ubuntu-latest
     name: Build and Test API Wrapper
@@ -106,9 +103,6 @@ jobs:
           mkdir -p test-results
           go test ./... -v 2>&1 | tee test-results/test-output.txt
           cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
-        env:
-          GOROOT: /usr/local/go
-          GOPATH: ${{ runner.workspace }}
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
@@ -121,4 +115,4 @@ jobs:
         with:
           name: API Tests
           path: test-results/junit-report.xml
-          reporter: junit
+          reporter: java-junit
