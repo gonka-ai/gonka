@@ -42,13 +42,12 @@ jobs:
         run: go build -o ./build/inferenced ./cmd/inferenced/main.go
 
       - name: Install go-junit-report
-        run: go install github.com/jstemmer/go-junit-report@latest
+        run: go install github.com/jstemmer/go-junit-report/v2@latest
 
       - name: Run Tests and Generate JUnit Report
         run: |
           mkdir -p test-results
-          go test ./... -v 2>&1 | tee test-results/test-output.txt
-          cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
+          go test ./... -v 2>&1 | go-junit-report -set-exit-code > test-results/junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
@@ -101,8 +100,7 @@ jobs:
       - name: Run Tests and Generate JUnit Report
         run: |
           mkdir -p test-results
-          go test ./... -v 2>&1 | tee test-results/test-output.txt
-          cat test-results/test-output.txt | go-junit-report > test-results/junit-report.xml
+          go test ./... -v 2>&1 | go-junit-report -set-exit-code > test-results/junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v3
