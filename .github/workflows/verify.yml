@@ -96,15 +96,17 @@ jobs:
         run: go install github.com/jstemmer/go-junit-report@latest
 
       - name: Run Tests and Generate JUnit Report
-        run: |
-          go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
+        run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
-      - name: cat junit-report.xml
-        run: cat junit-report.xml
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: decentralized-api/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
-          name: API Tests
-          path: inference-chain/junit-report.xml
+          name: Go Tests
+          path: decentralized-api/junit-report.xml
           reporter: java-junit
