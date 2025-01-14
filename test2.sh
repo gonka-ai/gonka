@@ -10,10 +10,9 @@ export PORT=8080
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 # BASE_DIR="prod-local/${KEY_NAME}"
-export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
-export PUBLIC_URL="http://$PUBLIC_IP:$PORT"
-export POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
+export PUBLIC_URL="http://${KEY_NAME}-api:$PORT"
+export POC_CALLBACK_URL="$PUBLIC_URL"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 
