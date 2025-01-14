@@ -99,11 +99,16 @@ jobs:
         run: |
           go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
-      - name: Publish Test Results
+      - name: Publish All Workspace Artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: junit-report.xml
-          path: ./inference-chain/junit-report.xml
+          name: all-artifacts
+          path: ./ # Uploads all files in the current working directory
+#          - name: Publish Test Results
+#            uses: actions/upload-artifact@v3
+#            with:
+#              name: junit-report.xml
+#              path: ./inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
