@@ -111,7 +111,7 @@ func StartInferenceServerWrapper(
 		writer.Write([]byte("{\"status\": \"ok\"}"))
 	})
 
-	addr := ":8080"
+	addr := fmt.Sprintf(":%d", configManager.GetConfig().Api.Port)
 
 	slog.Info("Starting the server", "address", addr)
 	loggedMux := LoggingMiddleware(mux)
