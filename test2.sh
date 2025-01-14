@@ -15,6 +15,7 @@ rm -r "prod-local" || true
 export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
 export DAPI_API__POC_CALLBACK_URL="$DAPI_API__PUBLIC_URL"
 export IS_GENESIS=true
+export WIREMOCK_PORT=8090
 
 echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
@@ -33,8 +34,8 @@ export IS_GENESIS=false
 
 export KEY_NAME=join2
 export PORT=8082
+export WIREMOCK_PORT=8092
 ./launch_chain.sh local
-
 
 if [ "$(whoami)" = "johnlong" ]; then
   curl -X POST "https://maker.ifttt.com/trigger/pushover_alert/with/key/bSVa981BFD2BtZZhn3DnTe?value1=TestRead&value2=Inference-ignite"
