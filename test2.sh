@@ -8,7 +8,7 @@ make build-docker
 
 export PORT=8080
 export KEY_NAME=genesis
-export NODE_CONFIG=node_payload.json
+export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 # BASE_DIR="prod-local/${KEY_NAME}"
 export PUBLIC_IP="${KEY_NAME}-api"
 rm -r "prod-local" || true
@@ -22,7 +22,7 @@ docker compose -p genesis -f docker-compose-local-genesis.yml up -d
 sleep 40
 
 export KEY_NAME=join1
-export NODE_CONFIG=$NODE_CONFIG
+export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
 export PORT=8081
 export WIREMOCK_PORT=8091
@@ -33,6 +33,7 @@ export IS_GENESIS=false
 ./launch_chain.sh local
 
 export KEY_NAME=join2
+export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PORT=8082
 export WIREMOCK_PORT=8092
 ./launch_chain.sh local
