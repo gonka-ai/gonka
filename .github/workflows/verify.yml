@@ -51,13 +51,13 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: junit-report.xml
-          path: junit-report.xml
+          path: ./inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
           name: Go Tests
-          path: junit-report.xml
+          path: ./inference-chain/junit-report.xml
           reporter: java-junit
   build-and-test-api:
     runs-on: ubuntu-latest
@@ -103,11 +103,11 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: junit-report.xml
-          path: junit-report.xml
+          path: ./inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
           name: API Tests
-          path: junit-report.xml
+          path: ./inference-chain/junit-report.xml
           reporter: java-junit
