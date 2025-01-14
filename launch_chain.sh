@@ -6,17 +6,9 @@ if [ -z "$mode" ]; then
 fi
 
 if [ "$mode" == "local" ]; then
-  if [ "$KEY_NAME" == "genesis" ]; then
-    compose_file="docker-compose-local-genesis.yml"
-  else
-    compose_file="docker-compose-local.yml"
-  fi
+  compose_file="docker-compose-local.yml"
 elif [ "$mode" == "cloud" ]; then
-    if [ "$KEY_NAME" == "genesis" ]; then
-      compose_file="docker-compose-cloud-genesis.yml"
-    else
-      compose_file="docker-compose-cloud-join.yml"
-    fi
+    compose_file="docker-compose-cloud-join.yml"
 else
   echo "Unknown mode: $mode"
   exit 1
@@ -32,7 +24,7 @@ fi
 # Much easier to manage the environment variables in a file
 # Check if /config.env exists, then source it
 if [ -f config.env ]; then
-  echo "Souring config.env file..."
+  echo "Sourcing config.env file..."
   source config.env
 fi
 
