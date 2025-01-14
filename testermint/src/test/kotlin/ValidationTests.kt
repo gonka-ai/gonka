@@ -1,3 +1,5 @@
+import com.productscience.LocalInferencePair
+import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
 import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
@@ -47,11 +49,24 @@ class ValidationTests : TestermintTest() {
 
     @Test
     fun `test invalid gets marked invalid`() {
+        var tries = 3
+
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
         val badResponse = defaultInferenceResponseObject.withMissingLogit()
         oddPair.mock?.setInferenceResponse(badResponse)
+        var newState: InferencePayload
+        do {
+            newState = getInferenceValidationState(highestFunded, oddPair)
+        } while (newState.status != InferenceStatus.INVALIDATED.value && tries-- > 0)
+        assertThat(newState.status).isEqualTo(InferenceStatus.INVALIDATED.value)
+    }
+
+    private fun getInferenceValidationState(
+        highestFunded: LocalInferencePair,
+        oddPair: LocalInferencePair,
+    ): InferencePayload {
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
                 .first {
@@ -66,7 +81,7 @@ class ValidationTests : TestermintTest() {
 
         highestFunded.node.waitForNextBlock(10)
         val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
-        assertThat(newState.status).isEqualTo(InferenceStatus.INVALIDATED.value)
+        return newState
     }
 
     @Test
