@@ -25,7 +25,6 @@ services:
       - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
-      - DAPI_CHAIN_NODE__IS_GENESIS=${IS_GENESIS}
       - NODE_CONFIG_PATH=/root/node_config.json
     networks:
       - chain-public
