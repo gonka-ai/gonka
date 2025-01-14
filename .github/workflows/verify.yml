@@ -43,9 +43,6 @@ jobs:
 
       - name: Install go-junit-report
         run: go install github.com/jstemmer/go-junit-report@latest
-        env:
-          GOROOT: /usr/local/go
-          GOPATH: ${{ runner.workspace }}
 
       - name: Run Tests and Generate JUnit Report
         run: |
@@ -103,9 +100,6 @@ jobs:
 
       - name: Install go-junit-report
         run: go install github.com/jstemmer/go-junit-report@latest
-        env:
-          GOROOT: /usr/local/go
-          GOPATH: ${{ runner.workspace }}
 
       - name: Run Tests and Generate JUnit Report
         run: |
