@@ -48,10 +48,6 @@ if [ -z "$WIREMOCK_PORT" ]; then
   echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"
 fi
 
-if [ -z "$PUBLIC_IP" ]; then
-  PUBLIC_IP="${KEY_NAME}-api"
-fi
-
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
 
