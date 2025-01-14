@@ -6,7 +6,7 @@ services:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
-      - SEED_NODE_P2P_PORT=${SEED_NODE_P2P_PORT}
+      - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
       - KEY_NAME=${KEY_NAME}
     networks:
       - chain-public
@@ -22,8 +22,8 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
-      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
-      - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
+      - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
       - NODE_CONFIG_PATH=/root/node_config.json
     networks:

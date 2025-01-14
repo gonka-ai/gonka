@@ -24,15 +24,15 @@ type nodeInfo struct {
 
 func SetSeedCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set-seeds [config-file-path] [node-host] [node-p2p-port]",
+		Use:   "set-seeds [config-file-path] [node-rpc-url] [node-p2p-url]",
 		Short: "Set seeds to the node address. RIGHT NOW ONLY SUPPORTS SINGLE NODE ADDRESS!",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFilePath := args[0]
 			nodeRpcUrl := args[1]
-			nodeP2PPort := args[2]
+			nodeP2PUrl := args[2]
 
-			err := setSeeds(configFilePath, nodeRpcUrl, nodeP2PPort)
+			err := setSeeds(configFilePath, nodeRpcUrl, nodeP2PUrl)
 			if err != nil {
 				return fmt.Errorf("Failed to set seed: %w", err)
 			}
@@ -44,7 +44,7 @@ func SetSeedCommand() *cobra.Command {
 	return cmd
 }
 
-func setSeeds(configFilePath string, nodeRpcUrl string, nodeP2PPort string) error {
+func setSeeds(configFilePath string, nodeRpcUrl string, nodeP2PUrl string) error {
 	statusUrl := fmt.Sprintf("%s/status", nodeRpcUrl)
 
 	resp, err := http.Get(statusUrl)
@@ -64,12 +64,12 @@ func setSeeds(configFilePath string, nodeRpcUrl string, nodeP2PPort string) erro
 
 	fmt.Printf("Performed status request to seed node. Node id: %s\n", genResp.Result.NodeInfo.ID)
 
-	seedHostAndPort, err := parseURL(nodeRpcUrl)
+	p2pHostAndPort, err := parseURL(nodeP2PUrl)
 	if err != nil {
 		return fmt.Errorf("failed to parse seed URL: %w", err)
 	}
 
-	seedString := fmt.Sprintf("%s@%s:%s", genResp.Result.NodeInfo.ID, seedHostAndPort.Host, nodeP2PPort)
+	seedString := fmt.Sprintf("%s@%s:%s", genResp.Result.NodeInfo.ID, p2pHostAndPort.Host, p2pHostAndPort.Port)
 
 	fmt.Printf("Seed string = %s\n", seedString)
 

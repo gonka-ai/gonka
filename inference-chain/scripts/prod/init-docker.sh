@@ -17,8 +17,8 @@ if [ -z "$SEED_NODE_RPC_URL" ]; then
   exit 1
 fi
 
-if [ -z "$SEED_NODE_P2P_PORT" ]; then
-  echo "SEED_NODE_P2P_PORT env var is required"
+if [ -z "$SEED_NODE_P2P_URL" ]; then
+  echo "SEED_NODE_P2P_URL env var is required"
   exit 1
 fi
 
@@ -52,7 +52,7 @@ $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 
-$APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_PORT"
+$APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
 
 echo "Grepping seeds =:"
 grep "seeds =" $STATE_DIR/config/config.toml
