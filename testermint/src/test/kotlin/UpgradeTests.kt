@@ -12,9 +12,9 @@ class UpgradeTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val height = highestFunded.getCurrentBlockHeight()
-        val checksum = "2067b6d330ef1d1d0037a769ebec146788a2e006c4c88d709ff0fbec6f13daef"
-        val path = getBinaryPath("v2/inferenced.zip", checksum)
-        val apiCheckshum = "652bb61e49003238f6af0b26cc41b93c38a9595e9e752e24097b9be3d7095a3a"
+        val checksum = "32620280f4b6abe013e97a521ae48f1c6915c78a51cc6661c51c429951fe6032"
+        val path = getBinaryPath("v2/inferenced/inferenced.zip", checksum)
+        val apiCheckshum = "06ba4bb537ce5e139edbd4ffdac5d68acc5e5bc1da89b4989f12c5fe1919118b"
         val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
         val response = highestFunded.node.submitUpgradeProposal(
             title = "v0.0.2test",

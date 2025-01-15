@@ -50,13 +50,13 @@ jobs:
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
         with:
-          name: junit-report
+          name: node-junit-report
           path: inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
-          name: Go Tests
+          name: Inferenced Tests
           path: inference-chain/junit-report.xml
           reporter: java-junit
   build-and-test-api:
@@ -101,12 +101,12 @@ jobs:
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
         with:
-          name: junit-report
+          name: api-junit-report
           path: decentralized-api/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
         with:
-          name: Go Tests
+          name: Decentralized-API Tests
           path: decentralized-api/junit-report.xml
           reporter: java-junit

@@ -34,6 +34,23 @@ define DOCKER_BUILD
 		-t $(DOCKER_TAG)
 endef
 
+define DOCKER_BUILD_OUTPUT
+	@echo "--> building decentralized-api docker image"
+	@echo "    	platform: $(PLATFORM)"
+	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
+	@echo "    	GOOS: $(GOOS)"
+	@echo "    	GOARCH: $(GOARCH)"
+	@docker build \
+		--platform $(PLATFORM) \
+		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
+		-f $(DOCKER_FILE) \
+		--output type=local,dest=./output \
+		..
+endef
+
+
 all:
 	install
 
@@ -67,12 +84,15 @@ docker-push:
 
 build-v2-test:
 	$(eval PLATFORM=linux/amd64)
-	$(DOCKER_BUILD)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(DOCKER_BUILD_OUTPUT)
 	@echo "--> clearing out ../public-html/v2/dapi"
 	@rm -rf ../public-html/v2/dapi/*
 	@mkdir -p ../public-html/v2/dapi
 	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
-	@cp ./build/dapi ../public-html/v2/dapi/decentralized-api
+	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api
 	@echo "--> zipping decentralized-api binary"
 	@zip -j ../public-html/v2/dapi/decentralized-api.zip ../public-html/v2/dapi/decentralized-api
 	@echo "--> generating shasum for decentralized-api.zip"
