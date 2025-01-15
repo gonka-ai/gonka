@@ -82,7 +82,7 @@ docker-push:
 	@echo "--> pushing decentralized-api docker image"
 	@docker push gcr.io/decentralized-ai/api
 
-build-v2-test:
+build-for-upgrade:
 	$(eval PLATFORM=linux/amd64)
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)

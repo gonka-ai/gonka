@@ -78,7 +78,7 @@ clean-state:
 docker-push:
 	docker push gcr.io/decentralized-ai/inferenced
 
-build-v2-test:
+build-for-upgrade:
 	$(eval PLATFORM=linux/amd64)
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
