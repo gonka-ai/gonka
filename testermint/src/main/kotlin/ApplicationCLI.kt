@@ -11,6 +11,7 @@ import com.productscience.data.TxResponse
 import com.productscience.data.Validator
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
+import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
@@ -45,37 +46,45 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long) {
-        wrapLog("waitForMinimumBlock", false) {
-            Logger.info("Waiting for block height to reach {}", minBlockHeight)
+    fun waitForState(
+        check: (status: NodeInfoResponse) -> Boolean,
+        description: String,
+        staleTimeout: Duration = Duration.ofSeconds(20),
+    ) {
+        wrapLog("waitForState", false) {
+            Logger.info("Waiting for state: {}", description)
+            var timeout = Instant.now().plus(staleTimeout)
+            var previousState: NodeInfoResponse? = null
             while (true) {
                 val currentState = getStatus()
-                val currentBlock = currentState.syncInfo.latestBlockHeight
-                if (currentBlock >= minBlockHeight) {
-                    Logger.info("Block height reached {}", currentBlock)
+                if (check(currentState)) {
+                    Logger.info("State reached: $description")
                     break
                 }
-                Logger.debug("Current block height is {}, waiting...", currentBlock)
+                if (previousState != currentState) {
+                    timeout = Instant.now().plus(staleTimeout)
+                }
+                if (Instant.now().isAfter(timeout)) {
+                    Logger.error("State is stale, was identical for {}", staleTimeout)
+                    error("State is stale, was identical for $staleTimeout")
+                }
+                previousState = currentState
+                Logger.debug("Current block is {}, waiting...", currentState.syncInfo.latestBlockHeight)
                 Thread.sleep(1000)
             }
+        }
+    }
+
+    fun waitForMinimumBlock(minBlockHeight: Long) {
+        wrapLog("waitForMinimumBlock", false) {
+            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight }, "block height $minBlockHeight")
         }
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
         wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
-            val currentBlock = currentState.syncInfo.latestBlockHeight
-            Logger.info("Waiting for block {} after {}", blocksToWait, currentBlock)
-            while (true) {
-                val newState = getStatus()
-                val newBlock = newState.syncInfo.latestBlockHeight
-                if (newBlock >= currentBlock + blocksToWait) {
-                    Logger.info("Block height reached {}", newBlock)
-                    break
-                }
-                Logger.debug("Current block height is {}, waiting...", newBlock)
-                Thread.sleep(1000)
-            }
+            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
         }
     }
 
@@ -326,6 +335,8 @@ class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
         output.add(String(frame.payload).trim())
     }
 }
+
+val maxBlockWaitTime = Duration.ofSeconds(15)
 
 val timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z".toRegex()
 

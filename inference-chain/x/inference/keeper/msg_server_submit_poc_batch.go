@@ -34,6 +34,7 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 		ReceivedAtBlockHeight:    currentBlockHeight,
 		Nonces:                   msg.Nonces,
 		Dist:                     msg.Dist,
+		BatchId:                  msg.BatchId,
 	}
 
 	k.SetPocBatch(ctx, storedBatch)

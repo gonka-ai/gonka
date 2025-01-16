@@ -165,7 +165,6 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		log.Fatalf("error unmarshalling config: %v", err)
 	}
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
-		slog.Info("Setting config.ChainNode.AccountName to env var", "AccountName", keyName)
 		config.ChainNode.AccountName = keyName
 	}
 	return config, nil

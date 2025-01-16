@@ -19,6 +19,7 @@ class InferenceMock(port: Int, val name: String) {
         )
 
     fun setInferenceResponse(openAIResponse: OpenAIResponse) =
-        this.setInferenceResponse(com.productscience.gsonSnakeCase.toJson(openAIResponse))
+        this.setInferenceResponse(
+            gsonSnakeCase.toJson(openAIResponse))
 
 }
