@@ -1,9 +1,12 @@
 package apiconfig_test
 
 import (
+	"bytes"
 	"decentralized-api/apiconfig"
+	"fmt"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slog"
 	"os"
 	"testing"
 )
@@ -61,6 +64,11 @@ func (c *CaptureWriterProvider) GetWriter() apiconfig.WriteCloser {
 }
 
 func TestConfigRoundTrip(t *testing.T) {
+	os.Unsetenv("DAPI_API__PORT")
+	os.Unsetenv("KEY_NAME")
+	os.Unsetenv("DAPI_CHAIN_NODE__URL")
+	os.Unsetenv("DAPI_API__POC_CALLBACK_URL")
+	os.Unsetenv("DAPI_API__PUBLIC_URL")
 	writeCapture := &CaptureWriterProvider{}
 	testManager := &apiconfig.ConfigManager{
 		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
@@ -78,12 +86,75 @@ func TestConfigRoundTrip(t *testing.T) {
 		KoanProvider: rawbytes.Provider([]byte(writeCapture.CapturedData)),
 	}
 	err = testManager2.Load()
+
 	require.NoError(t, err)
 	require.Equal(t, 8080, testManager2.GetConfig().Api.Port)
 	require.Equal(t, "http://join1-node:26657", testManager2.GetConfig().ChainNode.Url)
 	require.Equal(t, "join1", testManager2.GetConfig().ChainNode.AccountName)
 	require.Equal(t, "test", testManager2.GetConfig().ChainNode.KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager2.GetConfig().ChainNode.KeyringDir)
+}
+
+func loadManager(t *testing.T, err error) error {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testYaml)),
+	}
+	os.Setenv("DAPI_API__PORT", "9000")
+	os.Setenv("DAPI_CHAIN_NODE__URL", "http://join1-node:26658")
+	os.Setenv("KEY_NAME", "join2")
+	defer func() {
+		// Clean up environment variables
+		os.Unsetenv("DAPI_API__PORT")
+		os.Unsetenv("DAPI_CHAIN_NODE__URL")
+		os.Unsetenv("KEY_NAME")
+	}()
+
+	err = testManager.Load()
+	require.NoError(t, err)
+	return err
+}
+
+// We cannot write anything to stdout when loading config or we break cosmovisor!
+func TestNoLoggingToStdout(t *testing.T) {
+	// Save the original stdout
+	originalStdout := os.Stdout
+	defer func() { os.Stdout = originalStdout }() // Restore it after the test
+
+	// Create a pipe to capture stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	// Buffer to capture log output
+	var buf bytes.Buffer
+
+	// Set up a logger to write to stdout
+	logger := slog.New(slog.NewTextHandler(w, nil)) // Logs go to `w` (stdout)
+	slog.SetDefault(logger)
+
+	// Load config with overrides
+	err = loadManager(t, err)
+
+	// Close the pipe and reset stdout
+	_ = w.Close()
+	os.Stdout = originalStdout
+
+	// Read captured output
+	_, _ = buf.ReadFrom(r)
+
+	// Fail if anything is written to stdout
+	if buf.Len() > 0 {
+		t.Errorf("Unexpected logging to stdout: %q", buf.String())
+	}
+}
+
+// Example function in the library
+func LibraryFunctionThatShouldNotLog() {
+	// Simulate a log that should not reach stdout
+	//slog.Info("Oops, this log should fail the test")
+	fmt.Println("This should fail the test")
 }
 
 var testYaml = `

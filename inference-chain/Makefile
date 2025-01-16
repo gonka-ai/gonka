@@ -45,6 +45,24 @@ define DOCKER_BUILD
 		-t $(DOCKER_TAG)
 endef
 
+define DOCKER_BUILD_OUTPUT
+	@echo "--> building inferenced docker image"
+	@echo "platform:  $(PLATFORM)"
+	@echo "GOARCH:    $(GOARCH)"
+	@echo "LDFLAGS:   $(ldflags)"
+	@echo "GOOS:      $(GOOS)"
+
+	@DOCKER_BUILDKIT=1 \
+	docker build \
+		--platform $(PLATFORM) \
+		--build-arg LDFLAGS='$(ldflags)' \
+		--build-arg GOOS=$(GOOS) \
+		--build-arg GOARCH=$(GOARCH) \
+		-f $(DOCKER_FILE) \
+		--output type=local,dest=./output \
+		..
+endef
+
 build-docker:
 	rm -rf build/
 	$(eval PLATFORM=linux/amd64)
@@ -60,14 +78,17 @@ clean-state:
 docker-push:
 	docker push gcr.io/decentralized-ai/inferenced
 
-build-v2-test:
+build-for-upgrade:
 	$(eval PLATFORM=linux/amd64)
-	$(DOCKER_BUILD)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(DOCKER_BUILD_OUTPUT)
 	@echo "--> clearing out ../public-html/v2/inferenced"
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./build/inferenced ../public-html/v2/inferenced/inferenced
+	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced
 	@echo "--> zipping inferenced binary"
 	@zip -j ../public-html/v2/inferenced/inferenced.zip ../public-html/v2/inferenced/inferenced
 	@echo "--> generating shasum for inferenced.zip"

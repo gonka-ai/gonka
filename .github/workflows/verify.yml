@@ -35,17 +35,30 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Go Mod Verify
-        run: go mod verify
-
-      - name: Go Mod Tidy
-        run: go mod tidy
+      - name: Install dependencies
+        run: go mod download
 
       - name: Build
         run: go build -o ./build/inferenced ./cmd/inferenced/main.go
 
-      - name: Test
-        run: go test ./... -v
+      - name: Install go-junit-report
+        run: go install github.com/jstemmer/go-junit-report/v2@latest
+
+      - name: Run Tests and Generate JUnit Report
+        run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-junit-report
+          path: inference-chain/junit-report.xml
+
+      - name: Report Test Results in GitHub
+        uses: dorny/test-reporter@v1
+        with:
+          name: Inferenced Tests
+          path: inference-chain/junit-report.xml
+          reporter: java-junit
   build-and-test-api:
     runs-on: ubuntu-latest
     name: Build and Test API Wrapper
@@ -79,5 +92,21 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -v
+      - name: Install go-junit-report
+        run: go install github.com/jstemmer/go-junit-report@latest
+
+      - name: Run Tests and Generate JUnit Report
+        run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-junit-report
+          path: decentralized-api/junit-report.xml
+
+      - name: Report Test Results in GitHub
+        uses: dorny/test-reporter@v1
+        with:
+          name: Decentralized-API Tests
+          path: decentralized-api/junit-report.xml
+          reporter: java-junit

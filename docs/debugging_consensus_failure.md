@@ -10,10 +10,12 @@ github.com/cometbft/cometbft/consensus.(*State).receiveRoutine.func2()
 
 It means that your nodes have calculated the state differently, and therefore have different hashes.
 
+**Be sure it's a wrong AppHash**. You can get other failures for when there is an error during the time you BUILD consensus, they will be a CONSENSUS FAILURE!!! but with different error messages.
+
 ## Main Causes
 At present, there are two causes we have seen:
 ### Randomness in state calculation
-All GUIDs, random numbers and anything else using randomness has to be calculated OUTSIDE chain state calculation. Any randomness in state calculations means consensus cannot be reaced.
+All GUIDs, random numbers and anything else using randomness has to be calculated OUTSIDE chain state calculation. Any randomness in state calculations means consensus cannot be reached.
 ### Go's map iteration order
 When iterating over a Go map, the order is **indeterminate**. It may be the same as another node, it MAY NOT. **This means any maps in your state will break your consensus**. It also means any iteration over maps that is **used** to generate lists or maps will ALSO break consensus.
 
