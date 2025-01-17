@@ -1,12 +1,10 @@
-.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
 
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
-# don't override user values
 ifeq (,$(VERSION))
   VERSION := $(shell git describe --exact-match 2>/dev/null)
-  # if VERSION is empty, then populate it with branch's name and raw commit hash
   ifeq (,$(VERSION))
     VERSION := $(BRANCH)-$(COMMIT)
   endif
@@ -78,7 +76,7 @@ build-docker:
 	$(DOCKER_BUILD)
 
 clean-state:
-	rm -rf "$$HOME/.inference"
+	rm -rf "$(HOME)/.inference"
 
 docker-push:
 	docker push gcr.io/decentralized-ai/inferenced
@@ -98,3 +96,43 @@ build-for-upgrade:
 	@zip -j ../public-html/v2/inferenced/inferenced.zip ../public-html/v2/inferenced/inferenced
 	@echo "--> generating shasum for inferenced.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced.zip
+
+#################################################
+# CROSS-COMPILATION SECTION
+#################################################
+
+PLATFORMS := linux darwin windows
+ARCHS := amd64 arm64
+
+release: build-all package
+
+build-all:
+	@echo "Building all platforms/architectures..."
+	@$(foreach os,$(PLATFORMS),\
+		$(foreach arch,$(ARCHS),\
+			$(MAKE) --no-print-directory build-$(os)-$(arch);))
+	@echo "All builds complete."
+
+build-%:
+	$(eval OS := $(word 1,$(subst -, ,$*)))
+	$(eval ARCH := $(word 2,$(subst -, ,$*)))
+
+	@echo "Building for OS: $(OS), ARCH: $(ARCH)"
+	@mkdir -p build/$(OS)/$(ARCH)
+	@GOOS=$(OS) GOARCH=$(ARCH) go build -ldflags "$(ldflags)" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go
+	@if [ "$(OS)" = "darwin" ]; then \
+		echo "Running codesign for macOS (universal binary build may vary)..."; \
+		codesign --remove-signature build/$(OS)/$(ARCH)/inferenced || true; \
+		codesign --force --sign - build/$(OS)/$(ARCH)/inferenced || true; \
+	fi
+
+package:
+	@echo "Packaging binaries..."
+	@mkdir -p release
+	@for os in $(PLATFORMS); do \
+		for arch in $(ARCHS); do \
+			if [ -f build/$$os/$$arch/inferenced ]; then \
+				zip -j release/inferenced-$$os-$$arch.zip build/$$os/$$arch/inferenced; \
+			fi; \
+		done; \
+	done
