@@ -26,6 +26,11 @@ build:
 	@echo "Building locally with ldflags..."
 	@CGO_ENABLED=1 CC=gcc \
 		go build -ldflags "$(ldflags)" -o ./build/inferenced ./cmd/inferenced/main.go
+	@if [ "$(shell uname)" = "Darwin" ]; then \
+		echo "Running codesign for macOS..."; \
+		codesign --remove-signature ./build/inferenced; \
+		codesign --force --sign - ./build/inferenced; \
+	fi
 
 define DOCKER_BUILD
 	@echo "--> building inferenced docker image"
