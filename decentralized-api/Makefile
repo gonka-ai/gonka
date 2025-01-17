@@ -1,16 +1,15 @@
+.PHONY: all install build build-docker init clean-state mock-expected-keepers docker-push release build-all package deploy
+
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
-# don't override user values
 ifeq (,$(VERSION))
   VERSION := $(shell git describe --exact-match 2>/dev/null)
-  # if VERSION is empty, then populate it with branch's name and raw commit hash
   ifeq (,$(VERSION))
     VERSION := $(BRANCH)-$(COMMIT)
   endif
 endif
 
-# Update the ldflags with the app, client & server names
 ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 	-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api \
 	-X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
@@ -97,3 +96,39 @@ build-for-upgrade:
 	@zip -j ../public-html/v2/dapi/decentralized-api.zip ../public-html/v2/dapi/decentralized-api
 	@echo "--> generating shasum for decentralized-api.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api.zip
+
+#################################################
+# CROSS-COMPILATION SECTION
+#################################################
+
+PLATFORMS := linux darwin windows
+ARCHS := amd64 arm64
+
+release: build-all package
+
+build-all:
+	@echo "Building all platforms/architectures..."
+	@$(foreach os,$(PLATFORMS),\
+		$(foreach arch,$(ARCHS),\
+			$(MAKE) --no-print-directory build-$(os)-$(arch);))
+	@echo "All builds complete."
+
+build-%:
+	$(eval OS := $(word 1,$(subst -, ,$*)))
+	$(eval ARCH := $(word 2,$(subst -, ,$*)))
+
+	@echo "Building for OS: $(OS), ARCH: $(ARCH)"
+	@mkdir -p build/$(OS)/$(ARCH)
+	@GOOS=$(OS) GOARCH=$(ARCH) go build -o build/$(OS)/$(ARCH)/decentralized-api
+
+package:
+	@echo "Packaging binaries..."
+	@mkdir -p release
+	@for os in $(PLATFORMS); do \
+		for arch in $(ARCHS); do \
+			if [ -f build/$$os/$$arch/decentralized-api ]; then \
+				zip -j release/decentralized-api-$$os-$$arch.zip \
+					build/$$os/$$arch/decentralized-api; \
+			fi; \
+		done; \
+	done
