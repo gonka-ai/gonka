@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
@@ -10,7 +11,7 @@ import (
 	"encoding/json"
 	fmt "fmt"
 	"github.com/gorilla/websocket"
-	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"log/slog"
@@ -29,6 +30,7 @@ func StartEventListener(
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
 ) {
+	ctx := context.Background()
 	websocketUrl := getWebsocketUrl(configManager.GetConfig())
 	slog.Info("Connecting to websocket at", "url", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -55,7 +57,14 @@ func StartEventListener(
 		"address", transactionRecorder.Address,
 		"pubkey", pubKeyString)
 
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, proofofcompute.DefaultDifficulty)
+	params, err := transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
+
+	if err != nil {
+		slog.Error("Failed to get chain params", "error", err)
+		return
+	}
+
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
@@ -63,6 +72,7 @@ func StartEventListener(
 		configManager.GetConfig().Api.PoCCallbackUrl,
 		configManager.GetConfig().ChainNode.Url,
 		&transactionRecorder,
+		&params.Params,
 	)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
