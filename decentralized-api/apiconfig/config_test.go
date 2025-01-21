@@ -3,10 +3,10 @@ package apiconfig_test
 import (
 	"bytes"
 	"decentralized-api/apiconfig"
+	"decentralized-api/logging"
 	"fmt"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slog"
 	"os"
 	"testing"
 )
@@ -130,12 +130,11 @@ func TestNoLoggingToStdout(t *testing.T) {
 	// Buffer to capture log output
 	var buf bytes.Buffer
 
-	// Set up a logger to write to stdout
-	logger := slog.New(slog.NewTextHandler(w, nil)) // Logs go to `w` (stdout)
-	slog.SetDefault(logger)
-
 	// Load config with overrides
-	err = loadManager(t, err)
+	_, err = logging.WithNoopLogger(func() (interface{}, error) {
+		err := loadManager(t, err)
+		return nil, err
+	})
 
 	// Close the pipe and reset stdout
 	_ = w.Close()

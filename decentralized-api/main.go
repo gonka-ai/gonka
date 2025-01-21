@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,15 +17,22 @@ import (
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
-		config, err := apiconfig.LoadDefaultConfigManager()
-		if err != nil {
-			log.Fatalf("Error loading config: %v", err)
-		}
-		returnStatus(config)
+		logging.WithNoopLogger(func() (interface{}, error) {
+			config, err := apiconfig.LoadDefaultConfigManager()
+			if err != nil {
+				log.Fatalf("Error loading config: %v", err)
+			}
+			returnStatus(config)
+			return nil, nil
+		})
+
+		return
 	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
+
 	config, err := apiconfig.LoadDefaultConfigManager()
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
