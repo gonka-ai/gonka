@@ -37,6 +37,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
 	}
+	if err = apiconfig.LoadNodeConfig(config.GetConfig()); err != nil {
+		log.Fatalf("Error loading node config: %v", err)
+	}
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),

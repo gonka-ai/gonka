@@ -171,11 +171,6 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		config.ChainNode.AccountName = keyName
 	}
 
-	err = loadNodeConfig(&config)
-	if err != nil {
-		log.Fatalf("error loading node config: %v", err)
-	}
-
 	return config, nil
 }
 
@@ -205,7 +200,8 @@ type WriteCloser interface {
 	Close() error
 }
 
-func loadNodeConfig(config *Config) error {
+// Called once at startup to load additional nodes from a separate config file
+func LoadNodeConfig(config *Config) error {
 	nodeConfigPath, found := os.LookupEnv("NODE_CONFIG_PATH")
 	if !found || strings.TrimSpace(nodeConfigPath) == "" {
 		slog.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config")
