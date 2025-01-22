@@ -171,6 +171,10 @@ func readConfig(provider koanf.Provider) (Config, error) {
 		config.ChainNode.AccountName = keyName
 	}
 
+	if err := loadNodeConfig(&config); err != nil {
+		log.Fatalf("error loading node config: %v", err)
+	}
+
 	return config, nil
 }
 
@@ -201,7 +205,12 @@ type WriteCloser interface {
 }
 
 // Called once at startup to load additional nodes from a separate config file
-func LoadNodeConfig(config *Config) error {
+func loadNodeConfig(config *Config) error {
+	if config.NodeConfigIsMerged {
+		slog.Info("Node config already merged. Skipping")
+		return nil
+	}
+
 	nodeConfigPath, found := os.LookupEnv("NODE_CONFIG_PATH")
 	if !found || strings.TrimSpace(nodeConfigPath) == "" {
 		slog.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config")
@@ -236,6 +245,7 @@ func LoadNodeConfig(config *Config) error {
 
 	// Merge new nodes with existing ones
 	config.Nodes = append(config.Nodes, newNodes...)
+	config.NodeConfigIsMerged = true
 
 	slog.Info("Successfully loaded and merged node configuration",
 		"new_nodes", len(newNodes),
