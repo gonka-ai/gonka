@@ -60,10 +60,6 @@ func StartInferenceServerWrapper(
 ) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
-	nodes := configManager.GetConfig().Nodes
-	for _, node := range nodes {
-		loadNodeToBroker(nodeBroker, &node)
-	}
 
 	mux := http.NewServeMux()
 
@@ -846,20 +842,6 @@ func wrapSubmitNewParticipant(recorder cosmos_client.CosmosMessageClient) func(w
 	}
 }
 
-type SubmitNewParticipantDto struct {
-	Url          string   `json:"url"`
-	Models       []string `json:"models"`
-	ValidatorKey string   `json:"validator_key"`
-}
-
-type SubmitUnfundedNewParticipantDto struct {
-	Address      string   `json:"address"`
-	Url          string   `json:"url"`
-	Models       []string `json:"models"`
-	ValidatorKey string   `json:"validator_key"`
-	PubKey       string   `json:"pub_key"`
-}
-
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
 	BlockHeight  int64            `json:"block_height"`
@@ -876,7 +858,7 @@ type ParticipantDto struct {
 	Reputation  float32  `json:"reputation"`
 }
 
-func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, body SubmitUnfundedNewParticipantDto) {
+func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, body api.SubmitUnfundedNewParticipantDto) {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,
@@ -896,7 +878,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w 
 
 func submitNewParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	// Parse the request body into a SubmitNewParticipantDto
-	var body SubmitUnfundedNewParticipantDto
+	var body api.SubmitUnfundedNewParticipantDto
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 		slog.Error("Failed to decode request body", "error", err)
