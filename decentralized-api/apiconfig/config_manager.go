@@ -2,12 +2,15 @@ package apiconfig
 
 import (
 	"decentralized-api/broker"
+	"encoding/json"
+	"fmt"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"golang.org/x/exp/slog"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -167,6 +170,11 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if keyName, found := os.LookupEnv("KEY_NAME"); found {
 		config.ChainNode.AccountName = keyName
 	}
+
+	if err := loadNodeConfig(&config); err != nil {
+		log.Fatalf("error loading node config: %v", err)
+	}
+
 	return config, nil
 }
 
@@ -194,4 +202,76 @@ func writeConfig(config Config, writer WriteCloser) error {
 type WriteCloser interface {
 	Write([]byte) (int, error)
 	Close() error
+}
+
+// Called once at startup to load additional nodes from a separate config file
+func loadNodeConfig(config *Config) error {
+	if config.NodeConfigIsMerged {
+		slog.Info("Node config already merged. Skipping")
+		return nil
+	}
+
+	nodeConfigPath, found := os.LookupEnv("NODE_CONFIG_PATH")
+	if !found || strings.TrimSpace(nodeConfigPath) == "" {
+		slog.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config")
+		return nil
+	}
+
+	slog.Info("Loading and merging node configuration", "path", nodeConfigPath)
+
+	newNodes, err := parseInferenceNodesFromNodeConfigJson(nodeConfigPath)
+	if err != nil {
+		return err
+	}
+
+	// Check for duplicate IDs across both existing and new nodes
+	seenIds := make(map[string]bool)
+
+	// First, add existing nodes to the map
+	for _, node := range config.Nodes {
+		if seenIds[node.Id] {
+			return fmt.Errorf("duplicate node ID found in config: %s", node.Id)
+		}
+		seenIds[node.Id] = true
+	}
+
+	// Check new nodes for duplicates
+	for _, node := range newNodes {
+		if seenIds[node.Id] {
+			return fmt.Errorf("duplicate node ID found in config: %s", node.Id)
+		}
+		seenIds[node.Id] = true
+	}
+
+	// Merge new nodes with existing ones
+	config.Nodes = append(config.Nodes, newNodes...)
+	config.NodeConfigIsMerged = true
+
+	slog.Info("Successfully loaded and merged node configuration",
+		"new_nodes", len(newNodes),
+		"total_nodes", len(config.Nodes))
+	return nil
+}
+
+func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]broker.InferenceNode, error) {
+	file, err := os.Open(nodeConfigPath)
+	if err != nil {
+		slog.Error("Failed to open node config file", "error", err)
+		return nil, err
+	}
+	defer file.Close()
+
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		slog.Error("Failed to read node config file", "error", err)
+		return nil, err
+	}
+
+	var newNodes []broker.InferenceNode
+	if err := json.Unmarshal(bytes, &newNodes); err != nil {
+		slog.Error("Failed to parse node config JSON", "error", err)
+		return nil, err
+	}
+
+	return newNodes, nil
 }

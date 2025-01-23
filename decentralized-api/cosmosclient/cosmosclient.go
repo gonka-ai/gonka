@@ -117,10 +117,20 @@ type CosmosMessageClient interface {
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	GetContext() *context.Context
+	GetAddress() string
+	GetAccount() *cosmosaccount.Account
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
 	return &icc.Context
+}
+
+func (icc *InferenceCosmosClient) GetAddress() string {
+	return icc.Address
+}
+
+func (icc *InferenceCosmosClient) GetAccount() *cosmosaccount.Account {
+	return icc.Account
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {

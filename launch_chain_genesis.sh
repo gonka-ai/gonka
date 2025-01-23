@@ -66,7 +66,7 @@ docker compose -p "$project_name" -f "$compose_file" up -d
 # Some time to join chain
 sleep 20
 
-curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
+# curl -X POST "http://localhost:$PORT/v1/nodes/batch" -H "Content-Type: application/json" -d @$NODE_CONFIG
 
 if [ "$mode" == "local" ]; then
   node_container_name="$KEY_NAME-node"
@@ -82,25 +82,3 @@ validator_output=$(docker exec "$node_container_name" inferenced tendermint show
 validator_key=$(echo $validator_output | jq -r '.key')
 
 echo "validator_key=$validator_key"
-
-# Use jq to extract unique model values
-unique_models=$(jq '[.[] | .models[]] | unique' $NODE_CONFIG)
-
-# Print the unique models
-echo "Unique models: $unique_models"
-
-# Prepare the data structure for the final POST
-post_data=$(jq -n \
-  --arg url "$DAPI_API__PUBLIC_URL" \
-  --argjson models "$unique_models" \
-  --arg validator_key "$validator_key" \
-  '{
-    url: $url,
-    models: $models,
-    validator_key: $validator_key,
-  }')
-
-echo "POST request sent to http://localhost:$PORT with the following data:"
-echo "$post_data"
-
-curl -X POST "http://localhost:$PORT/v1/participants" -H "Content-Type: application/json" -d "$post_data"
