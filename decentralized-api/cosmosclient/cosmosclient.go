@@ -114,6 +114,7 @@ type CosmosMessageClient interface {
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
+	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	GetContext() *context.Context
@@ -195,6 +196,11 @@ func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.Msg
 }
 
 func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
+	transaction.Creator = icc.Address
+	return icc.sendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error {
 	transaction.Creator = icc.Address
 	return icc.sendTransaction(transaction)
 }
