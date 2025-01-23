@@ -75,6 +75,8 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(configManager))
+	mux.HandleFunc("/v1/admin/unit-of-compute-bid", api.WrapUnitOfComputeBid(configManager))
+	mux.HandleFunc("/v1/admin/register-model", api.WrapRegisterModel())
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
