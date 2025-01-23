@@ -29,6 +29,8 @@ message ValidationParams {
   double falsePositiveRate = 1;
   uint32 minRampUpMeasurements = 2;
   double passValue = 3;
+  double minValidationAverage = 4;
+  double maxValidationAverage = 5;
 }
 
 message PocParams {
