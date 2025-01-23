@@ -72,37 +72,43 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-
+  
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-
+  
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-
+  
   }
-
+  
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{pocStartBlockHeight}";
-
+  
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-
+  
   }
-
+  
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{blockHeight}";
-
+  
   }
-
+  
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-
+  
+  }
+  
+  // Queries a list of GetUnitOfComputePriceProposal items.
+  rpc GetUnitOfComputePriceProposal (QueryGetUnitOfComputePriceProposalRequest) returns (QueryGetUnitOfComputePriceProposalResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
+  
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -254,6 +260,11 @@ message PoCBatchesWithParticipants {
 message QueryGetCurrentEpochRequest {}
 
 message QueryGetCurrentEpochResponse {
-    uint64 epoch = 1;
+  uint64 epoch = 1;
 }
 
+message QueryGetUnitOfComputePriceProposalRequest {}
+
+message QueryGetUnitOfComputePriceProposalResponse {
+  uint64 price = 1;
+}

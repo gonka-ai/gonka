@@ -106,6 +106,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query getCurrentEpoch",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod:      "GetUnitOfComputePriceProposal",
+					Use:            "get-unit-of-compute-price-proposal",
+					Short:          "Query get-unit-of-compute-price-proposal",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

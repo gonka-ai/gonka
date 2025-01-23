@@ -5,6 +5,7 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
 )
@@ -51,7 +52,17 @@ func postUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClie
 
 func getUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	queryClient := cosmosClient.NewInferenceQueryClient()
-	_ = queryClient
 
-	// TODO: query current proposal
+	queryRequest := &types.QueryGetUnitOfComputePriceProposalRequest{}
+	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(*cosmosClient.GetContext(), queryRequest)
+	if err != nil {
+		slog.Error("Failed to query unit of compute price proposal", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	dto := UnitOfComputePriceProposalDto{
+		Price: queryResponse.Price,
+	}
+	RespondWithJson(w, dto)
 }

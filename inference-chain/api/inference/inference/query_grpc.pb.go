@@ -19,22 +19,23 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName                     = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName                  = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName               = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName                = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName             = "/inference.inference.Query/ParticipantAll"
-	Query_GetInferencesWithExecutors_FullMethodName = "/inference.inference.Query/GetInferencesWithExecutors"
-	Query_InferenceParticipant_FullMethodName       = "/inference.inference.Query/InferenceParticipant"
-	Query_GetRandomExecutor_FullMethodName          = "/inference.inference.Query/GetRandomExecutor"
-	Query_EpochGroupData_FullMethodName             = "/inference.inference.Query/EpochGroupData"
-	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
-	Query_SettleAmount_FullMethodName               = "/inference.inference.Query/SettleAmount"
-	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
-	Query_EpochGroupValidations_FullMethodName      = "/inference.inference.Query/EpochGroupValidations"
-	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
-	Query_PocBatchesForStage_FullMethodName         = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName            = "/inference.inference.Query/GetCurrentEpoch"
+	Query_Params_FullMethodName                        = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                     = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName                  = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                   = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName                = "/inference.inference.Query/ParticipantAll"
+	Query_GetInferencesWithExecutors_FullMethodName    = "/inference.inference.Query/GetInferencesWithExecutors"
+	Query_InferenceParticipant_FullMethodName          = "/inference.inference.Query/InferenceParticipant"
+	Query_GetRandomExecutor_FullMethodName             = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName                = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName             = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName                  = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName               = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName         = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName      = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName            = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
+	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
 )
 
 // QueryClient is the client API for Query service.
@@ -68,6 +69,8 @@ type QueryClient interface {
 	PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
+	// Queries a list of GetUnitOfComputePriceProposal items.
+	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
 }
 
 type queryClient struct {
@@ -222,6 +225,15 @@ func (c *queryClient) GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEp
 	return out, nil
 }
 
+func (c *queryClient) GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error) {
+	out := new(QueryGetUnitOfComputePriceProposalResponse)
+	err := c.cc.Invoke(ctx, Query_GetUnitOfComputePriceProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -253,6 +265,8 @@ type QueryServer interface {
 	PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
+	// Queries a list of GetUnitOfComputePriceProposal items.
+	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -307,6 +321,9 @@ func (UnimplementedQueryServer) PocBatchesForStage(context.Context, *QueryPocBat
 }
 func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
+}
+func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetUnitOfComputePriceProposal not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -609,6 +626,24 @@ func _Query_GetCurrentEpoch_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetUnitOfComputePriceProposalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetUnitOfComputePriceProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetUnitOfComputePriceProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetUnitOfComputePriceProposal(ctx, req.(*QueryGetUnitOfComputePriceProposalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -679,6 +714,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCurrentEpoch",
 			Handler:    _Query_GetCurrentEpoch_Handler,
+		},
+		{
+			MethodName: "GetUnitOfComputePriceProposal",
+			Handler:    _Query_GetUnitOfComputePriceProposal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
