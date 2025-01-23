@@ -4,7 +4,9 @@
 package types
 
 import (
+	encoding_binary "encoding/binary"
 	fmt "fmt"
+	_ "github.com/cosmos/cosmos-proto"
 	_ "github.com/cosmos/cosmos-sdk/types/tx/amino"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
@@ -26,6 +28,9 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 // Params defines the parameters for the module.
 type Params struct {
+	EpochParams      *EpochParams      `protobuf:"bytes,1,opt,name=epochParams,proto3" json:"epochParams,omitempty"`
+	ValidationParams *ValidationParams `protobuf:"bytes,2,opt,name=validationParams,proto3" json:"validationParams,omitempty"`
+	PocParams        *PocParams        `protobuf:"bytes,3,opt,name=pocParams,proto3" json:"pocParams,omitempty"`
 }
 
 func (m *Params) Reset()         { *m = Params{} }
@@ -61,25 +66,258 @@ func (m *Params) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_Params proto.InternalMessageInfo
 
+func (m *Params) GetEpochParams() *EpochParams {
+	if m != nil {
+		return m.EpochParams
+	}
+	return nil
+}
+
+func (m *Params) GetValidationParams() *ValidationParams {
+	if m != nil {
+		return m.ValidationParams
+	}
+	return nil
+}
+
+func (m *Params) GetPocParams() *PocParams {
+	if m != nil {
+		return m.PocParams
+	}
+	return nil
+}
+
+type EpochParams struct {
+	EpochLength         int64  `protobuf:"varint,1,opt,name=epochLength,proto3" json:"epochLength,omitempty"`
+	EpochMultiplier     int64  `protobuf:"varint,2,opt,name=epochMultiplier,proto3" json:"epochMultiplier,omitempty"`
+	EpochNewCoin        uint64 `protobuf:"varint,3,opt,name=epochNewCoin,proto3" json:"epochNewCoin,omitempty"`
+	CoinHalvingInterval int64  `protobuf:"varint,4,opt,name=coinHalvingInterval,proto3" json:"coinHalvingInterval,omitempty"`
+}
+
+func (m *EpochParams) Reset()         { *m = EpochParams{} }
+func (m *EpochParams) String() string { return proto.CompactTextString(m) }
+func (*EpochParams) ProtoMessage()    {}
+func (*EpochParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_3cf34332021bbe94, []int{1}
+}
+func (m *EpochParams) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *EpochParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_EpochParams.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *EpochParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EpochParams.Merge(m, src)
+}
+func (m *EpochParams) XXX_Size() int {
+	return m.Size()
+}
+func (m *EpochParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_EpochParams.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_EpochParams proto.InternalMessageInfo
+
+func (m *EpochParams) GetEpochLength() int64 {
+	if m != nil {
+		return m.EpochLength
+	}
+	return 0
+}
+
+func (m *EpochParams) GetEpochMultiplier() int64 {
+	if m != nil {
+		return m.EpochMultiplier
+	}
+	return 0
+}
+
+func (m *EpochParams) GetEpochNewCoin() uint64 {
+	if m != nil {
+		return m.EpochNewCoin
+	}
+	return 0
+}
+
+func (m *EpochParams) GetCoinHalvingInterval() int64 {
+	if m != nil {
+		return m.CoinHalvingInterval
+	}
+	return 0
+}
+
+type ValidationParams struct {
+	FalsePositiveRate     float64 `protobuf:"fixed64,1,opt,name=falsePositiveRate,proto3" json:"falsePositiveRate,omitempty"`
+	MinRampUpMeasurements uint32  `protobuf:"varint,2,opt,name=minRampUpMeasurements,proto3" json:"minRampUpMeasurements,omitempty"`
+	PassValue             float64 `protobuf:"fixed64,3,opt,name=passValue,proto3" json:"passValue,omitempty"`
+	MinValidationAverage  float64 `protobuf:"fixed64,4,opt,name=minValidationAverage,proto3" json:"minValidationAverage,omitempty"`
+	MaxValidationAverage  float64 `protobuf:"fixed64,5,opt,name=maxValidationAverage,proto3" json:"maxValidationAverage,omitempty"`
+}
+
+func (m *ValidationParams) Reset()         { *m = ValidationParams{} }
+func (m *ValidationParams) String() string { return proto.CompactTextString(m) }
+func (*ValidationParams) ProtoMessage()    {}
+func (*ValidationParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_3cf34332021bbe94, []int{2}
+}
+func (m *ValidationParams) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ValidationParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ValidationParams.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ValidationParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ValidationParams.Merge(m, src)
+}
+func (m *ValidationParams) XXX_Size() int {
+	return m.Size()
+}
+func (m *ValidationParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_ValidationParams.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ValidationParams proto.InternalMessageInfo
+
+func (m *ValidationParams) GetFalsePositiveRate() float64 {
+	if m != nil {
+		return m.FalsePositiveRate
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetMinRampUpMeasurements() uint32 {
+	if m != nil {
+		return m.MinRampUpMeasurements
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetPassValue() float64 {
+	if m != nil {
+		return m.PassValue
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetMinValidationAverage() float64 {
+	if m != nil {
+		return m.MinValidationAverage
+	}
+	return 0
+}
+
+func (m *ValidationParams) GetMaxValidationAverage() float64 {
+	if m != nil {
+		return m.MaxValidationAverage
+	}
+	return 0
+}
+
+type PocParams struct {
+	DefaultDifficulty uint32 `protobuf:"varint,1,opt,name=defaultDifficulty,proto3" json:"defaultDifficulty,omitempty"`
+}
+
+func (m *PocParams) Reset()         { *m = PocParams{} }
+func (m *PocParams) String() string { return proto.CompactTextString(m) }
+func (*PocParams) ProtoMessage()    {}
+func (*PocParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_3cf34332021bbe94, []int{3}
+}
+func (m *PocParams) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *PocParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_PocParams.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *PocParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PocParams.Merge(m, src)
+}
+func (m *PocParams) XXX_Size() int {
+	return m.Size()
+}
+func (m *PocParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_PocParams.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PocParams proto.InternalMessageInfo
+
+func (m *PocParams) GetDefaultDifficulty() uint32 {
+	if m != nil {
+		return m.DefaultDifficulty
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*Params)(nil), "inference.inference.Params")
+	proto.RegisterType((*EpochParams)(nil), "inference.inference.EpochParams")
+	proto.RegisterType((*ValidationParams)(nil), "inference.inference.ValidationParams")
+	proto.RegisterType((*PocParams)(nil), "inference.inference.PocParams")
 }
 
 func init() { proto.RegisterFile("inference/inference/params.proto", fileDescriptor_3cf34332021bbe94) }
 
 var fileDescriptor_3cf34332021bbe94 = []byte{
-	// 172 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x52, 0xc8, 0xcc, 0x4b, 0x4b,
-	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x0a, 0x12, 0x8b, 0x12, 0x73, 0x8b, 0xf5, 0x0a,
-	0x8a, 0xf2, 0x4b, 0xf2, 0x85, 0x84, 0xe1, 0xe2, 0x7a, 0x70, 0x96, 0x94, 0x60, 0x62, 0x6e, 0x66,
-	0x5e, 0xbe, 0x3e, 0x98, 0x84, 0xa8, 0x93, 0x12, 0x49, 0xcf, 0x4f, 0xcf, 0x07, 0x33, 0xf5, 0x41,
-	0x2c, 0x88, 0xa8, 0x92, 0x3e, 0x17, 0x5b, 0x00, 0xd8, 0x34, 0x2b, 0xd5, 0x17, 0x0b, 0xe4, 0x19,
-	0xbb, 0x9e, 0x6f, 0xd0, 0x92, 0x41, 0x58, 0x54, 0x81, 0x64, 0x29, 0x44, 0x99, 0x93, 0xff, 0x89,
-	0x47, 0x72, 0x8c, 0x17, 0x1e, 0xc9, 0x31, 0x3e, 0x78, 0x24, 0xc7, 0x38, 0xe1, 0xb1, 0x1c, 0xc3,
-	0x85, 0xc7, 0x72, 0x0c, 0x37, 0x1e, 0xcb, 0x31, 0x44, 0x99, 0xa6, 0x67, 0x96, 0x64, 0x94, 0x26,
-	0xe9, 0x25, 0xe7, 0xe7, 0xea, 0x17, 0x14, 0xe5, 0xa7, 0x94, 0x26, 0x97, 0x14, 0x27, 0x67, 0xa2,
-	0x39, 0x1d, 0xd9, 0xc4, 0x92, 0xca, 0x82, 0xd4, 0xe2, 0x24, 0x36, 0xb0, 0x43, 0x8c, 0x01, 0x01,
-	0x00, 0x00, 0xff, 0xff, 0xc0, 0x48, 0xcf, 0x01, 0xea, 0x00, 0x00, 0x00,
+	// 497 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x53, 0x41, 0x6b, 0x13, 0x41,
+	0x14, 0xce, 0x24, 0xb1, 0x90, 0x89, 0xc5, 0x76, 0x5a, 0xa1, 0x96, 0xb2, 0x86, 0x40, 0xa1, 0x88,
+	0x24, 0x52, 0xf5, 0x52, 0x04, 0xb1, 0x2a, 0x28, 0x58, 0x8d, 0x03, 0xf6, 0xe0, 0x45, 0xa6, 0x93,
+	0xb7, 0x9b, 0x81, 0xd9, 0x99, 0x61, 0x67, 0x76, 0x6d, 0xaf, 0xe2, 0xc9, 0x93, 0x3f, 0xc1, 0x9f,
+	0xe0, 0xc5, 0xff, 0xe0, 0xb1, 0x47, 0x8f, 0x92, 0x1c, 0xf4, 0x67, 0x48, 0x66, 0xd7, 0xec, 0x36,
+	0xd9, 0x4b, 0x78, 0xef, 0xfb, 0xde, 0xfb, 0x26, 0xdf, 0x37, 0x3b, 0xb8, 0x27, 0x54, 0x08, 0x09,
+	0x28, 0x0e, 0xc3, 0xb2, 0x32, 0x2c, 0x61, 0xb1, 0x1d, 0x98, 0x44, 0x3b, 0x4d, 0xb6, 0x16, 0xf8,
+	0x60, 0x51, 0xed, 0x6e, 0xb2, 0x58, 0x28, 0x3d, 0xf4, 0xbf, 0xf9, 0xdc, 0xee, 0x76, 0xa4, 0x23,
+	0xed, 0xcb, 0xe1, 0xbc, 0x2a, 0xd0, 0x5b, 0x5c, 0xdb, 0x58, 0xdb, 0x0f, 0x39, 0x91, 0x37, 0x39,
+	0xd5, 0xff, 0xdc, 0xc4, 0x6b, 0x23, 0x7f, 0x12, 0x39, 0xc6, 0x5d, 0x30, 0x9a, 0x4f, 0xf2, 0x76,
+	0x07, 0xf5, 0xd0, 0x41, 0xf7, 0xb0, 0x37, 0xa8, 0x39, 0x79, 0xf0, 0xbc, 0x9c, 0xa3, 0xd5, 0x25,
+	0xf2, 0x16, 0x6f, 0x64, 0x4c, 0x8a, 0x31, 0x73, 0x42, 0xab, 0x42, 0xa8, 0xe9, 0x85, 0xf6, 0x6b,
+	0x85, 0x4e, 0x97, 0x86, 0xe9, 0xca, 0x3a, 0x79, 0x84, 0x3b, 0x46, 0xf3, 0x42, 0xab, 0xe5, 0xb5,
+	0x82, 0x5a, 0xad, 0xd1, 0xff, 0x29, 0x5a, 0x2e, 0x1c, 0xed, 0xff, 0xfd, 0x76, 0x1b, 0x7d, 0xf9,
+	0xf3, 0xfd, 0xce, 0x5e, 0x99, 0xec, 0x79, 0x25, 0xe5, 0x7c, 0xac, 0xff, 0x03, 0xe1, 0x6e, 0xc5,
+	0x14, 0xe9, 0x15, 0x59, 0xbc, 0x02, 0x15, 0xb9, 0x89, 0xcf, 0xa2, 0x45, 0xab, 0x10, 0x39, 0xc0,
+	0x37, 0x7c, 0x7b, 0x92, 0x4a, 0x27, 0x8c, 0x14, 0x90, 0x78, 0xa3, 0x2d, 0xba, 0x0c, 0x93, 0x3e,
+	0xbe, 0xee, 0xa1, 0xd7, 0xf0, 0xf1, 0xa9, 0x16, 0xca, 0x7b, 0x68, 0xd3, 0x2b, 0x18, 0xb9, 0x87,
+	0xb7, 0xb8, 0x16, 0xea, 0x05, 0x93, 0x99, 0x50, 0xd1, 0x4b, 0xe5, 0x20, 0xc9, 0x98, 0xdc, 0x69,
+	0x7b, 0xc5, 0x3a, 0xea, 0xa8, 0x3d, 0x37, 0xd6, 0xff, 0xd4, 0xc4, 0x1b, 0xcb, 0x19, 0x92, 0xbb,
+	0x78, 0x33, 0x64, 0xd2, 0xc2, 0x48, 0x5b, 0xe1, 0x44, 0x06, 0x94, 0x39, 0xf0, 0x16, 0x10, 0x5d,
+	0x25, 0xc8, 0x03, 0x7c, 0x33, 0x16, 0x8a, 0xb2, 0xd8, 0xbc, 0x33, 0x27, 0xc0, 0x6c, 0x9a, 0x40,
+	0x0c, 0xca, 0xe5, 0xf7, 0xb6, 0x4e, 0xeb, 0x49, 0xb2, 0x87, 0x3b, 0x86, 0x59, 0x7b, 0xca, 0x64,
+	0x0a, 0xde, 0x11, 0xa2, 0x25, 0x40, 0x0e, 0xf1, 0x76, 0x2c, 0x54, 0xf9, 0xc7, 0x9e, 0x64, 0x90,
+	0xb0, 0x08, 0xbc, 0x1f, 0x44, 0x6b, 0x39, 0xbf, 0xc3, 0xce, 0x57, 0x77, 0xae, 0x15, 0x3b, 0x35,
+	0x5c, 0x11, 0xc2, 0x63, 0xdc, 0x59, 0xdc, 0xfd, 0xdc, 0xfc, 0x18, 0x42, 0x96, 0x4a, 0xf7, 0x4c,
+	0x84, 0xa1, 0xe0, 0xa9, 0x74, 0x17, 0xde, 0xfc, 0x3a, 0x5d, 0x25, 0x72, 0x81, 0xe3, 0x37, 0x3f,
+	0xa7, 0x01, 0xba, 0x9c, 0x06, 0xe8, 0xf7, 0x34, 0x40, 0x5f, 0x67, 0x41, 0xe3, 0x72, 0x16, 0x34,
+	0x7e, 0xcd, 0x82, 0xc6, 0xfb, 0x87, 0x91, 0x70, 0x93, 0xf4, 0x6c, 0xc0, 0x75, 0x3c, 0x34, 0x89,
+	0x1e, 0xa7, 0xdc, 0x59, 0x2e, 0x96, 0x5e, 0x6a, 0xf5, 0x7b, 0x72, 0x17, 0x06, 0xec, 0xd9, 0x9a,
+	0x7f, 0x5c, 0xf7, 0xff, 0x05, 0x00, 0x00, 0xff, 0xff, 0x76, 0x0d, 0x2c, 0xd1, 0xd9, 0x03, 0x00,
+	0x00,
 }
 
 func (this *Params) Equal(that interface{}) bool {
@@ -99,6 +337,108 @@ func (this *Params) Equal(that interface{}) bool {
 	if that1 == nil {
 		return this == nil
 	} else if this == nil {
+		return false
+	}
+	if !this.EpochParams.Equal(that1.EpochParams) {
+		return false
+	}
+	if !this.ValidationParams.Equal(that1.ValidationParams) {
+		return false
+	}
+	if !this.PocParams.Equal(that1.PocParams) {
+		return false
+	}
+	return true
+}
+func (this *EpochParams) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*EpochParams)
+	if !ok {
+		that2, ok := that.(EpochParams)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.EpochLength != that1.EpochLength {
+		return false
+	}
+	if this.EpochMultiplier != that1.EpochMultiplier {
+		return false
+	}
+	if this.EpochNewCoin != that1.EpochNewCoin {
+		return false
+	}
+	if this.CoinHalvingInterval != that1.CoinHalvingInterval {
+		return false
+	}
+	return true
+}
+func (this *ValidationParams) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ValidationParams)
+	if !ok {
+		that2, ok := that.(ValidationParams)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.FalsePositiveRate != that1.FalsePositiveRate {
+		return false
+	}
+	if this.MinRampUpMeasurements != that1.MinRampUpMeasurements {
+		return false
+	}
+	if this.PassValue != that1.PassValue {
+		return false
+	}
+	if this.MinValidationAverage != that1.MinValidationAverage {
+		return false
+	}
+	if this.MaxValidationAverage != that1.MaxValidationAverage {
+		return false
+	}
+	return true
+}
+func (this *PocParams) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*PocParams)
+	if !ok {
+		that2, ok := that.(PocParams)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.DefaultDifficulty != that1.DefaultDifficulty {
 		return false
 	}
 	return true
@@ -123,6 +463,165 @@ func (m *Params) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.PocParams != nil {
+		{
+			size, err := m.PocParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintParams(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.ValidationParams != nil {
+		{
+			size, err := m.ValidationParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintParams(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x12
+	}
+	if m.EpochParams != nil {
+		{
+			size, err := m.EpochParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintParams(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *EpochParams) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *EpochParams) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *EpochParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.CoinHalvingInterval != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.CoinHalvingInterval))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.EpochNewCoin != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.EpochNewCoin))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.EpochMultiplier != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.EpochMultiplier))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.EpochLength != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.EpochLength))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *ValidationParams) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ValidationParams) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ValidationParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.MaxValidationAverage != 0 {
+		i -= 8
+		encoding_binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(m.MaxValidationAverage))))
+		i--
+		dAtA[i] = 0x29
+	}
+	if m.MinValidationAverage != 0 {
+		i -= 8
+		encoding_binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(m.MinValidationAverage))))
+		i--
+		dAtA[i] = 0x21
+	}
+	if m.PassValue != 0 {
+		i -= 8
+		encoding_binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(m.PassValue))))
+		i--
+		dAtA[i] = 0x19
+	}
+	if m.MinRampUpMeasurements != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.MinRampUpMeasurements))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.FalsePositiveRate != 0 {
+		i -= 8
+		encoding_binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(m.FalsePositiveRate))))
+		i--
+		dAtA[i] = 0x9
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *PocParams) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *PocParams) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *PocParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.DefaultDifficulty != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.DefaultDifficulty))
+		i--
+		dAtA[i] = 0x8
+	}
 	return len(dAtA) - i, nil
 }
 
@@ -143,6 +642,75 @@ func (m *Params) Size() (n int) {
 	}
 	var l int
 	_ = l
+	if m.EpochParams != nil {
+		l = m.EpochParams.Size()
+		n += 1 + l + sovParams(uint64(l))
+	}
+	if m.ValidationParams != nil {
+		l = m.ValidationParams.Size()
+		n += 1 + l + sovParams(uint64(l))
+	}
+	if m.PocParams != nil {
+		l = m.PocParams.Size()
+		n += 1 + l + sovParams(uint64(l))
+	}
+	return n
+}
+
+func (m *EpochParams) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.EpochLength != 0 {
+		n += 1 + sovParams(uint64(m.EpochLength))
+	}
+	if m.EpochMultiplier != 0 {
+		n += 1 + sovParams(uint64(m.EpochMultiplier))
+	}
+	if m.EpochNewCoin != 0 {
+		n += 1 + sovParams(uint64(m.EpochNewCoin))
+	}
+	if m.CoinHalvingInterval != 0 {
+		n += 1 + sovParams(uint64(m.CoinHalvingInterval))
+	}
+	return n
+}
+
+func (m *ValidationParams) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.FalsePositiveRate != 0 {
+		n += 9
+	}
+	if m.MinRampUpMeasurements != 0 {
+		n += 1 + sovParams(uint64(m.MinRampUpMeasurements))
+	}
+	if m.PassValue != 0 {
+		n += 9
+	}
+	if m.MinValidationAverage != 0 {
+		n += 9
+	}
+	if m.MaxValidationAverage != 0 {
+		n += 9
+	}
+	return n
+}
+
+func (m *PocParams) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.DefaultDifficulty != 0 {
+		n += 1 + sovParams(uint64(m.DefaultDifficulty))
+	}
 	return n
 }
 
@@ -181,6 +749,422 @@ func (m *Params) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: Params: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthParams
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthParams
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.EpochParams == nil {
+				m.EpochParams = &EpochParams{}
+			}
+			if err := m.EpochParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthParams
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthParams
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ValidationParams == nil {
+				m.ValidationParams = &ValidationParams{}
+			}
+			if err := m.ValidationParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PocParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthParams
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthParams
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.PocParams == nil {
+				m.PocParams = &PocParams{}
+			}
+			if err := m.PocParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipParams(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthParams
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *EpochParams) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowParams
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: EpochParams: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: EpochParams: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochLength", wireType)
+			}
+			m.EpochLength = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochLength |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochMultiplier", wireType)
+			}
+			m.EpochMultiplier = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochMultiplier |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochNewCoin", wireType)
+			}
+			m.EpochNewCoin = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochNewCoin |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CoinHalvingInterval", wireType)
+			}
+			m.CoinHalvingInterval = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CoinHalvingInterval |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipParams(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthParams
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ValidationParams) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowParams
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ValidationParams: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ValidationParams: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 1 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FalsePositiveRate", wireType)
+			}
+			var v uint64
+			if (iNdEx + 8) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint64(encoding_binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+			iNdEx += 8
+			m.FalsePositiveRate = float64(math.Float64frombits(v))
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinRampUpMeasurements", wireType)
+			}
+			m.MinRampUpMeasurements = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MinRampUpMeasurements |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 1 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PassValue", wireType)
+			}
+			var v uint64
+			if (iNdEx + 8) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint64(encoding_binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+			iNdEx += 8
+			m.PassValue = float64(math.Float64frombits(v))
+		case 4:
+			if wireType != 1 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MinValidationAverage", wireType)
+			}
+			var v uint64
+			if (iNdEx + 8) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint64(encoding_binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+			iNdEx += 8
+			m.MinValidationAverage = float64(math.Float64frombits(v))
+		case 5:
+			if wireType != 1 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxValidationAverage", wireType)
+			}
+			var v uint64
+			if (iNdEx + 8) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint64(encoding_binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+			iNdEx += 8
+			m.MaxValidationAverage = float64(math.Float64frombits(v))
+		default:
+			iNdEx = preIndex
+			skippy, err := skipParams(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthParams
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *PocParams) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowParams
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: PocParams: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: PocParams: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DefaultDifficulty", wireType)
+			}
+			m.DefaultDifficulty = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DefaultDifficulty |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipParams(dAtA[iNdEx:])

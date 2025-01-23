@@ -7,11 +7,11 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -35,9 +35,11 @@ type NodePoCOrchestrator struct {
 	chainNodeUrl string
 	cosmosClient *cosmos_client.InferenceCosmosClient
 	noOp         bool
+	parameters   *types.Params
+	sync         sync.Mutex
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient) *NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, parameters *types.Params) *NodePoCOrchestrator {
 	return &NodePoCOrchestrator{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
@@ -48,7 +50,21 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 		chainNodeUrl: chainNodeUrl,
 		cosmosClient: cosmosClient,
 		noOp:         false,
+		parameters:   parameters,
+		sync:         sync.Mutex{},
 	}
+}
+
+func (o *NodePoCOrchestrator) GetParams() *types.Params {
+	o.sync.Lock()
+	defer o.sync.Unlock()
+	return o.parameters
+}
+
+func (o *NodePoCOrchestrator) SetParams(params *types.Params) {
+	o.sync.Lock()
+	defer o.sync.Unlock()
+	o.parameters = params
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
@@ -237,8 +253,9 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 		slog.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.")
 		return
 	}
+	epochParams := o.GetParams().EpochParams
 
-	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
+	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		slog.Error("MoveToValidationStage. Failed to get block hash", "error", err)
@@ -272,7 +289,8 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 		return
 	}
 
-	startOfPoCBlockHeight := proofofcompute.GetStartBlockHeightFromStartOfValStage(startOfValStageHeight)
+	epochParams := o.GetParams().EpochParams
+	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		slog.Error("ValidateReceivedBatches. Failed to get block hash", "error", err)

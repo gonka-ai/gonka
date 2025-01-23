@@ -9,15 +9,13 @@ import (
 )
 
 const (
-	FalsePositiveRate     = 0.05
-	MinRampUpMeasurements = 10
-	PassValue             = 0.99
-	TokenCost             = 1_000
+	TokenCost = 1_000
 )
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	params := k.Keeper.GetParams(ctx)
 	inference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
 		return nil, types.ErrInferenceNotFound
@@ -45,7 +43,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passed := msg.Value > PassValue
+	passed := msg.Value > float64(params.ValidationParams.PassValue)
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
@@ -71,7 +69,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 	// Where will we get this number? How much does it vary by model?
 
-	executor.Status = calculateStatus(FalsePositiveRate, executor)
+	executor.Status = calculateStatus(params.ValidationParams, executor)
 	k.SetParticipant(ctx, executor)
 
 	k.LogInfo("Validation: Saving inference", "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
@@ -100,16 +98,17 @@ func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *typ
 	k.SetEpochGroupValidations(ctx, epochGroupValidations)
 }
 
-func calculateStatus(falsePositiveRate float64, participant types.Participant) (status types.ParticipantStatus) {
+func calculateStatus(validationParameters *types.ValidationParams, participant types.Participant) (status types.ParticipantStatus) {
 	// Why not use the p-value, you ask? (or should).
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
+	falsePositiveRate := float64(validationParameters.FalsePositiveRate)
 	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
 		return types.ParticipantStatus_INVALID
 	}
 	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
-	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, MinRampUpMeasurements)
+	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, uint64(validationParameters.MinRampUpMeasurements))
 	if participant.InferenceCount < measurementsNeeded {
 		return types.ParticipantStatus_RAMPING
 	}

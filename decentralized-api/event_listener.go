@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
@@ -10,12 +11,13 @@ import (
 	"encoding/json"
 	fmt "fmt"
 	"github.com/gorilla/websocket"
-	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"log/slog"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,6 +30,7 @@ func StartEventListener(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
+	params *types.Params,
 ) {
 	websocketUrl := getWebsocketUrl(configManager.GetConfig())
 	slog.Info("Connecting to websocket at", "url", websocketUrl)
@@ -55,7 +58,7 @@ func StartEventListener(
 		"address", transactionRecorder.Address,
 		"pubkey", pubKeyString)
 
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, proofofcompute.DefaultDifficulty)
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.PocParams.DefaultDifficulty))
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
@@ -63,6 +66,7 @@ func StartEventListener(
 		configManager.GetConfig().Api.PoCCallbackUrl,
 		configManager.GetConfig().ChainNode.Url,
 		&transactionRecorder,
+		params,
 	)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
@@ -102,6 +106,28 @@ func StartEventListener(
 			}
 		}()
 	}
+}
+
+func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
+	var params *types.QueryParamsResponse
+	var err error
+	for i := 0; i < 10; i++ {
+		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
+		if err == nil {
+			return params, nil
+		}
+
+		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
+			slog.Info("Inference not ready, retrying...", "attempt", i+1, "error", err)
+			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
+			continue
+		}
+		// If not an RPC error, log and return early
+		slog.Error("Failed to get chain params", "error", err)
+		return nil, err
+	}
+	slog.Error("Exhausted all retries to get chain params", "error", err)
+	return nil, err
 }
 
 func handleMessage(

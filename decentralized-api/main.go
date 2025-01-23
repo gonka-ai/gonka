@@ -55,13 +55,19 @@ func main() {
 		loadNodeToBroker(nodeBroker, &node)
 	}
 
+	params, err := getParams(context.Background(), *recorder)
+	if err != nil {
+		slog.Error("Failed to get params", "error", err)
+		return
+	}
+
 	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config.GetConfig(), nodeBroker); err != nil {
 		slog.Error("Failed to register participant", "error", err)
 		return
 	}
 
 	go func() {
-		StartEventListener(nodeBroker, *recorder, config)
+		StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
 
 	StartInferenceServerWrapper(nodeBroker, recorder, config)

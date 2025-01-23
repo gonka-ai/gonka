@@ -11,7 +11,7 @@ export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 # BASE_DIR="prod-local/${KEY_NAME}"
 rm -r "prod-local" || true
-export PUBLIC_URL="http://${KEY_NAME}-api:$PORT"
+export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="$PUBLIC_URL"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
@@ -32,12 +32,16 @@ export SEED_API_URL="http://genesis-api:8080"
 export SEED_NODE_RPC_URL="http://genesis-node:26657"
 export SEED_NODE_P2P_URL="http://genesis-node:26656"
 export IS_GENESIS=false
+export PUBLIC_URL="http://${KEY_NAME}-api:8080"
+export POC_CALLBACK_URL="$PUBLIC_URL"
 ./launch_chain.sh local
 
 export KEY_NAME=join2
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PORT=8082
 export WIREMOCK_PORT=8092
+export PUBLIC_URL="http://${KEY_NAME}-api:8080"
+export POC_CALLBACK_URL="$PUBLIC_URL"
 ./launch_chain.sh local
 
 if [ "$(whoami)" = "johnlong" ]; then

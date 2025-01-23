@@ -8,7 +8,7 @@ fi
 if [ "$mode" == "local" ]; then
   compose_file="docker-compose-local.yml"
 elif [ "$mode" == "cloud" ]; then
-  compose_file="docker-compose-cloud-join.yml"
+    compose_file="docker-compose-cloud-join.yml"
 else
   echo "Unknown mode: $mode"
   exit 1

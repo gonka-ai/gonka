@@ -17,7 +17,6 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"github.com/productscience/inference/x/inference/proofofcompute"
 	"math/rand"
 
 	// this line is used by starport scaffolding # 1
@@ -159,12 +158,13 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
+	epochParams := am.keeper.GetParams(ctx).EpochParams
 
-	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		am.onSetNewValidatorsStage(ctx, blockHeight)
 	}
 
-	if proofofcompute.IsStartOfPoCStage(blockHeight) {
+	if epochParams.IsStartOfPoCStage(blockHeight) {
 		am.LogInfo("NewPocStart", "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight))
 		if err != nil {

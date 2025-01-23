@@ -21,14 +21,15 @@ COPY inference-chain/ /app/inference-chain
 
 WORKDIR /app/decentralized-api
 COPY decentralized-api/go.mod decentralized-api/go.sum ./
-RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
+
+RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go mod download
 
 COPY decentralized-api/. .
 
 # ARG LDFLAGS
-RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -ldflags "$LDFLAGS" \
     -o ./build/dapi
