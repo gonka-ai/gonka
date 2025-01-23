@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slog"
 	"os"
 	"testing"
 )
