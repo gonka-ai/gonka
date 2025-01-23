@@ -36,7 +36,7 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 	if err != nil {
 		return nil, err
 	}
-	executor.Status = calculateStatus(FalsePositiveRate, executor)
+	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
 
 	k.SetInference(ctx, inference)
 	k.SetParticipant(ctx, executor)

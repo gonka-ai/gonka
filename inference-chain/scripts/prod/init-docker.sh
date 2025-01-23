@@ -12,10 +12,13 @@ if [ -z "$KEYRING_BACKEND" ]; then
   KEYRING_BACKEND="test"
 fi
 
-if [ -z "$SEEDS" ]; then
-  echo "Seeds not specified, SEEDS are required."
-  # This needs to be set BEFORE the build to the actual seed values for the chain we want
-  # the dockerfile to point to
+if [ -z "$SEED_NODE_RPC_URL" ]; then
+  echo "SEED_NODE_RPC_URL env var is required"
+  exit 1
+fi
+
+if [ -z "$SEED_NODE_P2P_URL" ]; then
+  echo "SEED_NODE_P2P_URL env var is required"
   exit 1
 fi
 
@@ -45,10 +48,14 @@ $APP_NAME init \
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
+
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
-sed -Ei "s/^seeds = .*$/seeds = \"$SEEDS\"/g" \
-  $STATE_DIR/config/config.toml
+
+$APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
+
+echo "Grepping seeds =:"
+grep "seeds =" $STATE_DIR/config/config.toml
 
 # Create a key
 $APP_NAME keys \
@@ -58,10 +65,9 @@ $APP_NAME keys \
 # Need to join network? Or is that solely from the compose file?
 
 GENESIS_FILE="./.inference/genesis.json"
-if [ ! -f "$GENESIS_FILE" ]; then
-  echo "Genesis file not found at $GENESIS_FILE"
-  exit 1
-fi
+$APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
+
+cat $GENESIS_FILE
 
 echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json

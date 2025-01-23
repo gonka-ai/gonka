@@ -4,10 +4,12 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/cosmosclient"
+	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -15,15 +17,22 @@ import (
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
-		config, err := apiconfig.LoadDefaultConfigManager()
-		if err != nil {
-			log.Fatalf("Error loading config: %v", err)
-		}
-		returnStatus(config)
+		logging.WithNoopLogger(func() (interface{}, error) {
+			config, err := apiconfig.LoadDefaultConfigManager()
+			if err != nil {
+				log.Fatalf("Error loading config: %v", err)
+			}
+			returnStatus(config)
+			return nil, nil
+		})
+
+		return
 	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
+
 	config, err := apiconfig.LoadDefaultConfigManager()
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
@@ -32,7 +41,7 @@ func main() {
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"cosmos",
-		5,
+		10,
 		5*time.Second,
 		config.GetConfig(),
 	)
@@ -41,9 +50,24 @@ func main() {
 	}
 
 	nodeBroker := broker.NewBroker()
+	nodes := config.GetConfig().Nodes
+	for _, node := range nodes {
+		loadNodeToBroker(nodeBroker, &node)
+	}
+
+	params, err := getParams(context.Background(), *recorder)
+	if err != nil {
+		slog.Error("Failed to get params", "error", err)
+		return
+	}
+
+	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config.GetConfig(), nodeBroker); err != nil {
+		slog.Error("Failed to register participant", "error", err)
+		return
+	}
 
 	go func() {
-		StartEventListener(nodeBroker, *recorder, config)
+		StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
 
 	StartInferenceServerWrapper(nodeBroker, recorder, config)

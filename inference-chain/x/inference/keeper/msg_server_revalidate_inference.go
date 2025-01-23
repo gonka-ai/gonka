@@ -36,7 +36,7 @@ func (k msgServer) RevalidateInference(goCtx context.Context, msg *types.MsgReva
 	executor.ConsecutiveInvalidInferences = 0
 	executor.ValidatedInferences++
 
-	executor.Status = calculateStatus(FalsePositiveRate, executor)
+	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
 	k.SetParticipant(ctx, executor)
 
 	k.LogInfo("Validation: Saving inference", "inferenceId", inference.InferenceId, "status", inference.Status, "authority", inference.ProposalDetails.PolicyAddress)

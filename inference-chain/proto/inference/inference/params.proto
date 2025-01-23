@@ -3,6 +3,7 @@ package inference.inference;
 
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
+import "cosmos_proto/cosmos.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -10,6 +11,29 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message Params {
   option (amino.name) = "inference/x/inference/Params";
   option (gogoproto.equal) = true;
+  EpochParams epochParams = 1;
+  ValidationParams validationParams = 2;
+  PocParams pocParams = 3;
+}
 
-  
+message EpochParams {
+  option (gogoproto.equal) = true;
+  int64 epochLength = 1;
+  int64 epochMultiplier = 2;
+  uint64 epochNewCoin = 3;
+  int64 coinHalvingInterval = 4;
+}
+
+message ValidationParams {
+  option (gogoproto.equal) = true;
+  double falsePositiveRate = 1;
+  uint32 minRampUpMeasurements = 2;
+  double passValue = 3;
+  double minValidationAverage = 4;
+  double maxValidationAverage = 5;
+}
+
+message PocParams {
+  option (gogoproto.equal) = true;
+  uint32 defaultDifficulty = 1;
 }

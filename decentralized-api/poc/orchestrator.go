@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
@@ -165,6 +166,12 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
+	params, err := transactionRecorder.NewInferenceQueryClient().Params(transactionRecorder.Context, &types.QueryParamsRequest{})
+
+	if err == nil {
+		nodePoCOrchestrator.SetParams(&params.Params)
+	}
+
 	// Check for any upcoming upgrade plan
 	plan, err := transactionRecorder.GetUpgradePlan()
 	if err != nil {
@@ -198,9 +205,10 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
+	epochParams := nodePoCOrchestrator.GetParams().EpochParams
 	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
 
-	if proofofcompute.IsStartOfPoCStage(blockHeight) {
+	if epochParams.IsStartOfPoCStage(blockHeight) {
 		slog.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
@@ -212,7 +220,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
-	if proofofcompute.IsEndOfPoCStage(blockHeight) {
+	if epochParams.IsEndOfPoCStage(blockHeight) {
 		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
@@ -221,7 +229,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
-	if proofofcompute.IsStartOfPoCValidationStage(blockHeight) {
+	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
 		slog.Info("IsStartOfPoCValidationStage")
 
 		go func() {
@@ -231,7 +239,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
-	if proofofcompute.IsEndOfPoCValidationStage(blockHeight) {
+	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
 		slog.Info("IsEndOfPoCValidationStage")
 
 		nodePoCOrchestrator.Stop()
@@ -239,7 +247,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
-	if proofofcompute.IsSetNewValidatorsStage(blockHeight) {
+	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		go func() {
 			ChangeCurrentSeed(configManager)
 			RequestMoney(&transactionRecorder, configManager)

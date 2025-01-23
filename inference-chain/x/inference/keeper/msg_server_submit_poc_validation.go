@@ -4,8 +4,6 @@ import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
 	"fmt"
-	"github.com/productscience/inference/x/inference/proofofcompute"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -15,14 +13,15 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
+	epochParams := k.Keeper.GetParams(ctx).EpochParams
 
-	if !proofofcompute.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocValidation] start block height must be divisible by EpochLength", "EpochLength", proofofcompute.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocValidation] start block height must be divisible by %d. msg.BlockHeight = %d", proofofcompute.EpochLength, startBlockHeight)
+	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"[SubmitPocValidation] start block height must be divisible by EpochLength", "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocValidation] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !proofofcompute.IsValidationExchangeWindow(startBlockHeight, currentBlockHeight) {
+	if !epochParams.IsValidationExchangeWindow(startBlockHeight, currentBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
