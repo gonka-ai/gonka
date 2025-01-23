@@ -98,18 +98,18 @@ func StartEventListener(
 			slog.Error("Error unmarshalling message to JSONRPCResponse", "error", err, "message", message)
 		}
 
-		switch event.Result.Data.Type {
-		case "tendermint/event/NewBlock":
-			slog.Debug("New block event received", "type", event.Result.Data.Type)
-			poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
-			upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
-		case "tendermint/event/Tx":
-			go func() {
+		go func() {
+			switch event.Result.Data.Type {
+			case "tendermint/event/NewBlock":
+				slog.Debug("New block event received", "type", event.Result.Data.Type)
+				poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
+				upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
+			case "tendermint/event/Tx":
 				handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
-			}()
-		default:
-			slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
-		}
+			default:
+				slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
+			}
+		}()
 	}
 }
 

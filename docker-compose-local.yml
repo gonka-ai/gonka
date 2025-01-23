@@ -5,7 +5,8 @@ services:
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
-      - SEEDS=${SEEDS}
+      - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
+      - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
       - KEY_NAME=${KEY_NAME}
     networks:
       - chain-public
@@ -14,14 +15,17 @@ services:
     container_name: ${KEY_NAME}-api
     image: gcr.io/decentralized-ai/api
     volumes:
-      - ./prod-local/${KEY_NAME}:/root/.inference
+        - ./prod-local/${KEY_NAME}:/root/.inference
+        - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PORT}:8080"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
-      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
-      - DAPI_API__PUBLIC_URL=${DAPI_API__PUBLIC_URL}
+      - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
+      - NODE_CONFIG_PATH=/root/node_config.json
     networks:
       - chain-public
 

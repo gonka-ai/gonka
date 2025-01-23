@@ -5,14 +5,15 @@ import (
 )
 
 type Config struct {
-	Api           ApiConfig              `koanf:"api"`
-	Nodes         []broker.InferenceNode `koanf:"nodes"`
-	ChainNode     ChainNodeConfig        `koanf:"chain_node"`
-	UpcomingSeed  SeedInfo               `koanf:"upcoming_seed"`
-	CurrentSeed   SeedInfo               `koanf:"current_seed"`
-	PreviousSeed  SeedInfo               `koanf:"previous_seed"`
-	CurrentHeight int64                  `koanf:"current_height"`
-	UpgradePlan   UpgradePlan            `koanf:"upgrade_plan"`
+	Api                ApiConfig              `koanf:"api"`
+	Nodes              []broker.InferenceNode `koanf:"nodes"`
+	NodeConfigIsMerged bool                   `koanf:"merged_node_config"`
+	ChainNode          ChainNodeConfig        `koanf:"chain_node"`
+	UpcomingSeed       SeedInfo               `koanf:"upcoming_seed"`
+	CurrentSeed        SeedInfo               `koanf:"current_seed"`
+	PreviousSeed       SeedInfo               `koanf:"previous_seed"`
+	CurrentHeight      int64                  `koanf:"current_height"`
+	UpgradePlan        UpgradePlan            `koanf:"upgrade_plan"`
 }
 
 type UpgradePlan struct {
@@ -38,4 +39,6 @@ type ChainNodeConfig struct {
 	AccountName    string `koanf:"account_name"`
 	KeyringBackend string `koanf:"keyring_backend"`
 	KeyringDir     string `koanf:"keyring_dir"`
+	IsGenesis      bool   `koanf:"is_genesis"`
+	SeedApiUrl     string `koanf:"seed_api_url"`
 }

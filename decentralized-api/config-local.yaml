@@ -1,6 +1,7 @@
 api:
   port: 8080
-  poc_callback_url: localhost
+  poc_callback_url: http://localhost:8080
+  public_url: http://localhost:8080
 nodes:
   - id: node1
     host:  34.171.235.205:8080/ # Deployed inference node
@@ -12,3 +13,4 @@ chain_node:
   account_name: "alice"
   keyring_backend: "test"
   keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
+  is_genesis: false
