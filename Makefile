@@ -1,3 +1,5 @@
+.PHONY: release decentralized-api-release inference-chain-release
+
 all: build-docker
 
 build-docker: api-build-docker node-build-docker
@@ -15,3 +17,13 @@ api-build-and-push-docker:
 
 node-build-and-push-docker:
 	@make -C inference-chain build-and-push-docker
+
+release: decentralized-api-release inference-chain-release
+
+decentralized-api-release:
+	@echo "Releasing decentralized-api..."
+	@make -C decentralized-api release
+
+inference-chain-release:
+	@echo "Releasing inference-chain..."
+	@make -C inference-chain release
