@@ -189,6 +189,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submit-seed tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "blockHeight"}, {ProtoField: "signature"}},
 				},
+				{
+					RpcMethod:      "SubmitUnitOfComputePriceProposal",
+					Use:            "submit-unit-of-compute-price-proposal [price]",
+					Short:          "Send a submit-unit-of-compute-price-proposal tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

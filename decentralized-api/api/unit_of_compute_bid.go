@@ -2,19 +2,20 @@ package api
 
 import (
 	"decentralized-api/apiconfig"
+	cosmos_client "decentralized-api/cosmosclient"
 	"fmt"
 	"log/slog"
 	"net/http"
 )
 
-// v1/admin/unit-of-compute-bid
-func WrapUnitOfComputeBid(configManager *apiconfig.ConfigManager) func(w http.ResponseWriter, request *http.Request) {
+// v1/admin/unit-of-compute-price-proposal
+func WrapUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClient, configManager *apiconfig.ConfigManager) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodPost:
-			postUnitOfComputeBid(configManager)
+			postUnitOfComputePriceProposal(cosmosClient, configManager)
 		case http.MethodGet:
-			getUnitOfComputeBid(configManager)
+			getUnitOfComputePriceProposal(cosmosClient, configManager)
 		default:
 			slog.Error("Invalid request method", "method", request.Method, "path", request.URL.Path)
 			msg := fmt.Sprintf("Invalid request method. method = %s. path = %s", request.Method, request.URL.Path)
@@ -23,14 +24,15 @@ func WrapUnitOfComputeBid(configManager *apiconfig.ConfigManager) func(w http.Re
 	}
 }
 
-type UnitOfComputeBidDto struct {
-	Bid string `json:"bid"`
+type UnitOfComputePriceProposalDto struct {
+	Price string `json:"price"`
 }
 
-func postUnitOfComputeBid(configManager *apiconfig.ConfigManager) {
+func postUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClient, configManager *apiconfig.ConfigManager) {
 	configManager.GetConfig()
 }
 
-func getUnitOfComputeBid(configManager *apiconfig.ConfigManager) {
+// ignite scaffold message submit-unit-of-compute-price-proposal price:uint
+func getUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClient, configManager *apiconfig.ConfigManager) {
 
 }
