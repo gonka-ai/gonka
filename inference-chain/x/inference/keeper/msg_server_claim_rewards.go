@@ -172,7 +172,8 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			k.LogWarn("Executor not found in weight map", "executor", inference.Executor)
 			continue
 		}
-		shouldValidate, s := ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower))
+		shouldValidate, s := ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
+			k.Keeper.GetParams(ctx).ValidationParams)
 		k.LogDebug("ValidationDecision", "text", s, "inference", inference.InferenceId, "seed", msg.Seed)
 		if shouldValidate {
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
@@ -181,12 +182,28 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	return mustBeValidated, nil
 }
 
-func ShouldValidate(seed int64, inferenceDetails *types.InferenceDetail, totalPower uint32, validatorPower uint32, executorPower uint32) (bool, string) {
-	targetValidations := 1 - (inferenceDetails.ExecutorReputation * 0.9)
-	ourProbability := targetValidations * (float32(validatorPower) / float32(totalPower-executorPower))
+func ShouldValidate(
+	seed int64,
+	inferenceDetails *types.InferenceDetail,
+	totalPower uint32,
+	validatorPower uint32,
+	executorPower uint32,
+	validationParams *types.ValidationParams,
+) (bool, string) {
+	rangeSize := validationParams.MaxValidationAverage - validationParams.MinValidationAverage
+	executorAdjustment := rangeSize * (1 - float64(inferenceDetails.ExecutorReputation))
+	// 100% rep will be 0, 0% rep will be rangeSize
+	targetValidations := validationParams.MinValidationAverage + executorAdjustment
+	ourProbability := float32(targetValidations) * (float32(validatorPower)) / float32(totalPower-executorPower)
+	if ourProbability > 1 {
+		ourProbability = 1
+	}
 	randFloat := deterministicFloat(seed, inferenceDetails.InferenceId)
 	shouldValidate := randFloat < float64(ourProbability)
-	return shouldValidate, "Should Validate: " + fmt.Sprintf("%v", shouldValidate) + " randFloat: " + fmt.Sprintf("%v", randFloat) + " ourProbability: " + fmt.Sprintf("%v", ourProbability)
+	return shouldValidate, fmt.Sprintf(
+		"Should Validate: %v randFloat: %v ourProbability: %v, rangeSize: %v, executorAdjustment: %v, targetValidations: %v",
+		shouldValidate, randFloat, ourProbability, rangeSize, executorAdjustment, targetValidations,
+	)
 }
 
 // In lieu of a real random number generator, we use a deterministic function that takes a seed and an inferenceId

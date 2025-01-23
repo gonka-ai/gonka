@@ -4,7 +4,7 @@ go 1.22.2
 
 replace (
 	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.0.0-20250110234631-400161d59a0f
-		//github.com/cosmos/cosmos-sdk => ../../ps-fork/cosmos-sdk
+	//github.com/cosmos/cosmos-sdk => ../../ps-fork/cosmos-sdk
 	// fix upstream GHSA-h395-qcrw-5vmq vulnerability.
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.7.0
 	// replace broken goleveldb
@@ -210,6 +210,7 @@ require (
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/smartystreets/goconvey v1.8.1 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect

@@ -29,6 +29,8 @@ func DefaultParams() Params {
 			FalsePositiveRate:     0.05,
 			MinRampUpMeasurements: 10,
 			PassValue:             0.99,
+			MinValidationAverage:  0.1,
+			MaxValidationAverage:  1.0,
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,

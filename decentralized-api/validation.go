@@ -76,6 +76,12 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		return
 	}
 
+	params, err := queryClient.Params(transactionRecorder.Context, &types.QueryParamsRequest{})
+	if err != nil {
+		slog.Error("Validation: Failed to get params", "error", err)
+		return
+	}
+
 	logInferencesToSample(r.InferenceWithExecutor)
 
 	var toValidate []types.Inference
@@ -88,7 +94,8 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,
 			r.ValidatorPower,
-			inferenceWithExecutor.CurrentPower)
+			inferenceWithExecutor.CurrentPower,
+			params.Params.ValidationParams)
 		slog.Debug("Validation: Should validate", "message", message, "inferenceId", inferenceWithExecutor.Inference.InferenceId, "seed", config.CurrentSeed.Seed)
 		if shouldValidate {
 			toValidate = append(toValidate, inferenceWithExecutor.Inference)
