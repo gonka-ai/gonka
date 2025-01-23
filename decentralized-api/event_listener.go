@@ -30,8 +30,8 @@ func StartEventListener(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
+	params *types.Params,
 ) {
-	ctx := context.Background()
 	websocketUrl := getWebsocketUrl(configManager.GetConfig())
 	slog.Info("Connecting to websocket at", "url", websocketUrl)
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -58,12 +58,7 @@ func StartEventListener(
 		"address", transactionRecorder.Address,
 		"pubkey", pubKeyString)
 
-	params, done := getParams(ctx, transactionRecorder)
-	if done {
-		return
-	}
-
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.PocParams.DefaultDifficulty))
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
@@ -71,7 +66,7 @@ func StartEventListener(
 		configManager.GetConfig().Api.PoCCallbackUrl,
 		configManager.GetConfig().ChainNode.Url,
 		&transactionRecorder,
-		&params.Params,
+		params,
 	)
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
@@ -113,13 +108,13 @@ func StartEventListener(
 	}
 }
 
-func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, bool) {
+func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
 	var params *types.QueryParamsResponse
 	var err error
 	for i := 0; i < 10; i++ {
 		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
 		if err == nil {
-			return params, false
+			return params, nil
 		}
 
 		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
@@ -129,10 +124,10 @@ func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 		}
 		// If not an RPC error, log and return early
 		slog.Error("Failed to get chain params", "error", err)
-		return nil, true
+		return nil, err
 	}
 	slog.Error("Exhausted all retries to get chain params", "error", err)
-	return nil, true
+	return nil, err
 }
 
 func handleMessage(
