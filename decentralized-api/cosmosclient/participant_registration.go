@@ -153,6 +153,11 @@ func registerJoiningParticipant(recorder CosmosMessageClient, configManager *api
 	}
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 
+	workerKey, err := configManager.CreateWorkerKey()
+	if err != nil {
+		return fmt.Errorf("Failed to create worker key: %w", err)
+	}
+
 	uniqueModelsList, err := getUniqueModels(nodeBroker)
 	if err != nil {
 		return fmt.Errorf("Failed to get unique models: %w", err)
@@ -180,6 +185,7 @@ func registerJoiningParticipant(recorder CosmosMessageClient, configManager *api
 		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		PubKey:       pubKeyString,
+		WorkerKey:    workerKey,
 	}
 
 	requestUrl, err := url.JoinPath(config.ChainNode.SeedApiUrl, "/v1/participants")
