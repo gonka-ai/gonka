@@ -29,6 +29,7 @@ func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) t
 		PromptTokenCount:     make(map[string]uint64),
 		CompletionTokenCount: make(map[string]uint64),
 		ValidatorKey:         msg.GetValidatorKey(),
+		WorkerPublicKey:      msg.GetWorkerKey(),
 	}
 
 	for _, model := range msg.GetModels() {
