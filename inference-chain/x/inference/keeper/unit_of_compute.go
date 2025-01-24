@@ -9,6 +9,11 @@ func (k Keeper) SetUnitOfComputePriceProposal(ctx context.Context, proposal *typ
 	SetValue(k, ctx, proposal, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(proposal.Participant))
 }
 
+// TODO: fix name!
+func (k Keeper) GettUnitOfComputePriceProposal(ctx context.Context, participant string) (*types.UnitOfComputePriceProposal, bool) {
+	return GetValue[*types.UnitOfComputePriceProposal](k, ctx, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(participant))
+}
+
 func (k Keeper) SetUnitOfComputePrice(ctx context.Context, price uint64, epochId uint64) {
 	object := &types.UnitOfComputePrice{
 		Price:   price,
