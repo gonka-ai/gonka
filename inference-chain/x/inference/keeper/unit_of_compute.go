@@ -11,7 +11,18 @@ func (k Keeper) SetUnitOfComputePriceProposal(ctx context.Context, proposal *typ
 
 // TODO: fix name!
 func (k Keeper) GettUnitOfComputePriceProposal(ctx context.Context, participant string) (*types.UnitOfComputePriceProposal, bool) {
-	return GetValue[*types.UnitOfComputePriceProposal](k, ctx, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(participant))
+	var object types.UnitOfComputePriceProposal
+	return GetValue(k, ctx, &object, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(participant))
+}
+
+func (k Keeper) AllUnitOfComputePriceProposals(ctx context.Context) (proposals []*types.UnitOfComputePriceProposal) {
+	store := PrefixStore(ctx, k, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix))
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		// TODO: parse values!
+	}
 }
 
 func (k Keeper) SetUnitOfComputePrice(ctx context.Context, price uint64, epochId uint64) {
