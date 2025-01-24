@@ -84,6 +84,7 @@ message MsgSubmitNewParticipant {
            string url          = 2;
   repeated string models       = 3;
            string validatorKey = 4;
+           string workerKey    = 5;
 }
 
 message MsgSubmitNewParticipantResponse {
@@ -122,6 +123,7 @@ message MsgSubmitNewUnfundedParticipant {
   repeated string models       = 4;
            string pubKey       = 5;
            string validatorKey = 6;
+           string workerKey    = 7;
 }
 
 message MsgSubmitNewUnfundedParticipantResponse {}

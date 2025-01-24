@@ -83,15 +83,16 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 	}
 }
 
-func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
-	if config.ChainNode.IsGenesis {
+func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+	if config.GetConfig().ChainNode.IsGenesis {
 		return registerGenesisParticipant(recorder, config, nodeBroker)
 	} else {
 		return registerJoiningParticipant(recorder, config, nodeBroker)
 	}
 }
 
-func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
+func registerGenesisParticipant(recorder CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Genesis participant already exists")
 		return nil
@@ -104,7 +105,10 @@ func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 		return err
 	}
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
-
+	workerPublicKey, err := configManager.CreateWorkerKey()
+	if err != nil {
+		return fmt.Errorf("Failed to create worker key: %w", err)
+	}
 	uniqueModelsList, err := getUniqueModels(nodeBroker)
 	if err != nil {
 		return fmt.Errorf("Failed to get unique models: %w", err)
@@ -116,6 +120,7 @@ func registerGenesisParticipant(recorder CosmosMessageClient, config *apiconfig.
 		Url:          config.Api.PublicUrl,
 		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
+		WorkerKey:    workerPublicKey,
 	}
 
 	return recorder.SubmitNewParticipant(msg)
@@ -130,9 +135,11 @@ type submitUnfundedNewParticipantDto struct {
 	Models       []string `json:"models"`
 	ValidatorKey string   `json:"validator_key"`
 	PubKey       string   `json:"pub_key"`
+	WorkerKey    string   `json:"worker_key"`
 }
 
-func registerJoiningParticipant(recorder CosmosMessageClient, config *apiconfig.Config, nodeBroker *broker.Broker) error {
+func registerJoiningParticipant(recorder CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Participant already exists, skipping registration")
 		return nil
