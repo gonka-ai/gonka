@@ -79,9 +79,6 @@ import (
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	"github.com/productscience/inference/docs"
-
-	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
-	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 )
 
 const (
@@ -95,9 +92,8 @@ var (
 )
 
 var (
-	_            runtime.AppI            = (*App)(nil)
-	_            servertypes.Application = (*App)(nil)
-	WasmStoreKey                         = wasmtypes.StoreKey
+	_ runtime.AppI            = (*App)(nil)
+	_ servertypes.Application = (*App)(nil)
 )
 
 // App extends an ABCI application, but with most of its parameters exported.
@@ -129,7 +125,6 @@ type App struct {
 	GroupKeeper          groupkeeper.Keeper
 	NFTKeeper            nftkeeper.Keeper
 	CircuitBreakerKeeper circuitkeeper.Keeper
-	WasmKeeper           wasmkeeper.Keeper
 
 	// IBC
 	IBCKeeper           *ibckeeper.Keeper // IBC Keeper must be a pointer in the app, so we can SetRouter on it correctly
@@ -285,7 +280,6 @@ func New(
 		&app.GroupKeeper,
 		&app.CircuitBreakerKeeper,
 		&app.InferenceKeeper,
-		&app.WasmKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)
