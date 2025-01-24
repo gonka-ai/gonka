@@ -1,0 +1,41 @@
+func ProvideWasmKeeper(
+	app *App,
+	appOpts servertypes.AppOptions,
+) (*wasmkeeper.Keeper, error) {
+
+	wasmDir := filepath.Join(DefaultNodeHome, "wasm")
+	nodeConfig, err := wasm.ReadNodeConfig(appOpts)
+	if err != nil {
+		panic(fmt.Sprintf("error while reading wasm config: %s", err))
+	}
+
+	if app.MsgServiceRouter() == nil {
+		return nil, fmt.Errorf("MsgServiceRouter is nil")
+	}
+	if app.GRPCQueryRouter() == nil {
+		return nil, fmt.Errorf("GRPCQueryRouter is nil")
+	}
+
+	wasmKeeper := wasmkeeper.NewKeeper(
+		app.AppCodec(),
+		runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.StakingKeeper,
+		distrkeeper.NewQuerier(app.DistrKeeper),
+		app.IBCFeeKeeper, // ISC4 Wrapper: fee IBC middleware
+		app.IBCKeeper.ChannelKeeper,
+		app.IBCKeeper.PortKeeper,
+		app.GetCapabilityScopedKeeper(wasmtypes.StoreKey),
+		app.TransferKeeper,
+		app.MsgServiceRouter(),
+		app.GRPCQueryRouter(),
+		wasmDir,
+		nodeConfig,
+		wasmtypes.VMConfig{},
+		wasmkeeper.BuiltInCapabilities(),
+		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+	)
+
+	return &wasmKeeper, nil
+}
