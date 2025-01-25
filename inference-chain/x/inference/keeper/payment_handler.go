@@ -7,8 +7,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const inferenceDenom = "icoin"
-
 type PaymentHandler interface {
 	PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (int64, error)
 	MintRewardCoins(ctx context.Context, newCoins int64) error
@@ -54,8 +52,4 @@ func (k *Keeper) BurnCoins(ctx context.Context, burnCoins int64) error {
 	}
 	k.LogInfo("Burning coins", "coins", burnCoins)
 	return k.bank.BurnCoins(ctx, types.ModuleName, GetCoins(burnCoins))
-}
-
-func GetCoins(coins int64) sdk.Coins {
-	return sdk.NewCoins(sdk.NewInt64Coin(inferenceDenom, coins))
 }

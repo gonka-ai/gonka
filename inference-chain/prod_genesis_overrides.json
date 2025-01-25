@@ -1,0 +1,21 @@
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "min_deposit": [
+          {
+            "denom": "icoin",
+            "amount": "10"
+          }
+        ]
+      }
+    },
+    "inference": {
+      "params": {
+        "epochParams": {
+          "epochLength": "2000"
+        }
+      }
+    }
+  }
+}
