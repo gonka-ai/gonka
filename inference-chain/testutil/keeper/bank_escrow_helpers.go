@@ -15,7 +15,7 @@ func (escrow *MockBankEscrowKeeper) ExpectAny(context sdk.Context) {
 func coinsOf(amount uint64) sdk.Coins {
 	return sdk.Coins{
 		sdk.NewInt64Coin(
-			"icoin",
+			"nicoin",
 			int64(amount)),
 	}
 }
