@@ -49,12 +49,14 @@ jobs:
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: node-junit-report
           path: inference-chain/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
+        if: always()
         with:
           name: Inferenced Tests
           path: inference-chain/junit-report.xml
@@ -100,12 +102,14 @@ jobs:
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: api-junit-report
           path: decentralized-api/junit-report.xml
 
       - name: Report Test Results in GitHub
         uses: dorny/test-reporter@v1
+        if: always()
         with:
           name: Decentralized-API Tests
           path: decentralized-api/junit-report.xml
