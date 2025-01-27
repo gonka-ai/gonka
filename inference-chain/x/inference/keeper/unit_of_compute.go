@@ -44,13 +44,21 @@ func (k Keeper) SetUnitOfComputePrice(ctx context.Context, price uint64, epochId
 	SetValue(k, ctx, object, types.KeyPrefix(types.UnitOfComputePriceKeyPrefix), types.UnitOfComputePriceKey(epochId))
 }
 
-/*func (k Keeper) GetUnitOfComputePriceProposal(ctx context.Context, participant string) (val types.UnitOfComputePriceProposal, found bool) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.SettleAmountKeyPrefix))
-	b := store.Get(types.SettleAmountKey(participant))
-	if b == nil {
-		return val, false
+func (k Keeper) GetUnitOfComputePrice(ctx context.Context, epochId uint64) (*types.UnitOfComputePrice, bool) {
+	var object types.UnitOfComputePrice
+	return GetValue(k, ctx, &object, types.KeyPrefix(types.UnitOfComputePriceKeyPrefix), types.UnitOfComputePriceKey(epochId))
+}
+
+func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*types.UnitOfComputePrice, error) {
+	epochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		return nil, err
 	}
-	k.cdc.MustUnmarshal(b, &val)
-	return val, true
-}*/
+
+	price, found := k.GetUnitOfComputePrice(ctx, epochGroup.GroupData.EpochGroupId)
+	if !found {
+		return nil, fmt.Errorf("price not found for epoch %d", epochGroup.GroupData.EpochGroupId)
+	}
+
+	return price, nil
+}
