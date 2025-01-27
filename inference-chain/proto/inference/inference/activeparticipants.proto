@@ -8,17 +8,17 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 // Not added to the Genesis, because at genesis it's constructed based on Participants
 message ActiveParticipants {
   repeated ActiveParticipant participants = 1;
-  uint64 epochGroupId = 2;
-  int64 pocStartBlockHeight = 3;
-  int64 effectiveBlockHeight = 4;
-  int64 createdAtBlockHeight = 5; // Same as effectiveBlockHeight???
+  uint64 epoch_group_id = 2;
+  int64 poc_start_block_height = 3;
+  int64 effective_block_height = 4;
+  int64 created_at_block_height = 5; // Same as effective_block_height???
 }
 
 message ActiveParticipant {
   string index = 1;
-  string validatorKey = 2;
-  int64  weight = 3;
-  string inferenceUrl = 4;
+  string validator_key = 2;
+  int64 weight = 3;
+  string inference_url = 4;
   repeated string models = 5;
   RandomSeed seed = 6;
 }
