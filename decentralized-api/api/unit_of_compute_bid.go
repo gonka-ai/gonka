@@ -53,7 +53,10 @@ func postUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClie
 func getUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	queryClient := cosmosClient.NewInferenceQueryClient()
 
-	queryRequest := &types.QueryGetUnitOfComputePriceProposalRequest{}
+	queryRequest := &types.QueryGetUnitOfComputePriceProposalRequest{
+		Participant: cosmosClient.GetAddress(),
+	}
+
 	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(*cosmosClient.GetContext(), queryRequest)
 	if err != nil {
 		slog.Error("Failed to query unit of compute price proposal", "error", err)

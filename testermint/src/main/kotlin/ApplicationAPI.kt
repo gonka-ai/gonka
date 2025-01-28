@@ -127,9 +127,9 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         response.third.get()
     }
 
-    fun getPriceProposal(): UnitOfComputePriceProposalDto = wrapLog("SubmitPriceProposal", true) {
+    fun getPriceProposal(): GetUnitOfComputePriceProposalResponse = wrapLog("SubmitPriceProposal", true) {
         val response = Fuel.get("$url/v1/admin/unit-of-compute-price-proposal")
-            .responseObject<UnitOfComputePriceProposalDto>(gsonDeserializer(gsonSnakeCase))
+            .responseObject<GetUnitOfComputePriceProposalResponse>(gsonDeserializer(gsonSnakeCase))
         logResponse(response)
 
         response.third.get()
