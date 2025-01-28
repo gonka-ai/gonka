@@ -16,6 +16,18 @@ func NewParams() Params {
 	return Params{}
 }
 
+const million = 1_000_000
+
+func DefaultGenesisOnlyParams() GenesisOnlyParams {
+	return GenesisOnlyParams{
+		TotalSupply:      1_000 * million,
+		OriginatorSupply: 160 * million,
+		TopRewardAmount:  120 * million,
+		TopRewards:       3,
+		SupplyDenom:      NativeCoin,
+	}
+}
+
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
 	return Params{
@@ -34,6 +46,11 @@ func DefaultParams() Params {
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,
+		},
+		TokenomicsParams: &TokenomicsParams{
+			SubsidyReductionInterval: 0.05,
+			SubsidyReductionAmount:   0.20,
+			CurrentSubsidyPercentage: 0.90,
 		},
 	}
 }

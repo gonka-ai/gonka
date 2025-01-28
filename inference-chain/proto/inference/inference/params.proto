@@ -14,6 +14,22 @@ message Params {
   EpochParams epoch_params = 1;
   ValidationParams validation_params = 2;
   PocParams poc_params = 3;
+  TokenomicsParams tokenomics_params = 4;
+}
+
+message GenesisOnlyParams {
+  uint64 total_supply = 4;
+  uint64 originator_supply = 5;
+  uint64 top_reward_amount = 6;
+  int32 top_rewards = 7;
+  string supply_denom = 8;
+}
+
+message TokenomicsParams {
+  option (gogoproto.equal) = true;
+  double subsidy_reduction_interval = 1;
+  float subsidy_reduction_amount = 2;
+  float current_subsidy_percentage = 3;
 }
 
 message EpochParams {
