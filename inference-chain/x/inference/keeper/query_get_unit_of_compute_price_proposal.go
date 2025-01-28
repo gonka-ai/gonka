@@ -16,8 +16,12 @@ func (k Keeper) GetUnitOfComputePriceProposal(goCtx context.Context, req *types.
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	proposal, _ := k.GettUnitOfComputePriceProposal(ctx, req.Participant)
 
-	return &types.QueryGetUnitOfComputePriceProposalResponse{}, nil
+	params := k.GetParams(ctx)
+
+	return &types.QueryGetUnitOfComputePriceProposalResponse{
+		Proposal: proposal,
+		Default:  params.EpochParams.DefaultUnitOfComputePrice,
+	}, nil
 }

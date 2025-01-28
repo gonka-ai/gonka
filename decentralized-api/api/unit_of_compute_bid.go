@@ -61,8 +61,5 @@ func getUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClien
 		return
 	}
 
-	dto := UnitOfComputePriceProposalDto{
-		Price: queryResponse.Price,
-	}
-	RespondWithJson(w, dto)
+	RespondWithJson(w, queryResponse)
 }

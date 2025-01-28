@@ -13,6 +13,7 @@ import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/pocbatch.proto";
+import "inference/inference/unit_of_compute.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -263,8 +264,11 @@ message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
 }
 
-message QueryGetUnitOfComputePriceProposalRequest {}
+message QueryGetUnitOfComputePriceProposalRequest {
+  string participant = 1;
+}
 
 message QueryGetUnitOfComputePriceProposalResponse {
-  uint64 price = 1;
+  UnitOfComputePriceProposal proposal = 1;
+  uint64 default = 2;
 }
