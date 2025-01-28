@@ -13,10 +13,14 @@ class UnitOfComputeTests : TestermintTest() {
 
         println("test response = $priceProposalResponse")
 
-        instance.api.submitPriceProposal(UnitOfComputePriceProposalDto(price = 888.toULong()))
+        instance.api.submitPriceProposal(UnitOfComputePriceProposalDto(price = 127.toULong()))
 
         val priceProposalResponse2 = instance.api.getPriceProposal()
 
         println("test response = $priceProposalResponse2")
+
+        val instance2 = pairs[1]
+
+        instance2.api.submitPriceProposal(UnitOfComputePriceProposalDto(price = 888.toULong()))
     }
 }
