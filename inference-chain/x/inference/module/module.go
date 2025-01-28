@@ -261,11 +261,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	am.LogInfo("Unit of compute: retrieved proposals", "len(proposals)", len(proposals))
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", "len(proposals)", len(proposals))
 
 	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice)
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", "medianProposal", medianProposal)
 	if err != nil {
-		am.LogError("Unit of compute: onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
 		return
 	}
 
