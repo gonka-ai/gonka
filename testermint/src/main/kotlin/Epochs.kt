@@ -2,7 +2,7 @@ package com.productscience
 
 
 const val Multiplier = 1L
-const val EpochLength = 40 * Multiplier
+const val EpochLength = 20 * Multiplier
 const val startOfPocStage = 0 * Multiplier
 const val endOfPocStage = 3 * Multiplier
 const val pocExchangeDeadline = endOfPocStage + 5

@@ -34,6 +34,14 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    fun `test get app export`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val highestFunded = initialize(pairs)
+        val state = highestFunded.node.exportState()
+        Logger.debug(state)
+    }
+
+    @Test
     fun `test escrow and pre settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
