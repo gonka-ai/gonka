@@ -13,7 +13,7 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 KEY_NAME="genesis"
 APP_NAME="inferenced"
 CHAIN_ID="prod-sim"
-COIN_DENOM="icoin"
+COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 
 # Init the chain:
@@ -45,24 +45,25 @@ $APP_NAME keys \
     add "$KEY_NAME"
 
 echo "Adding the key to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "10000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
-$APP_NAME genesis gentx "$KEY_NAME" "10000000$COIN_DENOM" --chain-id "$CHAIN_ID"
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "1000000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis gentx "$KEY_NAME" "1000000000$COIN_DENOM" --chain-id "$CHAIN_ID"
 $APP_NAME genesis collect-gentxs
 
 modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
-  local jq_filter="$1"
+  local override_file="$1"
 
   echo "Checking if jq is installed"
   which jq
-  jq "$jq_filter" "$json_file" > "${json_file}.tmp"
+  jq ". * input" "$json_file" "$override_file" > "${json_file}.tmp"
   mv "${json_file}.tmp" "$json_file"
-  echo "Modified $json_file with filter: $jq_filter"
+  echo "Modified $json_file with file: $jq_filter"
   cat "$json_file"
 }
 
 # Usage
-modify_genesis_file '.app_state.gov.params.voting_period |= "30s"'
+modify_genesis_file 'denom.json'
+modify_genesis_file 'genesis_overrides.json'
 
 echo "Genesis file created"
 echo "Init for cosmovisor"

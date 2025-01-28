@@ -1,0 +1,33 @@
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "description": "AI Inference and training token",
+          "base": "nicoin",
+          "display": "icoin",
+          "name": "AI Coin",
+          "symbol": "AIC",
+          "denom_units": [
+            {
+              "denom": "nicoin",
+              "exponent": 0
+            },
+            {
+              "denom": "uicoin",
+              "exponent": 3
+            },
+            {
+              "denom": "micoin",
+              "exponent": 6
+            },
+            {
+              "denom": "icoin",
+              "exponent": 9
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

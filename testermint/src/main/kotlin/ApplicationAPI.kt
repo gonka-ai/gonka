@@ -8,6 +8,7 @@ import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
 import com.github.kittinunf.result.Result
+import com.productscience.data.AppExport
 import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.InferencePayload
