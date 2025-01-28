@@ -938,7 +938,7 @@ func getParticipants(recorder cosmos_client.CosmosMessageClient, w http.Response
 		if err == nil {
 			for _, balance := range balances {
 				// TODO: surely there is a place to get denom from
-				if balance.Denom == "icoin" {
+				if balance.Denom == "nicoin" {
 					pBalance = balance.Amount.Int64()
 				}
 			}

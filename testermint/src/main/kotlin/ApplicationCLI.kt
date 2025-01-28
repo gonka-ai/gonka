@@ -4,7 +4,9 @@ import com.github.dockerjava.api.async.ResultCallback
 import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.kittinunf.fuel.Fuel
 import com.google.gson.reflect.TypeToken
+import com.productscience.data.AppExport
 import com.productscience.data.BalanceResponse
 import com.productscience.data.NodeInfoResponse
 import com.productscience.data.TxResponse
@@ -88,6 +90,13 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         }
     }
 
+    fun exportState(height: Int? = null): AppExport =
+        wrapLog("GetFullState", false) {
+            execAndParse(listOfNotNull("export", "--height".takeIf { height != null }, height?.toString()),
+                includeOutputFlag = false)
+        }
+
+
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
     var addresss: String? = null
@@ -127,11 +136,12 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
-    private inline fun <reified T> execAndParse(args: List<String>): T {
-        val argsWithJson = listOf(config.appName) + args + "--output" + "json"
+    private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag:Boolean = true): T {
+        val argsWithJson = listOf(config.appName)+
+                args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
-        val output = response.joinToString("\n")
+        val output = response.joinToString("")
         Logger.debug("Output: {}", output)
         return gsonSnakeCase.fromJson(output, T::class.java)
     }
@@ -236,7 +246,8 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
                 "--summary",
                 description,
                 "--deposit",
-                "100000icoin",
+                // TODO: Denom and amount should not be hardcoded
+                "100000nicoin",
                 "--from",
                 proposer,
             )

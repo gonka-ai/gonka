@@ -1,0 +1,22 @@
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "min_deposit": [
+          {
+            "denom": "nicoin",
+            "amount": "1000"
+          }
+        ],
+        "voting_period": "30s"
+      }
+    },
+    "inference": {
+      "params": {
+        "epochParams": {
+          "epochLength": "20"
+        }
+      }
+    }
+  }
+}

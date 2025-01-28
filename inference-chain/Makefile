@@ -36,6 +36,8 @@ define DOCKER_BUILD
 	@echo "GOARCH:    $(GOARCH)"
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
+	@echo "GENESIS_OVERRIDES_FILE: $(GENESIS_OVERRIDES_FILE)"
+
 
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -43,6 +45,7 @@ define DOCKER_BUILD
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--build-arg GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE) \
 		-f $(DOCKER_FILE) \
 		.. \
 		-t $(DOCKER_TAG)
@@ -73,6 +76,7 @@ build-docker:
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced)
+	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 
 clean-state:
