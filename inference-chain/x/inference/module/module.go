@@ -261,20 +261,23 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	if err = upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice); err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
+	am.LogInfo("Unit of compute: retrieved proposals", "len(proposals)", len(proposals))
+
+	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice)
+	if err != nil {
+		am.LogError("Unit of compute: onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
 		return
 	}
 
 	// TODO: Move this so active participants are set 1 block before new validators
-	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, medianProposal)
 }
 
 func (am AppModule) computePrice(ctx context.Context) {
 
 }
 
-func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {
+func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
 	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
 
@@ -293,6 +296,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		return
 	}
 	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
+	newGroupData.UnitOfComputePrice = unitOfComputePrice
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
