@@ -102,7 +102,8 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
     var addresss: String? = null
     fun getAddress(): String = wrapLog("getAddress", false) {
         if (addresss == null) {
-            addresss = getKeys()[0].address
+            val keys = getKeys()
+            addresss = keys.first { it.name == this.config.pairName.drop(1) }.address
         }
         addresss!!
     }
