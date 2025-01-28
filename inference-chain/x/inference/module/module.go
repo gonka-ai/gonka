@@ -243,8 +243,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		}
 	}
 
+	upcomingEg.ComputeUnitOfComputePrice(ctx, am.keeper)
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+}
+
+func (am AppModule) computePrice(ctx context.Context) {
+
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {

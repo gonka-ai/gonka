@@ -12,6 +12,7 @@ message EpochGroupData {
   repeated SeedSignature memberSeedSignatures = 6;
   repeated InferenceDetail finishedInferences = 7;
   repeated ValidationWeight validationWeights = 8;
+  uint64 unitOfComputePrice = 9;
 }
 
 message InferenceDetail {

@@ -177,6 +177,7 @@ var (
 	fd_EpochGroupData_memberSeedSignatures protoreflect.FieldDescriptor
 	fd_EpochGroupData_finishedInferences   protoreflect.FieldDescriptor
 	fd_EpochGroupData_validationWeights    protoreflect.FieldDescriptor
+	fd_EpochGroupData_unitOfComputePrice   protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -190,6 +191,7 @@ func init() {
 	fd_EpochGroupData_memberSeedSignatures = md_EpochGroupData.Fields().ByName("memberSeedSignatures")
 	fd_EpochGroupData_finishedInferences = md_EpochGroupData.Fields().ByName("finishedInferences")
 	fd_EpochGroupData_validationWeights = md_EpochGroupData.Fields().ByName("validationWeights")
+	fd_EpochGroupData_unitOfComputePrice = md_EpochGroupData.Fields().ByName("unitOfComputePrice")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -305,6 +307,12 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
+	if x.UnitOfComputePrice != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.UnitOfComputePrice)
+		if !f(fd_EpochGroupData_unitOfComputePrice, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -336,6 +344,8 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 		return len(x.FinishedInferences) != 0
 	case "inference.inference.EpochGroupData.validationWeights":
 		return len(x.ValidationWeights) != 0
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		return x.UnitOfComputePrice != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -368,6 +378,8 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 		x.FinishedInferences = nil
 	case "inference.inference.EpochGroupData.validationWeights":
 		x.ValidationWeights = nil
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		x.UnitOfComputePrice = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -417,6 +429,9 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		}
 		listValue := &_EpochGroupData_8_list{list: &x.ValidationWeights}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		value := x.UnitOfComputePrice
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -459,6 +474,8 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_8_list)
 		x.ValidationWeights = *clv.list
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		x.UnitOfComputePrice = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -507,6 +524,8 @@ func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor)
 		panic(fmt.Errorf("field effectiveBlockHeight of message inference.inference.EpochGroupData is not mutable"))
 	case "inference.inference.EpochGroupData.lastBlockHeight":
 		panic(fmt.Errorf("field lastBlockHeight of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		panic(fmt.Errorf("field unitOfComputePrice of message inference.inference.EpochGroupData is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -539,6 +558,8 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 	case "inference.inference.EpochGroupData.validationWeights":
 		list := []*ValidationWeight{}
 		return protoreflect.ValueOfList(&_EpochGroupData_8_list{list: &list})
+	case "inference.inference.EpochGroupData.unitOfComputePrice":
+		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -642,6 +663,9 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if x.UnitOfComputePrice != 0 {
+			n += 1 + runtime.Sov(uint64(x.UnitOfComputePrice))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -670,6 +694,11 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.UnitOfComputePrice != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.UnitOfComputePrice))
+			i--
+			dAtA[i] = 0x48
 		}
 		if len(x.ValidationWeights) > 0 {
 			for iNdEx := len(x.ValidationWeights) - 1; iNdEx >= 0; iNdEx-- {
@@ -1005,6 +1034,25 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field UnitOfComputePrice", wireType)
+				}
+				x.UnitOfComputePrice = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.UnitOfComputePrice |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2543,6 +2591,7 @@ type EpochGroupData struct {
 	MemberSeedSignatures []*SeedSignature    `protobuf:"bytes,6,rep,name=memberSeedSignatures,proto3" json:"memberSeedSignatures,omitempty"`
 	FinishedInferences   []*InferenceDetail  `protobuf:"bytes,7,rep,name=finishedInferences,proto3" json:"finishedInferences,omitempty"`
 	ValidationWeights    []*ValidationWeight `protobuf:"bytes,8,rep,name=validationWeights,proto3" json:"validationWeights,omitempty"`
+	UnitOfComputePrice   uint64              `protobuf:"varint,9,opt,name=unitOfComputePrice,proto3" json:"unitOfComputePrice,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -2619,6 +2668,13 @@ func (x *EpochGroupData) GetValidationWeights() []*ValidationWeight {
 		return x.ValidationWeights
 	}
 	return nil
+}
+
+func (x *EpochGroupData) GetUnitOfComputePrice() uint64 {
+	if x != nil {
+		return x.UnitOfComputePrice
+	}
+	return 0
 }
 
 type InferenceDetail struct {
@@ -2765,7 +2821,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75,
 	0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x22, 0xe9, 0x03, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x65, 0x22, 0x99, 0x04, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
 	0x44, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
@@ -2795,7 +2851,10 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
 	0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x11, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x22, 0x7f, 0x0a,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x12, 0x2e, 0x0a,
+	0x12, 0x75, 0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72,
+	0x69, 0x63, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x75, 0x6e, 0x69, 0x74, 0x4f,
+	0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x22, 0x7f, 0x0a,
 	0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c,
 	0x12, 0x20, 0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
