@@ -2,7 +2,7 @@ package epochgroup
 
 import (
 	"context"
-	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 	"sort"
 )
 
@@ -12,15 +12,9 @@ type weightedProposal struct {
 	Price       uint64
 }
 
-func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, keeper keeper.Keeper, defaultProposal uint64) error {
+func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, proposals []*types.UnitOfComputePriceProposal, defaultProposal uint64) error {
 	members, err := eg.getGroupMembers(ctx)
 	if err != nil {
-		return err
-	}
-
-	proposals, err := keeper.AllUnitOfComputePriceProposals(ctx)
-	if err != nil {
-		eg.Logger.LogError("Error getting all unit of compute price proposals", "error", err)
 		return err
 	}
 

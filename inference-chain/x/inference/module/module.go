@@ -255,7 +255,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		defaultPrice = am.keeper.GetParams(ctx).EpochParams.DefaultUnitOfComputePrice
 	}
 
-	if err = upcomingEg.ComputeUnitOfComputePrice(ctx, am.keeper, defaultPrice); err != nil {
+	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get all unit of compute price proposals", "error", err.Error())
+		return
+	}
+
+	if err = upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice); err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
 		return
 	}
