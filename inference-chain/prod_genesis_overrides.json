@@ -13,7 +13,8 @@
     "inference": {
       "params": {
         "epochParams": {
-          "epochLength": "2000"
+          "epochLength": "2000",
+          "defaultUnitOfComputePrice": "100"
         }
       }
     }

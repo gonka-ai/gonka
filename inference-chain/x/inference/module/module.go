@@ -243,7 +243,23 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		}
 	}
 
-	upcomingEg.ComputeUnitOfComputePrice(ctx, am.keeper)
+	var defaultPrice uint64
+	if upcomingEg.GroupData.EpochGroupId != 1 {
+		currentEg, err := am.keeper.GetCurrentEpochGroup(ctx)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to get current epoch group", "error", err.Error())
+			return
+		}
+		defaultPrice = currentEg.GroupData.UnitOfComputePrice
+	} else {
+		defaultPrice = am.keeper.GetParams(ctx).EpochParams.DefaultUnitOfComputePrice
+	}
+
+	if err = upcomingEg.ComputeUnitOfComputePrice(ctx, am.keeper, defaultPrice); err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
+		return
+	}
+
 	// TODO: Move this so active participants are set 1 block before new validators
 	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
 }

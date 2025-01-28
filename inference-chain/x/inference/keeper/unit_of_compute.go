@@ -36,29 +36,11 @@ func (k Keeper) AllUnitOfComputePriceProposals(ctx context.Context) ([]*types.Un
 	return proposals, nil
 }
 
-func (k Keeper) SetUnitOfComputePrice(ctx context.Context, price uint64, epochId uint64) {
-	object := &types.UnitOfComputePrice{
-		Price:   price,
-		EpochId: epochId,
-	}
-	SetValue(k, ctx, object, types.KeyPrefix(types.UnitOfComputePriceKeyPrefix), types.UnitOfComputePriceKey(epochId))
-}
-
-func (k Keeper) GetUnitOfComputePrice(ctx context.Context, epochId uint64) (*types.UnitOfComputePrice, bool) {
-	var object types.UnitOfComputePrice
-	return GetValue(k, ctx, &object, types.KeyPrefix(types.UnitOfComputePriceKeyPrefix), types.UnitOfComputePriceKey(epochId))
-}
-
-func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*types.UnitOfComputePrice, error) {
+func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*uint64, error) {
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	price, found := k.GetUnitOfComputePrice(ctx, epochGroup.GroupData.EpochGroupId)
-	if !found {
-		return nil, fmt.Errorf("price not found for epoch %d", epochGroup.GroupData.EpochGroupId)
-	}
-
-	return price, nil
+	return &epochGroup.GroupData.UnitOfComputePrice, nil
 }

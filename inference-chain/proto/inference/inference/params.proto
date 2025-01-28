@@ -22,6 +22,7 @@ message EpochParams {
   int64 epochMultiplier = 2;
   uint64 epochNewCoin = 3;
   int64 coinHalvingInterval = 4;
+  uint64 defaultUnitOfComputePrice = 5;
 }
 
 message ValidationParams {
