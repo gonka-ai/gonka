@@ -18,10 +18,11 @@ message GenesisState {
 
   // params defines all the parameters of the module.
   Params                params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
-  repeated Inference             inference_list = 2 [(gogoproto.nullable) = false] ;
-  repeated Participant           participant_list = 3 [(gogoproto.nullable) = false] ;
-  repeated EpochGroupData        epoch_group_data_list = 4 [(gogoproto.nullable) = false] ;
-  repeated SettleAmount          settle_amount_list = 5 [(gogoproto.nullable) = false] ;
-  repeated EpochGroupValidations epoch_group_validations_list = 6 [(gogoproto.nullable) = false] ;
+  GenesisOnlyParams      genesis_only_params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  repeated Inference             inference_list = 3 [(gogoproto.nullable) = false] ;
+  repeated Participant           participant_list = 4 [(gogoproto.nullable) = false] ;
+  repeated EpochGroupData        epoch_group_data_list = 5 [(gogoproto.nullable) = false] ;
+  repeated SettleAmount          settle_amount_list = 6 [(gogoproto.nullable) = false] ;
+  repeated EpochGroupValidations epoch_group_validations_list = 7 [(gogoproto.nullable) = false] ;
 }
 

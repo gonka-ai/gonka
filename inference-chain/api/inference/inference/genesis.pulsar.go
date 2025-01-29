@@ -14,61 +14,10 @@ import (
 	sync "sync"
 )
 
-var _ protoreflect.List = (*_GenesisState_2_list)(nil)
-
-type _GenesisState_2_list struct {
-	list *[]*Inference
-}
-
-func (x *_GenesisState_2_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_GenesisState_2_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_GenesisState_2_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Inference)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_GenesisState_2_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Inference)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_GenesisState_2_list) AppendMutable() protoreflect.Value {
-	v := new(Inference)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_2_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_GenesisState_2_list) NewElement() protoreflect.Value {
-	v := new(Inference)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_GenesisState_2_list) IsValid() bool {
-	return x.list != nil
-}
-
 var _ protoreflect.List = (*_GenesisState_3_list)(nil)
 
 type _GenesisState_3_list struct {
-	list *[]*Participant
+	list *[]*Inference
 }
 
 func (x *_GenesisState_3_list) Len() int {
@@ -84,18 +33,18 @@ func (x *_GenesisState_3_list) Get(i int) protoreflect.Value {
 
 func (x *_GenesisState_3_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Participant)
+	concreteValue := valueUnwrapped.Interface().(*Inference)
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_GenesisState_3_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*Participant)
+	concreteValue := valueUnwrapped.Interface().(*Inference)
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_GenesisState_3_list) AppendMutable() protoreflect.Value {
-	v := new(Participant)
+	v := new(Inference)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
@@ -108,7 +57,7 @@ func (x *_GenesisState_3_list) Truncate(n int) {
 }
 
 func (x *_GenesisState_3_list) NewElement() protoreflect.Value {
-	v := new(Participant)
+	v := new(Inference)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
@@ -119,7 +68,7 @@ func (x *_GenesisState_3_list) IsValid() bool {
 var _ protoreflect.List = (*_GenesisState_4_list)(nil)
 
 type _GenesisState_4_list struct {
-	list *[]*EpochGroupData
+	list *[]*Participant
 }
 
 func (x *_GenesisState_4_list) Len() int {
@@ -135,18 +84,18 @@ func (x *_GenesisState_4_list) Get(i int) protoreflect.Value {
 
 func (x *_GenesisState_4_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
+	concreteValue := valueUnwrapped.Interface().(*Participant)
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_GenesisState_4_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
+	concreteValue := valueUnwrapped.Interface().(*Participant)
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_GenesisState_4_list) AppendMutable() protoreflect.Value {
-	v := new(EpochGroupData)
+	v := new(Participant)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
@@ -159,7 +108,7 @@ func (x *_GenesisState_4_list) Truncate(n int) {
 }
 
 func (x *_GenesisState_4_list) NewElement() protoreflect.Value {
-	v := new(EpochGroupData)
+	v := new(Participant)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
@@ -170,7 +119,7 @@ func (x *_GenesisState_4_list) IsValid() bool {
 var _ protoreflect.List = (*_GenesisState_5_list)(nil)
 
 type _GenesisState_5_list struct {
-	list *[]*SettleAmount
+	list *[]*EpochGroupData
 }
 
 func (x *_GenesisState_5_list) Len() int {
@@ -186,18 +135,18 @@ func (x *_GenesisState_5_list) Get(i int) protoreflect.Value {
 
 func (x *_GenesisState_5_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_GenesisState_5_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupData)
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_GenesisState_5_list) AppendMutable() protoreflect.Value {
-	v := new(SettleAmount)
+	v := new(EpochGroupData)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
@@ -210,7 +159,7 @@ func (x *_GenesisState_5_list) Truncate(n int) {
 }
 
 func (x *_GenesisState_5_list) NewElement() protoreflect.Value {
-	v := new(SettleAmount)
+	v := new(EpochGroupData)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
@@ -221,7 +170,7 @@ func (x *_GenesisState_5_list) IsValid() bool {
 var _ protoreflect.List = (*_GenesisState_6_list)(nil)
 
 type _GenesisState_6_list struct {
-	list *[]*EpochGroupValidations
+	list *[]*SettleAmount
 }
 
 func (x *_GenesisState_6_list) Len() int {
@@ -237,18 +186,18 @@ func (x *_GenesisState_6_list) Get(i int) protoreflect.Value {
 
 func (x *_GenesisState_6_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
+	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_GenesisState_6_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
+	concreteValue := valueUnwrapped.Interface().(*SettleAmount)
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_GenesisState_6_list) AppendMutable() protoreflect.Value {
-	v := new(EpochGroupValidations)
+	v := new(SettleAmount)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
@@ -261,7 +210,7 @@ func (x *_GenesisState_6_list) Truncate(n int) {
 }
 
 func (x *_GenesisState_6_list) NewElement() protoreflect.Value {
-	v := new(EpochGroupValidations)
+	v := new(SettleAmount)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
@@ -269,9 +218,61 @@ func (x *_GenesisState_6_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_GenesisState_7_list)(nil)
+
+type _GenesisState_7_list struct {
+	list *[]*EpochGroupValidations
+}
+
+func (x *_GenesisState_7_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_7_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_7_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_7_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochGroupValidations)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_7_list) AppendMutable() protoreflect.Value {
+	v := new(EpochGroupValidations)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_7_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_7_list) NewElement() protoreflect.Value {
+	v := new(EpochGroupValidations)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_7_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_GenesisState                              protoreflect.MessageDescriptor
 	fd_GenesisState_params                       protoreflect.FieldDescriptor
+	fd_GenesisState_genesis_only_params          protoreflect.FieldDescriptor
 	fd_GenesisState_inference_list               protoreflect.FieldDescriptor
 	fd_GenesisState_participant_list             protoreflect.FieldDescriptor
 	fd_GenesisState_epoch_group_data_list        protoreflect.FieldDescriptor
@@ -283,6 +284,7 @@ func init() {
 	file_inference_inference_genesis_proto_init()
 	md_GenesisState = File_inference_inference_genesis_proto.Messages().ByName("GenesisState")
 	fd_GenesisState_params = md_GenesisState.Fields().ByName("params")
+	fd_GenesisState_genesis_only_params = md_GenesisState.Fields().ByName("genesis_only_params")
 	fd_GenesisState_inference_list = md_GenesisState.Fields().ByName("inference_list")
 	fd_GenesisState_participant_list = md_GenesisState.Fields().ByName("participant_list")
 	fd_GenesisState_epoch_group_data_list = md_GenesisState.Fields().ByName("epoch_group_data_list")
@@ -361,32 +363,38 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if x.GenesisOnlyParams != nil {
+		value := protoreflect.ValueOfMessage(x.GenesisOnlyParams.ProtoReflect())
+		if !f(fd_GenesisState_genesis_only_params, value) {
+			return
+		}
+	}
 	if len(x.InferenceList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_2_list{list: &x.InferenceList})
+		value := protoreflect.ValueOfList(&_GenesisState_3_list{list: &x.InferenceList})
 		if !f(fd_GenesisState_inference_list, value) {
 			return
 		}
 	}
 	if len(x.ParticipantList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_3_list{list: &x.ParticipantList})
+		value := protoreflect.ValueOfList(&_GenesisState_4_list{list: &x.ParticipantList})
 		if !f(fd_GenesisState_participant_list, value) {
 			return
 		}
 	}
 	if len(x.EpochGroupDataList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_4_list{list: &x.EpochGroupDataList})
+		value := protoreflect.ValueOfList(&_GenesisState_5_list{list: &x.EpochGroupDataList})
 		if !f(fd_GenesisState_epoch_group_data_list, value) {
 			return
 		}
 	}
 	if len(x.SettleAmountList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_5_list{list: &x.SettleAmountList})
+		value := protoreflect.ValueOfList(&_GenesisState_6_list{list: &x.SettleAmountList})
 		if !f(fd_GenesisState_settle_amount_list, value) {
 			return
 		}
 	}
 	if len(x.EpochGroupValidationsList) != 0 {
-		value := protoreflect.ValueOfList(&_GenesisState_6_list{list: &x.EpochGroupValidationsList})
+		value := protoreflect.ValueOfList(&_GenesisState_7_list{list: &x.EpochGroupValidationsList})
 		if !f(fd_GenesisState_epoch_group_validations_list, value) {
 			return
 		}
@@ -408,6 +416,8 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 	switch fd.FullName() {
 	case "inference.inference.GenesisState.params":
 		return x.Params != nil
+	case "inference.inference.GenesisState.genesis_only_params":
+		return x.GenesisOnlyParams != nil
 	case "inference.inference.GenesisState.inference_list":
 		return len(x.InferenceList) != 0
 	case "inference.inference.GenesisState.participant_list":
@@ -436,6 +446,8 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.GenesisState.params":
 		x.Params = nil
+	case "inference.inference.GenesisState.genesis_only_params":
+		x.GenesisOnlyParams = nil
 	case "inference.inference.GenesisState.inference_list":
 		x.InferenceList = nil
 	case "inference.inference.GenesisState.participant_list":
@@ -465,35 +477,38 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.GenesisState.params":
 		value := x.Params
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.GenesisState.genesis_only_params":
+		value := x.GenesisOnlyParams
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.GenesisState.inference_list":
 		if len(x.InferenceList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_2_list{})
+			return protoreflect.ValueOfList(&_GenesisState_3_list{})
 		}
-		listValue := &_GenesisState_2_list{list: &x.InferenceList}
+		listValue := &_GenesisState_3_list{list: &x.InferenceList}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.GenesisState.participant_list":
 		if len(x.ParticipantList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_3_list{})
+			return protoreflect.ValueOfList(&_GenesisState_4_list{})
 		}
-		listValue := &_GenesisState_3_list{list: &x.ParticipantList}
+		listValue := &_GenesisState_4_list{list: &x.ParticipantList}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.GenesisState.epoch_group_data_list":
 		if len(x.EpochGroupDataList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_4_list{})
+			return protoreflect.ValueOfList(&_GenesisState_5_list{})
 		}
-		listValue := &_GenesisState_4_list{list: &x.EpochGroupDataList}
+		listValue := &_GenesisState_5_list{list: &x.EpochGroupDataList}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.GenesisState.settle_amount_list":
 		if len(x.SettleAmountList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_5_list{})
+			return protoreflect.ValueOfList(&_GenesisState_6_list{})
 		}
-		listValue := &_GenesisState_5_list{list: &x.SettleAmountList}
+		listValue := &_GenesisState_6_list{list: &x.SettleAmountList}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.GenesisState.epoch_group_validations_list":
 		if len(x.EpochGroupValidationsList) == 0 {
-			return protoreflect.ValueOfList(&_GenesisState_6_list{})
+			return protoreflect.ValueOfList(&_GenesisState_7_list{})
 		}
-		listValue := &_GenesisState_6_list{list: &x.EpochGroupValidationsList}
+		listValue := &_GenesisState_7_list{list: &x.EpochGroupValidationsList}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -517,25 +532,27 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 	switch fd.FullName() {
 	case "inference.inference.GenesisState.params":
 		x.Params = value.Message().Interface().(*Params)
+	case "inference.inference.GenesisState.genesis_only_params":
+		x.GenesisOnlyParams = value.Message().Interface().(*GenesisOnlyParams)
 	case "inference.inference.GenesisState.inference_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_2_list)
+		clv := lv.(*_GenesisState_3_list)
 		x.InferenceList = *clv.list
 	case "inference.inference.GenesisState.participant_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_3_list)
+		clv := lv.(*_GenesisState_4_list)
 		x.ParticipantList = *clv.list
 	case "inference.inference.GenesisState.epoch_group_data_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_4_list)
+		clv := lv.(*_GenesisState_5_list)
 		x.EpochGroupDataList = *clv.list
 	case "inference.inference.GenesisState.settle_amount_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_5_list)
+		clv := lv.(*_GenesisState_6_list)
 		x.SettleAmountList = *clv.list
 	case "inference.inference.GenesisState.epoch_group_validations_list":
 		lv := value.List()
-		clv := lv.(*_GenesisState_6_list)
+		clv := lv.(*_GenesisState_7_list)
 		x.EpochGroupValidationsList = *clv.list
 	default:
 		if fd.IsExtension() {
@@ -562,35 +579,40 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 			x.Params = new(Params)
 		}
 		return protoreflect.ValueOfMessage(x.Params.ProtoReflect())
+	case "inference.inference.GenesisState.genesis_only_params":
+		if x.GenesisOnlyParams == nil {
+			x.GenesisOnlyParams = new(GenesisOnlyParams)
+		}
+		return protoreflect.ValueOfMessage(x.GenesisOnlyParams.ProtoReflect())
 	case "inference.inference.GenesisState.inference_list":
 		if x.InferenceList == nil {
 			x.InferenceList = []*Inference{}
 		}
-		value := &_GenesisState_2_list{list: &x.InferenceList}
+		value := &_GenesisState_3_list{list: &x.InferenceList}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.GenesisState.participant_list":
 		if x.ParticipantList == nil {
 			x.ParticipantList = []*Participant{}
 		}
-		value := &_GenesisState_3_list{list: &x.ParticipantList}
+		value := &_GenesisState_4_list{list: &x.ParticipantList}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.GenesisState.epoch_group_data_list":
 		if x.EpochGroupDataList == nil {
 			x.EpochGroupDataList = []*EpochGroupData{}
 		}
-		value := &_GenesisState_4_list{list: &x.EpochGroupDataList}
+		value := &_GenesisState_5_list{list: &x.EpochGroupDataList}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.GenesisState.settle_amount_list":
 		if x.SettleAmountList == nil {
 			x.SettleAmountList = []*SettleAmount{}
 		}
-		value := &_GenesisState_5_list{list: &x.SettleAmountList}
+		value := &_GenesisState_6_list{list: &x.SettleAmountList}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.GenesisState.epoch_group_validations_list":
 		if x.EpochGroupValidationsList == nil {
 			x.EpochGroupValidationsList = []*EpochGroupValidations{}
 		}
-		value := &_GenesisState_6_list{list: &x.EpochGroupValidationsList}
+		value := &_GenesisState_7_list{list: &x.EpochGroupValidationsList}
 		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
@@ -608,21 +630,24 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.GenesisState.params":
 		m := new(Params)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.GenesisState.genesis_only_params":
+		m := new(GenesisOnlyParams)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.GenesisState.inference_list":
 		list := []*Inference{}
-		return protoreflect.ValueOfList(&_GenesisState_2_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_3_list{list: &list})
 	case "inference.inference.GenesisState.participant_list":
 		list := []*Participant{}
-		return protoreflect.ValueOfList(&_GenesisState_3_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_4_list{list: &list})
 	case "inference.inference.GenesisState.epoch_group_data_list":
 		list := []*EpochGroupData{}
-		return protoreflect.ValueOfList(&_GenesisState_4_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_5_list{list: &list})
 	case "inference.inference.GenesisState.settle_amount_list":
 		list := []*SettleAmount{}
-		return protoreflect.ValueOfList(&_GenesisState_5_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_6_list{list: &list})
 	case "inference.inference.GenesisState.epoch_group_validations_list":
 		list := []*EpochGroupValidations{}
-		return protoreflect.ValueOfList(&_GenesisState_6_list{list: &list})
+		return protoreflect.ValueOfList(&_GenesisState_7_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -694,6 +719,10 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		_ = l
 		if x.Params != nil {
 			l = options.Size(x.Params)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.GenesisOnlyParams != nil {
+			l = options.Size(x.GenesisOnlyParams)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if len(x.InferenceList) > 0 {
@@ -768,7 +797,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x32
+				dAtA[i] = 0x3a
 			}
 		}
 		if len(x.SettleAmountList) > 0 {
@@ -784,7 +813,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x2a
+				dAtA[i] = 0x32
 			}
 		}
 		if len(x.EpochGroupDataList) > 0 {
@@ -800,7 +829,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x22
+				dAtA[i] = 0x2a
 			}
 		}
 		if len(x.ParticipantList) > 0 {
@@ -816,7 +845,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x1a
+				dAtA[i] = 0x22
 			}
 		}
 		if len(x.InferenceList) > 0 {
@@ -832,8 +861,22 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x12
+				dAtA[i] = 0x1a
 			}
+		}
+		if x.GenesisOnlyParams != nil {
+			encoded, err := options.Marshal(x.GenesisOnlyParams)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x12
 		}
 		if x.Params != nil {
 			encoded, err := options.Marshal(x.Params)
@@ -936,6 +979,42 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 2:
 				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GenesisOnlyParams", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.GenesisOnlyParams == nil {
+					x.GenesisOnlyParams = &GenesisOnlyParams{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.GenesisOnlyParams); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceList", wireType)
 				}
 				var msglen int
@@ -968,7 +1047,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 3:
+			case 4:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ParticipantList", wireType)
 				}
@@ -1002,7 +1081,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 4:
+			case 5:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupDataList", wireType)
 				}
@@ -1036,7 +1115,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 5:
+			case 6:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SettleAmountList", wireType)
 				}
@@ -1070,7 +1149,7 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 6:
+			case 7:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochGroupValidationsList", wireType)
 				}
@@ -1160,11 +1239,12 @@ type GenesisState struct {
 
 	// params defines all the parameters of the module.
 	Params                    *Params                  `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
-	InferenceList             []*Inference             `protobuf:"bytes,2,rep,name=inference_list,json=inferenceList,proto3" json:"inference_list,omitempty"`
-	ParticipantList           []*Participant           `protobuf:"bytes,3,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
-	EpochGroupDataList        []*EpochGroupData        `protobuf:"bytes,4,rep,name=epoch_group_data_list,json=epochGroupDataList,proto3" json:"epoch_group_data_list,omitempty"`
-	SettleAmountList          []*SettleAmount          `protobuf:"bytes,5,rep,name=settle_amount_list,json=settleAmountList,proto3" json:"settle_amount_list,omitempty"`
-	EpochGroupValidationsList []*EpochGroupValidations `protobuf:"bytes,6,rep,name=epoch_group_validations_list,json=epochGroupValidationsList,proto3" json:"epoch_group_validations_list,omitempty"`
+	GenesisOnlyParams         *GenesisOnlyParams       `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
+	InferenceList             []*Inference             `protobuf:"bytes,3,rep,name=inference_list,json=inferenceList,proto3" json:"inference_list,omitempty"`
+	ParticipantList           []*Participant           `protobuf:"bytes,4,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
+	EpochGroupDataList        []*EpochGroupData        `protobuf:"bytes,5,rep,name=epoch_group_data_list,json=epochGroupDataList,proto3" json:"epoch_group_data_list,omitempty"`
+	SettleAmountList          []*SettleAmount          `protobuf:"bytes,6,rep,name=settle_amount_list,json=settleAmountList,proto3" json:"settle_amount_list,omitempty"`
+	EpochGroupValidationsList []*EpochGroupValidations `protobuf:"bytes,7,rep,name=epoch_group_validations_list,json=epochGroupValidationsList,proto3" json:"epoch_group_validations_list,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -1190,6 +1270,13 @@ func (*GenesisState) Descriptor() ([]byte, []int) {
 func (x *GenesisState) GetParams() *Params {
 	if x != nil {
 		return x.Params
+	}
+	return nil
+}
+
+func (x *GenesisState) GetGenesisOnlyParams() *GenesisOnlyParams {
+	if x != nil {
+		return x.GenesisOnlyParams
 	}
 	return nil
 }
@@ -1253,53 +1340,59 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x31, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
 	0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x96, 0x04, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65,
+	0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xf9, 0x04, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65,
 	0x73, 0x69, 0x73, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
 	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50,
 	0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01,
-	0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x4b, 0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x51, 0x0a, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x5c, 0x0a, 0x15, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x5f, 0x6c, 0x69, 0x73,
-	0x74, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70,
-	0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde,
-	0x1f, 0x00, 0x52, 0x12, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61,
-	0x74, 0x61, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x55, 0x0a, 0x12, 0x73, 0x65, 0x74, 0x74, 0x6c, 0x65,
-	0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03,
-	0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41,
-	0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x10, 0x73, 0x65, 0x74,
-	0x74, 0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x71, 0x0a,
-	0x1c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c,
-	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20,
-	0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47,
-	0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x42,
-	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x19, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
-	0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x4c, 0x69, 0x73, 0x74,
-	0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47, 0x65,
-	0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02,
-	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65,
-	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x61, 0x0a, 0x13, 0x67, 0x65, 0x6e, 0x65,
+	0x73, 0x69, 0x73, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x47, 0x65, 0x6e, 0x65,
+	0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8,
+	0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x11, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69,
+	0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x4b, 0x0a, 0x0e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x51, 0x0a, 0x10, 0x70, 0x61, 0x72, 0x74,
+	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x04, 0x20, 0x03,
+	0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
+	0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0f, 0x70, 0x61, 0x72, 0x74,
+	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x5c, 0x0a, 0x15, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x5f,
+	0x6c, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x12, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x55, 0x0a, 0x12, 0x73, 0x65, 0x74,
+	0x74, 0x6c, 0x65, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18,
+	0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x65, 0x74, 0x74,
+	0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x10,
+	0x73, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74,
+	0x12, 0x71, 0x0a, 0x1c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x6c, 0x69, 0x73, 0x74,
+	0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x73, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x19, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47,
+	0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x4c,
+	0x69, 0x73, 0x74, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
+	0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
+	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
+	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
+	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1318,24 +1411,26 @@ var file_inference_inference_genesis_proto_msgTypes = make([]protoimpl.MessageIn
 var file_inference_inference_genesis_proto_goTypes = []interface{}{
 	(*GenesisState)(nil),          // 0: inference.inference.GenesisState
 	(*Params)(nil),                // 1: inference.inference.Params
-	(*Inference)(nil),             // 2: inference.inference.Inference
-	(*Participant)(nil),           // 3: inference.inference.Participant
-	(*EpochGroupData)(nil),        // 4: inference.inference.EpochGroupData
-	(*SettleAmount)(nil),          // 5: inference.inference.SettleAmount
-	(*EpochGroupValidations)(nil), // 6: inference.inference.EpochGroupValidations
+	(*GenesisOnlyParams)(nil),     // 2: inference.inference.GenesisOnlyParams
+	(*Inference)(nil),             // 3: inference.inference.Inference
+	(*Participant)(nil),           // 4: inference.inference.Participant
+	(*EpochGroupData)(nil),        // 5: inference.inference.EpochGroupData
+	(*SettleAmount)(nil),          // 6: inference.inference.SettleAmount
+	(*EpochGroupValidations)(nil), // 7: inference.inference.EpochGroupValidations
 }
 var file_inference_inference_genesis_proto_depIdxs = []int32{
 	1, // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
-	2, // 1: inference.inference.GenesisState.inference_list:type_name -> inference.inference.Inference
-	3, // 2: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
-	4, // 3: inference.inference.GenesisState.epoch_group_data_list:type_name -> inference.inference.EpochGroupData
-	5, // 4: inference.inference.GenesisState.settle_amount_list:type_name -> inference.inference.SettleAmount
-	6, // 5: inference.inference.GenesisState.epoch_group_validations_list:type_name -> inference.inference.EpochGroupValidations
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	2, // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
+	3, // 2: inference.inference.GenesisState.inference_list:type_name -> inference.inference.Inference
+	4, // 3: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
+	5, // 4: inference.inference.GenesisState.epoch_group_data_list:type_name -> inference.inference.EpochGroupData
+	6, // 5: inference.inference.GenesisState.settle_amount_list:type_name -> inference.inference.SettleAmount
+	7, // 6: inference.inference.GenesisState.epoch_group_validations_list:type_name -> inference.inference.EpochGroupValidations
+	7, // [7:7] is the sub-list for method output_type
+	7, // [7:7] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_genesis_proto_init() }

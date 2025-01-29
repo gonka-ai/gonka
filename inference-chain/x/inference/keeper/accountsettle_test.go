@@ -162,12 +162,12 @@ func TestActualSettle(t *testing.T) {
 		PocStartBlockHeight: 10,
 	})
 
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, inference.GetCoins(inference.EpochNewCoin)).Return(nil)
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(inference.EpochNewCoin)).Return(nil)
 	// Issue refund immediately
 	participant2Address, err := sdk.AccAddressFromBech32(participant2.Address)
 	require.NoError(t, err)
 
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, participant2Address, inference.GetCoins(500)).Return(nil)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, participant2Address, types.GetCoins(500)).Return(nil)
 	err = keeper.SettleAccounts(ctx, 10)
 	require.NoError(t, err)
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
