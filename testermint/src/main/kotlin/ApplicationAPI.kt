@@ -51,7 +51,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
-            .responseObject<InferencePayload>(gsonDeserializer(gsonCamelCase))
+            .responseObject<InferencePayload>(gsonDeserializer(gsonSnakeCase))
         logResponse(response)
         response.third.get()
     }
