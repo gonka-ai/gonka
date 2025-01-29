@@ -168,28 +168,28 @@ func (x *_EpochGroupData_8_list) IsValid() bool {
 }
 
 var (
-	md_EpochGroupData                      protoreflect.MessageDescriptor
-	fd_EpochGroupData_pocStartBlockHeight  protoreflect.FieldDescriptor
-	fd_EpochGroupData_epochGroupId         protoreflect.FieldDescriptor
-	fd_EpochGroupData_epochPolicy          protoreflect.FieldDescriptor
-	fd_EpochGroupData_effectiveBlockHeight protoreflect.FieldDescriptor
-	fd_EpochGroupData_lastBlockHeight      protoreflect.FieldDescriptor
-	fd_EpochGroupData_memberSeedSignatures protoreflect.FieldDescriptor
-	fd_EpochGroupData_finishedInferences   protoreflect.FieldDescriptor
-	fd_EpochGroupData_validationWeights    protoreflect.FieldDescriptor
+	md_EpochGroupData                        protoreflect.MessageDescriptor
+	fd_EpochGroupData_poc_start_block_height protoreflect.FieldDescriptor
+	fd_EpochGroupData_epoch_group_id         protoreflect.FieldDescriptor
+	fd_EpochGroupData_epoch_policy           protoreflect.FieldDescriptor
+	fd_EpochGroupData_effective_block_height protoreflect.FieldDescriptor
+	fd_EpochGroupData_last_block_height      protoreflect.FieldDescriptor
+	fd_EpochGroupData_member_seed_signatures protoreflect.FieldDescriptor
+	fd_EpochGroupData_finished_inferences    protoreflect.FieldDescriptor
+	fd_EpochGroupData_validation_weights     protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_epoch_group_data_proto_init()
 	md_EpochGroupData = File_inference_inference_epoch_group_data_proto.Messages().ByName("EpochGroupData")
-	fd_EpochGroupData_pocStartBlockHeight = md_EpochGroupData.Fields().ByName("pocStartBlockHeight")
-	fd_EpochGroupData_epochGroupId = md_EpochGroupData.Fields().ByName("epochGroupId")
-	fd_EpochGroupData_epochPolicy = md_EpochGroupData.Fields().ByName("epochPolicy")
-	fd_EpochGroupData_effectiveBlockHeight = md_EpochGroupData.Fields().ByName("effectiveBlockHeight")
-	fd_EpochGroupData_lastBlockHeight = md_EpochGroupData.Fields().ByName("lastBlockHeight")
-	fd_EpochGroupData_memberSeedSignatures = md_EpochGroupData.Fields().ByName("memberSeedSignatures")
-	fd_EpochGroupData_finishedInferences = md_EpochGroupData.Fields().ByName("finishedInferences")
-	fd_EpochGroupData_validationWeights = md_EpochGroupData.Fields().ByName("validationWeights")
+	fd_EpochGroupData_poc_start_block_height = md_EpochGroupData.Fields().ByName("poc_start_block_height")
+	fd_EpochGroupData_epoch_group_id = md_EpochGroupData.Fields().ByName("epoch_group_id")
+	fd_EpochGroupData_epoch_policy = md_EpochGroupData.Fields().ByName("epoch_policy")
+	fd_EpochGroupData_effective_block_height = md_EpochGroupData.Fields().ByName("effective_block_height")
+	fd_EpochGroupData_last_block_height = md_EpochGroupData.Fields().ByName("last_block_height")
+	fd_EpochGroupData_member_seed_signatures = md_EpochGroupData.Fields().ByName("member_seed_signatures")
+	fd_EpochGroupData_finished_inferences = md_EpochGroupData.Fields().ByName("finished_inferences")
+	fd_EpochGroupData_validation_weights = md_EpochGroupData.Fields().ByName("validation_weights")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -259,49 +259,49 @@ func (x *fastReflection_EpochGroupData) Interface() protoreflect.ProtoMessage {
 func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.PocStartBlockHeight != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.PocStartBlockHeight)
-		if !f(fd_EpochGroupData_pocStartBlockHeight, value) {
+		if !f(fd_EpochGroupData_poc_start_block_height, value) {
 			return
 		}
 	}
 	if x.EpochGroupId != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.EpochGroupId)
-		if !f(fd_EpochGroupData_epochGroupId, value) {
+		if !f(fd_EpochGroupData_epoch_group_id, value) {
 			return
 		}
 	}
 	if x.EpochPolicy != "" {
 		value := protoreflect.ValueOfString(x.EpochPolicy)
-		if !f(fd_EpochGroupData_epochPolicy, value) {
+		if !f(fd_EpochGroupData_epoch_policy, value) {
 			return
 		}
 	}
 	if x.EffectiveBlockHeight != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.EffectiveBlockHeight)
-		if !f(fd_EpochGroupData_effectiveBlockHeight, value) {
+		if !f(fd_EpochGroupData_effective_block_height, value) {
 			return
 		}
 	}
 	if x.LastBlockHeight != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.LastBlockHeight)
-		if !f(fd_EpochGroupData_lastBlockHeight, value) {
+		if !f(fd_EpochGroupData_last_block_height, value) {
 			return
 		}
 	}
 	if len(x.MemberSeedSignatures) != 0 {
 		value := protoreflect.ValueOfList(&_EpochGroupData_6_list{list: &x.MemberSeedSignatures})
-		if !f(fd_EpochGroupData_memberSeedSignatures, value) {
+		if !f(fd_EpochGroupData_member_seed_signatures, value) {
 			return
 		}
 	}
 	if len(x.FinishedInferences) != 0 {
 		value := protoreflect.ValueOfList(&_EpochGroupData_7_list{list: &x.FinishedInferences})
-		if !f(fd_EpochGroupData_finishedInferences, value) {
+		if !f(fd_EpochGroupData_finished_inferences, value) {
 			return
 		}
 	}
 	if len(x.ValidationWeights) != 0 {
 		value := protoreflect.ValueOfList(&_EpochGroupData_8_list{list: &x.ValidationWeights})
-		if !f(fd_EpochGroupData_validationWeights, value) {
+		if !f(fd_EpochGroupData_validation_weights, value) {
 			return
 		}
 	}
@@ -320,21 +320,21 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
+	case "inference.inference.EpochGroupData.poc_start_block_height":
 		return x.PocStartBlockHeight != uint64(0)
-	case "inference.inference.EpochGroupData.epochGroupId":
+	case "inference.inference.EpochGroupData.epoch_group_id":
 		return x.EpochGroupId != uint64(0)
-	case "inference.inference.EpochGroupData.epochPolicy":
+	case "inference.inference.EpochGroupData.epoch_policy":
 		return x.EpochPolicy != ""
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
+	case "inference.inference.EpochGroupData.effective_block_height":
 		return x.EffectiveBlockHeight != uint64(0)
-	case "inference.inference.EpochGroupData.lastBlockHeight":
+	case "inference.inference.EpochGroupData.last_block_height":
 		return x.LastBlockHeight != uint64(0)
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		return len(x.MemberSeedSignatures) != 0
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		return len(x.FinishedInferences) != 0
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		return len(x.ValidationWeights) != 0
 	default:
 		if fd.IsExtension() {
@@ -352,21 +352,21 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
+	case "inference.inference.EpochGroupData.poc_start_block_height":
 		x.PocStartBlockHeight = uint64(0)
-	case "inference.inference.EpochGroupData.epochGroupId":
+	case "inference.inference.EpochGroupData.epoch_group_id":
 		x.EpochGroupId = uint64(0)
-	case "inference.inference.EpochGroupData.epochPolicy":
+	case "inference.inference.EpochGroupData.epoch_policy":
 		x.EpochPolicy = ""
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
+	case "inference.inference.EpochGroupData.effective_block_height":
 		x.EffectiveBlockHeight = uint64(0)
-	case "inference.inference.EpochGroupData.lastBlockHeight":
+	case "inference.inference.EpochGroupData.last_block_height":
 		x.LastBlockHeight = uint64(0)
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		x.MemberSeedSignatures = nil
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		x.FinishedInferences = nil
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		x.ValidationWeights = nil
 	default:
 		if fd.IsExtension() {
@@ -384,34 +384,34 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
+	case "inference.inference.EpochGroupData.poc_start_block_height":
 		value := x.PocStartBlockHeight
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochGroupData.epochGroupId":
+	case "inference.inference.EpochGroupData.epoch_group_id":
 		value := x.EpochGroupId
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochGroupData.epochPolicy":
+	case "inference.inference.EpochGroupData.epoch_policy":
 		value := x.EpochPolicy
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
+	case "inference.inference.EpochGroupData.effective_block_height":
 		value := x.EffectiveBlockHeight
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochGroupData.lastBlockHeight":
+	case "inference.inference.EpochGroupData.last_block_height":
 		value := x.LastBlockHeight
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		if len(x.MemberSeedSignatures) == 0 {
 			return protoreflect.ValueOfList(&_EpochGroupData_6_list{})
 		}
 		listValue := &_EpochGroupData_6_list{list: &x.MemberSeedSignatures}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		if len(x.FinishedInferences) == 0 {
 			return protoreflect.ValueOfList(&_EpochGroupData_7_list{})
 		}
 		listValue := &_EpochGroupData_7_list{list: &x.FinishedInferences}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		if len(x.ValidationWeights) == 0 {
 			return protoreflect.ValueOfList(&_EpochGroupData_8_list{})
 		}
@@ -437,25 +437,25 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
+	case "inference.inference.EpochGroupData.poc_start_block_height":
 		x.PocStartBlockHeight = value.Uint()
-	case "inference.inference.EpochGroupData.epochGroupId":
+	case "inference.inference.EpochGroupData.epoch_group_id":
 		x.EpochGroupId = value.Uint()
-	case "inference.inference.EpochGroupData.epochPolicy":
+	case "inference.inference.EpochGroupData.epoch_policy":
 		x.EpochPolicy = value.Interface().(string)
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
+	case "inference.inference.EpochGroupData.effective_block_height":
 		x.EffectiveBlockHeight = value.Uint()
-	case "inference.inference.EpochGroupData.lastBlockHeight":
+	case "inference.inference.EpochGroupData.last_block_height":
 		x.LastBlockHeight = value.Uint()
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_6_list)
 		x.MemberSeedSignatures = *clv.list
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_7_list)
 		x.FinishedInferences = *clv.list
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_8_list)
 		x.ValidationWeights = *clv.list
@@ -479,34 +479,34 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		if x.MemberSeedSignatures == nil {
 			x.MemberSeedSignatures = []*SeedSignature{}
 		}
 		value := &_EpochGroupData_6_list{list: &x.MemberSeedSignatures}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		if x.FinishedInferences == nil {
 			x.FinishedInferences = []*InferenceDetail{}
 		}
 		value := &_EpochGroupData_7_list{list: &x.FinishedInferences}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		if x.ValidationWeights == nil {
 			x.ValidationWeights = []*ValidationWeight{}
 		}
 		value := &_EpochGroupData_8_list{list: &x.ValidationWeights}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
-		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.EpochGroupData is not mutable"))
-	case "inference.inference.EpochGroupData.epochGroupId":
-		panic(fmt.Errorf("field epochGroupId of message inference.inference.EpochGroupData is not mutable"))
-	case "inference.inference.EpochGroupData.epochPolicy":
-		panic(fmt.Errorf("field epochPolicy of message inference.inference.EpochGroupData is not mutable"))
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
-		panic(fmt.Errorf("field effectiveBlockHeight of message inference.inference.EpochGroupData is not mutable"))
-	case "inference.inference.EpochGroupData.lastBlockHeight":
-		panic(fmt.Errorf("field lastBlockHeight of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.poc_start_block_height":
+		panic(fmt.Errorf("field poc_start_block_height of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.epoch_group_id":
+		panic(fmt.Errorf("field epoch_group_id of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.epoch_policy":
+		panic(fmt.Errorf("field epoch_policy of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.effective_block_height":
+		panic(fmt.Errorf("field effective_block_height of message inference.inference.EpochGroupData is not mutable"))
+	case "inference.inference.EpochGroupData.last_block_height":
+		panic(fmt.Errorf("field last_block_height of message inference.inference.EpochGroupData is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -520,23 +520,23 @@ func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor)
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.EpochGroupData.pocStartBlockHeight":
+	case "inference.inference.EpochGroupData.poc_start_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochGroupData.epochGroupId":
+	case "inference.inference.EpochGroupData.epoch_group_id":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochGroupData.epochPolicy":
+	case "inference.inference.EpochGroupData.epoch_policy":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.EpochGroupData.effectiveBlockHeight":
+	case "inference.inference.EpochGroupData.effective_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochGroupData.lastBlockHeight":
+	case "inference.inference.EpochGroupData.last_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochGroupData.memberSeedSignatures":
+	case "inference.inference.EpochGroupData.member_seed_signatures":
 		list := []*SeedSignature{}
 		return protoreflect.ValueOfList(&_EpochGroupData_6_list{list: &list})
-	case "inference.inference.EpochGroupData.finishedInferences":
+	case "inference.inference.EpochGroupData.finished_inferences":
 		list := []*InferenceDetail{}
 		return protoreflect.ValueOfList(&_EpochGroupData_7_list{list: &list})
-	case "inference.inference.EpochGroupData.validationWeights":
+	case "inference.inference.EpochGroupData.validation_weights":
 		list := []*ValidationWeight{}
 		return protoreflect.ValueOfList(&_EpochGroupData_8_list{list: &list})
 	default:
@@ -1041,18 +1041,18 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_InferenceDetail                    protoreflect.MessageDescriptor
-	fd_InferenceDetail_inferenceId        protoreflect.FieldDescriptor
-	fd_InferenceDetail_executor           protoreflect.FieldDescriptor
-	fd_InferenceDetail_executorReputation protoreflect.FieldDescriptor
+	md_InferenceDetail                     protoreflect.MessageDescriptor
+	fd_InferenceDetail_inference_id        protoreflect.FieldDescriptor
+	fd_InferenceDetail_executor            protoreflect.FieldDescriptor
+	fd_InferenceDetail_executor_reputation protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_epoch_group_data_proto_init()
 	md_InferenceDetail = File_inference_inference_epoch_group_data_proto.Messages().ByName("InferenceDetail")
-	fd_InferenceDetail_inferenceId = md_InferenceDetail.Fields().ByName("inferenceId")
+	fd_InferenceDetail_inference_id = md_InferenceDetail.Fields().ByName("inference_id")
 	fd_InferenceDetail_executor = md_InferenceDetail.Fields().ByName("executor")
-	fd_InferenceDetail_executorReputation = md_InferenceDetail.Fields().ByName("executorReputation")
+	fd_InferenceDetail_executor_reputation = md_InferenceDetail.Fields().ByName("executor_reputation")
 }
 
 var _ protoreflect.Message = (*fastReflection_InferenceDetail)(nil)
@@ -1122,7 +1122,7 @@ func (x *fastReflection_InferenceDetail) Interface() protoreflect.ProtoMessage {
 func (x *fastReflection_InferenceDetail) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_InferenceDetail_inferenceId, value) {
+		if !f(fd_InferenceDetail_inference_id, value) {
 			return
 		}
 	}
@@ -1134,7 +1134,7 @@ func (x *fastReflection_InferenceDetail) Range(f func(protoreflect.FieldDescript
 	}
 	if x.ExecutorReputation != float32(0) || math.Signbit(float64(x.ExecutorReputation)) {
 		value := protoreflect.ValueOfFloat32(x.ExecutorReputation)
-		if !f(fd_InferenceDetail_executorReputation, value) {
+		if !f(fd_InferenceDetail_executor_reputation, value) {
 			return
 		}
 	}
@@ -1153,11 +1153,11 @@ func (x *fastReflection_InferenceDetail) Range(f func(protoreflect.FieldDescript
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_InferenceDetail) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
+	case "inference.inference.InferenceDetail.inference_id":
 		return x.InferenceId != ""
 	case "inference.inference.InferenceDetail.executor":
 		return x.Executor != ""
-	case "inference.inference.InferenceDetail.executorReputation":
+	case "inference.inference.InferenceDetail.executor_reputation":
 		return x.ExecutorReputation != float32(0) || math.Signbit(float64(x.ExecutorReputation))
 	default:
 		if fd.IsExtension() {
@@ -1175,11 +1175,11 @@ func (x *fastReflection_InferenceDetail) Has(fd protoreflect.FieldDescriptor) bo
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_InferenceDetail) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
+	case "inference.inference.InferenceDetail.inference_id":
 		x.InferenceId = ""
 	case "inference.inference.InferenceDetail.executor":
 		x.Executor = ""
-	case "inference.inference.InferenceDetail.executorReputation":
+	case "inference.inference.InferenceDetail.executor_reputation":
 		x.ExecutorReputation = float32(0)
 	default:
 		if fd.IsExtension() {
@@ -1197,13 +1197,13 @@ func (x *fastReflection_InferenceDetail) Clear(fd protoreflect.FieldDescriptor) 
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_InferenceDetail) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
+	case "inference.inference.InferenceDetail.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.InferenceDetail.executor":
 		value := x.Executor
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.InferenceDetail.executorReputation":
+	case "inference.inference.InferenceDetail.executor_reputation":
 		value := x.ExecutorReputation
 		return protoreflect.ValueOfFloat32(value)
 	default:
@@ -1226,11 +1226,11 @@ func (x *fastReflection_InferenceDetail) Get(descriptor protoreflect.FieldDescri
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_InferenceDetail) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
+	case "inference.inference.InferenceDetail.inference_id":
 		x.InferenceId = value.Interface().(string)
 	case "inference.inference.InferenceDetail.executor":
 		x.Executor = value.Interface().(string)
-	case "inference.inference.InferenceDetail.executorReputation":
+	case "inference.inference.InferenceDetail.executor_reputation":
 		x.ExecutorReputation = float32(value.Float())
 	default:
 		if fd.IsExtension() {
@@ -1252,12 +1252,12 @@ func (x *fastReflection_InferenceDetail) Set(fd protoreflect.FieldDescriptor, va
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_InferenceDetail) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.InferenceDetail is not mutable"))
+	case "inference.inference.InferenceDetail.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.InferenceDetail is not mutable"))
 	case "inference.inference.InferenceDetail.executor":
 		panic(fmt.Errorf("field executor of message inference.inference.InferenceDetail is not mutable"))
-	case "inference.inference.InferenceDetail.executorReputation":
-		panic(fmt.Errorf("field executorReputation of message inference.inference.InferenceDetail is not mutable"))
+	case "inference.inference.InferenceDetail.executor_reputation":
+		panic(fmt.Errorf("field executor_reputation of message inference.inference.InferenceDetail is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.InferenceDetail"))
@@ -1271,11 +1271,11 @@ func (x *fastReflection_InferenceDetail) Mutable(fd protoreflect.FieldDescriptor
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_InferenceDetail) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.InferenceDetail.inferenceId":
+	case "inference.inference.InferenceDetail.inference_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.InferenceDetail.executor":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.InferenceDetail.executorReputation":
+	case "inference.inference.InferenceDetail.executor_reputation":
 		return protoreflect.ValueOfFloat32(float32(0))
 	default:
 		if fd.IsExtension() {
@@ -1566,15 +1566,15 @@ func (x *fastReflection_InferenceDetail) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_ValidationWeight               protoreflect.MessageDescriptor
-	fd_ValidationWeight_memberAddress protoreflect.FieldDescriptor
-	fd_ValidationWeight_weight        protoreflect.FieldDescriptor
+	md_ValidationWeight                protoreflect.MessageDescriptor
+	fd_ValidationWeight_member_address protoreflect.FieldDescriptor
+	fd_ValidationWeight_weight         protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_epoch_group_data_proto_init()
 	md_ValidationWeight = File_inference_inference_epoch_group_data_proto.Messages().ByName("ValidationWeight")
-	fd_ValidationWeight_memberAddress = md_ValidationWeight.Fields().ByName("memberAddress")
+	fd_ValidationWeight_member_address = md_ValidationWeight.Fields().ByName("member_address")
 	fd_ValidationWeight_weight = md_ValidationWeight.Fields().ByName("weight")
 }
 
@@ -1645,7 +1645,7 @@ func (x *fastReflection_ValidationWeight) Interface() protoreflect.ProtoMessage 
 func (x *fastReflection_ValidationWeight) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.MemberAddress != "" {
 		value := protoreflect.ValueOfString(x.MemberAddress)
-		if !f(fd_ValidationWeight_memberAddress, value) {
+		if !f(fd_ValidationWeight_member_address, value) {
 			return
 		}
 	}
@@ -1670,7 +1670,7 @@ func (x *fastReflection_ValidationWeight) Range(f func(protoreflect.FieldDescrip
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_ValidationWeight) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
+	case "inference.inference.ValidationWeight.member_address":
 		return x.MemberAddress != ""
 	case "inference.inference.ValidationWeight.weight":
 		return x.Weight != int64(0)
@@ -1690,7 +1690,7 @@ func (x *fastReflection_ValidationWeight) Has(fd protoreflect.FieldDescriptor) b
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ValidationWeight) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
+	case "inference.inference.ValidationWeight.member_address":
 		x.MemberAddress = ""
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = int64(0)
@@ -1710,7 +1710,7 @@ func (x *fastReflection_ValidationWeight) Clear(fd protoreflect.FieldDescriptor)
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_ValidationWeight) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
+	case "inference.inference.ValidationWeight.member_address":
 		value := x.MemberAddress
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.ValidationWeight.weight":
@@ -1736,7 +1736,7 @@ func (x *fastReflection_ValidationWeight) Get(descriptor protoreflect.FieldDescr
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ValidationWeight) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
+	case "inference.inference.ValidationWeight.member_address":
 		x.MemberAddress = value.Interface().(string)
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = value.Int()
@@ -1760,8 +1760,8 @@ func (x *fastReflection_ValidationWeight) Set(fd protoreflect.FieldDescriptor, v
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ValidationWeight) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
-		panic(fmt.Errorf("field memberAddress of message inference.inference.ValidationWeight is not mutable"))
+	case "inference.inference.ValidationWeight.member_address":
+		panic(fmt.Errorf("field member_address of message inference.inference.ValidationWeight is not mutable"))
 	case "inference.inference.ValidationWeight.weight":
 		panic(fmt.Errorf("field weight of message inference.inference.ValidationWeight is not mutable"))
 	default:
@@ -1777,7 +1777,7 @@ func (x *fastReflection_ValidationWeight) Mutable(fd protoreflect.FieldDescripto
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_ValidationWeight) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ValidationWeight.memberAddress":
+	case "inference.inference.ValidationWeight.member_address":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.ValidationWeight.weight":
 		return protoreflect.ValueOfInt64(int64(0))
@@ -2034,15 +2034,15 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_SeedSignature               protoreflect.MessageDescriptor
-	fd_SeedSignature_memberAddress protoreflect.FieldDescriptor
-	fd_SeedSignature_signature     protoreflect.FieldDescriptor
+	md_SeedSignature                protoreflect.MessageDescriptor
+	fd_SeedSignature_member_address protoreflect.FieldDescriptor
+	fd_SeedSignature_signature      protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_epoch_group_data_proto_init()
 	md_SeedSignature = File_inference_inference_epoch_group_data_proto.Messages().ByName("SeedSignature")
-	fd_SeedSignature_memberAddress = md_SeedSignature.Fields().ByName("memberAddress")
+	fd_SeedSignature_member_address = md_SeedSignature.Fields().ByName("member_address")
 	fd_SeedSignature_signature = md_SeedSignature.Fields().ByName("signature")
 }
 
@@ -2113,7 +2113,7 @@ func (x *fastReflection_SeedSignature) Interface() protoreflect.ProtoMessage {
 func (x *fastReflection_SeedSignature) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.MemberAddress != "" {
 		value := protoreflect.ValueOfString(x.MemberAddress)
-		if !f(fd_SeedSignature_memberAddress, value) {
+		if !f(fd_SeedSignature_member_address, value) {
 			return
 		}
 	}
@@ -2138,7 +2138,7 @@ func (x *fastReflection_SeedSignature) Range(f func(protoreflect.FieldDescriptor
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_SeedSignature) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
+	case "inference.inference.SeedSignature.member_address":
 		return x.MemberAddress != ""
 	case "inference.inference.SeedSignature.signature":
 		return x.Signature != ""
@@ -2158,7 +2158,7 @@ func (x *fastReflection_SeedSignature) Has(fd protoreflect.FieldDescriptor) bool
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_SeedSignature) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
+	case "inference.inference.SeedSignature.member_address":
 		x.MemberAddress = ""
 	case "inference.inference.SeedSignature.signature":
 		x.Signature = ""
@@ -2178,7 +2178,7 @@ func (x *fastReflection_SeedSignature) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_SeedSignature) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
+	case "inference.inference.SeedSignature.member_address":
 		value := x.MemberAddress
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.SeedSignature.signature":
@@ -2204,7 +2204,7 @@ func (x *fastReflection_SeedSignature) Get(descriptor protoreflect.FieldDescript
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_SeedSignature) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
+	case "inference.inference.SeedSignature.member_address":
 		x.MemberAddress = value.Interface().(string)
 	case "inference.inference.SeedSignature.signature":
 		x.Signature = value.Interface().(string)
@@ -2228,8 +2228,8 @@ func (x *fastReflection_SeedSignature) Set(fd protoreflect.FieldDescriptor, valu
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_SeedSignature) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
-		panic(fmt.Errorf("field memberAddress of message inference.inference.SeedSignature is not mutable"))
+	case "inference.inference.SeedSignature.member_address":
+		panic(fmt.Errorf("field member_address of message inference.inference.SeedSignature is not mutable"))
 	case "inference.inference.SeedSignature.signature":
 		panic(fmt.Errorf("field signature of message inference.inference.SeedSignature is not mutable"))
 	default:
@@ -2245,7 +2245,7 @@ func (x *fastReflection_SeedSignature) Mutable(fd protoreflect.FieldDescriptor) 
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_SeedSignature) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.SeedSignature.memberAddress":
+	case "inference.inference.SeedSignature.member_address":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.SeedSignature.signature":
 		return protoreflect.ValueOfString("")
@@ -2535,14 +2535,14 @@ type EpochGroupData struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	PocStartBlockHeight  uint64              `protobuf:"varint,1,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
-	EpochGroupId         uint64              `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
-	EpochPolicy          string              `protobuf:"bytes,3,opt,name=epochPolicy,proto3" json:"epochPolicy,omitempty"`
-	EffectiveBlockHeight uint64              `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
-	LastBlockHeight      uint64              `protobuf:"varint,5,opt,name=lastBlockHeight,proto3" json:"lastBlockHeight,omitempty"`
-	MemberSeedSignatures []*SeedSignature    `protobuf:"bytes,6,rep,name=memberSeedSignatures,proto3" json:"memberSeedSignatures,omitempty"`
-	FinishedInferences   []*InferenceDetail  `protobuf:"bytes,7,rep,name=finishedInferences,proto3" json:"finishedInferences,omitempty"`
-	ValidationWeights    []*ValidationWeight `protobuf:"bytes,8,rep,name=validationWeights,proto3" json:"validationWeights,omitempty"`
+	PocStartBlockHeight  uint64              `protobuf:"varint,1,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
+	EpochGroupId         uint64              `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
+	EpochPolicy          string              `protobuf:"bytes,3,opt,name=epoch_policy,json=epochPolicy,proto3" json:"epoch_policy,omitempty"`
+	EffectiveBlockHeight uint64              `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
+	LastBlockHeight      uint64              `protobuf:"varint,5,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
+	MemberSeedSignatures []*SeedSignature    `protobuf:"bytes,6,rep,name=member_seed_signatures,json=memberSeedSignatures,proto3" json:"member_seed_signatures,omitempty"`
+	FinishedInferences   []*InferenceDetail  `protobuf:"bytes,7,rep,name=finished_inferences,json=finishedInferences,proto3" json:"finished_inferences,omitempty"`
+	ValidationWeights    []*ValidationWeight `protobuf:"bytes,8,rep,name=validation_weights,json=validationWeights,proto3" json:"validation_weights,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -2626,9 +2626,9 @@ type InferenceDetail struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	InferenceId        string  `protobuf:"bytes,1,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	InferenceId        string  `protobuf:"bytes,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 	Executor           string  `protobuf:"bytes,2,opt,name=executor,proto3" json:"executor,omitempty"`
-	ExecutorReputation float32 `protobuf:"fixed32,3,opt,name=executorReputation,proto3" json:"executorReputation,omitempty"`
+	ExecutorReputation float32 `protobuf:"fixed32,3,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
 }
 
 func (x *InferenceDetail) Reset() {
@@ -2677,7 +2677,7 @@ type ValidationWeight struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	MemberAddress string `protobuf:"bytes,1,opt,name=memberAddress,proto3" json:"memberAddress,omitempty"`
+	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
 	Weight        int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
 }
 
@@ -2720,7 +2720,7 @@ type SeedSignature struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	MemberAddress string `protobuf:"bytes,1,opt,name=memberAddress,proto3" json:"memberAddress,omitempty"`
+	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
 	Signature     string `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
 }
 
@@ -2765,69 +2765,70 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75,
 	0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x22, 0xe9, 0x03, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
-	0x44, 0x61, 0x74, 0x61, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74,
-	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
-	0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47,
-	0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x12, 0x20, 0x0a, 0x0b, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x32, 0x0a, 0x14,
-	0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65,
-	0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
-	0x12, 0x28, 0x0a, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x56, 0x0a, 0x14, 0x6d, 0x65,
-	0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
-	0x65, 0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53,
-	0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x52, 0x14, 0x6d, 0x65,
-	0x6d, 0x62, 0x65, 0x72, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
-	0x65, 0x73, 0x12, 0x54, 0x0a, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x24,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x44, 0x65,
-	0x74, 0x61, 0x69, 0x6c, 0x52, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x53, 0x0a, 0x11, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x18, 0x08, 0x20,
-	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x11, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x22, 0x7f, 0x0a,
-	0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c,
-	0x12, 0x20, 0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18,
+	0x65, 0x22, 0xf7, 0x03, 0x0a, 0x0e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x12, 0x33, 0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x72,
+	0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c,
+	0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x12,
+	0x21, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x6c, 0x69,
+	0x63, 0x79, 0x12, 0x34, 0x0a, 0x16, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f,
+	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01,
+	0x28, 0x04, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x2a, 0x0a, 0x11, 0x6c, 0x61, 0x73, 0x74,
+	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65,
+	0x69, 0x67, 0x68, 0x74, 0x12, 0x58, 0x0a, 0x16, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x73,
+	0x65, 0x65, 0x64, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x73, 0x18, 0x06,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x65, 0x65, 0x64, 0x53,
+	0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x52, 0x14, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72,
+	0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x73, 0x12, 0x55,
+	0x0a, 0x13, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x24, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69,
+	0x6c, 0x52, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x54, 0x0a, 0x12, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x18, 0x08, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x11, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x22, 0x81, 0x01, 0x0a, 0x0f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x12,
+	0x21, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x49, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x2e,
-	0x0a, 0x12, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x70, 0x75, 0x74, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x02, 0x52, 0x12, 0x65, 0x78, 0x65, 0x63,
-	0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x50,
-	0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x24, 0x0a, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72,
-	0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65,
-	0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74,
-	0x22, 0x53, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
-	0x65, 0x12, 0x24, 0x0a, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65,
-	0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72,
-	0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61,
-	0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e,
-	0x61, 0x74, 0x75, 0x72, 0x65, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74,
-	0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73,
-	0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02,
-	0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
-	0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x12, 0x2f,
+	0x0a, 0x13, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x5f, 0x72, 0x65, 0x70, 0x75, 0x74,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x02, 0x52, 0x12, 0x65, 0x78, 0x65,
+	0x63, 0x75, 0x74, 0x6f, 0x72, 0x52, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22,
+	0x51, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64,
+	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d,
+	0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65,
+	0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74,
+	0x75, 0x72, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64,
+	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d,
+	0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69,
+	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73,
+	0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -2850,9 +2851,9 @@ var file_inference_inference_epoch_group_data_proto_goTypes = []interface{}{
 	(*SeedSignature)(nil),    // 3: inference.inference.SeedSignature
 }
 var file_inference_inference_epoch_group_data_proto_depIdxs = []int32{
-	3, // 0: inference.inference.EpochGroupData.memberSeedSignatures:type_name -> inference.inference.SeedSignature
-	1, // 1: inference.inference.EpochGroupData.finishedInferences:type_name -> inference.inference.InferenceDetail
-	2, // 2: inference.inference.EpochGroupData.validationWeights:type_name -> inference.inference.ValidationWeight
+	3, // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
+	1, // 1: inference.inference.EpochGroupData.finished_inferences:type_name -> inference.inference.InferenceDetail
+	2, // 2: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name

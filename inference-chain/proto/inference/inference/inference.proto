@@ -12,32 +12,32 @@ enum InferenceStatus {
 }
 
 message ProposalDetails {
-  uint64 reValidatePolicyId = 1;
-  uint64 invalidatePolicyId = 2;
-  string policyAddress = 3;
+  uint64 re_validate_policy_id = 1;
+  uint64 invalidate_policy_id = 2;
+  string policy_address = 3;
 }
 
 message Inference {
   string index = 1;
-  string inferenceId = 2;
-  string promptHash = 3;
-  string promptPayload = 4;
-  string responseHash = 5;
-  string responsePayload = 6;
-  uint64 promptTokenCount = 7;
-  uint64 completionTokenCount = 8;
-  string requestedBy = 9;
-  string executedBy = 10;
+  string inference_id = 2;
+  string prompt_hash = 3;
+  string prompt_payload = 4;
+  string response_hash = 5;
+  string response_payload = 6;
+  uint64 prompt_token_count = 7;
+  uint64 completion_token_count = 8;
+  string requested_by = 9;
+  string executed_by = 10;
   InferenceStatus status = 11;
-  int64 startBlockHeight = 12;
-  int64 endBlockHeight = 13;
-  int64 startBlockTimestamp = 14;
-  int64 endBlockTimestamp = 15;
+  int64 start_block_height = 12;
+  int64 end_block_height = 13;
+  int64 start_block_timestamp = 14;
+  int64 end_block_timestamp = 15;
   string model = 16;
-  uint64 maxTokens = 17;
-  int64 actualCost = 18;
-  int64 escrowAmount = 19;
-  ProposalDetails proposalDetails = 20;
-  uint64 epochGroupId = 21;
+  uint64 max_tokens = 17;
+  int64 actual_cost = 18;
+  int64 escrow_amount = 19;
+  ProposalDetails proposal_details = 20;
+  uint64 epoch_group_id = 21;
 }
 

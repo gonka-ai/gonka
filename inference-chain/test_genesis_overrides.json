@@ -13,8 +13,8 @@
     },
     "inference": {
       "params": {
-        "epochParams": {
-          "epochLength": "20"
+        "epoch_params": {
+          "epoch_length": "20"
         }
       }
     }
