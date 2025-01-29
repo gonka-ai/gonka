@@ -3,7 +3,7 @@
 ################################################################################
 # Build the application
 ################################################################################
-FROM golang:alpine AS builder
+FROM golang:1.23.5-bookworm AS builder
 
 ARG BUILD_FLAGS
 ARG GOOS
@@ -15,7 +15,9 @@ ENV GOOS=${GOOS} \
     GO111MODULE=on \
     GOCACHE=/root/.cache/go-build
 
-RUN apk add --no-cache make gcc musl-dev git
+RUN apt-get update && \
+    apt-get install -y make gcc build-essential git && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY inference-chain/ /app/inference-chain
 
@@ -37,11 +39,11 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
 ################################################################################
 # Final image
 ################################################################################
-FROM alpine:edge AS final
+FROM debian:bookworm-slim AS final
 
-RUN apk update && \
-    apk add --no-cache sed ca-certificates && \
-    rm -rf /var/cache/apk/*
+RUN apt-get update && \
+    apt-get install -y sed ca-certificates jq && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
 

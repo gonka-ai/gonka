@@ -78,12 +78,17 @@ import (
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/productscience/inference/docs"
 )
 
 const (
 	AccountAddressPrefix = "cosmos"
 	Name                 = "inference"
+)
+
+var (
+	wasmKeeper wasmkeeper.Keeper
 )
 
 var (

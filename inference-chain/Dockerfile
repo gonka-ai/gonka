@@ -3,7 +3,7 @@
 ################################################################################
 # Build stage
 ################################################################################
-FROM golang:alpine AS builder
+FROM golang:1.23.5-bookworm AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
@@ -14,7 +14,9 @@ ENV GOOS=${GOOS} \
     GO111MODULE=on \
     GOCACHE=/root/.cache/go-build
 
-RUN apk add --no-cache make gcc musl-dev git
+RUN apt-get update && \
+    apt-get install -y make gcc build-essential git && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/inference-chain
 
@@ -32,15 +34,20 @@ RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     -o ./build/inferenced \
     ./cmd/inferenced/main.go
 
-################################################################################
-# Final stage
-################################################################################
-FROM alpine:3.18 AS final
+RUN mkdir -p /tmp/deps && \
+    ldd /app/inference-chain/build/inferenced \
+    | grep -oP '(?<=\s)(/[^ ]+)' \
+    | xargs -I '{}' cp --parents '{}' /tmp/deps || true && \
+    tar cf /tmp/deps/deps.tar -C /tmp/deps .
 
-RUN apk update && \
-    apk add --no-cache sed ca-certificates && \
-    rm -rf /var/cache/apk/*
-RUN apk update && apk add --no-cache jq
+# ################################################################################
+# # Final stage
+# ################################################################################
+FROM debian:bookworm-slim AS final
+
+RUN apt-get update && \
+    apt-get install -y sed ca-certificates jq && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
 
@@ -50,6 +57,9 @@ ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
 ENV DAEMON_RESTART_AFTER_UPGRADE=true
 
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
+COPY --from=builder /tmp/deps/deps.tar /tmp/deps.tar
+RUN tar xf /tmp/deps.tar -C /
+
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/prod/init-docker.sh /root/init-docker.sh
 COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
