@@ -1,0 +1,17 @@
+syntax = "proto3";
+package cosmwasm.wasm.module.v1;
+
+import "cosmos/app/v1alpha1/module.proto";
+
+// Module is the config object for the module.
+message Module {
+  option (cosmos.app.v1alpha1.module) = {
+    go_import: "github.com/productscience/inference/x/wasm"
+  };
+
+  // InstantiateDefaultPermission defines the default permission for instantiating contracts
+  string instantiate_default_permission = 1;
+  
+  // AllowedCapabilities defines the list of capabilities that are allowed for WASM contracts
+  repeated string allowed_capabilities = 2;
+}

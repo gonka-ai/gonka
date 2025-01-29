@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	_ "cosmossdk.io/api/cosmos/tx/config/v1" // import for side-effects
+	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
@@ -65,7 +66,6 @@ import (
 	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	_ "github.com/cosmos/ibc-go/modules/capability" // import for side-effects
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
 	_ "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts" // import for side-effects
 	icacontrollerkeeper "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts/controller/keeper"
@@ -78,6 +78,9 @@ import (
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
+	"github.com/CosmWasm/wasmd/x/wasm"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/productscience/inference/docs"
 )
 
@@ -125,6 +128,7 @@ type App struct {
 	GroupKeeper          groupkeeper.Keeper
 	NFTKeeper            nftkeeper.Keeper
 	CircuitBreakerKeeper circuitkeeper.Keeper
+	WasmKeeper           wasmkeeper.Keeper
 
 	// IBC
 	IBCKeeper           *ibckeeper.Keeper // IBC Keeper must be a pointer in the app, so we can SetRouter on it correctly
@@ -173,14 +177,28 @@ func getGovProposalHandlers() []govclient.ProposalHandler {
 func AppConfig() depinject.Config {
 	return depinject.Configs(
 		appConfig,
-		// Loads the app config from a YAML file.
-		// appconfig.LoadYAML(AppConfigYAML),
 		depinject.Supply(
 			// supply custom module basics
 			map[string]module.AppModuleBasic{
 				genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 				govtypes.ModuleName:     gov.NewAppModuleBasic(getGovProposalHandlers()),
-				// this line is used by starport scaffolding # stargate/appConfig/moduleBasic
+				wasmtypes.ModuleName:    wasm.AppModuleBasic{},
+			},
+		),
+		depinject.Supply(
+			// Provide IBC interfaces for WASM
+			func(k *ibckeeper.Keeper) wasmtypes.ICS4Wrapper {
+				return k.ChannelKeeper
+			},
+			func(k *ibckeeper.Keeper) wasmtypes.ChannelKeeper {
+				return k.ChannelKeeper
+			},
+			func(k *ibckeeper.Keeper) wasmtypes.PortKeeper {
+				return k.PortKeeper
+			},
+			// Add capability keeper
+			func(k *capabilitykeeper.Keeper) wasmtypes.CapabilityKeeper {
+				return k.ScopeToModule(wasmtypes.ModuleName)
 			},
 		),
 	)
@@ -280,6 +298,7 @@ func New(
 		&app.GroupKeeper,
 		&app.CircuitBreakerKeeper,
 		&app.InferenceKeeper,
+		&app.WasmKeeper,
 		// this line is used by starport scaffolding # stargate/app/keeperDefinition
 	); err != nil {
 		panic(err)
@@ -375,6 +394,11 @@ func (app *App) LegacyAmino() *codec.LegacyAmino {
 // for modules to register their own custom testing types.
 func (app *App) AppCodec() codec.Codec {
 	return app.appCodec
+}
+
+// GetStoreService returns the KVStoreService for the provided store key.
+func (app *App) GetStoreService(storeKey string) store.KVStoreService {
+	return runtime.NewKVStoreService(app.GetKey(storeKey))
 }
 
 // GetKey returns the KVStoreKey for the provided store key.

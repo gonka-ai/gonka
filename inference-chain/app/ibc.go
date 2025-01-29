@@ -3,6 +3,7 @@ package app
 import (
 	"cosmossdk.io/core/appmodule"
 	storetypes "cosmossdk.io/store/types"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
@@ -40,6 +41,8 @@ import (
 
 // registerIBCModules register IBC keepers and non dependency inject modules.
 func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
+	app.Logger().Info("Starting registerIBCModules")
+
 	// set up non depinject support modules store keys
 	if err := app.RegisterStores(
 		storetypes.NewKVStoreKey(capabilitytypes.StoreKey),
@@ -48,6 +51,7 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		storetypes.NewKVStoreKey(ibcfeetypes.StoreKey),
 		storetypes.NewKVStoreKey(icahosttypes.StoreKey),
 		storetypes.NewKVStoreKey(icacontrollertypes.StoreKey),
+		storetypes.NewKVStoreKey(wasmtypes.StoreKey),
 		storetypes.NewMemoryStoreKey(capabilitytypes.MemStoreKey),
 		storetypes.NewTransientStoreKey(paramstypes.TStoreKey),
 	); err != nil {

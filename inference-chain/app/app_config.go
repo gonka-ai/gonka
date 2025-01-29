@@ -46,6 +46,7 @@ import (
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	_ "github.com/cosmos/ibc-go/modules/capability"
 	capabilitytypes "github.com/cosmos/ibc-go/modules/capability/types"
 	icatypes "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts/types"
 	ibcfeetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
@@ -56,7 +57,16 @@ import (
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
+
 	// this line is used by starport scaffolding # stargate/app/moduleImport
+
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+
+	wasmmodulev1 "github.com/productscience/inference/api/cosmwasm/wasm/module/v1"
+	ibccapabilitymodulev1 "github.com/productscience/inference/api/ibc/capability/module/v1"
+	ibccoremodulev1 "github.com/productscience/inference/api/ibc/core/module/v1"
+
+	_ "github.com/productscience/inference/x/wasm/module"
 )
 
 var (
@@ -95,6 +105,7 @@ var (
 		// chain modules
 		inferencemoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
+		wasmtypes.ModuleName,
 	}
 
 	// During begin block slashing happens after distr.BeginBlocker so that
@@ -119,6 +130,7 @@ var (
 		ibcfeetypes.ModuleName,
 		// chain modules
 		inferencemoduletypes.ModuleName,
+		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
 
@@ -138,6 +150,7 @@ var (
 		ibcfeetypes.ModuleName,
 		// chain modules
 		inferencemoduletypes.ModuleName,
+		wasmtypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
 
@@ -159,6 +172,7 @@ var (
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
@@ -170,6 +184,7 @@ var (
 		stakingtypes.BondedPoolName,
 		stakingtypes.NotBondedPoolName,
 		nft.ModuleName,
+		wasmtypes.ModuleName,
 		// We allow the following module accounts to receive funds:
 		// govtypes.ModuleName
 	}
@@ -256,8 +271,10 @@ var (
 				Config: appconfig.WrapAny(&upgrademodulev1.Module{}),
 			},
 			{
-				Name:   distrtypes.ModuleName,
-				Config: appconfig.WrapAny(&distrmodulev1.Module{}),
+				Name: distrtypes.ModuleName,
+				Config: appconfig.WrapAny(&distrmodulev1.Module{
+					Authority: authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+				}),
 			},
 			{
 				Name:   evidencetypes.ModuleName,
@@ -297,6 +314,20 @@ var (
 			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   ibcexported.ModuleName,
+				Config: appconfig.WrapAny(&ibccoremodulev1.Module{}),
+			},
+			{
+				Name: capabilitytypes.ModuleName,
+				Config: appconfig.WrapAny(&ibccapabilitymodulev1.Module{
+					SealKeeper: true,
+				}),
+			},
+			{
+				Name:   wasmtypes.ModuleName,
+				Config: appconfig.WrapAny(&wasmmodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},

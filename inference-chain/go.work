@@ -1,0 +1,7 @@
+go 1.23.1
+
+use (
+    .
+    ./x/ibc/capability
+    ./x/ibc/core
+) 

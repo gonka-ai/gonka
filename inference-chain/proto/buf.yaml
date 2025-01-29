@@ -1,25 +1,31 @@
+version: v1
+deps:
+  - buf.build/protocolbuffers/wellknowntypes
+  - buf.build/cosmos/cosmos-sdk
+  - buf.build/cosmos/cosmos-proto
+  - buf.build/cosmos/gogo-proto
+  - buf.build/googleapis/googleapis
+  - buf.build/cosmos/ics23
+  - buf.build/cosmwasm/wasmd
 breaking:
   use:
-  - FILE
-deps:
-- buf.build/protocolbuffers/wellknowntypes
-- buf.build/cosmos/cosmos-sdk
-- buf.build/cosmos/cosmos-proto
-- buf.build/cosmos/gogo-proto
-- buf.build/googleapis/googleapis
-- buf.build/cosmos/ics23
-- buf.build/cosmos/ibc
+    - FILE
 lint:
   except:
-  - UNARY_RPC
-  - COMMENT_FIELD
-  - SERVICE_SUFFIX
-  - PACKAGE_VERSION_SUFFIX
-  - RPC_REQUEST_STANDARD_NAME
-  ignore:
-  - tendermint
+    - UNARY_RPC
+    - COMMENT_FIELD
+    - SERVICE_SUFFIX
+    - PACKAGE_VERSION_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+  ignore_only:
+    PACKAGE_DIRECTORY_MATCH:
+      - tendermint
+      - ibc/core/04-channel
+      - ibc/core/02-client
+      - ibc/core/03-connection
+      - ibc/core/23-commitment
+      - ibc/core/24-host
   use:
-  - DEFAULT
-  - COMMENTS
-  - FILE_LOWER_SNAKE_CASE
-version: v1
+    - DEFAULT
+    - COMMENTS
+    - FILE_LOWER_SNAKE_CASE
