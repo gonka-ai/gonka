@@ -187,7 +187,7 @@ require (
 )
 
 replace (
-	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.0.0-20240830220859-4f35f6aa59c9
+	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.50.9-ps1
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain
 )
