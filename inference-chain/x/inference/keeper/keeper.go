@@ -16,7 +16,7 @@ type (
 		cdc          codec.BinaryCodec
 		storeService store.KVStoreService
 		logger       log.Logger
-		bank         types.BankEscrowKeeper
+		BankKeeper   types.BankEscrowKeeper
 		bankView     types.BankKeeper
 		validatorSet types.ValidatorSet
 		group        types.GroupMessageKeeper
@@ -50,7 +50,7 @@ func NewKeeper(
 		storeService:  storeService,
 		authority:     authority,
 		logger:        logger,
-		bank:          bank,
+		BankKeeper:    bank,
 		bankView:      bankView,
 		group:         group,
 		validatorSet:  validatorSet,

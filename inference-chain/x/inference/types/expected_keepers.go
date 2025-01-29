@@ -15,6 +15,7 @@ type AccountKeeper interface {
 	GetModuleAddress(moduleName string) sdk.AccAddress
 	SetAccount(ctx context.Context, acc sdk.AccountI)
 	NewAccountWithAddress(context.Context, sdk.AccAddress) sdk.AccountI
+	GetModuleAccount(ctx context.Context, moduleName string) sdk.ModuleAccountI
 	// Methods imported from account should be defined here
 }
 
