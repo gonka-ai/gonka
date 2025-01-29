@@ -79,6 +79,7 @@ import (
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+
 	"github.com/productscience/inference/docs"
 )
 
