@@ -14,6 +14,7 @@ import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/pocbatch.proto";
 import "inference/inference/unit_of_compute.proto";
+import "inference/inference/model.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -293,5 +294,6 @@ message QueryCurrentEpochGroupDataResponse {
 
 message QueryModelsAllRequest {}
 
-message QueryModelsAllResponse {}
-
+message QueryModelsAllResponse {
+  repeated Model model = 1 [(gogoproto.nullable) = false];
+}
