@@ -117,6 +117,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
   
   }
+  
+  // Queries a list of ModelsAll items.
+  rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/models_all";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -284,3 +290,8 @@ message QueryCurrentEpochGroupDataRequest {}
 message QueryCurrentEpochGroupDataResponse {
   EpochGroupData epochGroupData = 1 [(gogoproto.nullable) = false];
 }
+
+message QueryModelsAllRequest {}
+
+message QueryModelsAllResponse {}
+

@@ -33,6 +33,7 @@ const (
 	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
 	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
+	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
 )
 
 // MsgClient is the client API for Msg service.
@@ -55,6 +56,7 @@ type MsgClient interface {
 	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 }
 
 type msgClient struct {
@@ -191,6 +193,15 @@ func (c *msgClient) SubmitUnitOfComputePriceProposal(ctx context.Context, in *Ms
 	return out, nil
 }
 
+func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error) {
+	out := new(MsgRegisterModelResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterModel_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -211,6 +222,7 @@ type MsgServer interface {
 	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -259,6 +271,9 @@ func (UnimplementedMsgServer) SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgS
 }
 func (UnimplementedMsgServer) SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitUnitOfComputePriceProposal not implemented")
+}
+func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterModel not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -525,6 +540,24 @@ func _Msg_SubmitUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterModel)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterModel(ctx, req.(*MsgRegisterModel))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -587,6 +620,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitUnitOfComputePriceProposal",
 			Handler:    _Msg_SubmitUnitOfComputePriceProposal_Handler,
+		},
+		{
+			MethodName: "RegisterModel",
+			Handler:    _Msg_RegisterModel_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

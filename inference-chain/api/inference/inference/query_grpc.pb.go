@@ -37,6 +37,7 @@ const (
 	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
 	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
 	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
+	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -74,6 +75,8 @@ type QueryClient interface {
 	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
+	// Queries a list of ModelsAll items.
+	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
 }
 
 type queryClient struct {
@@ -246,6 +249,15 @@ func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurren
 	return out, nil
 }
 
+func (c *queryClient) ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error) {
+	out := new(QueryModelsAllResponse)
+	err := c.cc.Invoke(ctx, Query_ModelsAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -281,6 +293,8 @@ type QueryServer interface {
 	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
+	// Queries a list of ModelsAll items.
+	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -341,6 +355,9 @@ func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *
 }
 func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CurrentEpochGroupData not implemented")
+}
+func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -679,6 +696,24 @@ func _Query_CurrentEpochGroupData_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ModelsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryModelsAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ModelsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ModelsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ModelsAll(ctx, req.(*QueryModelsAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -757,6 +792,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CurrentEpochGroupData",
 			Handler:    _Query_CurrentEpochGroupData_Handler,
+		},
+		{
+			MethodName: "ModelsAll",
+			Handler:    _Query_ModelsAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
