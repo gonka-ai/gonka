@@ -175,8 +175,7 @@ func getGovProposalHandlers() []govclient.ProposalHandler {
 // ProvideWasmKeeper manually constructs the WASM keeper with minimal IBC/distribution
 // (passed as nil), so it compiles but won't enable advanced features in WASM.
 func ProvideWasmKeeper(app *App) (wasmkeeper.Keeper, error) {
-	// The store key for WASM
-	storeKey := app.GetKey(wasmtypes.StoreKey)
+	storeKey := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
 	if storeKey == nil {
 		return wasmkeeper.Keeper{}, fmt.Errorf("wasm store key not found")
 	}
