@@ -175,11 +175,17 @@ func getGovProposalHandlers() []govclient.ProposalHandler {
 
 // ProvideWasmKeeper manually constructs the WASM keeper with minimal IBC/distribution
 // (passed as nil), so it compiles but won't enable advanced features in WASM.
-func ProvideWasmKeeper(app *App) (wasmkeeper.Keeper, error) {
+func ProvideWasmKeeper(app *App) (*wasmkeeper.Keeper, error) {
 	storeKey := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
+
+	if err := app.RegisterStores(
+		storeKey,
+	); err != nil {
+		return nil, err
+	}
 	// The store key for WASM
 	if storeKey == nil {
-		return wasmkeeper.Keeper{}, fmt.Errorf("wasm store key not found")
+		return nil, fmt.Errorf("wasm store key not found")
 	}
 
 	// Build a store service from that key
@@ -212,7 +218,7 @@ func ProvideWasmKeeper(app *App) (wasmkeeper.Keeper, error) {
 		availableCapabilities,
 		authority,
 	)
-	return k, nil
+	return &k, nil
 }
 
 // AppConfig provides the app config using depinject
@@ -291,7 +297,7 @@ func New(
 	if err != nil {
 		return nil, err
 	}
-	app.WasmKeeper = wasmK
+	app.WasmKeeper = *wasmK
 
 	wasmModule := wasm.NewAppModule(
 		app.appCodec,
@@ -348,7 +354,24 @@ func New(
 		return nil, err
 	}
 
+	if err := checkWasmKeeperWorks(app); err != nil {
+		return nil, fmt.Errorf("Wasm keeper check failed: %w", err)
+	}
+
 	return app, nil
+}
+
+func checkWasmKeeperWorks(app *App) error {
+	// your baseapp only allows a single bool param. So just do:
+	ctx := app.App.NewContext(true)
+
+	// Attempt enumerating pinned codes
+	if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
+		return fmt.Errorf("InitializePinnedCodes returned error: %w", err)
+	}
+	// log success
+	ctx.Logger().Info("WASM keeper check: pinned codes enumerated successfully. Keeper is functional.")
+	return nil
 }
 
 // LegacyAmino returns the application's amino codec
