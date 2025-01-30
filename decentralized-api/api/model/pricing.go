@@ -16,7 +16,7 @@ type RegisterModelDto struct {
 }
 
 type ModelPriceDto struct {
-	ModelId                string `json:"model_id"`
+	Id                     string `json:"id"`
 	UnitsOfComputePerToken uint64 `json:"units_of_compute_per_token"`
 	PricePerToken          uint64 `json:"price_per_token"`
 }
