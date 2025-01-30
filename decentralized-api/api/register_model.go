@@ -1,20 +1,16 @@
 package api
 
 import (
+	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
 	"github.com/productscience/inference/api/inference/inference"
 	"net/http"
 )
 
-type RegisterModelDto struct {
-	ModelId               string `json:"model_id"`
-	UnitOfComputePerToken uint64 `json:"unit_of_compute_per_token"`
-}
-
 // v1/admin/register-model
 func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		body, err := parseJsonBody[RegisterModelDto](request)
+		body, err := parseJsonBody[model.RegisterModelDto](request)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
