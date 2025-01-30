@@ -17,7 +17,7 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 		}
 
 		msg := &inference.MsgRegisterModel{
-			Id:                    body.ModelId,
+			Id:                    body.Id,
 			UnitOfComputePerToken: body.UnitOfComputePerToken,
 		}
 		err = cosmosClient.RegisterModel(msg)
