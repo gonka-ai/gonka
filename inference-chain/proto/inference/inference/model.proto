@@ -4,6 +4,7 @@ package inference.inference;
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message Model {
-  string id = 1;
-  uint64 unit_of_compute_per_token = 2;
+  string submitted_by = 1;
+  string id = 2;
+  uint64 unit_of_compute_per_token = 3;
 }

@@ -10,8 +10,11 @@ import (
 func (k msgServer) RegisterModel(goCtx context.Context, msg *types.MsgRegisterModel) (*types.MsgRegisterModelResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Handling the message
-	_ = ctx
+	k.SetModel(ctx, &types.Model{
+		SubmittedBy:           msg.Creator,
+		Id:                    msg.Id,
+		UnitOfComputePerToken: msg.UnitOfComputePerToken,
+	})
 
 	return &types.MsgRegisterModelResponse{}, nil
 }
