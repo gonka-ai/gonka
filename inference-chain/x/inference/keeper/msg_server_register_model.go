@@ -11,9 +11,9 @@ func (k msgServer) RegisterModel(goCtx context.Context, msg *types.MsgRegisterMo
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	k.SetModel(ctx, &types.Model{
-		SubmittedBy:           msg.Creator,
-		Id:                    msg.Id,
-		UnitOfComputePerToken: msg.UnitOfComputePerToken,
+		SubmittedBy:            msg.Creator,
+		Id:                     msg.Id,
+		UnitsOfComputePerToken: msg.UnitsOfComputePerToken,
 	})
 
 	return &types.MsgRegisterModelResponse{}, nil

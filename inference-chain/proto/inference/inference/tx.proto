@@ -205,7 +205,7 @@ message MsgRegisterModel {
   option (cosmos.msg.v1.signer) = "creator";
   string creator               = 1;
   string id                    = 2;
-  uint64 unit_of_compute_per_token = 3;
+  uint64 units_of_compute_per_token = 3;
 }
 
 message MsgRegisterModelResponse {}
