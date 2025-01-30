@@ -75,6 +75,7 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(configManager))
+	mux.HandleFunc("/v1/pricing", api.WrapPricing())
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
 	mux.HandleFunc("/v1/admin/register-model", api.WrapRegisterModel())
 	mux.HandleFunc("/", logUnknownRequest())
