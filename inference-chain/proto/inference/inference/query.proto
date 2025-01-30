@@ -111,6 +111,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
   
   }
+  
+  // Queries a list of CurrentEpochGroupData items.
+  rpc CurrentEpochGroupData (QueryCurrentEpochGroupDataRequest) returns (QueryCurrentEpochGroupDataResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -270,5 +276,11 @@ message QueryGetUnitOfComputePriceProposalRequest {
 
 message QueryGetUnitOfComputePriceProposalResponse {
   UnitOfComputePriceProposal proposal = 1;
-  uint64 default = 2;
+  uint64                     default  = 2;
+}
+
+message QueryCurrentEpochGroupDataRequest {}
+
+message QueryCurrentEpochGroupDataResponse {
+  EpochGroupData epochGroupData = 1 [(gogoproto.nullable) = false];
 }

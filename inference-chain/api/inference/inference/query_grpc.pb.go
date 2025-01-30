@@ -36,6 +36,7 @@ const (
 	Query_PocBatchesForStage_FullMethodName            = "/inference.inference.Query/PocBatchesForStage"
 	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
 	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
+	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
 )
 
 // QueryClient is the client API for Query service.
@@ -71,6 +72,8 @@ type QueryClient interface {
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
 	// Queries a list of GetUnitOfComputePriceProposal items.
 	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
+	// Queries a list of CurrentEpochGroupData items.
+	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
 }
 
 type queryClient struct {
@@ -234,6 +237,15 @@ func (c *queryClient) GetUnitOfComputePriceProposal(ctx context.Context, in *Que
 	return out, nil
 }
 
+func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error) {
+	out := new(QueryCurrentEpochGroupDataResponse)
+	err := c.cc.Invoke(ctx, Query_CurrentEpochGroupData_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -267,6 +279,8 @@ type QueryServer interface {
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
 	// Queries a list of GetUnitOfComputePriceProposal items.
 	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
+	// Queries a list of CurrentEpochGroupData items.
+	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -324,6 +338,9 @@ func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurren
 }
 func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetUnitOfComputePriceProposal not implemented")
+}
+func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CurrentEpochGroupData not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -644,6 +661,24 @@ func _Query_GetUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_CurrentEpochGroupData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryCurrentEpochGroupDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).CurrentEpochGroupData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_CurrentEpochGroupData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).CurrentEpochGroupData(ctx, req.(*QueryCurrentEpochGroupDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -718,6 +753,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUnitOfComputePriceProposal",
 			Handler:    _Query_GetUnitOfComputePriceProposal_Handler,
+		},
+		{
+			MethodName: "CurrentEpochGroupData",
+			Handler:    _Query_CurrentEpochGroupData_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
