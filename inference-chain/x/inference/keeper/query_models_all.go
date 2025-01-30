@@ -16,8 +16,17 @@ func (k Keeper) ModelsAll(goCtx context.Context, req *types.QueryModelsAllReques
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	models, err := k.GetAllModels(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
-	return &types.QueryModelsAllResponse{}, nil
+	modelsValues, err := PointersToValues(models)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &types.QueryModelsAllResponse{
+		Model: modelsValues,
+	}, nil
 }

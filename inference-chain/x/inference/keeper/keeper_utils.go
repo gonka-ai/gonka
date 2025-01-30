@@ -62,3 +62,14 @@ func GetAllValues[T proto.Message](
 
 	return results, nil
 }
+
+func PointersToValues[T any](pointerSlice []*T) ([]T, error) {
+	values := make([]T, len(pointerSlice))
+	for i, ptr := range pointerSlice {
+		if ptr == nil {
+			return nil, fmt.Errorf("nil pointer at index %d", i)
+		}
+		values[i] = *ptr
+	}
+	return values, nil
+}
