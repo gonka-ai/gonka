@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"cosmossdk.io/store/prefix"
+	"fmt"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/gogoproto/proto"
 )
@@ -32,4 +33,32 @@ func GetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefi
 	k.cdc.MustUnmarshal(bz, object)
 
 	return object, true
+}
+
+func GetAllValues[T proto.Message](
+	ctx context.Context,
+	k Keeper,
+	keyPrefix []byte,
+	newT func() T,
+) ([]T, error) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	var results []T
+	for ; iterator.Valid(); iterator.Next() {
+		bz := iterator.Value()
+
+		val := newT()
+
+		if err := k.cdc.Unmarshal(bz, val); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal: %w", err)
+		}
+
+		results = append(results, val)
+	}
+
+	return results, nil
 }

@@ -35,4 +35,18 @@ func TestUnitOfComputeProposals(t *testing.T) {
 	if len(proposals) != 10 {
 		t.Errorf("Expected to find 10 proposals, got %d", len(proposals))
 	}
+
+	idSet := make(map[string]bool)
+	for _, proposal := range proposals {
+		idSet[proposal.Participant] = true
+	}
+	if len(idSet) != 10 {
+		t.Errorf("Expected to find 10 unique participants, got %d", len(idSet))
+	}
+	for i := 0; i < 10; i++ {
+		participant := "participant-" + strconv.Itoa(i)
+		if !idSet[participant] {
+			t.Errorf("Expected to find participant %s in proposals", participant)
+		}
+	}
 }
