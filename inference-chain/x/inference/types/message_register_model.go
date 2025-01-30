@@ -8,11 +8,11 @@ import (
 
 var _ sdk.Msg = &MsgRegisterModel{}
 
-func NewMsgRegisterModel(creator string, id string, unitOfComputePerToken uint64) *MsgRegisterModel {
+func NewMsgRegisterModel(creator string, id string, unitsOfComputePerToken uint64) *MsgRegisterModel {
 	return &MsgRegisterModel{
-		Creator:               creator,
-		Id:                    id,
-		UnitOfComputePerToken: unitOfComputePerToken,
+		Creator:                creator,
+		Id:                     id,
+		UnitsOfComputePerToken: unitsOfComputePerToken,
 	}
 }
 
