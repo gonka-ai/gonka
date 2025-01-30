@@ -220,7 +220,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "RegisterModel",
 					Use:            "register-model [id] [unit-of-compute-per-token]",
 					Short:          "Send a registerModel tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "unitOfComputePerToken"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "unit_of_compute_per_token"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
