@@ -35,13 +35,17 @@ func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
 }
 
 func (k *Keeper) PayParticipantFromEscrow(ctx context.Context, address string, amount uint64) error {
+	return k.PayParticipantFromModule(ctx, address, amount, types.ModuleName)
+}
+
+func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, amount uint64, moduleName string) error {
 	participantAddress, err := sdk.AccAddressFromBech32(address)
 	if err != nil {
 		return err
 	}
 
-	k.LogInfo("Paying participant", "participant", participantAddress, "amount", amount, "address", address)
-	err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, participantAddress, types.GetCoins(int64(amount)))
+	k.LogInfo("Paying participant", "participant", participantAddress, "amount", amount, "address", address, "module", moduleName)
+	err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, types.GetCoins(int64(amount)))
 	return err
 }
 

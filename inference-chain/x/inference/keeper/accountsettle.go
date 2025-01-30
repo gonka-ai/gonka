@@ -4,7 +4,6 @@ import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
-	"math"
 )
 
 // Start with a power of 2 for even distribution?
@@ -33,7 +32,8 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
-	amounts, rewardCoins, err := GetSettleAmounts(participants.Participant, blockHeight)
+	tokenomicsParams := k.GetParams(ctx).TokenomicsParams
+	amounts, rewardCoins, err := GetSettleAmounts(participants.Participant, tokenomicsParams)
 	if err != nil {
 		k.LogError("Error getting settle amounts", "error", err)
 		return err
@@ -93,21 +93,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	return nil
 }
 
-func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]*SettleResult, int64, error) {
-	halvings := blockHeight / CoinHalvingHeight
-	// Halve it that many times
-	totalRewardCoin := EpochNewCoin / math.Pow(2.0, float64(halvings))
-	totalWork := int64(0)
-	invalidatedBalance := int64(0)
-	for _, p := range participants {
-		// Do not count invalid participants work as "work", since it should not be part of the distributions
-		if p.CoinBalance > 0 && p.RefundBalance >= 0 && p.Status != types.ParticipantStatus_INVALID {
-			totalWork += p.CoinBalance
-		}
-		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_INVALID {
-			invalidatedBalance += p.CoinBalance
-		}
-	}
+func GetSettleAmounts(participants []types.Participant, tokenParams *types.TokenomicsParams) ([]*SettleResult, int64, error) {
+	totalWork, invalidatedBalance := getWorkTotals(participants)
+	totalRewardCoin := float64(totalWork) * float64(tokenParams.CurrentSubsidyPercentage)
 	punishmentDistribution := DistributedCoinInfo{
 		totalWork:       totalWork,
 		totalRewardCoin: float64(invalidatedBalance),
@@ -131,6 +119,21 @@ func GetSettleAmounts(participants []types.Participant, blockHeight int64) ([]*S
 		return amounts, 0, nil
 	}
 	return amounts, int64(totalRewardCoin), nil
+}
+
+func getWorkTotals(participants []types.Participant) (int64, int64) {
+	totalWork := int64(0)
+	invalidatedBalance := int64(0)
+	for _, p := range participants {
+		// Do not count invalid participants work as "work", since it should not be part of the distributions
+		if p.CoinBalance > 0 && p.RefundBalance >= 0 && p.Status != types.ParticipantStatus_INVALID {
+			totalWork += p.CoinBalance
+		}
+		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_INVALID {
+			invalidatedBalance += p.CoinBalance
+		}
+	}
+	return totalWork, invalidatedBalance
 }
 
 func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoinInfo) (*types.SettleAmount, error) {
