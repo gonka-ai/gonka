@@ -31,6 +31,7 @@ service Msg {
   rpc SubmitPocValidation              (MsgSubmitPocValidation             ) returns (MsgSubmitPocValidationResponse             );
   rpc SubmitSeed                       (MsgSubmitSeed                      ) returns (MsgSubmitSeedResponse                      );
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
+  rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -199,4 +200,13 @@ message MsgSubmitUnitOfComputePriceProposal {
 }
 
 message MsgSubmitUnitOfComputePriceProposalResponse {}
+
+message MsgRegisterModel {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator               = 1;
+  string id                    = 2;
+  uint64 unitOfComputePerToken = 3;
+}
+
+message MsgRegisterModelResponse {}
 
