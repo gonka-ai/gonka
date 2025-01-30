@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// v1/admin/register-model
+// v1/admin/models
 func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		body, err := parseJsonBody[model.RegisterModelDto](request)

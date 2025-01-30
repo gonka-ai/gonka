@@ -7,6 +7,7 @@ import com.github.kittinunf.fuel.core.Response
 import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
+import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.result.Result
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
@@ -128,19 +129,41 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun getPriceProposal(): GetUnitOfComputePriceProposalDto = wrapLog("SubmitPriceProposal", true) {
-        val response = Fuel.get("$url/v1/admin/unit-of-compute-price-proposal")
-            .responseObject<GetUnitOfComputePriceProposalDto>(gsonDeserializer(gsonSnakeCase))
-        logResponse(response)
-
-        response.third.get()
+        get<GetUnitOfComputePriceProposalDto>("v1/admin/unit-of-compute-price-proposal")
     }
 
     fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
-        val response = Fuel.get("$url/v1/pricing")
-            .responseObject<GetPricingDto>(gsonDeserializer(gsonSnakeCase))
+        get<GetPricingDto>("v1/pricing")
+    }
+
+    fun registerModel(model: RegisterModelDto): String = wrapLog("RegisterModel", true) {
+        postWithStringResponse("v1/admin/models", model)
+    }
+
+    inline fun <reified Out: Any> get(path: String): Out {
+        val response = Fuel.get("$url/$path")
+            .responseObject<Out>(gsonDeserializer(gsonSnakeCase))
         logResponse(response)
 
-        response.third.get()
+        return response.third.get()
+    }
+
+    inline fun <reified In: Any, reified Out: Any> post(path: String, body: In): Out {
+        val response = Fuel.post("$url/$path")
+            .jsonBody(body, gsonSnakeCase)
+            .responseObject<Out>()
+        logResponse(response)
+
+        return response.third.get()
+    }
+
+    inline fun <reified In: Any> postWithStringResponse(path: String, body: In): String {
+        val response = Fuel.post("$url/$path")
+            .jsonBody(body, gsonSnakeCase)
+            .responseString()
+        logResponse(response)
+
+        return response.third.get()
     }
 }
 

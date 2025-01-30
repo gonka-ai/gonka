@@ -24,3 +24,8 @@ data class ModelPriceDto(
     val unitsOfComputePerToken: ULong,
     val pricePerToken: ULong,
 )
+
+data class RegisterModelDto(
+    val id: String,
+    val unitsOfComputePerToken: ULong,
+)
