@@ -66,62 +66,62 @@ service Query {
   
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{pocStartBlockHeight}";
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
   
   }
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-  
+
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-  
+
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-  
+
   }
-  
+
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{pocStartBlockHeight}";
-  
+    option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{poc_start_block_height}";
+
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-  
+
   }
-  
+
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{blockHeight}";
-  
+    option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
+
   }
-  
+
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-  
+
   }
-  
+
   // Queries a list of GetUnitOfComputePriceProposal items.
   rpc GetUnitOfComputePriceProposal (QueryGetUnitOfComputePriceProposalRequest) returns (QueryGetUnitOfComputePriceProposalResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
-  
+
   }
-  
+
   // Queries a list of CurrentEpochGroupData items.
   rpc CurrentEpochGroupData (QueryCurrentEpochGroupDataRequest) returns (QueryCurrentEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
-  
+
   }
-  
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-  
+
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -170,22 +170,22 @@ message QueryAllParticipantResponse {
 }
 
 message QueryGetInferencesWithExecutorsRequest {
-  repeated string ids       = 1;
-           string requester = 2;
+  repeated string ids = 1;
+  string requester = 2;
 }
 
 message QueryGetInferencesWithExecutorsResponse {
-  repeated InferenceWithExecutor inferenceWithExecutor = 1 [(gogoproto.nullable) = false];
-           uint32                NumValidators         = 2;
-           uint32                TotalPower            = 3;
-           uint32                ValidatorPower        = 4;
-           uint32                CurrentHeight         = 5;
+  repeated InferenceWithExecutor inference_with_executor = 1 [(gogoproto.nullable) = false];
+  uint32                num_validators = 2;
+  uint32                total_power = 3;
+  uint32                validator_power = 4;
+  uint32                current_height = 5;
 }
 
 message InferenceWithExecutor {
-  Inference   inference    = 1 [(gogoproto.nullable) = false];
-  Participant executor     = 2 [(gogoproto.nullable) = false];
-  uint32      currentPower = 3;
+  Inference   inference = 1 [(gogoproto.nullable) = false];
+  Participant executor = 2 [(gogoproto.nullable) = false];
+  uint32      current_power = 3;
 }
 
 message QueryInferenceParticipantRequest {
@@ -204,11 +204,11 @@ message QueryGetRandomExecutorResponse {
 }
 
 message QueryGetEpochGroupDataRequest {
-  uint64 pocStartBlockHeight = 1;
+  uint64 poc_start_block_height = 1;
 }
 
 message QueryGetEpochGroupDataResponse {
-  EpochGroupData epochGroupData = 1 [(gogoproto.nullable) = false];
+  EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllEpochGroupDataRequest {
@@ -216,8 +216,8 @@ message QueryAllEpochGroupDataRequest {
 }
 
 message QueryAllEpochGroupDataResponse {
-  repeated EpochGroupData                         epochGroupData = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination     = 2;
+  repeated EpochGroupData                         epoch_group_data = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetSettleAmountRequest {
@@ -225,7 +225,7 @@ message QueryGetSettleAmountRequest {
 }
 
 message QueryGetSettleAmountResponse {
-  SettleAmount settleAmount = 1 [(gogoproto.nullable) = false];
+  SettleAmount settle_amount = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllSettleAmountRequest {
@@ -233,17 +233,17 @@ message QueryAllSettleAmountRequest {
 }
 
 message QueryAllSettleAmountResponse {
-  repeated SettleAmount                           settleAmount = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
+  repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetEpochGroupValidationsRequest {
-  string participant         = 1;
-  uint64 pocStartBlockHeight = 2;
+  string participant = 1;
+  uint64 poc_start_block_height = 2;
 }
 
 message QueryGetEpochGroupValidationsResponse {
-  EpochGroupValidations epochGroupValidations = 1 [(gogoproto.nullable) = false];
+  EpochGroupValidations epoch_group_validations = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllEpochGroupValidationsRequest {
@@ -251,23 +251,23 @@ message QueryAllEpochGroupValidationsRequest {
 }
 
 message QueryAllEpochGroupValidationsResponse {
-  repeated EpochGroupValidations                  epochGroupValidations = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination            = 2;
+  repeated EpochGroupValidations                  epoch_group_validations = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryPocBatchesForStageRequest {
-  int64 blockHeight = 1;
+  int64 block_height = 1;
 }
 
 message QueryPocBatchesForStageResponse {
-  repeated PoCBatchesWithParticipants pocBatch = 1 [(gogoproto.nullable) = false];
+  repeated PoCBatchesWithParticipants poc_batch = 1 [(gogoproto.nullable) = false];
 }
 
 message PoCBatchesWithParticipants {
-           string   participant = 1;
-           string   pubKey      = 2;
-           string   hexPubKey   = 3;
-  repeated PoCBatch pocBatch    = 4 [(gogoproto.nullable) = false];
+  string   participant = 1;
+  string   pub_key = 2;
+  string   hex_pub_key = 3;
+  repeated PoCBatch poc_batch = 4 [(gogoproto.nullable) = false];
 }
 
 message QueryGetCurrentEpochRequest {}
@@ -288,7 +288,7 @@ message QueryGetUnitOfComputePriceProposalResponse {
 message QueryCurrentEpochGroupDataRequest {}
 
 message QueryCurrentEpochGroupDataResponse {
-  EpochGroupData epochGroupData = 1 [(gogoproto.nullable) = false];
+  EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryModelsAllRequest {}

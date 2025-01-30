@@ -24,7 +24,7 @@ func (k Keeper) InferenceParticipant(goCtx context.Context, req *types.QueryInfe
 		return nil, status.Error(codes.InvalidArgument, "invalid address")
 	}
 	acc := k.AccountKeeper.GetAccount(ctx, addr)
-	balance := k.bankView.SpendableCoin(ctx, addr, BaseCoin)
+	balance := k.bankView.SpendableCoin(ctx, addr, types.BaseCoin)
 
 	return &types.QueryInferenceParticipantResponse{
 		Pubkey:  base64.StdEncoding.EncodeToString(acc.GetPubKey().Bytes()),

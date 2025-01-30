@@ -13,9 +13,9 @@
     },
     "inference": {
       "params": {
-        "epochParams": {
-          "epochLength": "20",
-          "defaultUnitOfComputePrice": "100"
+        "epoch_params": {
+          "epoch_length": "20",
+          "default_unit_of_compute_price": "100"
         }
       }
     }

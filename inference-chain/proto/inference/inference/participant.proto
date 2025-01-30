@@ -16,21 +16,21 @@ message Participant {
   string address = 2;
   float reputation = 3;
   int32 weight = 4;
-  int64 joinTime = 5;
-  int64 joinHeight = 6;
-  int64 lastInferenceTime = 7;
-  string inferenceUrl = 8;
+  int64 join_time = 5;
+  int64 join_height = 6;
+  int64 last_inference_time = 7;
+  string inference_url = 8;
   repeated string models = 9;
   ParticipantStatus status = 10;
   // TODO: must be removed! maps are not deterministic
-  map<string, uint64> promptTokenCount = 11;
-  map<string, uint64> completionTokenCount = 12;
-  uint64 inferenceCount = 13;
-  uint64 validatedInferences = 14;
-  uint64 invalidatedInferences = 15;
+  map<string, uint64> prompt_token_count = 11;
+  map<string, uint64> completion_token_count = 12;
+  uint64 inference_count = 13;
+  uint64 validated_inferences = 14;
+  uint64 invalidated_inferences = 15;
   // I don't see how a negative balance makes sense
-  int64 coinBalance = 16;
-  string validatorKey = 17;
-  int64 refundBalance = 18;
-  int64 consecutiveInvalidInferences = 19;
+  int64 coin_balance = 16;
+  string validator_key = 17;
+  int64 refund_balance = 18;
+  int64 consecutive_invalid_inferences = 19;
 }

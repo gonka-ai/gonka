@@ -64,22 +64,22 @@ func (x *_ActiveParticipants_1_list) IsValid() bool {
 }
 
 var (
-	md_ActiveParticipants                      protoreflect.MessageDescriptor
-	fd_ActiveParticipants_participants         protoreflect.FieldDescriptor
-	fd_ActiveParticipants_epochGroupId         protoreflect.FieldDescriptor
-	fd_ActiveParticipants_pocStartBlockHeight  protoreflect.FieldDescriptor
-	fd_ActiveParticipants_effectiveBlockHeight protoreflect.FieldDescriptor
-	fd_ActiveParticipants_createdAtBlockHeight protoreflect.FieldDescriptor
+	md_ActiveParticipants                         protoreflect.MessageDescriptor
+	fd_ActiveParticipants_participants            protoreflect.FieldDescriptor
+	fd_ActiveParticipants_epoch_group_id          protoreflect.FieldDescriptor
+	fd_ActiveParticipants_poc_start_block_height  protoreflect.FieldDescriptor
+	fd_ActiveParticipants_effective_block_height  protoreflect.FieldDescriptor
+	fd_ActiveParticipants_created_at_block_height protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_activeparticipants_proto_init()
 	md_ActiveParticipants = File_inference_inference_activeparticipants_proto.Messages().ByName("ActiveParticipants")
 	fd_ActiveParticipants_participants = md_ActiveParticipants.Fields().ByName("participants")
-	fd_ActiveParticipants_epochGroupId = md_ActiveParticipants.Fields().ByName("epochGroupId")
-	fd_ActiveParticipants_pocStartBlockHeight = md_ActiveParticipants.Fields().ByName("pocStartBlockHeight")
-	fd_ActiveParticipants_effectiveBlockHeight = md_ActiveParticipants.Fields().ByName("effectiveBlockHeight")
-	fd_ActiveParticipants_createdAtBlockHeight = md_ActiveParticipants.Fields().ByName("createdAtBlockHeight")
+	fd_ActiveParticipants_epoch_group_id = md_ActiveParticipants.Fields().ByName("epoch_group_id")
+	fd_ActiveParticipants_poc_start_block_height = md_ActiveParticipants.Fields().ByName("poc_start_block_height")
+	fd_ActiveParticipants_effective_block_height = md_ActiveParticipants.Fields().ByName("effective_block_height")
+	fd_ActiveParticipants_created_at_block_height = md_ActiveParticipants.Fields().ByName("created_at_block_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_ActiveParticipants)(nil)
@@ -155,25 +155,25 @@ func (x *fastReflection_ActiveParticipants) Range(f func(protoreflect.FieldDescr
 	}
 	if x.EpochGroupId != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.EpochGroupId)
-		if !f(fd_ActiveParticipants_epochGroupId, value) {
+		if !f(fd_ActiveParticipants_epoch_group_id, value) {
 			return
 		}
 	}
 	if x.PocStartBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.PocStartBlockHeight)
-		if !f(fd_ActiveParticipants_pocStartBlockHeight, value) {
+		if !f(fd_ActiveParticipants_poc_start_block_height, value) {
 			return
 		}
 	}
 	if x.EffectiveBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.EffectiveBlockHeight)
-		if !f(fd_ActiveParticipants_effectiveBlockHeight, value) {
+		if !f(fd_ActiveParticipants_effective_block_height, value) {
 			return
 		}
 	}
 	if x.CreatedAtBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.CreatedAtBlockHeight)
-		if !f(fd_ActiveParticipants_createdAtBlockHeight, value) {
+		if !f(fd_ActiveParticipants_created_at_block_height, value) {
 			return
 		}
 	}
@@ -194,13 +194,13 @@ func (x *fastReflection_ActiveParticipants) Has(fd protoreflect.FieldDescriptor)
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipants.participants":
 		return len(x.Participants) != 0
-	case "inference.inference.ActiveParticipants.epochGroupId":
+	case "inference.inference.ActiveParticipants.epoch_group_id":
 		return x.EpochGroupId != uint64(0)
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
 		return x.PocStartBlockHeight != int64(0)
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+	case "inference.inference.ActiveParticipants.effective_block_height":
 		return x.EffectiveBlockHeight != int64(0)
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
+	case "inference.inference.ActiveParticipants.created_at_block_height":
 		return x.CreatedAtBlockHeight != int64(0)
 	default:
 		if fd.IsExtension() {
@@ -220,13 +220,13 @@ func (x *fastReflection_ActiveParticipants) Clear(fd protoreflect.FieldDescripto
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipants.participants":
 		x.Participants = nil
-	case "inference.inference.ActiveParticipants.epochGroupId":
+	case "inference.inference.ActiveParticipants.epoch_group_id":
 		x.EpochGroupId = uint64(0)
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
 		x.PocStartBlockHeight = int64(0)
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+	case "inference.inference.ActiveParticipants.effective_block_height":
 		x.EffectiveBlockHeight = int64(0)
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
+	case "inference.inference.ActiveParticipants.created_at_block_height":
 		x.CreatedAtBlockHeight = int64(0)
 	default:
 		if fd.IsExtension() {
@@ -250,16 +250,16 @@ func (x *fastReflection_ActiveParticipants) Get(descriptor protoreflect.FieldDes
 		}
 		listValue := &_ActiveParticipants_1_list{list: &x.Participants}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.ActiveParticipants.epochGroupId":
+	case "inference.inference.ActiveParticipants.epoch_group_id":
 		value := x.EpochGroupId
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
 		value := x.PocStartBlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+	case "inference.inference.ActiveParticipants.effective_block_height":
 		value := x.EffectiveBlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
+	case "inference.inference.ActiveParticipants.created_at_block_height":
 		value := x.CreatedAtBlockHeight
 		return protoreflect.ValueOfInt64(value)
 	default:
@@ -286,13 +286,13 @@ func (x *fastReflection_ActiveParticipants) Set(fd protoreflect.FieldDescriptor,
 		lv := value.List()
 		clv := lv.(*_ActiveParticipants_1_list)
 		x.Participants = *clv.list
-	case "inference.inference.ActiveParticipants.epochGroupId":
+	case "inference.inference.ActiveParticipants.epoch_group_id":
 		x.EpochGroupId = value.Uint()
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
 		x.PocStartBlockHeight = value.Int()
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+	case "inference.inference.ActiveParticipants.effective_block_height":
 		x.EffectiveBlockHeight = value.Int()
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
+	case "inference.inference.ActiveParticipants.created_at_block_height":
 		x.CreatedAtBlockHeight = value.Int()
 	default:
 		if fd.IsExtension() {
@@ -320,14 +320,14 @@ func (x *fastReflection_ActiveParticipants) Mutable(fd protoreflect.FieldDescrip
 		}
 		value := &_ActiveParticipants_1_list{list: &x.Participants}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.ActiveParticipants.epochGroupId":
-		panic(fmt.Errorf("field epochGroupId of message inference.inference.ActiveParticipants is not mutable"))
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
-		panic(fmt.Errorf("field pocStartBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
-		panic(fmt.Errorf("field effectiveBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
-		panic(fmt.Errorf("field createdAtBlockHeight of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.epoch_group_id":
+		panic(fmt.Errorf("field epoch_group_id of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
+		panic(fmt.Errorf("field poc_start_block_height of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.effective_block_height":
+		panic(fmt.Errorf("field effective_block_height of message inference.inference.ActiveParticipants is not mutable"))
+	case "inference.inference.ActiveParticipants.created_at_block_height":
+		panic(fmt.Errorf("field created_at_block_height of message inference.inference.ActiveParticipants is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipants"))
@@ -344,13 +344,13 @@ func (x *fastReflection_ActiveParticipants) NewField(fd protoreflect.FieldDescri
 	case "inference.inference.ActiveParticipants.participants":
 		list := []*ActiveParticipant{}
 		return protoreflect.ValueOfList(&_ActiveParticipants_1_list{list: &list})
-	case "inference.inference.ActiveParticipants.epochGroupId":
+	case "inference.inference.ActiveParticipants.epoch_group_id":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.ActiveParticipants.pocStartBlockHeight":
+	case "inference.inference.ActiveParticipants.poc_start_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.ActiveParticipants.effectiveBlockHeight":
+	case "inference.inference.ActiveParticipants.effective_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.ActiveParticipants.createdAtBlockHeight":
+	case "inference.inference.ActiveParticipants.created_at_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -745,22 +745,22 @@ func (x *_ActiveParticipant_5_list) IsValid() bool {
 }
 
 var (
-	md_ActiveParticipant              protoreflect.MessageDescriptor
-	fd_ActiveParticipant_index        protoreflect.FieldDescriptor
-	fd_ActiveParticipant_validatorKey protoreflect.FieldDescriptor
-	fd_ActiveParticipant_weight       protoreflect.FieldDescriptor
-	fd_ActiveParticipant_inferenceUrl protoreflect.FieldDescriptor
-	fd_ActiveParticipant_models       protoreflect.FieldDescriptor
-	fd_ActiveParticipant_seed         protoreflect.FieldDescriptor
+	md_ActiveParticipant               protoreflect.MessageDescriptor
+	fd_ActiveParticipant_index         protoreflect.FieldDescriptor
+	fd_ActiveParticipant_validator_key protoreflect.FieldDescriptor
+	fd_ActiveParticipant_weight        protoreflect.FieldDescriptor
+	fd_ActiveParticipant_inference_url protoreflect.FieldDescriptor
+	fd_ActiveParticipant_models        protoreflect.FieldDescriptor
+	fd_ActiveParticipant_seed          protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_activeparticipants_proto_init()
 	md_ActiveParticipant = File_inference_inference_activeparticipants_proto.Messages().ByName("ActiveParticipant")
 	fd_ActiveParticipant_index = md_ActiveParticipant.Fields().ByName("index")
-	fd_ActiveParticipant_validatorKey = md_ActiveParticipant.Fields().ByName("validatorKey")
+	fd_ActiveParticipant_validator_key = md_ActiveParticipant.Fields().ByName("validator_key")
 	fd_ActiveParticipant_weight = md_ActiveParticipant.Fields().ByName("weight")
-	fd_ActiveParticipant_inferenceUrl = md_ActiveParticipant.Fields().ByName("inferenceUrl")
+	fd_ActiveParticipant_inference_url = md_ActiveParticipant.Fields().ByName("inference_url")
 	fd_ActiveParticipant_models = md_ActiveParticipant.Fields().ByName("models")
 	fd_ActiveParticipant_seed = md_ActiveParticipant.Fields().ByName("seed")
 }
@@ -838,7 +838,7 @@ func (x *fastReflection_ActiveParticipant) Range(f func(protoreflect.FieldDescri
 	}
 	if x.ValidatorKey != "" {
 		value := protoreflect.ValueOfString(x.ValidatorKey)
-		if !f(fd_ActiveParticipant_validatorKey, value) {
+		if !f(fd_ActiveParticipant_validator_key, value) {
 			return
 		}
 	}
@@ -850,7 +850,7 @@ func (x *fastReflection_ActiveParticipant) Range(f func(protoreflect.FieldDescri
 	}
 	if x.InferenceUrl != "" {
 		value := protoreflect.ValueOfString(x.InferenceUrl)
-		if !f(fd_ActiveParticipant_inferenceUrl, value) {
+		if !f(fd_ActiveParticipant_inference_url, value) {
 			return
 		}
 	}
@@ -883,11 +883,11 @@ func (x *fastReflection_ActiveParticipant) Has(fd protoreflect.FieldDescriptor) 
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipant.index":
 		return x.Index != ""
-	case "inference.inference.ActiveParticipant.validatorKey":
+	case "inference.inference.ActiveParticipant.validator_key":
 		return x.ValidatorKey != ""
 	case "inference.inference.ActiveParticipant.weight":
 		return x.Weight != int64(0)
-	case "inference.inference.ActiveParticipant.inferenceUrl":
+	case "inference.inference.ActiveParticipant.inference_url":
 		return x.InferenceUrl != ""
 	case "inference.inference.ActiveParticipant.models":
 		return len(x.Models) != 0
@@ -911,11 +911,11 @@ func (x *fastReflection_ActiveParticipant) Clear(fd protoreflect.FieldDescriptor
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipant.index":
 		x.Index = ""
-	case "inference.inference.ActiveParticipant.validatorKey":
+	case "inference.inference.ActiveParticipant.validator_key":
 		x.ValidatorKey = ""
 	case "inference.inference.ActiveParticipant.weight":
 		x.Weight = int64(0)
-	case "inference.inference.ActiveParticipant.inferenceUrl":
+	case "inference.inference.ActiveParticipant.inference_url":
 		x.InferenceUrl = ""
 	case "inference.inference.ActiveParticipant.models":
 		x.Models = nil
@@ -940,13 +940,13 @@ func (x *fastReflection_ActiveParticipant) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.ActiveParticipant.index":
 		value := x.Index
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.ActiveParticipant.validatorKey":
+	case "inference.inference.ActiveParticipant.validator_key":
 		value := x.ValidatorKey
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.ActiveParticipant.weight":
 		value := x.Weight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.ActiveParticipant.inferenceUrl":
+	case "inference.inference.ActiveParticipant.inference_url":
 		value := x.InferenceUrl
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.ActiveParticipant.models":
@@ -980,11 +980,11 @@ func (x *fastReflection_ActiveParticipant) Set(fd protoreflect.FieldDescriptor, 
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipant.index":
 		x.Index = value.Interface().(string)
-	case "inference.inference.ActiveParticipant.validatorKey":
+	case "inference.inference.ActiveParticipant.validator_key":
 		x.ValidatorKey = value.Interface().(string)
 	case "inference.inference.ActiveParticipant.weight":
 		x.Weight = value.Int()
-	case "inference.inference.ActiveParticipant.inferenceUrl":
+	case "inference.inference.ActiveParticipant.inference_url":
 		x.InferenceUrl = value.Interface().(string)
 	case "inference.inference.ActiveParticipant.models":
 		lv := value.List()
@@ -1025,12 +1025,12 @@ func (x *fastReflection_ActiveParticipant) Mutable(fd protoreflect.FieldDescript
 		return protoreflect.ValueOfMessage(x.Seed.ProtoReflect())
 	case "inference.inference.ActiveParticipant.index":
 		panic(fmt.Errorf("field index of message inference.inference.ActiveParticipant is not mutable"))
-	case "inference.inference.ActiveParticipant.validatorKey":
-		panic(fmt.Errorf("field validatorKey of message inference.inference.ActiveParticipant is not mutable"))
+	case "inference.inference.ActiveParticipant.validator_key":
+		panic(fmt.Errorf("field validator_key of message inference.inference.ActiveParticipant is not mutable"))
 	case "inference.inference.ActiveParticipant.weight":
 		panic(fmt.Errorf("field weight of message inference.inference.ActiveParticipant is not mutable"))
-	case "inference.inference.ActiveParticipant.inferenceUrl":
-		panic(fmt.Errorf("field inferenceUrl of message inference.inference.ActiveParticipant is not mutable"))
+	case "inference.inference.ActiveParticipant.inference_url":
+		panic(fmt.Errorf("field inference_url of message inference.inference.ActiveParticipant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ActiveParticipant"))
@@ -1046,11 +1046,11 @@ func (x *fastReflection_ActiveParticipant) NewField(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.ActiveParticipant.index":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.ActiveParticipant.validatorKey":
+	case "inference.inference.ActiveParticipant.validator_key":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.ActiveParticipant.weight":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.ActiveParticipant.inferenceUrl":
+	case "inference.inference.ActiveParticipant.inference_url":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.ActiveParticipant.models":
 		list := []string{}
@@ -1517,10 +1517,10 @@ type ActiveParticipants struct {
 	unknownFields protoimpl.UnknownFields
 
 	Participants         []*ActiveParticipant `protobuf:"bytes,1,rep,name=participants,proto3" json:"participants,omitempty"`
-	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
-	PocStartBlockHeight  int64                `protobuf:"varint,3,opt,name=pocStartBlockHeight,proto3" json:"pocStartBlockHeight,omitempty"`
-	EffectiveBlockHeight int64                `protobuf:"varint,4,opt,name=effectiveBlockHeight,proto3" json:"effectiveBlockHeight,omitempty"`
-	CreatedAtBlockHeight int64                `protobuf:"varint,5,opt,name=createdAtBlockHeight,proto3" json:"createdAtBlockHeight,omitempty"` // Same as effectiveBlockHeight???
+	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
+	PocStartBlockHeight  int64                `protobuf:"varint,3,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
+	EffectiveBlockHeight int64                `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
+	CreatedAtBlockHeight int64                `protobuf:"varint,5,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"` // Same as effective_block_height???
 }
 
 func (x *ActiveParticipants) Reset() {
@@ -1584,9 +1584,9 @@ type ActiveParticipant struct {
 	unknownFields protoimpl.UnknownFields
 
 	Index        string      `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	ValidatorKey string      `protobuf:"bytes,2,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	ValidatorKey string      `protobuf:"bytes,2,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
 	Weight       int64       `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
-	InferenceUrl string      `protobuf:"bytes,4,opt,name=inferenceUrl,proto3" json:"inferenceUrl,omitempty"`
+	InferenceUrl string      `protobuf:"bytes,4,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
 	Models       []string    `protobuf:"bytes,5,rep,name=models,proto3" json:"models,omitempty"`
 	Seed         *RandomSeed `protobuf:"bytes,6,opt,name=seed,proto3" json:"seed,omitempty"`
 }
@@ -1662,52 +1662,52 @@ var file_inference_inference_activeparticipants_proto_rawDesc = []byte{
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x1a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x72, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x5f,
-	0x73, 0x65, 0x65, 0x64, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x9e, 0x02, 0x0a, 0x12, 0x41,
+	0x73, 0x65, 0x65, 0x64, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xa8, 0x02, 0x0a, 0x12, 0x41,
 	0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
 	0x73, 0x12, 0x4a, 0x0a, 0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
 	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x41, 0x63,
 	0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
-	0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x22, 0x0a,
-	0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49,
-	0x64, 0x12, 0x30, 0x0a, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f,
-	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13,
-	0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x12, 0x32, 0x0a, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65,
-	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28,
-	0x03, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63,
-	0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x32, 0x0a, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74,
-	0x65, 0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74,
-	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xd6, 0x01, 0x0a, 0x11,
-	0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x77,
-	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x55, 0x72, 0x6c, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c,
-	0x73, 0x18, 0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12,
-	0x33, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x52, 0x04,
-	0x73, 0x65, 0x65, 0x64, 0x42, 0xc5, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x17, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
-	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
-	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x33,
+	0x0c, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73, 0x12, 0x24, 0x0a,
+	0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x69, 0x64, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x49, 0x64, 0x12, 0x33, 0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74,
+	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x65, 0x66, 0x66, 0x65,
+	0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74,
+	0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x35,
+	0x0a, 0x17, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x61, 0x74, 0x5f, 0x62, 0x6c, 0x6f,
+	0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x14, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48,
+	0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xd8, 0x01, 0x0a, 0x11, 0x41, 0x63, 0x74, 0x69, 0x76, 0x65,
+	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x69,
+	0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65,
+	0x78, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x6b,
+	0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x23,
+	0x0a, 0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x75, 0x72, 0x6c, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x55, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x05, 0x20,
+	0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x33, 0x0a, 0x04, 0x73,
+	0x65, 0x65, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x52, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x53, 0x65, 0x65, 0x64, 0x52, 0x04, 0x73, 0x65, 0x65, 0x64,
+	0x42, 0xc5, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x17, 0x41, 0x63,
+	0x74, 0x69, 0x76, 0x65, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x73,
+	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
+	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03,
+	0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2,
+	0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
+	0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

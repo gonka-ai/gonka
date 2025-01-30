@@ -4,28 +4,28 @@ package inference.inference;
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message PoCBatch {
-  string participantAddress = 1;
-  int64 pocStageStartBlockHeight = 2;
-  int64 receivedAtBlockHeight = 3;
+  string participant_address = 1;
+  int64 poc_stage_start_block_height = 2;
+  int64 received_at_block_height = 3;
   repeated int64 nonces = 4;
   repeated double dist = 5;
-  string batchId = 6;
+  string batch_id = 6;
 }
 
 /*
-ignite scaffold message SubmitPocValidation participantAddress pocStageStartBlockHeight:int nonces:array.int dist:array.int receivedDist:array.int rTarget:int fraudThreshold:int nInvalid:int probabilityHonest:int fraudDetected:bool
+ignite scaffold message SubmitPocValidation participant_address poc_stage_start_block_height:int nonces:array.int dist:array.int received_dist:array.int r_target:int fraud_threshold:int n_invalid:int probability_honest:int fraud_detected:bool
  */
 message PoCValidation {
-  string participantAddress = 1;
-  string validatorParticipantAddress = 2;
-  int64 pocStageStartBlockHeight = 3;
-  int64 validatedAtBlockHeight = 4;
+  string participant_address = 1;
+  string validator_participant_address = 2;
+  int64 poc_stage_start_block_height = 3;
+  int64 validated_at_block_height = 4;
   repeated int64 nonces = 5;
   repeated double dist = 6;
-  repeated double receivedDist = 7;
-  double rTarget = 8;
-  double fraudThreshold = 9;
-  int64 nInvalid = 10;
-  double probabilityHonest = 11;
-  bool fraudDetected = 12;
+  repeated double received_dist = 7;
+  double r_target = 8;
+  double fraud_threshold = 9;
+  int64 n_invalid = 10;
+  double probability_honest = 11;
+  bool fraud_detected = 12;
 }

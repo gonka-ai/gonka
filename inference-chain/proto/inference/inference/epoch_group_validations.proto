@@ -4,9 +4,9 @@ package inference.inference;
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 message EpochGroupValidations {
-  string participant = 1; 
-  uint64 pocStartBlockHeight = 2; 
-  repeated string validatedInferences = 3; 
-  
+  string participant = 1;
+  uint64 poc_start_block_height = 2;
+  repeated string validated_inferences = 3;
+
 }
 
