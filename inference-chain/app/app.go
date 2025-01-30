@@ -81,6 +81,7 @@ import (
 	// starport scaffolding # stargate/app/moduleImport
 
 	// WASM
+	"github.com/CosmWasm/wasmd/x/wasm"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
@@ -176,6 +177,7 @@ func getGovProposalHandlers() []govclient.ProposalHandler {
 // (passed as nil), so it compiles but won't enable advanced features in WASM.
 func ProvideWasmKeeper(app *App) (wasmkeeper.Keeper, error) {
 	storeKey := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
+	// The store key for WASM
 	if storeKey == nil {
 		return wasmkeeper.Keeper{}, fmt.Errorf("wasm store key not found")
 	}
@@ -290,6 +292,21 @@ func New(
 		return nil, err
 	}
 	app.WasmKeeper = wasmK
+
+	wasmModule := wasm.NewAppModule(
+		app.appCodec,
+		&app.WasmKeeper,
+		app.StakingKeeper,
+		app.AccountKeeper,
+		app.BankKeeper,
+		nil,
+		app.GetSubspace(wasmtypes.ModuleName),
+	)
+	if err := app.RegisterModules(
+		wasmModule,
+	); err != nil {
+		return nil, err
+	}
 
 	// If you have custom IBC modules to register, do so
 	if err := app.registerIBCModules(appOpts); err != nil {
