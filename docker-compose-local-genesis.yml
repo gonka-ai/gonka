@@ -5,6 +5,7 @@ services:
     image: gcr.io/decentralized-ai/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./my_contract:/contract
     environment:
       - KEY_NAME=${KEY_NAME}
     networks:

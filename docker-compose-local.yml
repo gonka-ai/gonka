@@ -4,6 +4,7 @@ services:
     image: gcr.io/decentralized-ai/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./my_contract:/contract
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
