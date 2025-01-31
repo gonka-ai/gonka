@@ -58,6 +58,12 @@ func TestGenesis(t *testing.T) {
 				PocStartBlockHeight: 1,
 			},
 		},
+		TokenomicsData: &types.TokenomicsData{
+			TotalFees:      85,
+			TotalSubsidies: 11,
+			TotalRefunded:  99,
+			TotalBurned:    5,
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -82,5 +88,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
+	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

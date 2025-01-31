@@ -1790,3 +1790,17 @@ prod-local/
 /decentralized-api/output/var/spool/mail/
 /decentralized-api/output/var/lock
 /decentralized-api/output/var/run
+/jq_test/denom.json
+/jq_test/genesis.json
+/jq_test/genesis2.json
+/public-html/v2/dapi/decentralized-api
+/public-html/v2/dapi/decentralized-api.zip
+/public-html/v2/inferenced/inferenced
+/public-html/v2/inferenced/inferenced.zip
+/public-html/inferenced
+/logdy
+/inference-chain/junit-report.xml
+/inference-chain/output/etc/ssl1.1/certs/
+/inference-chain/output/usr/bin/[
+/inference-chain/output/usr/bin/[[
+/inference-chain/output/var/spool/mail/

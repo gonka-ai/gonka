@@ -1,0 +1,12 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message TokenomicsData {
+  uint64 total_fees = 1;
+  uint64 total_subsidies = 2;
+  uint64 total_refunded = 3;
+  uint64 total_burned = 4;
+  
+}

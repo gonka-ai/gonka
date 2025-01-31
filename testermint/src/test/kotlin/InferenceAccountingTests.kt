@@ -14,7 +14,7 @@ import com.productscience.setNewValidatorsStage
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import kotlin.math.pow
+import kotlin.math.roundToLong
 import kotlin.test.assertNotNull
 
 class InferenceAccountingTests : TestermintTest() {
@@ -100,6 +100,8 @@ class InferenceAccountingTests : TestermintTest() {
                     participant.coinsOwed + // Coins earned for performing inferences
                     participant.refundsOwed + // refunds from excess escrow
                     coinRewards[participant]!! // coins earned from the epoch
+            Logger.info("Existing Balance: ${participant.balance}, Earned:${participant.coinsOwed}, " +
+                    "Refunds:${participant.refundsOwed}, Rewards:${coinRewards[participant]}")
             assertThat(participantAfter.balance)
                 .`as`("Balance has previous coinsOwed and refundsOwed for ${participant.id}")
                 .isEqualTo(expectedTotal)
@@ -167,18 +169,13 @@ class InferenceAccountingTests : TestermintTest() {
         rewards: Long,
         blockHeight: Long,
     ): Map<Participant, Long> {
-        val halvings: Long = blockHeight / COIN_HALVING_HEIGHT
-        val adjustedRewards = rewards / (2.0.pow(halvings.toInt())).toLong()
-        Logger.debug(
-            "Rewards calculation: baseRewards:$rewards, height:$blockHeight halvings:$halvings, " +
-                    "adjusted:$adjustedRewards"
-        )
-        val totalWork = preSettle.sumOf { it.coinsOwed }
+        val bonusPercentage = 0.90
         return preSettle.associateWith { participant ->
-            val share = participant.coinsOwed.toDouble() / totalWork
-            Logger.debug("Participant ${participant.id} share: $share")
-            Logger.debug("Participant ${participant.id} reward: ${(adjustedRewards * share).toLong()}")
-            (adjustedRewards * share).toLong()
+            
+            val coinsForParticipant = (participant.coinsOwed * bonusPercentage).roundToLong()
+            Logger.info("Participant: ${participant.id}, Owed: ${participant.coinsOwed}, " +
+                    "Bonus: $bonusPercentage, RewardCoins: $coinsForParticipant")
+            coinsForParticipant
         }
     }
 

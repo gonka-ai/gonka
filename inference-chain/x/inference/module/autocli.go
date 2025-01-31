@@ -106,6 +106,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query getCurrentEpoch",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod: "TokenomicsData",
+					Use:       "show-tokenomics-data",
+					Short:     "show tokenomics_data",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

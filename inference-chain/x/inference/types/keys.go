@@ -22,3 +22,8 @@ var (
 func KeyPrefix(p string) []byte {
 	return []byte(p)
 }
+
+const (
+	TokenomicsDataKey  = "TokenomicsData/value/"
+	GenesisOnlyDataKey = "GenesisOnlyData/value/"
+)

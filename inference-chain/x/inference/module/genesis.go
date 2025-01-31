@@ -1,7 +1,9 @@
 package inference
 
 import (
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -33,6 +35,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	InitHoldingAccounts(ctx, k, genState)
 
+	// Set if defined
+	if genState.TokenomicsData != nil {
+		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
+	}
+
+	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
+
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -43,26 +52,48 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {
 
 	supplyDenom := state.GenesisOnlyParams.SupplyDenom
+	denomMetadata, found := k.BankKeeper.GetDenomMetaData(ctx, types.BaseCoin)
+	if !found {
+		panic("BaseCoin denom not found")
+	}
+
+	err := LoadMetadataToSdk(ctx, k, denomMetadata)
+	if err != nil {
+		panic(err)
+	}
 
 	// Ensures creation if not already existing
 	k.AccountKeeper.GetModuleAccount(ctx, types.StandardRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 
-	standardRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.StandardRewardAmount))
-	topRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
-	preProgrammedSaleCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
+	standardRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.StandardRewardAmount))
+	topRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
+	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
 
-	if err := k.BankKeeper.MintCoins(ctx, types.StandardRewardPoolAccName, standardRewardCoins); err != nil {
+	if err := k.BankKeeper.MintCoins(ctx, types.StandardRewardPoolAccName, sdk.NewCoins(standardRewardCoin)); err != nil {
 		panic(err)
 	}
-	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, topRewardCoins); err != nil {
+	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin)); err != nil {
 		panic(err)
 	}
-	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, preProgrammedSaleCoins); err != nil {
+	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, sdk.NewCoins(preProgrammedCoin)); err != nil {
 		panic(err)
 	}
+}
 
+func LoadMetadataToSdk(ctx sdk.Context, k keeper.Keeper, metadata banktypes.Metadata) error {
+	for _, denom := range metadata.DenomUnits {
+		err := sdk.RegisterDenom(denom.Denom, math.LegacyNewDec(10).Power(uint64(denom.Exponent)))
+		if err != nil {
+			return err
+		}
+	}
+	err := sdk.SetBaseDenom(metadata.Base)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ExportGenesis returns the module's exported genesis.
@@ -75,6 +106,15 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.EpochGroupDataList = k.GetAllEpochGroupData(ctx)
 	genesis.SettleAmountList = k.GetAllSettleAmount(ctx)
 	genesis.EpochGroupValidationsList = k.GetAllEpochGroupValidations(ctx)
+	// Get all tokenomicsData
+	tokenomicsData, found := k.GetTokenomicsData(ctx)
+	if found {
+		genesis.TokenomicsData = &tokenomicsData
+	}
+	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
+	if found {
+		genesis.GenesisOnlyParams = genesisOnlyParams
+	}
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

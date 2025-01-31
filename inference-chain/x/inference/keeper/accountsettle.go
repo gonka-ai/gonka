@@ -4,11 +4,78 @@ import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"math"
 )
 
-// Start with a power of 2 for even distribution?
-const EpochNewCoin = 1_048_576
-const CoinHalvingHeight = 100
+type SettleParameters struct {
+	CurrentSubsidyPercentage float64
+	TotalSubsidyPaid         int64
+	StageCutoff              float64
+	StageDecrease            float64
+	TotalSubsidySupply       int64
+}
+
+type SubsidyResult struct {
+	Amount        int64
+	CrossedCutoff bool
+}
+
+func (sp *SettleParameters) GetTotalSubsidy(workCoins int64) SubsidyResult {
+	if sp.TotalSubsidyPaid >= sp.TotalSubsidySupply {
+		return SubsidyResult{Amount: 0, CrossedCutoff: false}
+	}
+
+	nextCutoff := sp.getNextCutoff()
+	subsidyAtCurrentRate := getSubsidy(workCoins, sp.CurrentSubsidyPercentage)
+	if sp.TotalSubsidyPaid+subsidyAtCurrentRate > nextCutoff {
+		// Calculate the amount of subsidy that can be paid at the current rate
+		// before the next cutoff
+		subsidyUntilCutoff := nextCutoff - sp.TotalSubsidyPaid
+		if nextCutoff >= sp.TotalSubsidySupply {
+			return SubsidyResult{Amount: subsidyUntilCutoff, CrossedCutoff: true}
+		}
+		// Don't want to underestimate work left, so use Floor
+		workUntilNextCutoff := int64(math.Floor(float64(subsidyUntilCutoff) / sp.CurrentSubsidyPercentage))
+		nextRate := sp.CurrentSubsidyPercentage * (1.0 - sp.StageDecrease)
+		subsidyAtNextRate := getSubsidy(workCoins-workUntilNextCutoff, nextRate)
+		return SubsidyResult{Amount: subsidyUntilCutoff + subsidyAtNextRate, CrossedCutoff: true}
+	}
+	return SubsidyResult{Amount: subsidyAtCurrentRate, CrossedCutoff: false}
+}
+
+// Clarify our approach to calculating the subsidy
+func getSubsidy(work int64, rate float64) int64 {
+	return int64(math.Round(float64(work) * rate))
+}
+
+func (sp *SettleParameters) getNextCutoff() int64 {
+	cutoffUnit := int64(math.Round(sp.StageCutoff * float64(sp.TotalSubsidySupply)))
+	currentCutoff := (sp.TotalSubsidyPaid / cutoffUnit) * cutoffUnit
+	nextCutoff := currentCutoff + cutoffUnit
+	return nextCutoff
+}
+
+func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
+	params := k.GetParams(ctx)
+	tokenomicsData, found := k.GetTokenomicsData(ctx)
+	if !found {
+		// Almost literally impossible
+		panic("Tokenomics data not found")
+	}
+	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
+	if !found {
+		// Almost literally impossible
+		panic("Genesis only params not found")
+	}
+	normalizedTotalSuply := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.StandardRewardAmount))
+	return &SettleParameters{
+		CurrentSubsidyPercentage: float64(params.TokenomicsParams.CurrentSubsidyPercentage),
+		TotalSubsidyPaid:         int64(tokenomicsData.TotalSubsidies),
+		StageCutoff:              params.TokenomicsParams.SubsidyReductionInterval,
+		StageDecrease:            float64(params.TokenomicsParams.SubsidyReductionAmount),
+		TotalSubsidySupply:       normalizedTotalSuply.Amount.Int64(),
+	}
+}
 
 func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -32,17 +99,22 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
-	tokenomicsParams := k.GetParams(ctx).TokenomicsParams
-	amounts, rewardCoins, err := GetSettleAmounts(participants.Participant, tokenomicsParams)
+	amounts, subsidyResult, err := GetSettleAmounts(participants.Participant, k.GetSettleParameters(ctx))
 	if err != nil {
 		k.LogError("Error getting settle amounts", "error", err)
 		return err
 	}
-	err = k.MintRewardCoins(ctx, rewardCoins)
+	err = k.MintRewardCoins(ctx, subsidyResult.Amount)
 	if err != nil {
 		k.LogError("Unable to mint new coins!", "error", err)
 		return err
 	}
+	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(subsidyResult.Amount)})
+	if subsidyResult.CrossedCutoff {
+		k.LogInfo("Crossed subsidy cutoff", "amount", subsidyResult.Amount)
+		k.ReduceSubsidyPercentage(ctx)
+	}
+
 	for _, amount := range amounts {
 		if amount.Error != nil {
 			k.LogError("Error calculating settle amounts", "error", amount.Error, "participant", amount.Settle.Participant)
@@ -71,6 +143,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 				k.LogError("Error paying refund", "error", err)
 				continue
 			}
+			k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: amount.Settle.RefundCoins})
 			amount.Settle.RefundCoins = 0
 		}
 		if amount.Settle.RewardCoins > 0 && participant.Reputation < 1.0 {
@@ -87,26 +160,22 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			if err != nil {
 				k.LogError("Error burning coins", "error", err)
 			}
+			k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: previousSettle.GetTotalCoins()})
 		}
 		k.SetSettleAmount(ctx, *amount.Settle)
 	}
 	return nil
 }
 
-func GetSettleAmounts(participants []types.Participant, tokenParams *types.TokenomicsParams) ([]*SettleResult, int64, error) {
-	totalWork, invalidatedBalance := getWorkTotals(participants)
-	totalRewardCoin := float64(totalWork) * float64(tokenParams.CurrentSubsidyPercentage)
-	punishmentDistribution := DistributedCoinInfo{
-		totalWork:       totalWork,
-		totalRewardCoin: float64(invalidatedBalance),
-	}
+func GetSettleAmounts(participants []types.Participant, tokenParams *SettleParameters) ([]*SettleResult, SubsidyResult, error) {
+	totalWork, _ := getWorkTotals(participants)
+	subsidyResult := tokenParams.GetTotalSubsidy(totalWork)
 	rewardDistribution := DistributedCoinInfo{
 		totalWork:       totalWork,
-		totalRewardCoin: totalRewardCoin,
+		totalRewardCoin: subsidyResult.Amount,
 	}
 	amounts := make([]*SettleResult, 0)
 	distributions := make([]DistributedCoinInfo, 0)
-	distributions = append(distributions, punishmentDistribution)
 	distributions = append(distributions, rewardDistribution)
 	for _, p := range participants {
 		settle, err := getSettleAmount(&p, distributions)
@@ -116,9 +185,9 @@ func GetSettleAmounts(participants []types.Participant, tokenParams *types.Token
 		})
 	}
 	if totalWork == 0 {
-		return amounts, 0, nil
+		return amounts, SubsidyResult{Amount: 0, CrossedCutoff: false}, nil
 	}
-	return amounts, int64(totalRewardCoin), nil
+	return amounts, subsidyResult, nil
 }
 
 func getWorkTotals(participants []types.Participant) (int64, int64) {
@@ -169,14 +238,23 @@ func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoi
 	}, nil
 }
 
+func (k Keeper) ReduceSubsidyPercentage(ctx context.Context) {
+	params := k.GetParams(ctx)
+	params.TokenomicsParams.CurrentSubsidyPercentage *= (1.0 - params.TokenomicsParams.SubsidyReductionAmount)
+	err := k.SetParams(ctx, params)
+	if err != nil {
+		panic("Unable to set new subsidy percentage")
+	}
+}
+
 type DistributedCoinInfo struct {
 	totalWork       int64
-	totalRewardCoin float64
+	totalRewardCoin int64
 }
 
 func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) int64 {
-	bonusCoins := float64(participantWorkDone) / float64(rc.totalWork) * rc.totalRewardCoin
-	return int64(bonusCoins)
+	bonusCoins := float64(participantWorkDone) / float64(rc.totalWork) * float64(rc.totalRewardCoin)
+	return int64(math.Round(bonusCoins))
 }
 
 type SettleResult struct {

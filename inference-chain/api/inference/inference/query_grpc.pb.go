@@ -35,6 +35,7 @@ const (
 	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
 	Query_PocBatchesForStage_FullMethodName         = "/inference.inference.Query/PocBatchesForStage"
 	Query_GetCurrentEpoch_FullMethodName            = "/inference.inference.Query/GetCurrentEpoch"
+	Query_TokenomicsData_FullMethodName             = "/inference.inference.Query/TokenomicsData"
 )
 
 // QueryClient is the client API for Query service.
@@ -68,6 +69,8 @@ type QueryClient interface {
 	PocBatchesForStage(ctx context.Context, in *QueryPocBatchesForStageRequest, opts ...grpc.CallOption) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
+	// Queries a TokenomicsData by index.
+	TokenomicsData(ctx context.Context, in *QueryGetTokenomicsDataRequest, opts ...grpc.CallOption) (*QueryGetTokenomicsDataResponse, error)
 }
 
 type queryClient struct {
@@ -222,6 +225,15 @@ func (c *queryClient) GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEp
 	return out, nil
 }
 
+func (c *queryClient) TokenomicsData(ctx context.Context, in *QueryGetTokenomicsDataRequest, opts ...grpc.CallOption) (*QueryGetTokenomicsDataResponse, error) {
+	out := new(QueryGetTokenomicsDataResponse)
+	err := c.cc.Invoke(ctx, Query_TokenomicsData_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -253,6 +265,8 @@ type QueryServer interface {
 	PocBatchesForStage(context.Context, *QueryPocBatchesForStageRequest) (*QueryPocBatchesForStageResponse, error)
 	// Queries a list of GetCurrentEpoch items.
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
+	// Queries a TokenomicsData by index.
+	TokenomicsData(context.Context, *QueryGetTokenomicsDataRequest) (*QueryGetTokenomicsDataResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -307,6 +321,9 @@ func (UnimplementedQueryServer) PocBatchesForStage(context.Context, *QueryPocBat
 }
 func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCurrentEpoch not implemented")
+}
+func (UnimplementedQueryServer) TokenomicsData(context.Context, *QueryGetTokenomicsDataRequest) (*QueryGetTokenomicsDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TokenomicsData not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -609,6 +626,24 @@ func _Query_GetCurrentEpoch_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TokenomicsData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTokenomicsDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TokenomicsData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TokenomicsData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TokenomicsData(ctx, req.(*QueryGetTokenomicsDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -679,6 +714,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCurrentEpoch",
 			Handler:    _Query_GetCurrentEpoch_Handler,
+		},
+		{
+			MethodName: "TokenomicsData",
+			Handler:    _Query_TokenomicsData_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

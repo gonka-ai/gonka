@@ -9,6 +9,95 @@ import (
 	"testing"
 )
 
+var tokenomicsParams = types.DefaultParams().TokenomicsParams
+var defaultSettleParameters = inference.SettleParameters{
+	CurrentSubsidyPercentage: 0.90,
+	TotalSubsidyPaid:         0,
+	StageCutoff:              0.05,
+	StageDecrease:            0.20,
+	TotalSubsidySupply:       600000000000,
+}
+
+func calcExpectedRewards(participants []types.Participant) int64 {
+	totalWorkCoins := int64(0)
+	for _, p := range participants {
+		totalWorkCoins += p.CoinBalance
+	}
+	return int64(float32(totalWorkCoins) * tokenomicsParams.CurrentSubsidyPercentage)
+}
+
+func TestRewardsNoCrossover(t *testing.T) {
+	subsidy := defaultSettleParameters.GetTotalSubsidy(1000)
+	require.Equal(t, int64(900), subsidy.Amount)
+	require.False(t, subsidy.CrossedCutoff)
+}
+
+func TestRewardsCrossover(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.90,
+		TotalSubsidyPaid:         9500,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000,
+	}
+	subsidy := params.GetTotalSubsidy(1000)
+	require.Equal(t, int64(820), subsidy.Amount)
+	require.True(t, subsidy.CrossedCutoff)
+
+}
+
+func TestRewardsSecondCrossover(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.72,
+		TotalSubsidyPaid:         19500,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000,
+	}
+	subsidy := params.GetTotalSubsidy(1000)
+	require.Equal(t, int64(676), subsidy.Amount)
+	require.True(t, subsidy.CrossedCutoff)
+}
+
+func TestNoRewardsPastSupplyCrossover(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.90,
+		TotalSubsidyPaid:         199500,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000,
+	}
+	subsidy := params.GetTotalSubsidy(1000)
+	require.Equal(t, int64(500), subsidy.Amount)
+	require.True(t, subsidy.CrossedCutoff)
+}
+
+func TestNoRewardsPastSupplyEntirely(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.90,
+		TotalSubsidyPaid:         200000,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000,
+	}
+	subsidy := params.GetTotalSubsidy(1000)
+	require.Equal(t, int64(0), subsidy.Amount)
+	require.False(t, subsidy.CrossedCutoff)
+}
+
+func TestNoCrossoverAtZero(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.90,
+		TotalSubsidyPaid:         0,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000,
+	}
+	subsidy := params.GetTotalSubsidy(1000)
+	require.Equal(t, int64(900), subsidy.Amount)
+	require.False(t, subsidy.CrossedCutoff)
+}
+
 func TestSingleSettle(t *testing.T) {
 	participant1 := types.Participant{
 		Address:       "participant1",
@@ -16,13 +105,14 @@ func TestSingleSettle(t *testing.T) {
 		RefundBalance: 0,
 		Status:        types.ParticipantStatus_ACTIVE,
 	}
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, 50)
+	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1})
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
-	require.Equal(t, int64(inference.EpochNewCoin), newCoin)
+	require.Equal(t, expectedRewardCoin, newCoin)
 	p1Result := result[0]
 	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin), p1Result.Settle.RewardCoins)
+	require.Equal(t, uint64(expectedRewardCoin), p1Result.Settle.RewardCoins)
 	require.Equal(t, uint64(0), p1Result.Settle.RefundCoins)
 }
 
@@ -39,40 +129,24 @@ func TestEvenSettle(t *testing.T) {
 		RefundBalance: 500,
 		Status:        types.ParticipantStatus_ACTIVE,
 	}
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1, participant2}, 50)
+	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1, participant2}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(result))
-	require.Equal(t, int64(inference.EpochNewCoin), newCoin)
+	require.Equal(t, expectedRewardCoin, newCoin)
 	p1Result := result[0]
 	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2), p1Result.Settle.RewardCoins)
+	require.Equal(t, uint64(expectedRewardCoin/2), p1Result.Settle.RewardCoins)
 	require.Equal(t, uint64(0), p1Result.Settle.RefundCoins)
 	p2Result := result[1]
 	require.Equal(t, uint64(1000), p2Result.Settle.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2), p2Result.Settle.RewardCoins)
+	require.Equal(t, uint64(expectedRewardCoin/2), p2Result.Settle.RewardCoins)
 	require.Equal(t, uint64(500), p2Result.Settle.RefundCoins)
-}
-
-func TestRewardHalf(t *testing.T) {
-	participant1 := types.Participant{
-		Address:       "participant1",
-		CoinBalance:   1000,
-		RefundBalance: 0,
-		Status:        types.ParticipantStatus_ACTIVE,
-	}
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, inference.CoinHalvingHeight)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(result))
-	require.Equal(t, int64(inference.EpochNewCoin/2), newCoin)
-	p1Result := result[0]
-	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2), p1Result.Settle.RewardCoins)
-	require.Equal(t, uint64(0), p1Result.Settle.RefundCoins)
 }
 
 func TestNoWorkBalance(t *testing.T) {
 	participant1 := newParticipant(0, 0, "1")
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, 50)
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
 	// If no one works, no coin
@@ -85,7 +159,7 @@ func TestNoWorkBalance(t *testing.T) {
 
 func TestNegativeCoinBalance(t *testing.T) {
 	participant1 := newParticipant(-1, 0, "1")
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, 50)
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, int64(0), newCoin)
@@ -96,39 +170,12 @@ func TestNegativeCoinBalance(t *testing.T) {
 func TestNegativeRefundBalance(t *testing.T) {
 	// Unclear how we might get a negative balance, I'm not going to belabor the behavior
 	participant1 := newParticipant(1, -1, "1")
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, 50)
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
 	require.Equal(t, int64(0), newCoin)
 	p1Result := result[0]
 	require.Equal(t, types.ErrNegativeRefundBalance, p1Result.Error)
-}
-
-func TestInvalidParticipantBalanceGetsDistributed(t *testing.T) {
-	p1 := newParticipant(1000, 0, "1")
-	p2 := newParticipant(1000, 0, "2")
-	invalidParticipant := types.Participant{
-		Address:       "invalid",
-		CoinBalance:   2000,
-		RefundBalance: 0,
-		Status:        types.ParticipantStatus_INVALID,
-	}
-	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{p1, p2, invalidParticipant}, 50)
-	require.NoError(t, err)
-	require.Equal(t, 3, len(result))
-	require.Equal(t, int64(inference.EpochNewCoin), newCoin)
-	p1Result := result[0]
-	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
-	require.Equal(t, int64(inference.EpochNewCoin/2+1000), int64(p1Result.Settle.RewardCoins))
-	require.Equal(t, uint64(0), p1Result.Settle.RefundCoins)
-	p2Result := result[1]
-	require.Equal(t, uint64(1000), p2Result.Settle.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2+1000), p2Result.Settle.RewardCoins)
-	require.Equal(t, uint64(0), p2Result.Settle.RefundCoins)
-	invalidResult := result[2]
-	require.Equal(t, uint64(0), invalidResult.Settle.WorkCoins)
-	require.Equal(t, uint64(0), invalidResult.Settle.RewardCoins)
-	require.Equal(t, uint64(0), invalidResult.Settle.RefundCoins)
 }
 
 func newParticipant(coinBalance int64, refundBalance int64, id string) types.Participant {
@@ -161,8 +208,8 @@ func TestActualSettle(t *testing.T) {
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{
 		PocStartBlockHeight: 10,
 	})
-
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(inference.EpochNewCoin)).Return(nil)
+	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
 	// Issue refund immediately
 	participant2Address, err := sdk.AccAddressFromBech32(participant2.Address)
 	require.NoError(t, err)
@@ -183,13 +230,13 @@ func TestActualSettle(t *testing.T) {
 	settleAmount1, found := keeper.GetSettleAmount(ctx, participant1.Address)
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount1.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2), settleAmount1.RewardCoins)
+	require.Equal(t, uint64(expectedRewardCoin/2), settleAmount1.RewardCoins)
 	require.Equal(t, uint64(0), settleAmount1.RefundCoins)
 	require.Equal(t, uint64(10), settleAmount1.PocStartHeight)
 	settleAmount2, found := keeper.GetSettleAmount(ctx, participant2.Address)
 	require.True(t, found)
 	require.Equal(t, uint64(1000), settleAmount2.WorkCoins)
-	require.Equal(t, uint64(inference.EpochNewCoin/2), settleAmount2.RewardCoins)
+	require.Equal(t, uint64(expectedRewardCoin/2), settleAmount2.RewardCoins)
 	// Refund should already have been issued
 	require.Equal(t, uint64(0), settleAmount2.RefundCoins)
 }
