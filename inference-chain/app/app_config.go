@@ -32,6 +32,7 @@ import (
 	"cosmossdk.io/x/nft"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+
 	"github.com/cosmos/cosmos-sdk/runtime"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
@@ -52,21 +53,16 @@ import (
 	ibcfeetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
-	// this line is used by starport scaffolding # stargate/app/moduleImport
+
+	"google.golang.org/protobuf/types/known/durationpb"
+	// starport scaffolding # stargate/app/moduleImport
 )
 
 var (
-	// NOTE: The genutils module must occur after staking so that pools are
-	// properly initialized with tokens from genesis accounts.
-	// NOTE: The genutils module must also occur after auth so that it can access the params from auth.
-	// NOTE: Capability module must occur first so that it can initialize any capabilities
-	// so that other modules that want to create or claim capabilities afterwards in InitChain
-	// can do so safely.
 	genesisModuleOrder = []string{
 		// cosmos-sdk/ibc modules
 		capabilitytypes.ModuleName,
@@ -93,19 +89,18 @@ var (
 		group.ModuleName,
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
+
 		// chain modules
 		inferencemoduletypes.ModuleName,
+
+		// now ensure wasm is included in init genesis:
 		wasmtypes.ModuleName,
-		// this line is used by starport scaffolding # stargate/app/initGenesis
+
+		// starport scaffolding # stargate/app/initGenesis
 	}
 
-	// During begin block slashing happens after distr.BeginBlocker so that
-	// there is nothing left over in the validator fee pool, so as to keep the
-	// CanWithdrawInvariant invariant.
-	// NOTE: staking module is required if HistoricalEntries param > 0
-	// NOTE: capability module's beginblocker must come before any modules using capabilities (e.g. IBC)
+	// Additional begin blockers
 	beginBlockers = []string{
-		// cosmos sdk modules
 		minttypes.ModuleName,
 		distrtypes.ModuleName,
 		slashingtypes.ModuleName,
@@ -113,42 +108,38 @@ var (
 		stakingtypes.ModuleName,
 		authz.ModuleName,
 		genutiltypes.ModuleName,
-		// ibc modules
 		capabilitytypes.ModuleName,
 		ibcexported.ModuleName,
 		ibctransfertypes.ModuleName,
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
-		// chain modules
 		inferencemoduletypes.ModuleName,
-		// this line is used by starport scaffolding # stargate/app/beginBlockers
+		wasmtypes.ModuleName,
+		// starport scaffolding # stargate/app/beginBlockers
 	}
 
 	endBlockers = []string{
-		// cosmos sdk modules
 		crisistypes.ModuleName,
 		govtypes.ModuleName,
 		stakingtypes.ModuleName,
 		feegrant.ModuleName,
 		group.ModuleName,
 		genutiltypes.ModuleName,
-		// ibc modules
 		ibcexported.ModuleName,
 		ibctransfertypes.ModuleName,
 		capabilitytypes.ModuleName,
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
-		// chain modules
 		inferencemoduletypes.ModuleName,
-		// this line is used by starport scaffolding # stargate/app/endBlockers
+		wasmtypes.ModuleName,
+		// starport scaffolding # stargate/app/endBlockers
 	}
 
 	preBlockers = []string{
 		upgradetypes.ModuleName,
-		// this line is used by starport scaffolding # stargate/app/preBlockers
+		// starport scaffolding # stargate/app/preBlockers
 	}
 
-	// module account permissions
 	moduleAccPerms = []*authmodulev1.ModuleAccountPermission{
 		{Account: authtypes.FeeCollectorName},
 		{Account: distrtypes.ModuleName},
@@ -161,10 +152,10 @@ var (
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
-		// this line is used by starport scaffolding # stargate/app/maccPerms
+		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		// starport scaffolding # stargate/app/maccPerms
 	}
 
-	// blocked account addresses
 	blockAccAddrs = []string{
 		authtypes.FeeCollectorName,
 		distrtypes.ModuleName,
@@ -172,11 +163,11 @@ var (
 		stakingtypes.BondedPoolName,
 		stakingtypes.NotBondedPoolName,
 		nft.ModuleName,
-		// We allow the following module accounts to receive funds:
-		// govtypes.ModuleName
+		wasmtypes.ModuleName,
+		// gov can receive funds
 	}
 
-	// appConfig application configuration (used by depinject)
+	// Notice here we add the wasm module entry as well:
 	appConfig = appconfig.Compose(&appv1alpha1.Config{
 		Modules: []*appv1alpha1.ModuleConfig{
 			{
@@ -193,11 +184,6 @@ var (
 							KvStoreKey: "acc",
 						},
 					},
-					// When ExportGenesis is not specified, the export genesis module order
-					// is equal to the init genesis order
-					// ExportGenesis: genesisModuleOrder,
-					// Uncomment if you want to set a custom migration order here.
-					// OrderMigrations: nil,
 				}),
 			},
 			{
@@ -205,9 +191,6 @@ var (
 				Config: appconfig.WrapAny(&authmodulev1.Module{
 					Bech32Prefix:             AccountAddressPrefix,
 					ModuleAccountPermissions: moduleAccPerms,
-					// By default modules authority is the governance module. This is configurable with the following:
-					// Authority: "group", // A custom module authority can be set using a module name
-					// Authority: "cosmos1cwwv22j5ca08ggdv9c2uky355k908694z577tv", // or a specific address
 				}),
 			},
 			{
@@ -227,8 +210,6 @@ var (
 			{
 				Name: stakingtypes.ModuleName,
 				Config: appconfig.WrapAny(&stakingmodulev1.Module{
-					// NOTE: specifying a prefix is only necessary when using bech32 addresses
-					// If not specfied, the auth Bech32Prefix appended with "valoper" and "valcons" is used by default
 					Bech32PrefixValidator: AccountAddressPrefix + "valoper",
 					Bech32PrefixConsensus: AccountAddressPrefix + "valcons",
 				}),
@@ -300,7 +281,6 @@ var (
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
 			},
-			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},
 	})
 )

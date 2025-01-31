@@ -21,6 +21,7 @@ import (
 	_ "cosmossdk.io/x/upgrade"    // import for side-effects
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
 
+	"github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -313,6 +314,7 @@ func New(
 	); err != nil {
 		return nil, err
 	}
+	wasmModule.RegisterInterfaces(app.interfaceRegistry)
 
 	// If you have custom IBC modules to register, do so
 	if err := app.registerIBCModules(appOpts); err != nil {
@@ -356,6 +358,12 @@ func New(
 
 	if err := checkWasmKeeperWorks(app); err != nil {
 		return nil, fmt.Errorf("Wasm keeper check failed: %w", err)
+	}
+
+	ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
+
+	if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
 	}
 
 	return app, nil

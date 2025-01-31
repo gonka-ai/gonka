@@ -24,6 +24,8 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/productscience/inference/app"
+
+	wasmclient "github.com/CosmWasm/wasmd/x/wasm/client/cli"
 )
 
 func initRootCmd(
@@ -87,6 +89,7 @@ func queryCommand() *cobra.Command {
 		server.QueryBlocksCmd(),
 		authcmd.QueryTxCmd(),
 		server.QueryBlockResultsCmd(),
+		wasmclient.GetQueryCmd(),
 	)
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 
@@ -113,6 +116,7 @@ func txCommand() *cobra.Command {
 		authcmd.GetEncodeCommand(),
 		authcmd.GetDecodeCommand(),
 		authcmd.GetSimulateCmd(),
+		wasmclient.GetTxCmd(),
 	)
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 

@@ -7,8 +7,10 @@ import (
 	"cosmossdk.io/client/v2/autocli"
 	clientv2keyring "cosmossdk.io/client/v2/autocli/keyring"
 	"cosmossdk.io/core/address"
+	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"github.com/CosmWasm/wasmd/x/wasm"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/config"
 	"github.com/cosmos/cosmos-sdk/client/flags"
@@ -24,6 +26,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/productscience/inference/app"
 )
 
@@ -108,6 +112,11 @@ func NewRootCmd() *cobra.Command {
 		moduleBasicManager[name] = module.CoreAppModuleBasicAdaptor(name, mod)
 		autoCliOpts.Modules[name] = mod
 	}
+	wasmModules := RegisterWasm(clientCtx.InterfaceRegistry)
+	for name, mod := range wasmModules {
+		moduleBasicManager[name] = module.CoreAppModuleBasicAdaptor(name, mod)
+		autoCliOpts.Modules[name] = mod
+	}
 
 	initRootCmd(rootCmd, clientCtx.TxConfig, moduleBasicManager)
 
@@ -121,6 +130,18 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	return rootCmd
+}
+
+func RegisterWasm(registry cdctypes.InterfaceRegistry) map[string]appmodule.AppModule {
+	modules := map[string]appmodule.AppModule{
+		wasmtypes.ModuleName: wasm.AppModule{},
+	}
+
+	for name, m := range modules {
+		module.CoreAppModuleBasicAdaptor(name, m).RegisterInterfaces(registry)
+	}
+
+	return modules
 }
 
 func overwriteFlagDefaults(c *cobra.Command, defaults map[string]string) {
