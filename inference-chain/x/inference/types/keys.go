@@ -9,6 +9,10 @@ const (
 
 	// MemStoreKey defines the in-memory store key
 	MemStoreKey = "mem_inference"
+
+	StandardRewardPoolAccName = "standard_reward"
+	TopRewardPoolAccName      = "top_reward"
+	PreProgrammedSaleAccName  = "pre_programmed_sale"
 )
 
 var (

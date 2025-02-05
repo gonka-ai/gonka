@@ -30,10 +30,39 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	for _, elem := range genState.EpochGroupValidationsList {
 		k.SetEpochGroupValidations(ctx, elem)
 	}
+
+	InitHoldingAccounts(ctx, k, genState)
+
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
 	}
+
+}
+
+func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {
+
+	supplyDenom := state.GenesisOnlyParams.SupplyDenom
+
+	// Ensures creation if not already existing
+	k.AccountKeeper.GetModuleAccount(ctx, types.StandardRewardPoolAccName)
+	k.AccountKeeper.GetModuleAccount(ctx, types.TopRewardPoolAccName)
+	k.AccountKeeper.GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+
+	standardRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.StandardRewardAmount))
+	topRewardCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
+	preProgrammedSaleCoins := sdk.NewCoins(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
+
+	if err := k.BankKeeper.MintCoins(ctx, types.StandardRewardPoolAccName, standardRewardCoins); err != nil {
+		panic(err)
+	}
+	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, topRewardCoins); err != nil {
+		panic(err)
+	}
+	if err := k.BankKeeper.MintCoins(ctx, types.PreProgrammedSaleAccName, preProgrammedSaleCoins); err != nil {
+		panic(err)
+	}
+
 }
 
 // ExportGenesis returns the module's exported genesis.

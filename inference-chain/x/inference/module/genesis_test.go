@@ -1,6 +1,7 @@
 package inference_test
 
 import (
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -12,7 +13,8 @@ import (
 
 func TestGenesis(t *testing.T) {
 	genesisState := types.GenesisState{
-		Params: types.DefaultParams(),
+		Params:            types.DefaultParams(),
+		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 
 		InferenceList: []types.Inference{
 			{
@@ -59,7 +61,15 @@ func TestGenesis(t *testing.T) {
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
-	k, ctx := keepertest.InferenceKeeper(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.StandardRewardPoolAccName)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.StandardRewardPoolAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
 	require.NotNil(t, got)
