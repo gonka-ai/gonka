@@ -28,11 +28,3 @@ func TestTokenomicsDataGet(t *testing.T) {
 		nullify.Fill(&rst),
 	)
 }
-
-func TestTokenomicsDataRemove(t *testing.T) {
-	keeper, ctx := keepertest.InferenceKeeper(t)
-	createTestTokenomicsData(keeper, ctx)
-	keeper.RemoveTokenomicsData(ctx)
-	_, found := keeper.GetTokenomicsData(ctx)
-	require.False(t, found)
-}

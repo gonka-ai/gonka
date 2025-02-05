@@ -44,10 +44,3 @@ func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.Tok
 	newData, _ := k.GetTokenomicsData(ctx)
 	k.LogInfo("Tokenomics data added", "tokenomicsData", newData)
 }
-
-// RemoveTokenomicsData removes tokenomicsData from the store
-func (k Keeper) RemoveTokenomicsData(ctx context.Context) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.TokenomicsDataKey))
-	store.Delete([]byte{0})
-}
