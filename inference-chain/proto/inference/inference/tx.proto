@@ -51,104 +51,104 @@ message MsgUpdateParamsResponse {}
 
 message MsgStartInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator       = 1;
-  string inferenceId   = 2;
-  string promptHash    = 3;
-  string promptPayload = 4;
-  string model         = 6;
-  string requestedBy   = 7;
+  string creator = 1;
+  string inference_id = 2;
+  string prompt_hash = 3;
+  string prompt_payload = 4;
+  string model = 6;
+  string requested_by = 7;
 }
 
 message MsgStartInferenceResponse {
-  string inferenceIndex = 1;
+  string inference_index = 1;
 }
 
 message MsgFinishInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator              = 1;
-  string inferenceId          = 2;
-  string responseHash         = 3;
-  string responsePayload      = 4;
-  uint64 promptTokenCount     = 5;
-  uint64 completionTokenCount = 6;
-  string executedBy           = 7;
+  string creator = 1;
+  string inference_id = 2;
+  string response_hash = 3;
+  string response_payload = 4;
+  uint64 prompt_token_count = 5;
+  uint64 completion_token_count = 6;
+  string executed_by = 7;
 }
 
 message MsgFinishInferenceResponse {
-  string inferenceIndex = 1;
+  string inference_index = 1;
 }
 
 message MsgSubmitNewParticipant {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator      = 1;
-           string url          = 2;
-  repeated string models       = 3;
-           string validatorKey = 4;
-           string workerKey    = 5;
+  string creator = 1;
+  string url = 2;
+  repeated string models = 3;
+  string validator_key = 4;
+           string worker_key    = 5;
 }
 
 message MsgSubmitNewParticipantResponse {
-  string participantIndex = 1;
-  string status           = 2;
+  string participant_index = 1;
+  string status = 2;
 }
 
 message MsgValidation {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator         = 1;
-  string id              = 2;
-  string inferenceId     = 3;
-  string responsePayload = 4;
-  string responseHash    = 5;
-  double value           = 6;
-  bool   revalidation    = 7;
+  string creator = 1;
+  string id = 2;
+  string inference_id = 3;
+  string response_payload = 4;
+  string response_hash = 5;
+  double value = 6;
+  bool revalidation = 7;
 }
 
 message MsgValidationResponse {}
 
 message MsgSubmitPoC {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator       = 1;
-           int64  blockHeight   = 2;
-  repeated string nonce         = 3;
-           string seedSignature = 4;
+  string creator = 1;
+  int64 block_height = 2;
+  repeated string nonce = 3;
+  string seed_signature = 4;
 }
 
 message MsgSubmitPoCResponse {}
 
 message MsgSubmitNewUnfundedParticipant {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator      = 1;
-           string address      = 2;
-           string url          = 3;
-  repeated string models       = 4;
-           string pubKey       = 5;
-           string validatorKey = 6;
-           string workerKey    = 7;
+  string creator = 1;
+  string address = 2;
+  string url = 3;
+  repeated string models = 4;
+  string pub_key = 5;
+  string validator_key = 6;
+           string worker_key    = 7;
 }
 
 message MsgSubmitNewUnfundedParticipantResponse {}
 
 message MsgInvalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator     = 1;
-  string inferenceId = 2;
+  string creator = 1;
+  string inference_id = 2;
 }
 
 message MsgInvalidateInferenceResponse {}
 
 message MsgRevalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator     = 1;
-  string inferenceId = 2;
+  string creator = 1;
+  string inference_id = 2;
 }
 
 message MsgRevalidateInferenceResponse {}
 
 message MsgClaimRewards {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator        = 1;
-  int64  seed           = 2;
-  uint64 pocStartHeight = 3;
+  string creator = 1;
+  int64 seed = 2;
+  uint64 poc_start_height = 3;
 }
 
 message MsgClaimRewardsResponse {
@@ -158,28 +158,28 @@ message MsgClaimRewardsResponse {
 
 message MsgSubmitPocBatch {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator                  = 1;
-           int64  pocStageStartBlockHeight = 2;
-           string batchId                  = 3;
-  repeated int64  nonces                   = 4;
-  repeated double dist                     = 5;
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  string batch_id = 3;
+  repeated int64 nonces = 4;
+  repeated double dist = 5;
 }
 
 message MsgSubmitPocBatchResponse {}
 
 message MsgSubmitPocValidation {
   option (cosmos.msg.v1.signer) = "creator";
-           string creator                  =  1;
-           string participantAddress       =  2;
-           int64  pocStageStartBlockHeight =  3;
-  repeated int64  nonces                   =  4;
-  repeated double dist                     =  5;
-  repeated double receivedDist             =  6;
-           double rTarget                  =  7;
-           double fraudThreshold           =  8;
-           int64  nInvalid                 =  9;
-           double probabilityHonest        = 10;
-           bool   fraudDetected            = 11;
+  string creator = 1;
+  string participant_address = 2;
+  int64 poc_stage_start_block_height = 3;
+  repeated int64 nonces = 4;
+  repeated double dist = 5;
+  repeated double received_dist = 6;
+  double r_target = 7;
+  double fraud_threshold = 8;
+  int64 n_invalid = 9;
+  double probability_honest = 10;
+  bool fraud_detected = 11;
 }
 
 message MsgSubmitPocValidationResponse {}
@@ -187,7 +187,7 @@ message MsgSubmitPocValidationResponse {}
 message MsgSubmitSeed {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  int64  blockHeight = 2;
+  int64 block_height = 2;
   string signature = 3;
 }
 

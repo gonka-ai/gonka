@@ -11,29 +11,45 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message Params {
   option (amino.name) = "inference/x/inference/Params";
   option (gogoproto.equal) = true;
-  EpochParams epochParams = 1;
-  ValidationParams validationParams = 2;
-  PocParams pocParams = 3;
+  EpochParams epoch_params = 1;
+  ValidationParams validation_params = 2;
+  PocParams poc_params = 3;
+  TokenomicsParams tokenomics_params = 4;
+}
+
+message GenesisOnlyParams {
+  uint64 total_supply = 4;
+  uint64 originator_supply = 5;
+  uint64 top_reward_amount = 6;
+  int32 top_rewards = 7;
+  string supply_denom = 8;
+}
+
+message TokenomicsParams {
+  option (gogoproto.equal) = true;
+  double subsidy_reduction_interval = 1;
+  float subsidy_reduction_amount = 2;
+  float current_subsidy_percentage = 3;
 }
 
 message EpochParams {
   option (gogoproto.equal) = true;
-  int64 epochLength = 1;
-  int64 epochMultiplier = 2;
-  uint64 epochNewCoin = 3;
-  int64 coinHalvingInterval = 4;
+  int64 epoch_length = 1;
+  int64 epoch_multiplier = 2;
+  uint64 epoch_new_coin = 3;
+  int64 coin_halving_interval = 4;
 }
 
 message ValidationParams {
   option (gogoproto.equal) = true;
-  double falsePositiveRate = 1;
-  uint32 minRampUpMeasurements = 2;
-  double passValue = 3;
-  double minValidationAverage = 4;
-  double maxValidationAverage = 5;
+  double false_positive_rate = 1;
+  uint32 min_ramp_up_measurements = 2;
+  double pass_value = 3;
+  double min_validation_average = 4;
+  double max_validation_average = 5;
 }
 
 message PocParams {
   option (gogoproto.equal) = true;
-  uint32 defaultDifficulty = 1;
+  uint32 default_difficulty = 1;
 }

@@ -386,15 +386,15 @@ func request_Query_EpochGroupData_0(ctx context.Context, marshaler runtime.Marsh
 		_   = err
 	)
 
-	val, ok = pathParams["pocStartBlockHeight"]
+	val, ok = pathParams["poc_start_block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "pocStartBlockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
 	}
 
 	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "pocStartBlockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
 	}
 
 	msg, err := client.EpochGroupData(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
@@ -413,15 +413,15 @@ func local_request_Query_EpochGroupData_0(ctx context.Context, marshaler runtime
 		_   = err
 	)
 
-	val, ok = pathParams["pocStartBlockHeight"]
+	val, ok = pathParams["poc_start_block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "pocStartBlockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
 	}
 
 	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "pocStartBlockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
 	}
 
 	msg, err := server.EpochGroupData(ctx, &protoReq)
@@ -577,15 +577,15 @@ func request_Query_EpochGroupValidations_0(ctx context.Context, marshaler runtim
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-	val, ok = pathParams["pocStartBlockHeight"]
+	val, ok = pathParams["poc_start_block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "pocStartBlockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
 	}
 
 	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "pocStartBlockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
 	}
 
 	msg, err := client.EpochGroupValidations(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
@@ -615,15 +615,15 @@ func local_request_Query_EpochGroupValidations_0(ctx context.Context, marshaler 
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
-	val, ok = pathParams["pocStartBlockHeight"]
+	val, ok = pathParams["poc_start_block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "pocStartBlockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "poc_start_block_height")
 	}
 
 	protoReq.PocStartBlockHeight, err = runtime.Uint64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "pocStartBlockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "poc_start_block_height", err)
 	}
 
 	msg, err := server.EpochGroupValidations(ctx, &protoReq)
@@ -678,15 +678,15 @@ func request_Query_PocBatchesForStage_0(ctx context.Context, marshaler runtime.M
 		_   = err
 	)
 
-	val, ok = pathParams["blockHeight"]
+	val, ok = pathParams["block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "blockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "block_height")
 	}
 
 	protoReq.BlockHeight, err = runtime.Int64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "blockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "block_height", err)
 	}
 
 	msg, err := client.PocBatchesForStage(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
@@ -705,15 +705,15 @@ func local_request_Query_PocBatchesForStage_0(ctx context.Context, marshaler run
 		_   = err
 	)
 
-	val, ok = pathParams["blockHeight"]
+	val, ok = pathParams["block_height"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "blockHeight")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "block_height")
 	}
 
 	protoReq.BlockHeight, err = runtime.Int64(val)
 
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "blockHeight", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "block_height", err)
 	}
 
 	msg, err := server.PocBatchesForStage(ctx, &protoReq)
@@ -1494,7 +1494,7 @@ var (
 
 	pattern_Query_GetRandomExecutor_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_random_executor"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_EpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "epoch_group_data", "pocStartBlockHeight"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupData_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "epoch_group_data", "poc_start_block_height"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_EpochGroupDataAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_data"}, "", runtime.AssumeColonVerbOpt(false)))
 
@@ -1502,11 +1502,11 @@ var (
 
 	pattern_Query_SettleAmountAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "settle_amount"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "pocStartBlockHeight"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "poc_start_block_height"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_EpochGroupValidationsAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "epoch_group_validations"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_PocBatchesForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_batches_for_stage", "blockHeight"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_PocBatchesForStage_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "poc_batches_for_stage", "block_height"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_GetCurrentEpoch_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "get_current_epoch"}, "", runtime.AssumeColonVerbOpt(false)))
 )
