@@ -158,16 +158,31 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		amount.Settle.PocStartHeight = pocBlockHeight
 		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
 		if found {
-			// No claim, burn it!
-			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()))
-			if err != nil {
-				k.LogError("Error burning coins", "error", err)
-			}
-			k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: previousSettle.GetTotalCoins()})
+			k.burnUnclaimedSettle(ctx, amount, previousSettle)
 		}
 		k.SetSettleAmount(ctx, *amount.Settle)
 	}
 	return nil
+}
+
+func (k *Keeper) burnUnclaimedSettle(ctx context.Context, amount *SettleResult, previousSettle types.SettleAmount) {
+	// No claim, burn it! This should not happen often
+	k.LogWarn("Previous settle amount found, burning coins", "address", amount.Settle.Participant, "amount", previousSettle.GetTotalCoins())
+
+	if previousSettle.RewardCoins > 0 {
+		err := k.BankKeeper.BurnCoins(ctx, types.StandardRewardPoolAccName, types.GetCoins(int64(previousSettle.RewardCoins)))
+		if err != nil {
+			k.LogError("Error burning reward coins", "error", err)
+		}
+		k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: previousSettle.RewardCoins})
+	}
+	if previousSettle.WorkCoins > 0 || previousSettle.RefundCoins > 0 {
+		err := k.BurnCoins(ctx, int64(previousSettle.WorkCoins+previousSettle.RefundCoins))
+		if err != nil {
+			k.LogError("Error burning work coins", "error", err)
+		}
+		k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: previousSettle.WorkCoins})
+	}
 }
 
 func GetSettleAmounts(participants []types.Participant, tokenParams *SettleParameters) ([]*SettleResult, SubsidyResult, error) {
