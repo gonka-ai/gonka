@@ -167,6 +167,8 @@ func handleMessage(
 		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
 		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	case submitGovProposalAction:
+		handleGovProposal(event.Result.Events, transactionRecorder)
 	default:
 		slog.Debug("Unhandled action received", "action", action)
 	}
@@ -209,4 +211,8 @@ func getWebsocketUrl(config *apiconfig.Config) string {
 
 	// Construct the new URL
 	return u.String()
+}
+
+func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+
 }
