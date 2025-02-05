@@ -18,7 +18,7 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 		}
 
 		msg := &inference.MsgRegisterModel{
-			Creator:                cosmosClient.GetAddress(),
+			Creator:                cosmosclient.GetProposalMsgSigner(),
 			Id:                     body.Id,
 			UnitsOfComputePerToken: body.UnitsOfComputePerToken,
 		}

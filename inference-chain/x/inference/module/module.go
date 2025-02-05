@@ -378,9 +378,11 @@ type ModuleOutputs struct {
 func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// default to governance authority if not provided
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+	println("SETTING AUTHORITY TO: ", authority.String())
 	if in.Config.Authority != "" {
 		authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
 	}
+	println("SETTING AUTHORITY TO: ", authority.String())
 	k := keeper.NewKeeper(
 		in.Cdc,
 		in.StoreService,

@@ -2,6 +2,8 @@ package cosmosclient
 
 import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -26,4 +28,8 @@ func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, depositBaseCo
 	}
 
 	return nil
+}
+
+func GetProposalMsgSigner() string {
+	return authtypes.NewModuleAddress(govtypes.ModuleName).String()
 }

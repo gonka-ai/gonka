@@ -28,4 +28,12 @@ class UnitOfComputeTests : TestermintTest() {
         val instance3 = pairs[2]
         instance3.api.registerModel(RegisterModelDto(id = "llama", unitsOfComputePerToken = 10.toULong()))
     }
+
+    @Test
+    fun `register model`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val instance = pairs[2]
+
+        instance.api.registerModel(RegisterModelDto(id = "llama", unitsOfComputePerToken = 10.toULong()))
+    }
 }
