@@ -59,6 +59,7 @@ class UnitOfComputeTests : TestermintTest() {
 
         pairs[2].node.exec(listOf("inferenced", "query", "gov", "votes", "1"))
 
+        pairs[2].node.exec(listOf("inferenced", "query", "gov", "proposals"))
     }
 }
 

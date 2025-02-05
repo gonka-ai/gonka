@@ -25,8 +25,8 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 type UnitOfComputePriceProposal struct {
 	Participant           string `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
 	Price                 uint64 `protobuf:"varint,2,opt,name=price,proto3" json:"price,omitempty"`
-	ProposedAtBlockHeight uint64 `protobuf:"varint,3,opt,name=proposedAtBlockHeight,proto3" json:"proposedAtBlockHeight,omitempty"`
-	ProposedAtEpoch       uint64 `protobuf:"varint,4,opt,name=proposedAtEpoch,proto3" json:"proposedAtEpoch,omitempty"`
+	ProposedAtBlockHeight uint64 `protobuf:"varint,3,opt,name=proposed_at_block_height,json=proposedAtBlockHeight,proto3" json:"proposed_at_block_height,omitempty"`
+	ProposedAtEpoch       uint64 `protobuf:"varint,4,opt,name=proposed_at_epoch,json=proposedAtEpoch,proto3" json:"proposed_at_epoch,omitempty"`
 }
 
 func (m *UnitOfComputePriceProposal) Reset()         { *m = UnitOfComputePriceProposal{} }
@@ -90,61 +90,8 @@ func (m *UnitOfComputePriceProposal) GetProposedAtEpoch() uint64 {
 	return 0
 }
 
-type UnitOfComputePrice struct {
-	Price   uint64 `protobuf:"varint,1,opt,name=price,proto3" json:"price,omitempty"`
-	EpochId uint64 `protobuf:"varint,2,opt,name=epochId,proto3" json:"epochId,omitempty"`
-}
-
-func (m *UnitOfComputePrice) Reset()         { *m = UnitOfComputePrice{} }
-func (m *UnitOfComputePrice) String() string { return proto.CompactTextString(m) }
-func (*UnitOfComputePrice) ProtoMessage()    {}
-func (*UnitOfComputePrice) Descriptor() ([]byte, []int) {
-	return fileDescriptor_96bb0ec13e08e30b, []int{1}
-}
-func (m *UnitOfComputePrice) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *UnitOfComputePrice) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_UnitOfComputePrice.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *UnitOfComputePrice) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_UnitOfComputePrice.Merge(m, src)
-}
-func (m *UnitOfComputePrice) XXX_Size() int {
-	return m.Size()
-}
-func (m *UnitOfComputePrice) XXX_DiscardUnknown() {
-	xxx_messageInfo_UnitOfComputePrice.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_UnitOfComputePrice proto.InternalMessageInfo
-
-func (m *UnitOfComputePrice) GetPrice() uint64 {
-	if m != nil {
-		return m.Price
-	}
-	return 0
-}
-
-func (m *UnitOfComputePrice) GetEpochId() uint64 {
-	if m != nil {
-		return m.EpochId
-	}
-	return 0
-}
-
 func init() {
 	proto.RegisterType((*UnitOfComputePriceProposal)(nil), "inference.inference.UnitOfComputePriceProposal")
-	proto.RegisterType((*UnitOfComputePrice)(nil), "inference.inference.UnitOfComputePrice")
 }
 
 func init() {
@@ -152,24 +99,24 @@ func init() {
 }
 
 var fileDescriptor_96bb0ec13e08e30b = []byte{
-	// 268 bytes of a gzipped FileDescriptorProto
+	// 259 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xd2, 0xcc, 0xcc, 0x4b, 0x4b,
 	0x2d, 0x4a, 0xcd, 0x4b, 0x4e, 0xd5, 0x47, 0xb0, 0x4a, 0xf3, 0x32, 0x4b, 0xe2, 0xf3, 0xd3, 0xe2,
 	0x93, 0xf3, 0x73, 0x0b, 0x4a, 0x4b, 0x52, 0xf5, 0x0a, 0x8a, 0xf2, 0x4b, 0xf2, 0x85, 0x84, 0xe1,
-	0x0a, 0xf4, 0xe0, 0x2c, 0xa5, 0x2d, 0x8c, 0x5c, 0x52, 0xa1, 0x79, 0x99, 0x25, 0xfe, 0x69, 0xce,
+	0x0a, 0xf4, 0xe0, 0x2c, 0xa5, 0x9d, 0x8c, 0x5c, 0x52, 0xa1, 0x79, 0x99, 0x25, 0xfe, 0x69, 0xce,
 	0x10, 0xc5, 0x01, 0x45, 0x99, 0xc9, 0xa9, 0x01, 0x45, 0xf9, 0x05, 0xf9, 0xc5, 0x89, 0x39, 0x42,
 	0x0a, 0x5c, 0xdc, 0x05, 0x89, 0x45, 0x25, 0x99, 0xc9, 0x99, 0x05, 0x89, 0x79, 0x25, 0x12, 0x8c,
 	0x0a, 0x8c, 0x1a, 0x9c, 0x41, 0xc8, 0x42, 0x42, 0x22, 0x5c, 0xac, 0x05, 0x20, 0x2d, 0x12, 0x4c,
-	0x0a, 0x8c, 0x1a, 0x2c, 0x41, 0x10, 0x8e, 0x90, 0x09, 0x97, 0x68, 0x01, 0xd8, 0x8c, 0xd4, 0x14,
-	0xc7, 0x12, 0xa7, 0x9c, 0xfc, 0xe4, 0x6c, 0x8f, 0xd4, 0xcc, 0xf4, 0x8c, 0x12, 0x09, 0x66, 0xb0,
-	0x2a, 0xec, 0x92, 0x42, 0x1a, 0x5c, 0xfc, 0x08, 0x09, 0xd7, 0x82, 0xfc, 0xe4, 0x0c, 0x09, 0x16,
-	0xb0, 0x7a, 0x74, 0x61, 0x25, 0x17, 0x2e, 0x21, 0x4c, 0x57, 0x23, 0xdc, 0xc2, 0x88, 0xec, 0x16,
-	0x09, 0x2e, 0xf6, 0x54, 0x90, 0x26, 0xcf, 0x14, 0xa8, 0x1b, 0x61, 0x5c, 0x27, 0xff, 0x13, 0x8f,
-	0xe4, 0x18, 0x2f, 0x3c, 0x92, 0x63, 0x7c, 0xf0, 0x48, 0x8e, 0x71, 0xc2, 0x63, 0x39, 0x86, 0x0b,
-	0x8f, 0xe5, 0x18, 0x6e, 0x3c, 0x96, 0x63, 0x88, 0x32, 0x4d, 0xcf, 0x2c, 0xc9, 0x28, 0x4d, 0xd2,
-	0x4b, 0xce, 0xcf, 0xd5, 0x2f, 0x28, 0xca, 0x4f, 0x29, 0x4d, 0x2e, 0x29, 0x4e, 0xce, 0x44, 0x0b,
-	0xe6, 0x0a, 0x24, 0x76, 0x49, 0x65, 0x41, 0x6a, 0x71, 0x12, 0x1b, 0x38, 0xa4, 0x8d, 0x01, 0x01,
-	0x00, 0x00, 0xff, 0xff, 0x1c, 0x33, 0x03, 0x8a, 0x96, 0x01, 0x00, 0x00,
+	0x0a, 0x8c, 0x1a, 0x2c, 0x41, 0x10, 0x8e, 0x90, 0x39, 0x97, 0x44, 0x01, 0xd8, 0x8c, 0xd4, 0x94,
+	0xf8, 0xc4, 0x92, 0xf8, 0xa4, 0x9c, 0xfc, 0xe4, 0xec, 0xf8, 0x8c, 0xd4, 0xcc, 0xf4, 0x8c, 0x12,
+	0x09, 0x66, 0xb0, 0x42, 0x51, 0x98, 0xbc, 0x63, 0x89, 0x13, 0x48, 0xd6, 0x03, 0x2c, 0x29, 0xa4,
+	0xc5, 0x25, 0x88, 0xac, 0x31, 0xb5, 0x20, 0x3f, 0x39, 0x43, 0x82, 0x05, 0xac, 0x83, 0x1f, 0xa1,
+	0xc3, 0x15, 0x24, 0xec, 0xe4, 0x7f, 0xe2, 0x91, 0x1c, 0xe3, 0x85, 0x47, 0x72, 0x8c, 0x0f, 0x1e,
+	0xc9, 0x31, 0x4e, 0x78, 0x2c, 0xc7, 0x70, 0xe1, 0xb1, 0x1c, 0xc3, 0x8d, 0xc7, 0x72, 0x0c, 0x51,
+	0xa6, 0xe9, 0x99, 0x25, 0x19, 0xa5, 0x49, 0x7a, 0xc9, 0xf9, 0xb9, 0xfa, 0x05, 0x45, 0xf9, 0x29,
+	0xa5, 0xc9, 0x25, 0xc5, 0xc9, 0x99, 0x68, 0xa1, 0x54, 0x81, 0xc4, 0x2e, 0xa9, 0x2c, 0x48, 0x2d,
+	0x4e, 0x62, 0x03, 0x07, 0x94, 0x31, 0x20, 0x00, 0x00, 0xff, 0xff, 0x09, 0xf4, 0x01, 0x9c, 0x55,
+	0x01, 0x00, 0x00,
 }
 
 func (m *UnitOfComputePriceProposal) Marshal() (dAtA []byte, err error) {
@@ -217,39 +164,6 @@ func (m *UnitOfComputePriceProposal) MarshalToSizedBuffer(dAtA []byte) (int, err
 	return len(dAtA) - i, nil
 }
 
-func (m *UnitOfComputePrice) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *UnitOfComputePrice) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *UnitOfComputePrice) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.EpochId != 0 {
-		i = encodeVarintUnitOfCompute(dAtA, i, uint64(m.EpochId))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.Price != 0 {
-		i = encodeVarintUnitOfCompute(dAtA, i, uint64(m.Price))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
 func encodeVarintUnitOfCompute(dAtA []byte, offset int, v uint64) int {
 	offset -= sovUnitOfCompute(v)
 	base := offset
@@ -279,21 +193,6 @@ func (m *UnitOfComputePriceProposal) Size() (n int) {
 	}
 	if m.ProposedAtEpoch != 0 {
 		n += 1 + sovUnitOfCompute(uint64(m.ProposedAtEpoch))
-	}
-	return n
-}
-
-func (m *UnitOfComputePrice) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Price != 0 {
-		n += 1 + sovUnitOfCompute(uint64(m.Price))
-	}
-	if m.EpochId != 0 {
-		n += 1 + sovUnitOfCompute(uint64(m.EpochId))
 	}
 	return n
 }
@@ -418,94 +317,6 @@ func (m *UnitOfComputePriceProposal) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.ProposedAtEpoch |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipUnitOfCompute(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthUnitOfCompute
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *UnitOfComputePrice) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowUnitOfCompute
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: UnitOfComputePrice: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: UnitOfComputePrice: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Price", wireType)
-			}
-			m.Price = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowUnitOfCompute
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Price |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EpochId", wireType)
-			}
-			m.EpochId = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowUnitOfCompute
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.EpochId |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
