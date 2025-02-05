@@ -865,6 +865,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w 
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
 		PubKey:       body.PubKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Debug("Submitting NewUnfundedParticipant", "message", msg)
@@ -895,6 +896,7 @@ func submitNewParticipant(recorder cosmos_client.CosmosMessageClient, w http.Res
 		Url:          body.Url,
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Info("ValidatorKey in dapi", "key", body.ValidatorKey)
