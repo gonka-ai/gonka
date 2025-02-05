@@ -17,8 +17,10 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 			return
 		}
 
+		govCreator := cosmosclient.GetProposalMsgSigner()
+		slog.Info("RegisterModel", "govCreator", govCreator)
 		msg := &inference.MsgRegisterModel{
-			Creator:                cosmosclient.GetProposalMsgSigner(),
+			Creator:                govCreator,
 			Id:                     body.Id,
 			UnitsOfComputePerToken: body.UnitsOfComputePerToken,
 		}
