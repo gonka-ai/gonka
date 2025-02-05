@@ -9,6 +9,7 @@ import com.productscience.data.AppExport
 import com.productscience.data.BalanceResponse
 import com.productscience.data.InferenceParams
 import com.productscience.data.NodeInfoResponse
+import com.productscience.data.TokenomicsData
 import com.productscience.data.TxResponse
 import com.productscience.data.Validator
 import com.productscience.data.parseProto
@@ -148,6 +149,12 @@ data class ApplicationCLI(
         val response = exec(listOf(config.appName) + listOf("query", "inference", "params"))
         val protoText = """\{.*\}""".toRegex().find(response.first())?.value
         parseProto(protoText!!)
+    }
+
+    data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
+
+    fun getTokenomics(): TokenomicsWrapper = wrapLog("getTokenomics", false) {
+        execAndParse(listOf("query", "inference", "show-tokenomics-data"))
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
