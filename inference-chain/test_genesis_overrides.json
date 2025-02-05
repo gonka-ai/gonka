@@ -19,12 +19,12 @@
       },
       "genesis_only_params": {
         "total_supply": "1000",
-        "originator_supply": "160",
-        "top_reward_amount": "120",
-        "standard_reward_amount": "600",
-        "pre_programmed_sale_amount": "120",
+        "originator_supply": "10",
+        "top_reward_amount": "10",
+        "standard_reward_amount": "200",
+        "pre_programmed_sale_amount": "20",
         "top_rewards": 3,
-        "supply_denom": "mcicoin"
+        "supply_denom": "micoin"
       }
     }
   }

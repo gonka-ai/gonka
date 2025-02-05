@@ -5,6 +5,7 @@ import (
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	inference "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -23,12 +24,57 @@ func calcExpectedRewards(participants []types.Participant) int64 {
 	for _, p := range participants {
 		totalWorkCoins += p.CoinBalance
 	}
-	return int64(float32(totalWorkCoins) * tokenomicsParams.CurrentSubsidyPercentage)
+	w := decimal.NewFromInt(totalWorkCoins)
+	r := decimal.NewFromInt(1).Sub(decimal.NewFromFloat32(defaultSettleParameters.CurrentSubsidyPercentage))
+	return w.Div(r).IntPart()
+}
+
+func TestReduceSubsidy(t *testing.T) {
+	oParams := types.TokenomicsParams{
+		SubsidyReductionAmount:   0.20,
+		SubsidyReductionInterval: 0.05,
+		CurrentSubsidyPercentage: 0.90,
+	}
+	params := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.72), params.CurrentSubsidyPercentage)
+	params2 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.576), params2.CurrentSubsidyPercentage)
+	params3 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.4608), params3.CurrentSubsidyPercentage)
+	params4 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.3686), params4.CurrentSubsidyPercentage)
+	params5 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.2949), params5.CurrentSubsidyPercentage)
+	params6 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.2359), params6.CurrentSubsidyPercentage)
+	params7 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.1887), params7.CurrentSubsidyPercentage)
+	params8 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.1510), params8.CurrentSubsidyPercentage)
+	params9 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.1208), params9.CurrentSubsidyPercentage)
+	params10 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.0966), params10.CurrentSubsidyPercentage)
+	params11 := oParams.ReduceSubsidyPercentage()
+	require.Equal(t, float32(0.0773), params11.CurrentSubsidyPercentage)
 }
 
 func TestRewardsNoCrossover(t *testing.T) {
 	subsidy := defaultSettleParameters.GetTotalSubsidy(1000)
-	require.Equal(t, int64(900), subsidy.Amount)
+	require.Equal(t, int64(10000), subsidy.Amount)
+	require.False(t, subsidy.CrossedCutoff)
+}
+
+func TestRewardsNoCrossover2(t *testing.T) {
+	params := inference.SettleParameters{
+		CurrentSubsidyPercentage: 0.90,
+		TotalSubsidyPaid:         0,
+		StageCutoff:              0.05,
+		StageDecrease:            0.20,
+		TotalSubsidySupply:       200000000,
+	}
+	subsidy := params.GetTotalSubsidy(340000)
+	require.Equal(t, int64(3400000), subsidy.Amount)
 	require.False(t, subsidy.CrossedCutoff)
 }
 
@@ -41,7 +87,8 @@ func TestRewardsCrossover(t *testing.T) {
 		TotalSubsidySupply:       200000,
 	}
 	subsidy := params.GetTotalSubsidy(1000)
-	require.Equal(t, int64(820), subsidy.Amount)
+	// A note: 3892 is if we truncate, 3893 is if we round
+	require.Equal(t, int64(3892), subsidy.Amount)
 	require.True(t, subsidy.CrossedCutoff)
 
 }
@@ -55,7 +102,7 @@ func TestRewardsSecondCrossover(t *testing.T) {
 		TotalSubsidySupply:       200000,
 	}
 	subsidy := params.GetTotalSubsidy(1000)
-	require.Equal(t, int64(676), subsidy.Amount)
+	require.Equal(t, int64(2528), subsidy.Amount)
 	require.True(t, subsidy.CrossedCutoff)
 }
 
@@ -94,7 +141,7 @@ func TestNoCrossoverAtZero(t *testing.T) {
 		TotalSubsidySupply:       200000,
 	}
 	subsidy := params.GetTotalSubsidy(1000)
-	require.Equal(t, int64(900), subsidy.Amount)
+	require.Equal(t, int64(10000), subsidy.Amount)
 	require.False(t, subsidy.CrossedCutoff)
 }
 
@@ -109,7 +156,7 @@ func TestSingleSettle(t *testing.T) {
 	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
-	require.Equal(t, expectedRewardCoin, newCoin)
+	require.Equal(t, expectedRewardCoin, newCoin.Amount)
 	p1Result := result[0]
 	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
 	require.Equal(t, uint64(expectedRewardCoin), p1Result.Settle.RewardCoins)
@@ -133,7 +180,7 @@ func TestEvenSettle(t *testing.T) {
 	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1, participant2}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(result))
-	require.Equal(t, expectedRewardCoin, newCoin)
+	require.Equal(t, expectedRewardCoin, newCoin.Amount)
 	p1Result := result[0]
 	require.Equal(t, uint64(1000), p1Result.Settle.WorkCoins)
 	require.Equal(t, uint64(expectedRewardCoin/2), p1Result.Settle.RewardCoins)
@@ -144,13 +191,50 @@ func TestEvenSettle(t *testing.T) {
 	require.Equal(t, uint64(500), p2Result.Settle.RefundCoins)
 }
 
+func TestEvenAmong3(t *testing.T) {
+	participant1 := types.Participant{
+		Address:       "participant1",
+		CoinBalance:   255000,
+		RefundBalance: 0,
+		Status:        types.ParticipantStatus_RAMPING,
+	}
+	participant2 := types.Participant{
+		Address:       "participant2",
+		CoinBalance:   340000,
+		RefundBalance: 19630000,
+		Status:        types.ParticipantStatus_ACTIVE,
+	}
+	participant3 := types.Participant{
+		Address:       "participant3",
+		CoinBalance:   255000,
+		RefundBalance: 0,
+		Status:        types.ParticipantStatus_RAMPING,
+	}
+	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1, participant2, participant3}, &defaultSettleParameters)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, int64(8500000), newCoin.Amount)
+	p1Result := result[0]
+	require.Equal(t, uint64(255000), p1Result.Settle.WorkCoins)
+	require.Equal(t, uint64(2550000), p1Result.Settle.RewardCoins)
+	require.Equal(t, uint64(0), p1Result.Settle.RefundCoins)
+	p2Result := result[1]
+	require.Equal(t, uint64(340000), p2Result.Settle.WorkCoins)
+	require.Equal(t, uint64(3400000), p2Result.Settle.RewardCoins)
+	require.Equal(t, uint64(19630000), p2Result.Settle.RefundCoins)
+	p3Result := result[2]
+	require.Equal(t, uint64(255000), p3Result.Settle.WorkCoins)
+	require.Equal(t, uint64(2550000), p3Result.Settle.RewardCoins)
+	require.Equal(t, uint64(0), p3Result.Settle.RefundCoins)
+}
+
 func TestNoWorkBalance(t *testing.T) {
 	participant1 := newParticipant(0, 0, "1")
 	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
 	// If no one works, no coin
-	require.Equal(t, int64(0), newCoin)
+	require.Equal(t, int64(0), newCoin.Amount)
 	p1Result := result[0]
 	require.Zero(t, p1Result.Settle.WorkCoins)
 	require.Zero(t, p1Result.Settle.RewardCoins)
@@ -162,7 +246,7 @@ func TestNegativeCoinBalance(t *testing.T) {
 	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
-	require.Equal(t, int64(0), newCoin)
+	require.Equal(t, int64(0), newCoin.Amount)
 	p1Result := result[0]
 	require.Equal(t, types.ErrNegativeCoinBalance, p1Result.Error)
 }
@@ -173,7 +257,7 @@ func TestNegativeRefundBalance(t *testing.T) {
 	result, newCoin, err := inference.GetSettleAmounts([]types.Participant{participant1}, &defaultSettleParameters)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(result))
-	require.Equal(t, int64(0), newCoin)
+	require.Equal(t, int64(0), newCoin.Amount)
 	p1Result := result[0]
 	require.Equal(t, types.ErrNegativeRefundBalance, p1Result.Error)
 }

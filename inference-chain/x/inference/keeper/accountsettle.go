@@ -4,14 +4,15 @@ import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"math"
 )
 
 type SettleParameters struct {
-	CurrentSubsidyPercentage float64
+	CurrentSubsidyPercentage float32
 	TotalSubsidyPaid         int64
 	StageCutoff              float64
-	StageDecrease            float64
+	StageDecrease            float32
 	TotalSubsidySupply       int64
 }
 
@@ -34,8 +35,7 @@ func (sp *SettleParameters) GetTotalSubsidy(workCoins int64) SubsidyResult {
 		if nextCutoff >= sp.TotalSubsidySupply {
 			return SubsidyResult{Amount: subsidyUntilCutoff, CrossedCutoff: true}
 		}
-		// Don't want to underestimate work left, so use Floor
-		workUntilNextCutoff := int64(math.Floor(float64(subsidyUntilCutoff) / sp.CurrentSubsidyPercentage))
+		workUntilNextCutoff := getWork(subsidyUntilCutoff, sp.CurrentSubsidyPercentage)
 		nextRate := sp.CurrentSubsidyPercentage * (1.0 - sp.StageDecrease)
 		subsidyAtNextRate := getSubsidy(workCoins-workUntilNextCutoff, nextRate)
 		return SubsidyResult{Amount: subsidyUntilCutoff + subsidyAtNextRate, CrossedCutoff: true}
@@ -44,8 +44,16 @@ func (sp *SettleParameters) GetTotalSubsidy(workCoins int64) SubsidyResult {
 }
 
 // Clarify our approach to calculating the subsidy
-func getSubsidy(work int64, rate float64) int64 {
-	return int64(math.Round(float64(work) * rate))
+func getSubsidy(work int64, rate float32) int64 {
+	w := decimal.NewFromInt(work)
+	r := decimal.NewFromInt(1).Sub(decimal.NewFromFloat32(rate))
+	return w.Div(r).IntPart()
+}
+
+func getWork(subsidy int64, rate float32) int64 {
+	s := decimal.NewFromInt(subsidy)
+	r := decimal.NewFromInt(1).Sub(decimal.NewFromFloat32(rate))
+	return s.Mul(r).IntPart()
 }
 
 func (sp *SettleParameters) getNextCutoff() int64 {
@@ -69,10 +77,10 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 	}
 	normalizedTotalSuply := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.StandardRewardAmount))
 	return &SettleParameters{
-		CurrentSubsidyPercentage: float64(params.TokenomicsParams.CurrentSubsidyPercentage),
+		CurrentSubsidyPercentage: params.TokenomicsParams.CurrentSubsidyPercentage,
 		TotalSubsidyPaid:         int64(tokenomicsData.TotalSubsidies),
 		StageCutoff:              params.TokenomicsParams.SubsidyReductionInterval,
-		StageDecrease:            float64(params.TokenomicsParams.SubsidyReductionAmount),
+		StageDecrease:            params.TokenomicsParams.SubsidyReductionAmount,
 		TotalSubsidySupply:       normalizedTotalSuply.Amount.Int64(),
 	}
 }
@@ -240,7 +248,7 @@ func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoi
 
 func (k Keeper) ReduceSubsidyPercentage(ctx context.Context) {
 	params := k.GetParams(ctx)
-	params.TokenomicsParams.CurrentSubsidyPercentage *= (1.0 - params.TokenomicsParams.SubsidyReductionAmount)
+	params.TokenomicsParams = params.TokenomicsParams.ReduceSubsidyPercentage()
 	err := k.SetParams(ctx, params)
 	if err != nil {
 		panic("Unable to set new subsidy percentage")
@@ -253,8 +261,11 @@ type DistributedCoinInfo struct {
 }
 
 func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) int64 {
-	bonusCoins := float64(participantWorkDone) / float64(rc.totalWork) * float64(rc.totalRewardCoin)
-	return int64(math.Round(bonusCoins))
+	wd := decimal.NewFromInt(participantWorkDone)
+	tw := decimal.NewFromInt(rc.totalWork)
+	tr := decimal.NewFromInt(rc.totalRewardCoin)
+	bonusCoins := wd.Div(tw).Mul(tr)
+	return bonusCoins.IntPart()
 }
 
 type SettleResult struct {

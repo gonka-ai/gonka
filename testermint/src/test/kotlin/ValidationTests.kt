@@ -19,7 +19,7 @@ class ValidationTests : TestermintTest() {
     fun `test valid in parallel`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
-
+        highestFunded.waitForFirstPoC()
         runBlocking {
             // Launch coroutines with async and collect the deferred results
             val requests = List(10) { i ->

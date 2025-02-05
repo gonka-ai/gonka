@@ -2,6 +2,7 @@ package types
 
 import (
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
+	"github.com/shopspring/decimal"
 )
 
 var _ paramtypes.ParamSet = (*Params)(nil)
@@ -66,4 +67,15 @@ func validateEpochParams(i interface{}) error {
 // Validate validates the set of params
 func (p Params) Validate() error {
 	return nil
+}
+
+// ReduceSubsidyPercentage This produces the exact table we expect, as outlined in the whitepaper
+// We round to 4 decimal places, and we use decimal to avoid floating point errors
+func (p *TokenomicsParams) ReduceSubsidyPercentage() *TokenomicsParams {
+	csp := decimal.NewFromFloat32(p.CurrentSubsidyPercentage)
+	sra := decimal.NewFromFloat32(p.SubsidyReductionAmount)
+	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra))
+	f, _ := newCSP.Round(4).Float64()
+	p.CurrentSubsidyPercentage = float32(f)
+	return p
 }

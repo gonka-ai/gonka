@@ -267,6 +267,6 @@ message QueryGetCurrentEpochResponse {
 message QueryGetTokenomicsDataRequest {}
 
 message QueryGetTokenomicsDataResponse {
-  TokenomicsData TokenomicsData = 1 [(gogoproto.nullable) = false];
+  TokenomicsData tokenomics_data = 1 [(gogoproto.nullable) = false];
 }
 
