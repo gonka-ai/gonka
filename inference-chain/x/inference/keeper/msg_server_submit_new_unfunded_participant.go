@@ -42,6 +42,7 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			Url:          msg.GetUrl(),
 			Models:       msg.GetModels(),
 			ValidatorKey: msg.GetValidatorKey(),
+			WorkerKey:    msg.GetWorkerKey(),
 		})
 	k.LogDebug("Adding new participant", "participant", newParticipant)
 	k.SetParticipant(ctx, newParticipant)
