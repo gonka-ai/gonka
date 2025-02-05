@@ -34,7 +34,8 @@ func getPricing(w http.ResponseWriter, cosmosClient cosmosclient.CosmosMessageCl
 	context := *cosmosClient.GetContext()
 	req := &types.QueryCurrentEpochGroupDataRequest{}
 	response, err := queryClient.CurrentEpochGroupData(context, req)
-	// FIXME: handle epoch 0
+	// FIXME: handle epoch 0, there's a default price specifically for that,
+	// 	but at the moment you just return 0 (since when epoch == 0 you get empty struct from CurrentEpochGroupData)
 	if err != nil {
 		http.Error(w, "Failed to get current epoch group data", http.StatusInternalServerError)
 		return

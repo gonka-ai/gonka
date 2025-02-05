@@ -8,15 +8,22 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, depositBaseCoins int64) error {
+type ProposalData struct {
+	Metadata  string
+	Title     string
+	Summary   string
+	Expedited bool
+}
+
+func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, proposalData *ProposalData) error {
 	proposalMsg, err := v1.NewMsgSubmitProposal(
 		[]sdk.Msg{msg},
-		types.GetCoins(depositBaseCoins),
+		types.GetCoins(100000000), // FIXME: this should be equal to min deposit
 		cosmosClient.GetAddress(),
-		"Made from decentralized-api", // TODO
-		"my-proposal",                 // TODO
-		"Hey this is a proposal",      // TODO
-		true,                          // TODO: ?
+		proposalData.Metadata,
+		proposalData.Title,
+		proposalData.Summary,
+		proposalData.Expedited,
 	)
 	if err != nil {
 		return err
