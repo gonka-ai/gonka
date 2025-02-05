@@ -202,10 +202,11 @@ message MsgSubmitUnitOfComputePriceProposal {
 message MsgSubmitUnitOfComputePriceProposalResponse {}
 
 message MsgRegisterModel {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator               = 1;
-  string id                    = 2;
-  uint64 units_of_compute_per_token = 3;
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string proposed_by = 2;
+  string id = 3;
+  uint64 units_of_compute_per_token = 4;
 }
 
 message MsgRegisterModelResponse {}

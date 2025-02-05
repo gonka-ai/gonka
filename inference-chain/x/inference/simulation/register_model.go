@@ -19,7 +19,8 @@ func SimulateMsgRegisterModel(
 	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
 		simAccount, _ := simtypes.RandomAcc(r, accs)
 		msg := &types.MsgRegisterModel{
-			Creator: simAccount.Address.String(),
+			Authority:  k.GetAuthority(),
+			ProposedBy: simAccount.Address.String(),
 		}
 
 		// TODO: Handling the RegisterModel simulation

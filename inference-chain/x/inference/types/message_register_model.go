@@ -8,18 +8,23 @@ import (
 
 var _ sdk.Msg = &MsgRegisterModel{}
 
-func NewMsgRegisterModel(creator string, id string, unitsOfComputePerToken uint64) *MsgRegisterModel {
+func NewMsgRegisterModel(authority string, proposedBy string, id string, unitsOfComputePerToken uint64) *MsgRegisterModel {
 	return &MsgRegisterModel{
-		Creator:                creator,
+		Authority:              authority,
+		ProposedBy:             proposedBy,
 		Id:                     id,
 		UnitsOfComputePerToken: unitsOfComputePerToken,
 	}
 }
 
 func (msg *MsgRegisterModel) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Creator)
+	_, err := sdk.AccAddressFromBech32(msg.Authority)
 	if err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid authrority address (%s)", err)
+	}
+	_, err = sdk.AccAddressFromBech32(msg.ProposedBy)
+	if err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid proposedBy address (%s)", err)
 	}
 	return nil
 }

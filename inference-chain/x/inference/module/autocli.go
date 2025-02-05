@@ -216,12 +216,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submit-unit-of-compute-price-proposal tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
 				},
-				{
-					RpcMethod:      "RegisterModel",
-					Use:            "register-model [id] [units-of-compute-per-token]",
-					Short:          "Send a registerModel tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "units_of_compute_per_token"}},
-				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
