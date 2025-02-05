@@ -57,7 +57,7 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 		panic("BaseCoin denom not found")
 	}
 
-	err := LoadMetadataToSdk(ctx, k, denomMetadata)
+	err := LoadMetadataToSdk(denomMetadata)
 	if err != nil {
 		panic(err)
 	}
@@ -82,7 +82,7 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	}
 }
 
-func LoadMetadataToSdk(ctx sdk.Context, k keeper.Keeper, metadata banktypes.Metadata) error {
+func LoadMetadataToSdk(metadata banktypes.Metadata) error {
 	for _, denom := range metadata.DenomUnits {
 		err := sdk.RegisterDenom(denom.Denom, math.LegacyNewDec(10).Power(uint64(denom.Exponent)))
 		if err != nil {

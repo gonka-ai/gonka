@@ -1,6 +1,7 @@
 package inference_test
 
 import (
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"go.uber.org/mock/gomock"
 	"testing"
 
@@ -75,6 +76,19 @@ func TestGenesis(t *testing.T) {
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.StandardRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+		Base: types.BaseCoin,
+		DenomUnits: []*banktypes.DenomUnit{
+			{
+				Denom:    types.BaseCoin,
+				Exponent: 0,
+			},
+			{
+				Denom:    types.NativeCoin,
+				Exponent: 9,
+			},
+		},
+	}, true)
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)

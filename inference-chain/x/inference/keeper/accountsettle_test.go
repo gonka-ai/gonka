@@ -293,7 +293,6 @@ func TestActualSettle(t *testing.T) {
 		PocStartBlockHeight: 10,
 	})
 	expectedRewardCoin := calcExpectedRewards([]types.Participant{participant1, participant2})
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
 	// Issue refund immediately
 	participant2Address, err := sdk.AccAddressFromBech32(participant2.Address)
 	require.NoError(t, err)

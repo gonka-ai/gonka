@@ -21,11 +21,12 @@ const million = 1_000_000
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
-		TotalSupply:      1_000 * million,
-		OriginatorSupply: 160 * million,
-		TopRewardAmount:  120 * million,
-		TopRewards:       3,
-		SupplyDenom:      NativeCoin,
+		TotalSupply:          1_000 * million,
+		OriginatorSupply:     160 * million,
+		TopRewardAmount:      120 * million,
+		TopRewards:           3,
+		SupplyDenom:          NativeCoin,
+		StandardRewardAmount: 600 * million,
 	}
 }
 
