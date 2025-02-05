@@ -37,9 +37,16 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 
 func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) error {
 	ms.LogInfo("Issuing rewards", "address", msg.Creator, "amount", settleAmount.GetTotalCoins())
-	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, settleAmount.GetTotalCoins())
+	escrowPayment := settleAmount.GetRefundCoins() + settleAmount.GetWorkCoins()
+	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment)
 	if err != nil {
 		ms.LogError("Error paying participant", "error", err)
+		return err
+	}
+	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: settleAmount.GetRefundCoins(), TotalFees: settleAmount.GetWorkCoins()})
+	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.StandardRewardPoolAccName)
+	if err != nil {
+		ms.LogError("Error paying participant for rewards", "error", err)
 		return err
 	}
 	ms.RemoveSettleAmount(ctx, msg.Creator)

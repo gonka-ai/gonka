@@ -13,6 +13,7 @@ import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/pocbatch.proto";
+import "inference/inference/tokenomics_data.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -72,37 +73,43 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-
+  
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-
+  
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-
+  
   }
-
+  
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{poc_start_block_height}";
-
+  
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-
+  
   }
-
+  
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
-
+  
   }
-
+  
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-
+  
+  }
+  
+  // Queries a TokenomicsData by index.
+  rpc TokenomicsData (QueryGetTokenomicsDataRequest) returns (QueryGetTokenomicsDataResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/tokenomics_data";
+  
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -151,21 +158,21 @@ message QueryAllParticipantResponse {
 }
 
 message QueryGetInferencesWithExecutorsRequest {
-  repeated string ids = 1;
-  string requester = 2;
+  repeated string ids       = 1;
+           string requester = 2;
 }
 
 message QueryGetInferencesWithExecutorsResponse {
   repeated InferenceWithExecutor inference_with_executor = 1 [(gogoproto.nullable) = false];
-  uint32                num_validators = 2;
-  uint32                total_power = 3;
-  uint32                validator_power = 4;
-  uint32                current_height = 5;
+           uint32                num_validators          = 2;
+           uint32                total_power             = 3;
+           uint32                validator_power         = 4;
+           uint32                current_height          = 5;
 }
 
 message InferenceWithExecutor {
-  Inference   inference = 1 [(gogoproto.nullable) = false];
-  Participant executor = 2 [(gogoproto.nullable) = false];
+  Inference   inference     = 1 [(gogoproto.nullable) = false];
+  Participant executor      = 2 [(gogoproto.nullable) = false];
   uint32      current_power = 3;
 }
 
@@ -198,7 +205,7 @@ message QueryAllEpochGroupDataRequest {
 
 message QueryAllEpochGroupDataResponse {
   repeated EpochGroupData                         epoch_group_data = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+           cosmos.base.query.v1beta1.PageResponse pagination       = 2;
 }
 
 message QueryGetSettleAmountRequest {
@@ -215,11 +222,11 @@ message QueryAllSettleAmountRequest {
 
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+           cosmos.base.query.v1beta1.PageResponse pagination    = 2;
 }
 
 message QueryGetEpochGroupValidationsRequest {
-  string participant = 1;
+  string participant            = 1;
   uint64 poc_start_block_height = 2;
 }
 
@@ -233,7 +240,7 @@ message QueryAllEpochGroupValidationsRequest {
 
 message QueryAllEpochGroupValidationsResponse {
   repeated EpochGroupValidations                  epoch_group_validations = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+           cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 
 message QueryPocBatchesForStageRequest {
@@ -245,15 +252,21 @@ message QueryPocBatchesForStageResponse {
 }
 
 message PoCBatchesWithParticipants {
-  string   participant = 1;
-  string   pub_key = 2;
-  string   hex_pub_key = 3;
-  repeated PoCBatch poc_batch = 4 [(gogoproto.nullable) = false];
+           string   participant = 1;
+           string   pub_key     = 2;
+           string   hex_pub_key = 3;
+  repeated PoCBatch poc_batch   = 4 [(gogoproto.nullable) = false];
 }
 
 message QueryGetCurrentEpochRequest {}
 
 message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
+}
+
+message QueryGetTokenomicsDataRequest {}
+
+message QueryGetTokenomicsDataResponse {
+  TokenomicsData tokenomics_data = 1 [(gogoproto.nullable) = false];
 }
 

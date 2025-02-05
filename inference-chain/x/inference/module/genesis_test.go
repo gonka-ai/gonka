@@ -1,6 +1,7 @@
 package inference_test
 
 import (
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"go.uber.org/mock/gomock"
 	"testing"
 
@@ -58,6 +59,12 @@ func TestGenesis(t *testing.T) {
 				PocStartBlockHeight: 1,
 			},
 		},
+		TokenomicsData: &types.TokenomicsData{
+			TotalFees:      85,
+			TotalSubsidies: 11,
+			TotalRefunded:  99,
+			TotalBurned:    5,
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -69,6 +76,19 @@ func TestGenesis(t *testing.T) {
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.StandardRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+		Base: types.BaseCoin,
+		DenomUnits: []*banktypes.DenomUnit{
+			{
+				Denom:    types.BaseCoin,
+				Exponent: 0,
+			},
+			{
+				Denom:    types.NativeCoin,
+				Exponent: 9,
+			},
+		},
+	}, true)
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
@@ -82,5 +102,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
+	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

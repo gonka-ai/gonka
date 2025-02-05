@@ -22,3 +22,9 @@ prod-local/
 /payload.json
 /genesis
 /prod-local/genesis
+/inference-chain/output/
+/decentralized-api/output/
+/jq_test/
+/public-html/
+/logdy
+/inference-chain/junit-report.xml

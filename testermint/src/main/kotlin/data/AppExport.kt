@@ -22,12 +22,36 @@ data class AppState(
 
 data class InferenceState(
     val params: InferenceParams,
+    val genesisOnlyParams: GenesisOnlyParams,
+    val tokenomicsData: TokenomicsData,
+)
+data class TokenomicsData(
+    val totalFees: Long,
+    val totalSubsidies: Long,
+    val totalRefunded: Long,
+    val totalBurned: Long,
+)
+data class GenesisOnlyParams(
+    val totalSupply: Long,
+    val originatorSupply: Long,
+    val topRewardAmount: Long,
+    val standardRewardAmount: Long,
+    val preProgrammedSaleAmount: Long,
+    val topRewards: Int,
+    val supplyDenom: String,
 )
 
 data class InferenceParams(
     val epochParams: EpochParams,
     val validationParams: ValidationParams,
     val pocParams: PocParams,
+    val tokenomicsParams: TokenomicsParams,
+)
+
+data class TokenomicsParams(
+    val subsidyReductionInterval: Double,
+    val subsidyReductionAmount: Double,
+    val currentSubsidyPercentage: Double,
 )
 
 data class EpochParams(
@@ -75,6 +99,7 @@ data class GovParams(
 data class BankState(
     val balances: List<BankBalance>,
     val supply: List<Coin>,
+
 )
 
 data class BankBalance(
