@@ -40,9 +40,25 @@ class UnitOfComputeTests : TestermintTest() {
     @Test
     fun `vote on model proposal`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
+        //val depositResponse = pairs[2].node.makeGovernanceDeposit("1", 48000000)
+        //println("DEPOSIT:\n" + depositResponse)
+
         pairs.forEachIndexed { i, p ->
             p.node.voteOnProposal("1", "yes")
         }
+    }
+
+    @Test
+    fun queries() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        pairs[2].node.exec(listOf("inferenced", "query", "gov", "deposits", "1"))
+
+        pairs[2].node.exec(listOf("inferenced", "query", "gov", "params"))
+
+        pairs[2].node.exec(listOf("inferenced", "query", "gov", "proposal", "1"))
+
+        pairs[2].node.exec(listOf("inferenced", "query", "gov", "votes", "1"))
+
     }
 }
 
