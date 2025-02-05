@@ -30,7 +30,7 @@ class UnitOfComputeTests : TestermintTest() {
     }
 
     @Test
-    fun `register model`() {
+    fun `submit register model proposal`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[2]
 
@@ -40,8 +40,6 @@ class UnitOfComputeTests : TestermintTest() {
     @Test
     fun `vote on model proposal`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
-        val depositResponse = pairs[2].node.makeGovernanceDeposit("1", 49000000)
-        println("DEPOSIT:\n" + depositResponse)
 
         pairs.forEachIndexed { i, p ->
             p.node.voteOnProposal("1", "yes")
