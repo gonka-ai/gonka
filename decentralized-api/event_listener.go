@@ -24,7 +24,7 @@ import (
 const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
 	validationAction        = "/inference.inference.MsgValidation"
-	submitGovProposalAction = "/cosmos.gov.MsgSubmitProposal"
+	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
 )
 
 func StartEventListener(
