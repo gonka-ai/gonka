@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	finishInferenceAction = "/inference.inference.MsgFinishInference"
-	validationAction      = "/inference.inference.MsgValidation"
+	finishInferenceAction   = "/inference.inference.MsgFinishInference"
+	validationAction        = "/inference.inference.MsgValidation"
+	submitGovProposalAction = "/cosmos.gov.MsgSubmitProposal"
 )
 
 func StartEventListener(
@@ -45,7 +46,8 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(ws, "tm.event='Tx' AND message.action='submit_proposal'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+	subscribeToEvents(ws, "tm.event='Tx'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
