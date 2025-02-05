@@ -143,7 +143,18 @@ func handleMessage(
 		return
 	}
 
-	var action = event.Result.Events["message.action"][0]
+	slog.Info("Event received", "event", event)
+	slog.Info("Event received", "actions", event.Result.Events["message.action"], "events", event.Result.Events)
+
+	actions, ok := event.Result.Events["message.action"]
+	if !ok || len(actions) == 0 {
+		// Handle the missing key or empty slice.
+		// For example, log an error, return from the function, etc.
+		log.Println("No message.action event found")
+		return // or handle it accordingly
+	}
+
+	action := actions[0]
 	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
@@ -151,7 +162,6 @@ func handleMessage(
 	//		slog.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
 	//	}
 	//}
-	slog.Info("Event received", "actions", event.Result.Events["message.action"], "events", event.Result.Events)
 	switch action {
 	case finishInferenceAction:
 		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
