@@ -45,6 +45,7 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='submit_proposal'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -148,11 +149,14 @@ func handleMessage(
 	//		slog.Debug("\tEventValue", "key", key, "attr", attr, "index", i)
 	//	}
 	//}
+	slog.Info("Event received", "actions", event.Result.Events["message.action"], "events", event.Result.Events)
 	switch action {
 	case finishInferenceAction:
 		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
 		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	default:
+		slog.Debug("Unhandled action received", "action", action)
 	}
 }
 

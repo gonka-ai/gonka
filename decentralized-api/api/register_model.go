@@ -4,6 +4,7 @@ import (
 	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
 	"github.com/productscience/inference/api/inference/inference"
+	"log/slog"
 	"net/http"
 )
 
@@ -20,8 +21,11 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 			Id:                     body.Id,
 			UnitsOfComputePerToken: body.UnitsOfComputePerToken,
 		}
-		err = cosmosClient.RegisterModel(msg)
+
+		// TODO: make it a function of cosmosClient interface?
+		err = cosmosclient.SubmitProposal(cosmosClient, msg, 1000000)
 		if err != nil {
+			slog.Error("SubmitProposal failed", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
