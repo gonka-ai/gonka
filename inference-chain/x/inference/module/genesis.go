@@ -63,17 +63,12 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 	}
 
 	// Ensures creation if not already existing
-	k.AccountKeeper.GetModuleAccount(ctx, types.StandardRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	k.AccountKeeper.GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 
-	standardRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.StandardRewardAmount))
 	topRewardCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.TopRewardAmount))
 	preProgrammedCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(supplyDenom, state.GenesisOnlyParams.PreProgrammedSaleAmount))
 
-	if err := k.BankKeeper.MintCoins(ctx, types.StandardRewardPoolAccName, sdk.NewCoins(standardRewardCoin)); err != nil {
-		panic(err)
-	}
 	if err := k.BankKeeper.MintCoins(ctx, types.TopRewardPoolAccName, sdk.NewCoins(topRewardCoin)); err != nil {
 		panic(err)
 	}

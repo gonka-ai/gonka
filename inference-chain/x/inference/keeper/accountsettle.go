@@ -112,6 +112,11 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		k.LogError("Error getting settle amounts", "error", err)
 		return err
 	}
+	err = k.MintRewardCoins(ctx, subsidyResult.Amount)
+	if err != nil {
+		k.LogError("Error minting reward coins", "error", err)
+		return err
+	}
 	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalSubsidies: uint64(subsidyResult.Amount)})
 	if subsidyResult.CrossedCutoff {
 		k.LogInfo("Crossed subsidy cutoff", "amount", subsidyResult.Amount)

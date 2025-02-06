@@ -297,6 +297,7 @@ func TestActualSettle(t *testing.T) {
 	participant2Address, err := sdk.AccAddressFromBech32(participant2.Address)
 	require.NoError(t, err)
 
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.ModuleName, types.GetCoins(expectedRewardCoin)).Return(nil)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(ctx, types.ModuleName, participant2Address, types.GetCoins(500)).Return(nil)
 	err = keeper.SettleAccounts(ctx, 10)
 	require.NoError(t, err)
