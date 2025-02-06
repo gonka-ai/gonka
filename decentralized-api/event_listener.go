@@ -47,7 +47,6 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
-	subscribeToEvents(ws, "tm.event='Tx'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -143,14 +142,11 @@ func handleMessage(
 		return
 	}
 
-	slog.Info("Event received", "event", event)
-	slog.Info("Event received", "actions", event.Result.Events["message.action"], "events", event.Result.Events)
-
 	actions, ok := event.Result.Events["message.action"]
 	if !ok || len(actions) == 0 {
 		// Handle the missing key or empty slice.
 		// For example, log an error, return from the function, etc.
-		log.Println("No message.action event found")
+		slog.Info("No message.action event found", "event", event)
 		return // or handle it accordingly
 	}
 
