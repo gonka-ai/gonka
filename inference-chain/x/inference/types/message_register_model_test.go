@@ -17,13 +17,15 @@ func TestMsgRegisterModel_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgRegisterModel{
-				Creator: "invalid_address",
+				Authority:  "invalid_address",
+				ProposedBy: "invalid_address",
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
 			msg: MsgRegisterModel{
-				Creator: sample.AccAddress(),
+				Authority:  sample.AccAddress(),
+				ProposedBy: sample.AccAddress(),
 			},
 		},
 	}

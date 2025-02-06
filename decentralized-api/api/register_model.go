@@ -37,7 +37,7 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 		// TODO: make it a function of cosmosClient interface?
 		err = cosmosclient.SubmitProposal(cosmosClient, msg, proposalData)
 		if err != nil {
-			slog.Error("SubmitProposal failed", err)
+			slog.Error("SubmitProposal failed", "err", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
