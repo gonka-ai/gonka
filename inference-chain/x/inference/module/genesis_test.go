@@ -69,11 +69,9 @@ func TestGenesis(t *testing.T) {
 	}
 
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
-	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.StandardRewardPoolAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.StandardRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
 	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{

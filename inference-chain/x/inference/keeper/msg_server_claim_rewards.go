@@ -44,7 +44,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return err
 	}
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: settleAmount.GetRefundCoins(), TotalFees: settleAmount.GetWorkCoins()})
-	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.StandardRewardPoolAccName)
+	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName)
 	if err != nil {
 		ms.LogError("Error paying participant for rewards", "error", err)
 		return err
