@@ -18,11 +18,13 @@ message Params {
 }
 
 message GenesisOnlyParams {
-  uint64 total_supply = 4;
-  uint64 originator_supply = 5;
-  uint64 top_reward_amount = 6;
-  int32 top_rewards = 7;
-  string supply_denom = 8;
+  int64 total_supply = 1;
+  int64 originator_supply = 2;
+  int64 top_reward_amount = 3;
+  int64 standard_reward_amount = 4;
+  int64 pre_programmed_sale_amount = 5;
+  int32 top_rewards = 6;
+  string supply_denom = 7;
 }
 
 message TokenomicsParams {

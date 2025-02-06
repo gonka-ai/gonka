@@ -82,8 +82,7 @@ data class InferenceResult(
 }
 
 private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
-    highestFunded.node.waitForMinimumBlock((EpochLength + setNewValidatorsStage + 1))
-
+    highestFunded.waitForFirstPoC()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
     val inferenceId = response.id
@@ -101,6 +100,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.node.waitForMinimumBlock(1)
+        it.node.exportState()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })

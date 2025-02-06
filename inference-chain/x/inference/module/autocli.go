@@ -107,6 +107,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{
+					RpcMethod: "TokenomicsData",
+					Use:       "show-tokenomics-data",
+					Short:     "show tokenomics_data",
+				},
+				{
 					RpcMethod:      "GetUnitOfComputePriceProposal",
 					Use:            "get-unit-of-compute-price-proposal",
 					Short:          "Query get-unit-of-compute-price-proposal",

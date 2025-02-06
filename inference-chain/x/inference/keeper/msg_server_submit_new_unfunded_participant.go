@@ -42,6 +42,7 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			Url:          msg.GetUrl(),
 			Models:       msg.GetModels(),
 			ValidatorKey: msg.GetValidatorKey(),
+			WorkerKey:    msg.GetWorkerKey(),
 		})
 	k.LogDebug("Adding new participant", "participant", newParticipant)
 	k.SetParticipant(ctx, newParticipant)
@@ -55,7 +56,7 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			k.LogError("Error minting coins", "error", err)
 			return nil, err
 		}
-		err = k.bank.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.MustAccAddressFromBech32(msg.GetAddress()), starterCoins)
+		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.MustAccAddressFromBech32(msg.GetAddress()), starterCoins)
 		if err != nil {
 			k.LogError("Error sending coins", "error", err)
 			return nil, err

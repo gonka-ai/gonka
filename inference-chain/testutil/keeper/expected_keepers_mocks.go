@@ -15,10 +15,11 @@ import (
 
 	math "cosmossdk.io/math"
 	types "github.com/cosmos/cosmos-sdk/types"
+	types0 "github.com/cosmos/cosmos-sdk/x/bank/types"
 	group "github.com/cosmos/cosmos-sdk/x/group"
 	keeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	types0 "github.com/cosmos/cosmos-sdk/x/staking/types"
-	types1 "github.com/productscience/inference/x/inference/types"
+	types1 "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types2 "github.com/productscience/inference/x/inference/types"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -57,6 +58,20 @@ func (m *MockAccountKeeper) GetAccount(arg0 context.Context, arg1 types.AccAddre
 func (mr *MockAccountKeeperMockRecorder) GetAccount(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccount", reflect.TypeOf((*MockAccountKeeper)(nil).GetAccount), arg0, arg1)
+}
+
+// GetModuleAccount mocks base method.
+func (m *MockAccountKeeper) GetModuleAccount(ctx context.Context, moduleName string) types.ModuleAccountI {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetModuleAccount", ctx, moduleName)
+	ret0, _ := ret[0].(types.ModuleAccountI)
+	return ret0
+}
+
+// GetModuleAccount indicates an expected call of GetModuleAccount.
+func (mr *MockAccountKeeperMockRecorder) GetModuleAccount(ctx, moduleName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetModuleAccount", reflect.TypeOf((*MockAccountKeeper)(nil).GetModuleAccount), ctx, moduleName)
 }
 
 // GetModuleAddress mocks base method.
@@ -185,6 +200,21 @@ func (m *MockBankEscrowKeeper) BurnCoins(ctx context.Context, moduleName string,
 func (mr *MockBankEscrowKeeperMockRecorder) BurnCoins(ctx, moduleName, amt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BurnCoins", reflect.TypeOf((*MockBankEscrowKeeper)(nil).BurnCoins), ctx, moduleName, amt)
+}
+
+// GetDenomMetaData mocks base method.
+func (m *MockBankEscrowKeeper) GetDenomMetaData(ctx context.Context, denom string) (types0.Metadata, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDenomMetaData", ctx, denom)
+	ret0, _ := ret[0].(types0.Metadata)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetDenomMetaData indicates an expected call of GetDenomMetaData.
+func (mr *MockBankEscrowKeeperMockRecorder) GetDenomMetaData(ctx, denom any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDenomMetaData", reflect.TypeOf((*MockBankEscrowKeeper)(nil).GetDenomMetaData), ctx, denom)
 }
 
 // MintCoins mocks base method.
@@ -620,7 +650,7 @@ func (m *MockValidatorSet) EXPECT() *MockValidatorSetMockRecorder {
 }
 
 // IterateValidators mocks base method.
-func (m *MockValidatorSet) IterateValidators(arg0 context.Context, arg1 func(int64, types0.ValidatorI) bool) error {
+func (m *MockValidatorSet) IterateValidators(arg0 context.Context, arg1 func(int64, types1.ValidatorI) bool) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IterateValidators", arg0, arg1)
 	ret0, _ := ret[0].(error)
@@ -657,10 +687,10 @@ func (m *MockStakingKeeper) EXPECT() *MockStakingKeeperMockRecorder {
 }
 
 // SetComputeValidators mocks base method.
-func (m *MockStakingKeeper) SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types0.Validator, error) {
+func (m *MockStakingKeeper) SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types1.Validator, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SetComputeValidators", ctx, computeResults)
-	ret0, _ := ret[0].([]types0.Validator)
+	ret0, _ := ret[0].([]types1.Validator)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -695,10 +725,10 @@ func (m *MockParticipantKeeper) EXPECT() *MockParticipantKeeperMockRecorder {
 }
 
 // GetAllParticipant mocks base method.
-func (m *MockParticipantKeeper) GetAllParticipant(ctx context.Context) []types1.Participant {
+func (m *MockParticipantKeeper) GetAllParticipant(ctx context.Context) []types2.Participant {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllParticipant", ctx)
-	ret0, _ := ret[0].([]types1.Participant)
+	ret0, _ := ret[0].([]types2.Participant)
 	return ret0
 }
 
@@ -709,10 +739,10 @@ func (mr *MockParticipantKeeperMockRecorder) GetAllParticipant(ctx any) *gomock.
 }
 
 // GetParticipant mocks base method.
-func (m *MockParticipantKeeper) GetParticipant(ctx context.Context, index string) (types1.Participant, bool) {
+func (m *MockParticipantKeeper) GetParticipant(ctx context.Context, index string) (types2.Participant, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetParticipant", ctx, index)
-	ret0, _ := ret[0].(types1.Participant)
+	ret0, _ := ret[0].(types2.Participant)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -724,10 +754,10 @@ func (mr *MockParticipantKeeperMockRecorder) GetParticipant(ctx, index any) *gom
 }
 
 // GetParticipants mocks base method.
-func (m *MockParticipantKeeper) GetParticipants(ctx context.Context, ids []string) ([]types1.Participant, bool) {
+func (m *MockParticipantKeeper) GetParticipants(ctx context.Context, ids []string) ([]types2.Participant, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetParticipants", ctx, ids)
-	ret0, _ := ret[0].([]types1.Participant)
+	ret0, _ := ret[0].([]types2.Participant)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -739,10 +769,10 @@ func (mr *MockParticipantKeeperMockRecorder) GetParticipants(ctx, ids any) *gomo
 }
 
 // ParticipantAll mocks base method.
-func (m *MockParticipantKeeper) ParticipantAll(ctx context.Context, req *types1.QueryAllParticipantRequest) (*types1.QueryAllParticipantResponse, error) {
+func (m *MockParticipantKeeper) ParticipantAll(ctx context.Context, req *types2.QueryAllParticipantRequest) (*types2.QueryAllParticipantResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ParticipantAll", ctx, req)
-	ret0, _ := ret[0].(*types1.QueryAllParticipantResponse)
+	ret0, _ := ret[0].(*types2.QueryAllParticipantResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -766,7 +796,7 @@ func (mr *MockParticipantKeeperMockRecorder) RemoveParticipant(ctx, index any) *
 }
 
 // SetParticipant mocks base method.
-func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types1.Participant) {
+func (m *MockParticipantKeeper) SetParticipant(ctx context.Context, participant types2.Participant) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetParticipant", ctx, participant)
 }
@@ -801,10 +831,10 @@ func (m *MockEpochGroupDataKeeper) EXPECT() *MockEpochGroupDataKeeperMockRecorde
 }
 
 // GetAllEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types1.EpochGroupData {
+func (m *MockEpochGroupDataKeeper) GetAllEpochGroupData(ctx context.Context) []types2.EpochGroupData {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllEpochGroupData", ctx)
-	ret0, _ := ret[0].([]types1.EpochGroupData)
+	ret0, _ := ret[0].([]types2.EpochGroupData)
 	return ret0
 }
 
@@ -815,10 +845,10 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) GetAllEpochGroupData(ctx any) *g
 }
 
 // GetEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (types1.EpochGroupData, bool) {
+func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (types2.EpochGroupData, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetEpochGroupData", ctx, pocStartBlockHeight)
-	ret0, _ := ret[0].(types1.EpochGroupData)
+	ret0, _ := ret[0].(types2.EpochGroupData)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
@@ -842,7 +872,7 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) RemoveEpochGroupData(ctx, pocSta
 }
 
 // SetEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types1.EpochGroupData) {
+func (m *MockEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types2.EpochGroupData) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "SetEpochGroupData", ctx, epochGroupData)
 }
