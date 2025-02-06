@@ -10,6 +10,7 @@ import "inference/inference/participant.proto";
 import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
+import "inference/inference/model.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -24,5 +25,5 @@ message GenesisState {
   repeated EpochGroupData        epoch_group_data_list = 5 [(gogoproto.nullable) = false] ;
   repeated SettleAmount          settle_amount_list = 6 [(gogoproto.nullable) = false] ;
   repeated EpochGroupValidations epoch_group_validations_list = 7 [(gogoproto.nullable) = false] ;
+  repeated Model model_list = 8 [(gogoproto.nullable) = false] ;
 }
-
