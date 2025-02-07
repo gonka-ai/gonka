@@ -1,0 +1,12 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message TrainingTask {
+  uint64 id = 1;
+  string requested_by = 2;
+  uint64 created_at_block_height = 3;
+  uint64 assigned_at_block_height = 4;
+  uint64 finished_at_block_height = 5;
+}
