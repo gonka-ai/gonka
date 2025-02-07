@@ -1,0 +1,11 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message UnitOfComputePriceProposal {
+  string participant = 1;
+  uint64 price = 2;
+  uint64 proposed_at_block_height = 3;
+  uint64 proposed_at_epoch = 4;
+}

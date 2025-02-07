@@ -19,23 +19,26 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName                     = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName                  = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName               = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName                = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName             = "/inference.inference.Query/ParticipantAll"
-	Query_GetInferencesWithExecutors_FullMethodName = "/inference.inference.Query/GetInferencesWithExecutors"
-	Query_InferenceParticipant_FullMethodName       = "/inference.inference.Query/InferenceParticipant"
-	Query_GetRandomExecutor_FullMethodName          = "/inference.inference.Query/GetRandomExecutor"
-	Query_EpochGroupData_FullMethodName             = "/inference.inference.Query/EpochGroupData"
-	Query_EpochGroupDataAll_FullMethodName          = "/inference.inference.Query/EpochGroupDataAll"
-	Query_SettleAmount_FullMethodName               = "/inference.inference.Query/SettleAmount"
-	Query_SettleAmountAll_FullMethodName            = "/inference.inference.Query/SettleAmountAll"
-	Query_EpochGroupValidations_FullMethodName      = "/inference.inference.Query/EpochGroupValidations"
-	Query_EpochGroupValidationsAll_FullMethodName   = "/inference.inference.Query/EpochGroupValidationsAll"
-	Query_PocBatchesForStage_FullMethodName         = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName            = "/inference.inference.Query/GetCurrentEpoch"
-	Query_TokenomicsData_FullMethodName             = "/inference.inference.Query/TokenomicsData"
+	Query_Params_FullMethodName                        = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                     = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName                  = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                   = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName                = "/inference.inference.Query/ParticipantAll"
+	Query_GetInferencesWithExecutors_FullMethodName    = "/inference.inference.Query/GetInferencesWithExecutors"
+	Query_InferenceParticipant_FullMethodName          = "/inference.inference.Query/InferenceParticipant"
+	Query_GetRandomExecutor_FullMethodName             = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName                = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName             = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName                  = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName               = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName         = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName      = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName            = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
+	Query_TokenomicsData_FullMethodName                = "/inference.inference.Query/TokenomicsData"
+	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
+	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
+	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -71,6 +74,12 @@ type QueryClient interface {
 	GetCurrentEpoch(ctx context.Context, in *QueryGetCurrentEpochRequest, opts ...grpc.CallOption) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
 	TokenomicsData(ctx context.Context, in *QueryGetTokenomicsDataRequest, opts ...grpc.CallOption) (*QueryGetTokenomicsDataResponse, error)
+	// Queries a list of GetUnitOfComputePriceProposal items.
+	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
+	// Queries a list of CurrentEpochGroupData items.
+	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
+	// Queries a list of ModelsAll items.
+	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
 }
 
 type queryClient struct {
@@ -234,6 +243,33 @@ func (c *queryClient) TokenomicsData(ctx context.Context, in *QueryGetTokenomics
 	return out, nil
 }
 
+func (c *queryClient) GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error) {
+	out := new(QueryGetUnitOfComputePriceProposalResponse)
+	err := c.cc.Invoke(ctx, Query_GetUnitOfComputePriceProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error) {
+	out := new(QueryCurrentEpochGroupDataResponse)
+	err := c.cc.Invoke(ctx, Query_CurrentEpochGroupData_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error) {
+	out := new(QueryModelsAllResponse)
+	err := c.cc.Invoke(ctx, Query_ModelsAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -267,6 +303,12 @@ type QueryServer interface {
 	GetCurrentEpoch(context.Context, *QueryGetCurrentEpochRequest) (*QueryGetCurrentEpochResponse, error)
 	// Queries a TokenomicsData by index.
 	TokenomicsData(context.Context, *QueryGetTokenomicsDataRequest) (*QueryGetTokenomicsDataResponse, error)
+	// Queries a list of GetUnitOfComputePriceProposal items.
+	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
+	// Queries a list of CurrentEpochGroupData items.
+	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
+	// Queries a list of ModelsAll items.
+	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -324,6 +366,15 @@ func (UnimplementedQueryServer) GetCurrentEpoch(context.Context, *QueryGetCurren
 }
 func (UnimplementedQueryServer) TokenomicsData(context.Context, *QueryGetTokenomicsDataRequest) (*QueryGetTokenomicsDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TokenomicsData not implemented")
+}
+func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetUnitOfComputePriceProposal not implemented")
+}
+func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CurrentEpochGroupData not implemented")
+}
+func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -644,6 +695,60 @@ func _Query_TokenomicsData_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetUnitOfComputePriceProposalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetUnitOfComputePriceProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetUnitOfComputePriceProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetUnitOfComputePriceProposal(ctx, req.(*QueryGetUnitOfComputePriceProposalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_CurrentEpochGroupData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryCurrentEpochGroupDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).CurrentEpochGroupData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_CurrentEpochGroupData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).CurrentEpochGroupData(ctx, req.(*QueryCurrentEpochGroupDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ModelsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryModelsAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ModelsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ModelsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ModelsAll(ctx, req.(*QueryModelsAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -718,6 +823,18 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TokenomicsData",
 			Handler:    _Query_TokenomicsData_Handler,
+		},
+		{
+			MethodName: "GetUnitOfComputePriceProposal",
+			Handler:    _Query_GetUnitOfComputePriceProposal_Handler,
+		},
+		{
+			MethodName: "CurrentEpochGroupData",
+			Handler:    _Query_CurrentEpochGroupData_Handler,
+		},
+		{
+			MethodName: "ModelsAll",
+			Handler:    _Query_ModelsAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

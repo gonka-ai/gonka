@@ -12,8 +12,9 @@
     },
     "inference": {
       "params": {
-        "epoch_params": {
-          "epoch_length": "2000"
+        "epochParams": {
+          "epochLength": "2000",
+          "default_unit_of_compute_price": "100"
         }
       },
       "genesis_only_params": {

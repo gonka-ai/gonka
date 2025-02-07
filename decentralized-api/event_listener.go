@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	finishInferenceAction = "/inference.inference.MsgFinishInference"
-	validationAction      = "/inference.inference.MsgValidation"
+	finishInferenceAction   = "/inference.inference.MsgFinishInference"
+	validationAction        = "/inference.inference.MsgValidation"
+	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
 )
 
 func StartEventListener(
@@ -45,6 +46,7 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -140,7 +142,15 @@ func handleMessage(
 		return
 	}
 
-	var action = event.Result.Events["message.action"][0]
+	actions, ok := event.Result.Events["message.action"]
+	if !ok || len(actions) == 0 {
+		// Handle the missing key or empty slice.
+		// For example, log an error, return from the function, etc.
+		slog.Info("No message.action event found", "event", event)
+		return // or handle it accordingly
+	}
+
+	action := actions[0]
 	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
@@ -153,6 +163,10 @@ func handleMessage(
 		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
 		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	case submitGovProposalAction:
+		handleGovProposal(event.Result.Events, transactionRecorder)
+	default:
+		slog.Debug("Unhandled action received", "action", action)
 	}
 }
 
@@ -193,4 +207,8 @@ func getWebsocketUrl(config *apiconfig.Config) string {
 
 	// Construct the new URL
 	return u.String()
+}
+
+func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+
 }

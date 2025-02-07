@@ -14,7 +14,8 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "20"
+          "epoch_length": "20",
+          "default_unit_of_compute_price": "100"
         }
       },
       "genesis_only_params": {
@@ -25,7 +26,11 @@
         "pre_programmed_sale_amount": "20",
         "top_rewards": 3,
         "supply_denom": "micoin"
-      }
+      },
+      "model_list": [
+        {"proposed_by": "genesis", "id": "AGI", "units_of_compute_per_token": 100},
+        {"proposed_by": "genesis", "id": "ASI", "units_of_compute_per_token": 1000}
+      ]
     }
   }
 }

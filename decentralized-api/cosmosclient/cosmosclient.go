@@ -114,8 +114,10 @@ type CosmosMessageClient interface {
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
+	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
+	SendTransaction(msg sdk.Msg) error
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
@@ -145,39 +147,39 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.Address
 	transaction.ExecutedBy = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.Address
 	slog.Info("Validation: Reporting validation", "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
@@ -186,17 +188,22 @@ func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address stri
 
 func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
 }
 
 func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
 	transaction.Creator = icc.Address
-	return icc.sendTransaction(transaction)
+	return icc.SendTransaction(transaction)
+}
+
+func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error {
+	transaction.Creator = icc.Address
+	return icc.SendTransaction(transaction)
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -264,7 +271,7 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 	return &factory, nil
 }
 
-func (icc *InferenceCosmosClient) sendTransaction(msg sdk.Msg) error {
+func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) error {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()

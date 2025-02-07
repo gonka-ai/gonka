@@ -46,6 +46,14 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
 	}
+	for _, elem := range genState.ModelList {
+		if elem.ProposedBy != "genesis" {
+			panic("At genesis all model.ProposedBy are expected to be \"genesis\".")
+		}
+
+		elem.ProposedBy = k.GetAuthority()
+		k.SetModel(ctx, &elem)
+	}
 
 }
 
@@ -110,7 +118,20 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams
 	}
+	genesis.ModelList = getModels(&ctx, &k)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis
+}
+
+func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
+	models, err := k.GetAllModels(ctx)
+	if err != nil {
+		panic(err)
+	}
+	models2, err := keeper.PointersToValues(models)
+	if err != nil {
+		panic(err)
+	}
+	return models2
 }

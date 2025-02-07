@@ -17,19 +17,21 @@ service Msg {
   
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
-  rpc UpdateParams                 (MsgUpdateParams                ) returns (MsgUpdateParamsResponse                );
-  rpc StartInference               (MsgStartInference              ) returns (MsgStartInferenceResponse              );
-  rpc FinishInference              (MsgFinishInference             ) returns (MsgFinishInferenceResponse             );
-  rpc SubmitNewParticipant         (MsgSubmitNewParticipant        ) returns (MsgSubmitNewParticipantResponse        );
-  rpc Validation                   (MsgValidation                  ) returns (MsgValidationResponse                  );
-  rpc SubmitPoC                    (MsgSubmitPoC                   ) returns (MsgSubmitPoCResponse                   );
-  rpc SubmitNewUnfundedParticipant (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
-  rpc InvalidateInference          (MsgInvalidateInference         ) returns (MsgInvalidateInferenceResponse         );
-  rpc RevalidateInference          (MsgRevalidateInference         ) returns (MsgRevalidateInferenceResponse         );
-  rpc ClaimRewards                 (MsgClaimRewards                ) returns (MsgClaimRewardsResponse                );
-  rpc SubmitPocBatch               (MsgSubmitPocBatch              ) returns (MsgSubmitPocBatchResponse              );
-  rpc SubmitPocValidation          (MsgSubmitPocValidation         ) returns (MsgSubmitPocValidationResponse         );
-  rpc SubmitSeed                   (MsgSubmitSeed                  ) returns (MsgSubmitSeedResponse                  );
+  rpc UpdateParams                     (MsgUpdateParams                    ) returns (MsgUpdateParamsResponse                    );
+  rpc StartInference                   (MsgStartInference                  ) returns (MsgStartInferenceResponse                  );
+  rpc FinishInference                  (MsgFinishInference                 ) returns (MsgFinishInferenceResponse                 );
+  rpc SubmitNewParticipant             (MsgSubmitNewParticipant            ) returns (MsgSubmitNewParticipantResponse            );
+  rpc Validation                       (MsgValidation                      ) returns (MsgValidationResponse                      );
+  rpc SubmitPoC                        (MsgSubmitPoC                       ) returns (MsgSubmitPoCResponse                       );
+  rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant    ) returns (MsgSubmitNewUnfundedParticipantResponse    );
+  rpc InvalidateInference              (MsgInvalidateInference             ) returns (MsgInvalidateInferenceResponse             );
+  rpc RevalidateInference              (MsgRevalidateInference             ) returns (MsgRevalidateInferenceResponse             );
+  rpc ClaimRewards                     (MsgClaimRewards                    ) returns (MsgClaimRewardsResponse                    );
+  rpc SubmitPocBatch                   (MsgSubmitPocBatch                  ) returns (MsgSubmitPocBatchResponse                  );
+  rpc SubmitPocValidation              (MsgSubmitPocValidation             ) returns (MsgSubmitPocValidationResponse             );
+  rpc SubmitSeed                       (MsgSubmitSeed                      ) returns (MsgSubmitSeedResponse                      );
+  rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
+  rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -192,4 +194,22 @@ message MsgSubmitSeed {
 }
 
 message MsgSubmitSeedResponse {}
+
+message MsgSubmitUnitOfComputePriceProposal {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 price   = 2;
+}
+
+message MsgSubmitUnitOfComputePriceProposalResponse {}
+
+message MsgRegisterModel {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string proposed_by = 2;
+  string id = 3;
+  uint64 units_of_compute_per_token = 4;
+}
+
+message MsgRegisterModelResponse {}
 

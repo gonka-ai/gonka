@@ -40,6 +40,7 @@ message EpochParams {
   int64 epoch_multiplier = 2;
   uint64 epoch_new_coin = 3;
   int64 coin_halving_interval = 4;
+  uint64 default_unit_of_compute_price = 5;
 }
 
 message ValidationParams {

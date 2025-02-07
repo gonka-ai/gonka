@@ -243,11 +243,42 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		}
 	}
 
+	var defaultPrice uint64
+	if upcomingEg.GroupData.EpochGroupId != 1 {
+		currentEg, err := am.keeper.GetCurrentEpochGroup(ctx)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to get current epoch group", "error", err.Error())
+			return
+		}
+		defaultPrice = currentEg.GroupData.UnitOfComputePrice
+	} else {
+		defaultPrice = am.keeper.GetParams(ctx).EpochParams.DefaultUnitOfComputePrice
+	}
+
+	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get all unit of compute price proposals", "error", err.Error())
+		return
+	}
+
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", "len(proposals)", len(proposals))
+
+	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice)
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", "medianProposal", medianProposal)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
+		return
+	}
+
 	// TODO: Move this so active participants are set 1 block before new validators
-	am.moveUpcomingToEffectiveGroup(ctx, blockHeight)
+	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, medianProposal)
 }
 
-func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64) {
+func (am AppModule) computePrice(ctx context.Context) {
+
+}
+
+func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
 	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
 
@@ -266,6 +297,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		return
 	}
 	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
+	newGroupData.UnitOfComputePrice = unitOfComputePrice
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)

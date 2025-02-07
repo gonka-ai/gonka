@@ -11,12 +11,13 @@ import "inference/inference/epoch_group_data.proto";
 import "inference/inference/settle_amount.proto";
 import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/tokenomics_data.proto";
+import "inference/inference/model.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 // GenesisState defines the inference module's genesis state.
 message GenesisState {
-  
+
   // params defines all the parameters of the module.
            Params                params                       = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
            GenesisOnlyParams     genesis_only_params          = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
@@ -26,5 +27,5 @@ message GenesisState {
   repeated SettleAmount          settle_amount_list           = 6 [(gogoproto.nullable) = false] ;
   repeated EpochGroupValidations epoch_group_validations_list = 7 [(gogoproto.nullable) = false] ;
            TokenomicsData        tokenomics_data               = 8;
+  repeated Model model_list = 9 [(gogoproto.nullable) = false] ;
 }
-
