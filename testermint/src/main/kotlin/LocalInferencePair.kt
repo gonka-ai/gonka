@@ -1,18 +1,16 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.command.CreateContainerResponse
-import com.github.dockerjava.api.model.Bind
 import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.ExposedPort
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Ports
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
+import com.productscience.data.AppState
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
+import com.productscience.data.Spec
 import org.tinylog.kotlin.Logger
 import java.time.Instant
 
@@ -160,6 +158,8 @@ data class ApplicationConfig(
     val denom: String,
     val stateDirName: String,
     val pairName: String = "",
+    val genesisName: String = "genesis",
+    val genesisSpec: Spec<AppState>? = null,
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

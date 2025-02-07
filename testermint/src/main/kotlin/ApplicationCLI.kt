@@ -1,7 +1,5 @@
 package com.productscience
 
-import com.github.dockerjava.api.async.ResultCallback
-import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
@@ -17,7 +15,6 @@ import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
 import java.time.Instant
-import java.time.format.DateTimeParseException
 
 // Usage
 data class ApplicationCLI(
@@ -27,6 +24,16 @@ data class ApplicationCLI(
 ) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
+
+    fun getGenesisState(): AppExport =
+        wrapLog("getGenesisJson", false) {
+            val filePath = "/root/.inference/config/genesis.json"
+            val readFileCommand = listOf("cat", filePath)
+
+            val output = exec(readFileCommand)
+            val joined = output.joinToString("")
+            gsonSnakeCase.fromJson(joined, AppExport::class.java)
+        }
 
     fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {

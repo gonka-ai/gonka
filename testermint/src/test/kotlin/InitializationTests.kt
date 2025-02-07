@@ -1,45 +1,24 @@
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.DockerGroup
+import com.productscience.getLocalInferencePairs
+import com.productscience.inferenceConfig
+import com.productscience.initialize
+import com.productscience.initializeCluster
 import org.junit.jupiter.api.Test
-import java.nio.file.Path
 
 class InitializationTests {
-    @Test
-    fun initializeDockerOnly() {
-
-        val genesisGroup = DockerGroup(
-            dockerClient = DockerClientBuilder.getInstance().build(),
-            keyName = "genesis",
-            port = 8080,
-            nodeConfigFile = "node_payload_wiremock_genesis.json",
-            isGenesis = true,
-            wiremockExternalPort = 8090,
-            workingDirectory = getRepoRoot(),
-            genesisOverridesFile = "inference-chain/test_genesis_overrides.json"
-        )
-
-        genesisGroup.init()
-    }
 
     @Test
     fun init3() {
-        val genesisGroup = DockerGroup(
-            dockerClient = DockerClientBuilder.getInstance().build(),
-            keyName = "genesis",
-            port = 8080,
-            nodeConfigFile = "node_payload_wiremock_genesis.json",
-            isGenesis = true,
-            wiremockExternalPort = 8090,
-            workingDirectory = getRepoRoot(),
-            genesisOverridesFile = "inference-chain/test_genesis_overrides.json"
-        )
+        initializeCluster(2, inferenceConfig)
+    }
 
-        val joinGroup1 = createJoinGroup(1, genesisGroup)
-        val joinGroup2 = createJoinGroup(2, genesisGroup)
-        genesisGroup.init()
-        Thread.sleep(40000)
-        joinGroup1.init()
-        joinGroup2.init()
+    @Test
+    fun getGenesisState() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val highestFunded = initialize(pairs)
+        val genesis = highestFunded.node.getGenesisState()
+
+        println(genesis.appState.inference)
     }
 
     @Test
@@ -56,28 +35,5 @@ class InitializationTests {
         network?.let {
             dockerClient.removeNetworkCmd(it.id).exec()
         }
-    }
-
-    private fun createJoinGroup(iteration: Int, genesisGroup: DockerGroup): DockerGroup {
-        val keyName = "join$iteration"
-        return DockerGroup(
-            dockerClient = DockerClientBuilder.getInstance().build(),
-            keyName = keyName,
-            port = 8080 + iteration,
-            nodeConfigFile = "node_payload_wiremock_$keyName.json",
-            isGenesis = false,
-            wiremockExternalPort = 8090 + iteration,
-            workingDirectory = getRepoRoot(),
-            genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
-            genesisGroup = genesisGroup
-        )
-    }
-
-    private fun getRepoRoot(): String {
-        val currentDir = Path.of("").toAbsolutePath()
-        return generateSequence(currentDir) { it.parent }
-            .firstOrNull { it.fileName.toString() == "inference-ignite" }
-            ?.toString()
-            ?: throw IllegalStateException("Repository root 'inference-ignite' not found")
     }
 }

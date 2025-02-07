@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.DurationDeserializer
 import com.productscience.data.InferenceNode
@@ -174,7 +175,7 @@ private fun TxResponse.assertSuccess() {
 }
 
 val defaultFunding = 20_000_000L
-val gsonSnakeCase = GsonBuilder()
+val gsonSnakeCase: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())

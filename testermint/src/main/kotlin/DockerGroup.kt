@@ -7,6 +7,7 @@ import com.github.dockerjava.api.model.ExposedPort
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.Ports
 import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.core.DockerClientBuilder
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.ExperimentalPathApi
@@ -25,6 +26,7 @@ data class DockerGroup(
     val genesisOverridesFile: String,
     val publicUrl: String = "http://$keyName-api:8080",
     val pocCallbackUrl: String = publicUrl,
+    val config: ApplicationConfig,
 ) {
     fun init() {
         tearDownExisting()
@@ -39,7 +41,7 @@ data class DockerGroup(
         dockerClient.startContainerCmd(mock.id).exec()
     }
 
-    private fun tearDownExisting() {
+    fun tearDownExisting() {
         val containers = dockerClient.listContainersCmd().withShowAll(true).exec()
         val containersToStop = containers.filter {
             it.labels.any { (key, value) ->
@@ -47,10 +49,11 @@ data class DockerGroup(
             }
         }
         containersToStop.forEach {
-            println("Stopping container ${it.id} with name ${it.names.first()}")
-            if (it.state == "running") {
-                dockerClient.stopContainerCmd(it.id).exec()
-            }
+            println("Removing container ${it.id} with name ${it.names.first()}")
+            // I don't think there is a need to be graceful in stopping old containers
+//            if (it.state == "running") {
+//                dockerClient.stopContainerCmd(it.id).exec()
+//            }
             dockerClient.removeContainerCmd(it.id).withForce(true).withRemoveVolumes(true).exec()
         }
     }
@@ -184,5 +187,96 @@ data class DockerGroup(
         // Create and start the container
         return createCommand.exec()
     }
+}
 
+fun createDockerGroup(iteration: Int, genesisGroup: DockerGroup?, config: ApplicationConfig): DockerGroup {
+    val keyName = if (iteration == 0) "genesis" else "join$iteration"
+    val nodeConfigFile = "node_payload_wiremock_$keyName.json"
+    val repoRoot = getRepoRoot()
+
+    val nodeFile = Path.of(repoRoot, nodeConfigFile)
+    if (!Files.exists(nodeFile)) {
+        Files.writeString(
+            nodeFile, """
+            [
+              {
+                "id": "wiremock",
+                "host": "$keyName-wiremock",
+                "inference_port": 8080,
+                "poc_port": 8080,
+                "max_concurrent": 10,
+                "models": [
+                  "unsloth/llama-3-8b-Instruct"
+                ]
+              }
+            ]
+        """.trimIndent()
+        )
+    }
+    return DockerGroup(
+        dockerClient = DockerClientBuilder.getInstance().build(),
+        keyName = keyName,
+        port = 8080 + iteration,
+        nodeConfigFile = nodeConfigFile,
+        isGenesis = iteration == 0,
+        wiremockExternalPort = 8090 + iteration,
+        workingDirectory = repoRoot,
+        genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
+        genesisGroup = genesisGroup,
+        config = config
+    )
+}
+
+fun getRepoRoot(): String {
+    val currentDir = Path.of("").toAbsolutePath()
+    return generateSequence(currentDir) { it.parent }
+        .firstOrNull { it.fileName.toString() == "inference-ignite" }
+        ?.toString()
+        ?: throw IllegalStateException("Repository root 'inference-ignite' not found")
+}
+
+fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<DockerGroup> {
+    val genesisGroup = createDockerGroup(0, null, config)
+    val joinGroups = (1..joinCount).map { createDockerGroup(it, genesisGroup, config) }
+    val allGroups = listOf(genesisGroup) + joinGroups
+    allGroups.forEach { it.tearDownExisting() }
+    genesisGroup.init()
+    Thread.sleep(40000)
+    joinGroups.forEach { it.init() }
+    return allGroups
+}
+
+fun setupLocalCluster(joinCount: Int, config: ApplicationConfig): LocalCluster? {
+    val currentCluster = getLocalCluster(config)
+    if (clusterMatchesConfig(currentCluster, joinCount, config)) {
+        return currentCluster
+    } else {
+        initializeCluster(joinCount, config)
+        return getLocalCluster(config)
+    }
+}
+
+fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: ApplicationConfig): Boolean {
+    if (cluster == null) return false
+    if (cluster.joinPairs.size != joinCount) return false
+    val genesisState = cluster.genesis.node.getGenesisState()
+    if (config.genesisSpec?.matches(genesisState.appState) == false) {
+        return false
+    }
+    return true
+}
+
+fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
+    val currentPairs = getLocalInferencePairs(config)
+    val (genesis, join) = currentPairs.partition { it.name == config.genesisName }
+    return genesis.singleOrNull()?.let {
+        LocalCluster(it, join)
+    }
+}
+
+data class LocalCluster(
+    val genesis: LocalInferencePair,
+    val joinPairs: List<LocalInferencePair>,
+) {
+    val allPairs = listOf(genesis) + joinPairs
 }
