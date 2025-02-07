@@ -13,6 +13,10 @@ import (
 func (k Keeper) CreateTask(ctx sdk.Context, task *types.TrainingTask) error {
 	store := EmptyPrefixStore(ctx, &k)
 
+	if task.Id == 0 {
+		task.Id = k.GetNextTaskID(ctx)
+	}
+
 	taskKey := types.TrainingTaskFullKey(task.Id)
 	if store.Has(taskKey) {
 		return fmt.Errorf("task already exists. id = %d", task.Id)
@@ -26,6 +30,31 @@ func (k Keeper) CreateTask(ctx sdk.Context, task *types.TrainingTask) error {
 	store.Set(queuedKey, []byte{})
 
 	return nil
+}
+
+// GetNextTaskID returns the next available task ID as a uint64.
+// It reads the current sequence number from the KVStore, increments it,
+// saves it back, and then returns the new value.
+func (k Keeper) GetNextTaskID(ctx sdk.Context) uint64 {
+	store := EmptyPrefixStore(ctx, &k)
+
+	key := []byte(types.TrainingTaskSequenceKey)
+	bz := store.Get(key)
+	var nextId uint64
+	if bz == nil {
+		// Start at 1 if no sequence exists yet.
+		nextId = 1
+	} else {
+		// Decode the current sequence and increment it.
+		nextId = binary.BigEndian.Uint64(bz) + 1
+	}
+
+	// Store the new sequence number.
+	newBz := make([]byte, 8)
+	binary.BigEndian.PutUint64(newBz, nextId)
+	store.Set(key, newBz)
+
+	return nextId
 }
 
 // StartTask moves a task from the queued state to the in-progress state.

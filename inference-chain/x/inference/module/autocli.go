@@ -221,6 +221,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a submit-unit-of-compute-price-proposal tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
 				},
+				{
+					RpcMethod:      "CreateTrainingTask",
+					Use:            "create-training-task",
+					Short:          "Send a createTrainingTask tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

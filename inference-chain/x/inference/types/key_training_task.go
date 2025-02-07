@@ -8,6 +8,8 @@ const (
 	// Actual training task objects are stored under keys like "TrainingTask/value/{taskID}".
 	TrainingTaskKeyPrefix = "TrainingTask/value/"
 
+	TrainingTaskSequenceKey = "TrainingTask/sequence/value/"
+
 	// Set of training tasks IDs that are queued for processing.
 	QueuedTrainingTaskKeyPrefix = "TrainingTask/queued/value/"
 
