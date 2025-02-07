@@ -111,7 +111,7 @@ data class ApplicationCLI(
     fun getAddress(): String = wrapLog("getAddress", false) {
         if (addresss == null) {
             val keys = getKeys()
-            addresss = keys.first { it.name == this.config.pairName.drop(1) }.address
+            addresss = (keys.firstOrNull { it.name == this.config.pairName.drop(1) } ?: keys.first()).address
         }
         addresss!!
     }
@@ -362,92 +362,5 @@ data class ApplicationCLI(
 
 }
 
-class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
-    val output = mutableListOf<String>()
-    override fun onNext(frame: Frame) {
-        output.add(String(frame.payload).trim())
-    }
-}
-
 val maxBlockWaitTime = Duration.ofSeconds(15)
 
-val timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z".toRegex()
-
-fun extractTimestamp(entireLine: String): Instant? {
-    val matchResult = timestampPattern.find(entireLine)
-    return if (matchResult != null) {
-        try {
-            Instant.parse(matchResult.value)
-        } catch (e: DateTimeParseException) {
-            null
-        }
-    } else {
-        null
-    }
-}
-
-class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
-    var currentHeight = 0L
-    val currentMessage = StringBuilder()
-    val currentTimestamp: Instant? = null
-
-    override fun onNext(frame: Frame) = logContext(
-        mapOf(
-            "operation" to type,
-            "pair" to name,
-            "source" to "container",
-            "blockHeight" to currentHeight.toString()
-        )
-    ) {
-        val logEntry = String(frame.payload).trim()
-        val timestamp = extractTimestamp(logEntry)
-        if (timestamp != null) {
-            val entryWithoutTimestamp = logEntry.replaceFirst(timestampPattern, "").trim()
-            if (currentMessage.isNotEmpty()) {
-                log(currentMessage.toString())
-                currentMessage.clear()
-            }
-            if (frame.payload.size < 1000) {
-                log(entryWithoutTimestamp)
-            } else {
-                currentMessage.append(entryWithoutTimestamp)
-            }
-        } else {
-            currentMessage.append(logEntry)
-            if (frame.payload.size < 1000) {
-                log(currentMessage.toString())
-                currentMessage.clear()
-            }
-        }
-        Unit
-    }
-
-    private fun log(logEntry: String) {
-        if (logEntry.contains("committed state")) {
-            // extract out height=123
-
-            "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
-                val height = it.groupValues[1].toLong()
-                if (height > currentHeight) {
-                    Logger.info("New block, height={}", height)
-                    currentHeight = height
-                }
-            }
-        }
-
-        if (logEntry.contains("INFO+")) {
-            Logger.info(logEntry)
-        } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
-            // We map this to debug as there is a LOT of info level logs
-            Logger.debug(logEntry)
-        } else if (logEntry.contains("ERR") || logEntry.contains(" ERROR ")) {
-            Logger.error(logEntry)
-        } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
-            Logger.debug(logEntry)
-        } else if (logEntry.contains("WRN ") || logEntry.contains(" WARN ")) {
-            Logger.warn(logEntry)
-        } else {
-            Logger.trace(logEntry)
-        }
-    }
-}

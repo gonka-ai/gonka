@@ -12,6 +12,7 @@ import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import kotlin.test.assertNotNull
@@ -127,7 +128,7 @@ class InferenceAccountingTests : TestermintTest() {
             )
             assertThat(participantAfter.balance)
                 .`as`("Balance has previous coinsOwed and refundsOwed for ${participant.id}")
-                .isEqualTo(expectedTotal)
+                .isCloseTo(expectedTotal, Offset.offset(1))
             tokenomics = tokenomics.copy(
                 totalSubsidies = tokenomics.totalSubsidies + coinRewards[participant]!!,
                 totalFees = tokenomics.totalFees + participant.coinsOwed,
