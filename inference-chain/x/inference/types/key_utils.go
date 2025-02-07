@@ -12,17 +12,12 @@ func stringKey(id string) []byte {
 	return key
 }
 
-func stringsKey(id1, id2 string) []byte {
+func stringsKey(ids ...string) []byte {
 	var key []byte
-
-	id1Bytes := []byte(id1)
-	key = append(key, id1Bytes...)
-	key = append(key, []byte("/")...)
-
-	id2Bytes := []byte(id2)
-	key = append(key, id2Bytes...)
-	key = append(key, []byte("/")...)
-
+	for _, id := range ids {
+		key = append(key, id...)
+		key = append(key, '/')
+	}
 	return key
 }
 
