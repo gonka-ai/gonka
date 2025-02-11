@@ -1,6 +1,6 @@
 module decentralized-api
 
-go 1.22.2
+go 1.22.8
 
 require (
 	cosmossdk.io/store v1.1.0

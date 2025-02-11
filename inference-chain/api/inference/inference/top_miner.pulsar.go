@@ -2,7 +2,7 @@
 package inference
 
 import (
-	v1beta1 "cosmossdk.io/api/cosmos/base/v1beta1"
+	_ "cosmossdk.io/api/cosmos/base/v1beta1"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	_ "github.com/cosmos/gogoproto/gogoproto"
@@ -17,7 +17,7 @@ import (
 var _ protoreflect.List = (*_TopMiner_4_list)(nil)
 
 type _TopMiner_4_list struct {
-	list *[]*v1beta1.Coin
+	list *[]int64
 }
 
 func (x *_TopMiner_4_list) Len() int {
@@ -28,37 +28,32 @@ func (x *_TopMiner_4_list) Len() int {
 }
 
 func (x *_TopMiner_4_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+	return protoreflect.ValueOfInt64((*x.list)[i])
 }
 
 func (x *_TopMiner_4_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*v1beta1.Coin)
+	valueUnwrapped := value.Int()
+	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
 func (x *_TopMiner_4_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*v1beta1.Coin)
+	valueUnwrapped := value.Int()
+	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
 func (x *_TopMiner_4_list) AppendMutable() protoreflect.Value {
-	v := new(v1beta1.Coin)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
+	panic(fmt.Errorf("AppendMutable can not be called on message TopMiner at list field RewardsPaid as it is not of Message kind"))
 }
 
 func (x *_TopMiner_4_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
 	*x.list = (*x.list)[:n]
 }
 
 func (x *_TopMiner_4_list) NewElement() protoreflect.Value {
-	v := new(v1beta1.Coin)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
+	v := int64(0)
+	return protoreflect.ValueOfInt64(v)
 }
 
 func (x *_TopMiner_4_list) IsValid() bool {
@@ -66,15 +61,17 @@ func (x *_TopMiner_4_list) IsValid() bool {
 }
 
 var (
-	md_TopMiner                        protoreflect.MessageDescriptor
-	fd_TopMiner_address                protoreflect.FieldDescriptor
-	fd_TopMiner_last_qualified_started protoreflect.FieldDescriptor
-	fd_TopMiner_rewards_paid_count     protoreflect.FieldDescriptor
-	fd_TopMiner_rewards_paid           protoreflect.FieldDescriptor
-	fd_TopMiner_qualified_periods      protoreflect.FieldDescriptor
-	fd_TopMiner_missed_periods         protoreflect.FieldDescriptor
-	fd_TopMiner_qualified_time         protoreflect.FieldDescriptor
-	fd_TopMiner_missed_time            protoreflect.FieldDescriptor
+	md_TopMiner                         protoreflect.MessageDescriptor
+	fd_TopMiner_address                 protoreflect.FieldDescriptor
+	fd_TopMiner_last_qualified_started  protoreflect.FieldDescriptor
+	fd_TopMiner_rewards_paid_count      protoreflect.FieldDescriptor
+	fd_TopMiner_rewards_paid            protoreflect.FieldDescriptor
+	fd_TopMiner_qualified_periods       protoreflect.FieldDescriptor
+	fd_TopMiner_missed_periods          protoreflect.FieldDescriptor
+	fd_TopMiner_qualified_time          protoreflect.FieldDescriptor
+	fd_TopMiner_missed_time             protoreflect.FieldDescriptor
+	fd_TopMiner_last_updated_time       protoreflect.FieldDescriptor
+	fd_TopMiner_first_qualified_started protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -88,6 +85,8 @@ func init() {
 	fd_TopMiner_missed_periods = md_TopMiner.Fields().ByName("missed_periods")
 	fd_TopMiner_qualified_time = md_TopMiner.Fields().ByName("qualified_time")
 	fd_TopMiner_missed_time = md_TopMiner.Fields().ByName("missed_time")
+	fd_TopMiner_last_updated_time = md_TopMiner.Fields().ByName("last_updated_time")
+	fd_TopMiner_first_qualified_started = md_TopMiner.Fields().ByName("first_qualified_started")
 }
 
 var _ protoreflect.Message = (*fastReflection_TopMiner)(nil)
@@ -161,8 +160,8 @@ func (x *fastReflection_TopMiner) Range(f func(protoreflect.FieldDescriptor, pro
 			return
 		}
 	}
-	if x.LastQualifiedStarted != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.LastQualifiedStarted)
+	if x.LastQualifiedStarted != int64(0) {
+		value := protoreflect.ValueOfInt64(x.LastQualifiedStarted)
 		if !f(fd_TopMiner_last_qualified_started, value) {
 			return
 		}
@@ -191,15 +190,27 @@ func (x *fastReflection_TopMiner) Range(f func(protoreflect.FieldDescriptor, pro
 			return
 		}
 	}
-	if x.QualifiedTime != int32(0) {
-		value := protoreflect.ValueOfInt32(x.QualifiedTime)
+	if x.QualifiedTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.QualifiedTime)
 		if !f(fd_TopMiner_qualified_time, value) {
 			return
 		}
 	}
-	if x.MissedTime != int32(0) {
-		value := protoreflect.ValueOfInt32(x.MissedTime)
+	if x.MissedTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.MissedTime)
 		if !f(fd_TopMiner_missed_time, value) {
+			return
+		}
+	}
+	if x.LastUpdatedTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.LastUpdatedTime)
+		if !f(fd_TopMiner_last_updated_time, value) {
+			return
+		}
+	}
+	if x.FirstQualifiedStarted != int64(0) {
+		value := protoreflect.ValueOfInt64(x.FirstQualifiedStarted)
+		if !f(fd_TopMiner_first_qualified_started, value) {
 			return
 		}
 	}
@@ -221,7 +232,7 @@ func (x *fastReflection_TopMiner) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.TopMiner.address":
 		return x.Address != ""
 	case "inference.inference.TopMiner.last_qualified_started":
-		return x.LastQualifiedStarted != uint64(0)
+		return x.LastQualifiedStarted != int64(0)
 	case "inference.inference.TopMiner.rewards_paid_count":
 		return x.RewardsPaidCount != int32(0)
 	case "inference.inference.TopMiner.rewards_paid":
@@ -231,9 +242,13 @@ func (x *fastReflection_TopMiner) Has(fd protoreflect.FieldDescriptor) bool {
 	case "inference.inference.TopMiner.missed_periods":
 		return x.MissedPeriods != int32(0)
 	case "inference.inference.TopMiner.qualified_time":
-		return x.QualifiedTime != int32(0)
+		return x.QualifiedTime != int64(0)
 	case "inference.inference.TopMiner.missed_time":
-		return x.MissedTime != int32(0)
+		return x.MissedTime != int64(0)
+	case "inference.inference.TopMiner.last_updated_time":
+		return x.LastUpdatedTime != int64(0)
+	case "inference.inference.TopMiner.first_qualified_started":
+		return x.FirstQualifiedStarted != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -253,7 +268,7 @@ func (x *fastReflection_TopMiner) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.TopMiner.address":
 		x.Address = ""
 	case "inference.inference.TopMiner.last_qualified_started":
-		x.LastQualifiedStarted = uint64(0)
+		x.LastQualifiedStarted = int64(0)
 	case "inference.inference.TopMiner.rewards_paid_count":
 		x.RewardsPaidCount = int32(0)
 	case "inference.inference.TopMiner.rewards_paid":
@@ -263,9 +278,13 @@ func (x *fastReflection_TopMiner) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.TopMiner.missed_periods":
 		x.MissedPeriods = int32(0)
 	case "inference.inference.TopMiner.qualified_time":
-		x.QualifiedTime = int32(0)
+		x.QualifiedTime = int64(0)
 	case "inference.inference.TopMiner.missed_time":
-		x.MissedTime = int32(0)
+		x.MissedTime = int64(0)
+	case "inference.inference.TopMiner.last_updated_time":
+		x.LastUpdatedTime = int64(0)
+	case "inference.inference.TopMiner.first_qualified_started":
+		x.FirstQualifiedStarted = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -287,7 +306,7 @@ func (x *fastReflection_TopMiner) Get(descriptor protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.TopMiner.last_qualified_started":
 		value := x.LastQualifiedStarted
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.TopMiner.rewards_paid_count":
 		value := x.RewardsPaidCount
 		return protoreflect.ValueOfInt32(value)
@@ -305,10 +324,16 @@ func (x *fastReflection_TopMiner) Get(descriptor protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfInt32(value)
 	case "inference.inference.TopMiner.qualified_time":
 		value := x.QualifiedTime
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.TopMiner.missed_time":
 		value := x.MissedTime
-		return protoreflect.ValueOfInt32(value)
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.TopMiner.last_updated_time":
+		value := x.LastUpdatedTime
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.TopMiner.first_qualified_started":
+		value := x.FirstQualifiedStarted
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -332,7 +357,7 @@ func (x *fastReflection_TopMiner) Set(fd protoreflect.FieldDescriptor, value pro
 	case "inference.inference.TopMiner.address":
 		x.Address = value.Interface().(string)
 	case "inference.inference.TopMiner.last_qualified_started":
-		x.LastQualifiedStarted = value.Uint()
+		x.LastQualifiedStarted = value.Int()
 	case "inference.inference.TopMiner.rewards_paid_count":
 		x.RewardsPaidCount = int32(value.Int())
 	case "inference.inference.TopMiner.rewards_paid":
@@ -344,9 +369,13 @@ func (x *fastReflection_TopMiner) Set(fd protoreflect.FieldDescriptor, value pro
 	case "inference.inference.TopMiner.missed_periods":
 		x.MissedPeriods = int32(value.Int())
 	case "inference.inference.TopMiner.qualified_time":
-		x.QualifiedTime = int32(value.Int())
+		x.QualifiedTime = value.Int()
 	case "inference.inference.TopMiner.missed_time":
-		x.MissedTime = int32(value.Int())
+		x.MissedTime = value.Int()
+	case "inference.inference.TopMiner.last_updated_time":
+		x.LastUpdatedTime = value.Int()
+	case "inference.inference.TopMiner.first_qualified_started":
+		x.FirstQualifiedStarted = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -369,7 +398,7 @@ func (x *fastReflection_TopMiner) Mutable(fd protoreflect.FieldDescriptor) proto
 	switch fd.FullName() {
 	case "inference.inference.TopMiner.rewards_paid":
 		if x.RewardsPaid == nil {
-			x.RewardsPaid = []*v1beta1.Coin{}
+			x.RewardsPaid = []int64{}
 		}
 		value := &_TopMiner_4_list{list: &x.RewardsPaid}
 		return protoreflect.ValueOfList(value)
@@ -387,6 +416,10 @@ func (x *fastReflection_TopMiner) Mutable(fd protoreflect.FieldDescriptor) proto
 		panic(fmt.Errorf("field qualified_time of message inference.inference.TopMiner is not mutable"))
 	case "inference.inference.TopMiner.missed_time":
 		panic(fmt.Errorf("field missed_time of message inference.inference.TopMiner is not mutable"))
+	case "inference.inference.TopMiner.last_updated_time":
+		panic(fmt.Errorf("field last_updated_time of message inference.inference.TopMiner is not mutable"))
+	case "inference.inference.TopMiner.first_qualified_started":
+		panic(fmt.Errorf("field first_qualified_started of message inference.inference.TopMiner is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -403,20 +436,24 @@ func (x *fastReflection_TopMiner) NewField(fd protoreflect.FieldDescriptor) prot
 	case "inference.inference.TopMiner.address":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.TopMiner.last_qualified_started":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.TopMiner.rewards_paid_count":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.TopMiner.rewards_paid":
-		list := []*v1beta1.Coin{}
+		list := []int64{}
 		return protoreflect.ValueOfList(&_TopMiner_4_list{list: &list})
 	case "inference.inference.TopMiner.qualified_periods":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.TopMiner.missed_periods":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.TopMiner.qualified_time":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.TopMiner.missed_time":
-		return protoreflect.ValueOfInt32(int32(0))
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.TopMiner.last_updated_time":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.TopMiner.first_qualified_started":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TopMiner"))
@@ -497,10 +534,11 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 			n += 1 + runtime.Sov(uint64(x.RewardsPaidCount))
 		}
 		if len(x.RewardsPaid) > 0 {
+			l = 0
 			for _, e := range x.RewardsPaid {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
+				l += runtime.Sov(uint64(e))
 			}
+			n += 1 + runtime.Sov(uint64(l)) + l
 		}
 		if x.QualifiedPeriods != 0 {
 			n += 1 + runtime.Sov(uint64(x.QualifiedPeriods))
@@ -513,6 +551,12 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 		}
 		if x.MissedTime != 0 {
 			n += 1 + runtime.Sov(uint64(x.MissedTime))
+		}
+		if x.LastUpdatedTime != 0 {
+			n += 1 + runtime.Sov(uint64(x.LastUpdatedTime))
+		}
+		if x.FirstQualifiedStarted != 0 {
+			n += 1 + runtime.Sov(uint64(x.FirstQualifiedStarted))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -543,6 +587,16 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
+		if x.FirstQualifiedStarted != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FirstQualifiedStarted))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.LastUpdatedTime != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.LastUpdatedTime))
+			i--
+			dAtA[i] = 0x48
+		}
 		if x.MissedTime != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.MissedTime))
 			i--
@@ -564,20 +618,25 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 			dAtA[i] = 0x28
 		}
 		if len(x.RewardsPaid) > 0 {
-			for iNdEx := len(x.RewardsPaid) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.RewardsPaid[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x22
+			var pksize2 int
+			for _, num := range x.RewardsPaid {
+				pksize2 += runtime.Sov(uint64(num))
 			}
+			i -= pksize2
+			j1 := i
+			for _, num1 := range x.RewardsPaid {
+				num := uint64(num1)
+				for num >= 1<<7 {
+					dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+					num >>= 7
+					j1++
+				}
+				dAtA[j1] = uint8(num)
+				j1++
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(pksize2))
+			i--
+			dAtA[i] = 0x22
 		}
 		if x.RewardsPaidCount != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.RewardsPaidCount))
@@ -691,7 +750,7 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.LastQualifiedStarted |= uint64(b&0x7F) << shift
+					x.LastQualifiedStarted |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -716,39 +775,81 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 					}
 				}
 			case 4:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RewardsPaid", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				if wireType == 0 {
+					var v int64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= int64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
 					}
-					if iNdEx >= l {
+					x.RewardsPaid = append(x.RewardsPaid, v)
+				} else if wireType == 2 {
+					var packedLen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						packedLen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if packedLen < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					postIndex := iNdEx + packedLen
+					if postIndex < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					if postIndex > l {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
+					var elementCount int
+					var count int
+					for _, integer := range dAtA[iNdEx:postIndex] {
+						if integer < 128 {
+							count++
+						}
 					}
+					elementCount = count
+					if elementCount != 0 && len(x.RewardsPaid) == 0 {
+						x.RewardsPaid = make([]int64, 0, elementCount)
+					}
+					for iNdEx < postIndex {
+						var v int64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							v |= int64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						x.RewardsPaid = append(x.RewardsPaid, v)
+					}
+				} else {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RewardsPaid", wireType)
 				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RewardsPaid = append(x.RewardsPaid, &v1beta1.Coin{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.RewardsPaid[len(x.RewardsPaid)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
 			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field QualifiedPeriods", wireType)
@@ -801,7 +902,7 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.QualifiedTime |= int32(b&0x7F) << shift
+					x.QualifiedTime |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -820,7 +921,45 @@ func (x *fastReflection_TopMiner) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.MissedTime |= int32(b&0x7F) << shift
+					x.MissedTime |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field LastUpdatedTime", wireType)
+				}
+				x.LastUpdatedTime = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.LastUpdatedTime |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FirstQualifiedStarted", wireType)
+				}
+				x.FirstQualifiedStarted = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.FirstQualifiedStarted |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -878,14 +1017,16 @@ type TopMiner struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Address              string          `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	LastQualifiedStarted uint64          `protobuf:"varint,2,opt,name=last_qualified_started,json=lastQualifiedStarted,proto3" json:"last_qualified_started,omitempty"`
-	RewardsPaidCount     int32           `protobuf:"varint,3,opt,name=rewards_paid_count,json=rewardsPaidCount,proto3" json:"rewards_paid_count,omitempty"`
-	RewardsPaid          []*v1beta1.Coin `protobuf:"bytes,4,rep,name=rewards_paid,json=rewardsPaid,proto3" json:"rewards_paid,omitempty"`
-	QualifiedPeriods     int32           `protobuf:"varint,5,opt,name=qualified_periods,json=qualifiedPeriods,proto3" json:"qualified_periods,omitempty"`
-	MissedPeriods        int32           `protobuf:"varint,6,opt,name=missed_periods,json=missedPeriods,proto3" json:"missed_periods,omitempty"`
-	QualifiedTime        int32           `protobuf:"varint,7,opt,name=qualified_time,json=qualifiedTime,proto3" json:"qualified_time,omitempty"`
-	MissedTime           int32           `protobuf:"varint,8,opt,name=missed_time,json=missedTime,proto3" json:"missed_time,omitempty"`
+	Address               string  `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	LastQualifiedStarted  int64   `protobuf:"varint,2,opt,name=last_qualified_started,json=lastQualifiedStarted,proto3" json:"last_qualified_started,omitempty"`
+	RewardsPaidCount      int32   `protobuf:"varint,3,opt,name=rewards_paid_count,json=rewardsPaidCount,proto3" json:"rewards_paid_count,omitempty"`
+	RewardsPaid           []int64 `protobuf:"varint,4,rep,packed,name=rewards_paid,json=rewardsPaid,proto3" json:"rewards_paid,omitempty"`
+	QualifiedPeriods      int32   `protobuf:"varint,5,opt,name=qualified_periods,json=qualifiedPeriods,proto3" json:"qualified_periods,omitempty"`
+	MissedPeriods         int32   `protobuf:"varint,6,opt,name=missed_periods,json=missedPeriods,proto3" json:"missed_periods,omitempty"`
+	QualifiedTime         int64   `protobuf:"varint,7,opt,name=qualified_time,json=qualifiedTime,proto3" json:"qualified_time,omitempty"`
+	MissedTime            int64   `protobuf:"varint,8,opt,name=missed_time,json=missedTime,proto3" json:"missed_time,omitempty"`
+	LastUpdatedTime       int64   `protobuf:"varint,9,opt,name=last_updated_time,json=lastUpdatedTime,proto3" json:"last_updated_time,omitempty"`
+	FirstQualifiedStarted int64   `protobuf:"varint,10,opt,name=first_qualified_started,json=firstQualifiedStarted,proto3" json:"first_qualified_started,omitempty"`
 }
 
 func (x *TopMiner) Reset() {
@@ -915,7 +1056,7 @@ func (x *TopMiner) GetAddress() string {
 	return ""
 }
 
-func (x *TopMiner) GetLastQualifiedStarted() uint64 {
+func (x *TopMiner) GetLastQualifiedStarted() int64 {
 	if x != nil {
 		return x.LastQualifiedStarted
 	}
@@ -929,7 +1070,7 @@ func (x *TopMiner) GetRewardsPaidCount() int32 {
 	return 0
 }
 
-func (x *TopMiner) GetRewardsPaid() []*v1beta1.Coin {
+func (x *TopMiner) GetRewardsPaid() []int64 {
 	if x != nil {
 		return x.RewardsPaid
 	}
@@ -950,16 +1091,30 @@ func (x *TopMiner) GetMissedPeriods() int32 {
 	return 0
 }
 
-func (x *TopMiner) GetQualifiedTime() int32 {
+func (x *TopMiner) GetQualifiedTime() int64 {
 	if x != nil {
 		return x.QualifiedTime
 	}
 	return 0
 }
 
-func (x *TopMiner) GetMissedTime() int32 {
+func (x *TopMiner) GetMissedTime() int64 {
 	if x != nil {
 		return x.MissedTime
+	}
+	return 0
+}
+
+func (x *TopMiner) GetLastUpdatedTime() int64 {
+	if x != nil {
+		return x.LastUpdatedTime
+	}
+	return 0
+}
+
+func (x *TopMiner) GetFirstQualifiedStarted() int64 {
+	if x != nil {
+		return x.FirstQualifiedStarted
 	}
 	return 0
 }
@@ -974,42 +1129,46 @@ var file_inference_inference_top_miner_proto_rawDesc = []byte{
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x67, 0x6f, 0x67, 0x6f, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
 	0x1a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x62, 0x61, 0x73, 0x65, 0x2f, 0x76, 0x31,
 	0x62, 0x65, 0x74, 0x61, 0x31, 0x2f, 0x63, 0x6f, 0x69, 0x6e, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x22, 0xe8, 0x02, 0x0a, 0x08, 0x54, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x12, 0x18, 0x0a,
+	0x22, 0xb1, 0x03, 0x0a, 0x08, 0x54, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x12, 0x18, 0x0a,
 	0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
 	0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x34, 0x0a, 0x16, 0x6c, 0x61, 0x73, 0x74, 0x5f,
 	0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x65,
-	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x6c, 0x61, 0x73, 0x74, 0x51, 0x75, 0x61,
+	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x6c, 0x61, 0x73, 0x74, 0x51, 0x75, 0x61,
 	0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x74, 0x61, 0x72, 0x74, 0x65, 0x64, 0x12, 0x2c, 0x0a,
 	0x12, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x5f, 0x70, 0x61, 0x69, 0x64, 0x5f, 0x63, 0x6f,
 	0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x10, 0x72, 0x65, 0x77, 0x61, 0x72,
-	0x64, 0x73, 0x50, 0x61, 0x69, 0x64, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x42, 0x0a, 0x0c, 0x72,
+	0x64, 0x73, 0x50, 0x61, 0x69, 0x64, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x27, 0x0a, 0x0c, 0x72,
 	0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x5f, 0x70, 0x61, 0x69, 0x64, 0x18, 0x04, 0x20, 0x03, 0x28,
-	0x0b, 0x32, 0x19, 0x2e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2e, 0x62, 0x61, 0x73, 0x65, 0x2e,
-	0x76, 0x31, 0x62, 0x65, 0x74, 0x61, 0x31, 0x2e, 0x43, 0x6f, 0x69, 0x6e, 0x42, 0x04, 0xc8, 0xde,
-	0x1f, 0x00, 0x52, 0x0b, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x50, 0x61, 0x69, 0x64, 0x12,
-	0x2b, 0x0a, 0x11, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x5f, 0x70, 0x65, 0x72,
-	0x69, 0x6f, 0x64, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x05, 0x52, 0x10, 0x71, 0x75, 0x61, 0x6c,
-	0x69, 0x66, 0x69, 0x65, 0x64, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x73, 0x12, 0x25, 0x0a, 0x0e,
-	0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x73, 0x18, 0x06,
-	0x20, 0x01, 0x28, 0x05, 0x52, 0x0d, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x50, 0x65, 0x72, 0x69,
-	0x6f, 0x64, 0x73, 0x12, 0x25, 0x0a, 0x0e, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64,
-	0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0d, 0x71, 0x75, 0x61,
-	0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x6d, 0x69,
-	0x73, 0x73, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x08, 0x20, 0x01, 0x28, 0x05, 0x52,
-	0x0a, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x42, 0xbb, 0x01, 0x0a, 0x17,
-	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0d, 0x54, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65,
-	0x72, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73,
-	0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02,
-	0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
-	0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x03, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0b, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73,
+	0x50, 0x61, 0x69, 0x64, 0x12, 0x2b, 0x0a, 0x11, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65,
+	0x64, 0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x05, 0x52,
+	0x10, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64,
+	0x73, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x5f, 0x70, 0x65, 0x72, 0x69,
+	0x6f, 0x64, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0d, 0x6d, 0x69, 0x73, 0x73, 0x65,
+	0x64, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x73, 0x12, 0x25, 0x0a, 0x0e, 0x71, 0x75, 0x61, 0x6c,
+	0x69, 0x66, 0x69, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x0d, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x12,
+	0x1f, 0x0a, 0x0b, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x08,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65,
+	0x12, 0x2a, 0x0a, 0x11, 0x6c, 0x61, 0x73, 0x74, 0x5f, 0x75, 0x70, 0x64, 0x61, 0x74, 0x65, 0x64,
+	0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x6c, 0x61, 0x73,
+	0x74, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x12, 0x36, 0x0a, 0x17,
+	0x66, 0x69, 0x72, 0x73, 0x74, 0x5f, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x5f,
+	0x73, 0x74, 0x61, 0x72, 0x74, 0x65, 0x64, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x03, 0x52, 0x15, 0x66,
+	0x69, 0x72, 0x73, 0x74, 0x51, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x74, 0x61,
+	0x72, 0x74, 0x65, 0x64, 0x42, 0xbb, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x42, 0x0d, 0x54, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1026,16 +1185,14 @@ func file_inference_inference_top_miner_proto_rawDescGZIP() []byte {
 
 var file_inference_inference_top_miner_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_inference_inference_top_miner_proto_goTypes = []interface{}{
-	(*TopMiner)(nil),     // 0: inference.inference.TopMiner
-	(*v1beta1.Coin)(nil), // 1: cosmos.base.v1beta1.Coin
+	(*TopMiner)(nil), // 0: inference.inference.TopMiner
 }
 var file_inference_inference_top_miner_proto_depIdxs = []int32{
-	1, // 0: inference.inference.TopMiner.rewards_paid:type_name -> cosmos.base.v1beta1.Coin
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // [0:0] is the sub-list for method output_type
+	0, // [0:0] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for extension type_name
+	0, // [0:0] is the sub-list for extension extendee
+	0, // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_top_miner_proto_init() }
