@@ -20,6 +20,8 @@ type PayoutSettings struct {
 	MaxPayoutsTotal    int32
 	MaxPayoutsPerMiner int32
 	AllowedFailureRate float32
+	MaximumTime        int64
+	FirstQualifiedTime int64
 }
 
 func (p PayoutSettings) GetPayoutAmount() int64 {
@@ -102,7 +104,7 @@ func minerShouldGetPayout(factors *TopMinerFactors, existingMiner *types.TopMine
 	return factors.TimeOfCalculation-existingMiner.LastQualifiedStarted > factors.PayoutSettings.PayoutPeriod &&
 		existingMiner.RewardsPaidCount < factors.PayoutSettings.MaxPayoutsPerMiner &&
 		minerIsInTopN(factors, existingMiner) &&
-		rewardsStillAvailable(factors)
+		rewardsStillAvailable(factors, existingMiner)
 }
 
 func minerIsInTopN(factors *TopMinerFactors, existingMiner *types.TopMiner) bool {
@@ -115,7 +117,7 @@ func minerIsInTopN(factors *TopMinerFactors, existingMiner *types.TopMiner) bool
 		if miner.FirstQualifiedStarted == 0 {
 			continue
 		}
-		if miner.FirstQualifiedStarted < existingMiner.FirstQualifiedStarted {
+		if firstMinerIsGreater(&miner, existingMiner) {
 			minersRemaining--
 		}
 		if minersRemaining <= 0 {
@@ -125,12 +127,28 @@ func minerIsInTopN(factors *TopMinerFactors, existingMiner *types.TopMiner) bool
 	return true
 }
 
-func rewardsStillAvailable(factors *TopMinerFactors) bool {
+func firstMinerIsGreater(a, b *types.TopMiner) bool {
+	if a.Address == b.Address {
+		return false
+	}
+	if a.FirstQualifiedStarted != b.FirstQualifiedStarted {
+		return a.FirstQualifiedStarted < b.FirstQualifiedStarted
+	}
+	if a.InitialPower != b.InitialPower {
+		return a.InitialPower > b.InitialPower
+	}
+	return a.InitialOrder < b.InitialOrder
+}
+
+func rewardsStillAvailable(factors *TopMinerFactors, miner *types.TopMiner) bool {
+	cutoff := factors.PayoutSettings.FirstQualifiedTime + factors.PayoutSettings.MaximumTime
+	if miner.LastQualifiedStarted > cutoff {
+		return false
+	}
 	var allRewardsPaid = int32(0)
 	for _, miner := range factors.TopMiners {
 		allRewardsPaid += miner.RewardsPaidCount
 	}
-	println(allRewardsPaid)
 	return allRewardsPaid < factors.PayoutSettings.MaxPayoutsTotal
 }
 

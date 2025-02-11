@@ -16,5 +16,7 @@ message TopMiner {
   int64 missed_time = 8;
   int64 last_updated_time = 9;
   int64 first_qualified_started = 10;
+  int64 initial_power = 11;
+  int32 initial_order = 12;
 }
 
