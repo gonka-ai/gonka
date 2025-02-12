@@ -21,6 +21,7 @@ var defaultPayoutSettings = PayoutSettings{
 	MaxPayoutsPerMiner: 4,
 	AllowedFailureRate: 0.01,
 	MaximumTime:        days(365 * 4),
+	FirstQualifiedTime: now,
 }
 
 func TestNeverQualified(t *testing.T) {
@@ -29,10 +30,9 @@ func TestNeverQualified(t *testing.T) {
 		Qualified:         false,
 		TimeOfCalculation: now,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{},
+		TopMiners:         []*types.TopMiner{},
 	}
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, DoNothing{}, action)
 }
 
@@ -41,12 +41,11 @@ var startingFactors = &TopMinerFactors{
 	Qualified:         true,
 	TimeOfCalculation: now,
 	PayoutSettings:    defaultPayoutSettings,
-	TopMiners:         []types.TopMiner{},
+	TopMiners:         []*types.TopMiner{},
 }
 
 func TestAddNewMiner(t *testing.T) {
-	action, err := GetTopMinerAction(startingFactors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(startingFactors)
 	require.IsType(t, AddMiner{}, action)
 	newMiner := action.(AddMiner).miner
 	require.Equal(t, startingFactors.MinerAddress, newMiner.Address)
@@ -62,17 +61,16 @@ func TestAddNewMiner(t *testing.T) {
 }
 
 func TestUpdateMinerOnce(t *testing.T) {
-	action, _ := GetTopMinerAction(startingFactors)
+	action := GetTopMinerAction(startingFactors)
 	newMiner := action.(AddMiner).miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
 		TimeOfCalculation: startingFactors.TimeOfCalculation + 1000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{newMiner},
+		TopMiners:         []*types.TopMiner{&newMiner},
 	}
-	action, err := GetTopMinerAction(updatedFactors)
-	require.NoError(t, err)
+	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateMiner{}, action)
 	updatedMiner := action.(UpdateMiner).miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
@@ -88,26 +86,25 @@ func TestUpdateMinerOnce(t *testing.T) {
 }
 
 func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
-	action, _ := GetTopMinerAction(startingFactors)
+	action := GetTopMinerAction(startingFactors)
 	newMiner := action.(AddMiner).miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
 		TimeOfCalculation: startingFactors.TimeOfCalculation + 1000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{newMiner},
+		TopMiners:         []*types.TopMiner{&newMiner},
 	}
-	action, _ = GetTopMinerAction(updatedFactors)
+	action = GetTopMinerAction(updatedFactors)
 	updatedMiner := action.(UpdateMiner).miner
 	updatedFactors = &TopMinerFactors{
 		MinerAddress:      updatedMiner.Address,
 		Qualified:         false,
 		TimeOfCalculation: updatedFactors.TimeOfCalculation + 1000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{updatedMiner},
+		TopMiners:         []*types.TopMiner{&updatedMiner},
 	}
-	action, err := GetTopMinerAction(updatedFactors)
-	require.NoError(t, err)
+	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateMiner{}, action)
 	updatedMiner = action.(UpdateMiner).miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
@@ -122,7 +119,7 @@ func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 }
 
 func TestMinerDisqualifiedForPeriod(t *testing.T) {
-	action, _ := GetTopMinerAction(startingFactors)
+	action := GetTopMinerAction(startingFactors)
 	newMiner := action.(AddMiner).miner
 	disqualificationThreshold := decimal.NewFromInt(defaultPayoutSettings.PayoutPeriod).Mul(decimal.NewFromFloat32(defaultPayoutSettings.AllowedFailureRate))
 	// Simulate many periods
@@ -135,9 +132,9 @@ func TestMinerDisqualifiedForPeriod(t *testing.T) {
 		Qualified:         false,
 		TimeOfCalculation: startingFactors.TimeOfCalculation + 1000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{newMiner},
+		TopMiners:         []*types.TopMiner{&newMiner},
 	}
-	action, _ = GetTopMinerAction(disqualifyingFactors)
+	action = GetTopMinerAction(disqualifyingFactors)
 	updatedMiner := action.(UpdateMiner).miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
 	require.Equal(t, int32(0), updatedMiner.QualifiedPeriods)
@@ -150,16 +147,16 @@ func TestMinerDisqualifiedForPeriod(t *testing.T) {
 }
 
 func TestMinerGetsPaid(t *testing.T) {
-	action, _ := GetTopMinerAction(startingFactors)
+	action := GetTopMinerAction(startingFactors)
 	newMiner := action.(AddMiner).miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
 		TimeOfCalculation: startingFactors.TimeOfCalculation + defaultPayoutSettings.PayoutPeriod + 1,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners:         []types.TopMiner{newMiner},
+		TopMiners:         []*types.TopMiner{&newMiner},
 	}
-	action, _ = GetTopMinerAction(updatedFactors)
+	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
 	updatedMiner := action.(UpdateAndPayMiner).miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
@@ -184,11 +181,11 @@ func Test4thMinerDoesNotGetPaid(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
-			*miner4,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
+			miner4,
 		},
 	}
 	minerShouldNotBePaid(t, miner4, factors)
@@ -201,12 +198,11 @@ func TestMinerGetsSecondReward(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner,
+		TopMiners: []*types.TopMiner{
+			miner,
 		},
 	}
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
 	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).payout)
 	newMiner := action.(UpdateAndPayMiner).miner
@@ -234,8 +230,8 @@ func TestMinerGetsNo5thReward(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner,
+		TopMiners: []*types.TopMiner{
+			miner,
 		},
 	}
 	minerShouldNotBePaid(t, miner, factors)
@@ -252,12 +248,12 @@ func TestMinerGetsNo13thReward(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
-			*miner4,
-			*miner5,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
+			miner4,
+			miner5,
 		},
 	}
 	minerShouldNotBePaid(t, miner5, factors)
@@ -270,11 +266,11 @@ func getDisqualifiedMiner(miner *types.TopMiner) *types.TopMiner {
 		Qualified:         false,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner,
+		TopMiners: []*types.TopMiner{
+			miner,
 		},
 	}
-	action, _ := GetTopMinerAction(disqFactors)
+	action := GetTopMinerAction(disqFactors)
 	topMiner := action.(UpdateMiner).miner
 	return &topMiner
 }
@@ -290,15 +286,14 @@ func TestMinerGetsPaidAfterOthersDisqualified(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
-			*miner4,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
+			miner4,
 		},
 	}
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
 	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).payout)
 	paidMiner := action.(UpdateAndPayMiner).miner
@@ -323,14 +318,13 @@ func TestMinerDoesNotGetPaidAfterOthersMaxedOut(t *testing.T) {
 		Qualified:         false,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
 		},
 	}
-	action, err := GetTopMinerAction(disqFactors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(disqFactors)
 	require.IsType(t, UpdateMiner{}, action)
 	disqMiner := action.(UpdateMiner).miner
 	miner4 := getTestMiner(days(365) - 1000)
@@ -339,21 +333,20 @@ func TestMinerDoesNotGetPaidAfterOthersMaxedOut(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			disqMiner,
-			*miner4,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			&disqMiner,
+			miner4,
 		},
 	}
-	action, err = GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action = GetTopMinerAction(factors)
 	require.IsType(t, UpdateMiner{}, action)
 	paidMiner := action.(UpdateMiner).miner
 	require.Equal(t, int32(0), paidMiner.RewardsPaidCount)
 	require.Equal(t, int32(365), paidMiner.QualifiedPeriods)
 	require.Equal(t, int32(0), paidMiner.MissedPeriods)
-	require.Equal(t, int64(days(365)+9000), paidMiner.QualifiedTime)
+	require.Equal(t, days(365)+9000, paidMiner.QualifiedTime)
 	require.Equal(t, int64(0), paidMiner.MissedTime)
 	require.Equal(t, factors.TimeOfCalculation, paidMiner.LastUpdatedTime)
 	require.Equal(t, factors.TimeOfCalculation-days(365)-9000, paidMiner.LastQualifiedStarted)
@@ -373,11 +366,11 @@ func TestResolveTiesByPower(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
-			*miner4,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
+			miner4,
 		},
 	}
 	minerShouldNotBePaid(t, miner1, factors)
@@ -388,15 +381,13 @@ func TestResolveTiesByPower(t *testing.T) {
 
 func minerShouldBePaid(t *testing.T, miner *types.TopMiner, factors *TopMinerFactors) {
 	factors.MinerAddress = miner.Address
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
 }
 
 func minerShouldNotBePaid(t *testing.T, miner *types.TopMiner, factors *TopMinerFactors) {
 	factors.MinerAddress = miner.Address
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateMiner{}, action)
 }
 
@@ -417,11 +408,11 @@ func TestResolveTiesByOrder(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
-			*miner3,
-			*miner4,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
+			miner3,
+			miner4,
 		},
 	}
 	minerShouldBePaid(t, miner1, factors)
@@ -439,13 +430,12 @@ func TestMinerShouldGetPaidOnceAfterCutoff(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 10000,
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			*miner2,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			miner2,
 		},
 	}
-	action, err := GetTopMinerAction(factors)
-	require.NoError(t, err)
+	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
 	paidMiner := action.(UpdateAndPayMiner).miner
 	secondFactors := &TopMinerFactors{
@@ -453,14 +443,192 @@ func TestMinerShouldGetPaidOnceAfterCutoff(t *testing.T) {
 		Qualified:         true,
 		TimeOfCalculation: now + 20000 + days(365),
 		PayoutSettings:    defaultPayoutSettings,
-		TopMiners: []types.TopMiner{
-			*miner1,
-			paidMiner,
+		TopMiners: []*types.TopMiner{
+			miner1,
+			&paidMiner,
 		},
 	}
-	action, err = GetTopMinerAction(secondFactors)
-	require.NoError(t, err)
+	action = GetTopMinerAction(secondFactors)
 	require.IsType(t, UpdateMiner{}, action)
+}
+
+func TestSortedMiners(t *testing.T) {
+	miner1 := getTestMiner(days(365*4) + 1000)
+	miner2 := getTestMiner(days(365*1) - 1000)
+	miner3 := getTestMiner(days(365*1) - 1000)
+	miner4 := getTestMiner(days(365*1) - 1000)
+	miner5 := getTestMiner(days(365*1) - 1000)
+	miner6 := getTestMiner(days(365*5) - 1000)
+	miner3.InitialPower = 100
+	miner2.InitialPower = 200
+	miner4.InitialPower = 50
+	miner5.InitialPower = 50
+	miner4.InitialOrder = 1
+	miner5.InitialOrder = 2
+	minerSet := &TopMinerSet{
+		TopMiners: []*types.TopMiner{
+			miner5,
+			miner1,
+			miner3,
+			miner4,
+			miner2,
+			miner6,
+		},
+		Participants: []*Miner{
+			{
+				miner3.Address,
+				true, nil,
+			},
+			{
+				miner1.Address,
+				false,
+				nil,
+			},
+			{
+				miner2.Address,
+				true,
+				nil,
+			},
+			{
+				miner5.Address,
+				true,
+				nil,
+			},
+			{
+				miner4.Address,
+				true,
+				nil,
+			},
+			{
+				"NewMinerAddress",
+				true,
+				nil,
+			},
+		},
+	}
+	sorted := getSortedMiners(minerSet)
+	require.Equal(t, 6, len(sorted))
+	require.Equal(t, miner1.Address, sorted[0].Address)
+	require.Equal(t, miner2.Address, sorted[1].Address)
+	require.Equal(t, miner3.Address, sorted[2].Address)
+	require.Equal(t, miner4.Address, sorted[3].Address)
+	require.Equal(t, miner5.Address, sorted[4].Address)
+	require.Equal(t, "NewMinerAddress", sorted[5].Address)
+}
+
+// GetTopMinerActions tests!!
+func getTestSet() *TopMinerSet {
+	miner1 := getTestMiner(days(365*4) + 1000)
+	miner2 := getTestMiner(days(365*1) - 1000)
+	miner3 := getTestMiner(days(365*1) - 1000)
+	miner4 := getTestMiner(days(365*1) - 1000)
+	miner1.InitialPower = 1000
+	miner2.InitialPower = 200
+	miner3.InitialPower = 100
+	miner3.InitialOrder = 1
+	miner4.InitialPower = 100
+	miner4.InitialOrder = 2
+	set := &TopMinerSet{
+		TopMiners: []*types.TopMiner{miner1, miner2, miner3, miner4},
+		Participants: []*Miner{
+			{
+				"NewMinerAddress",
+				true,
+				nil,
+			},
+			{
+				miner2.Address,
+				true, nil,
+			},
+			{
+				miner1.Address,
+				true, nil,
+			},
+			{
+				miner4.Address,
+				true, nil,
+			},
+			{
+				"NonQualAddress",
+				false,
+				nil,
+			},
+			{
+				miner3.Address,
+				true, nil,
+			},
+		},
+		PayoutSettings:    defaultPayoutSettings,
+		TimeOfCalculation: now + 10000,
+	}
+	return set
+
+}
+
+// TODO: Just standard, make sure all values match
+func TestGetTopMinerActions(t *testing.T) {
+	set := getTestSet()
+	actions := GetTopMinerActions(set)
+	require.Equal(t, 6, len(actions))
+	requireAction(t, actions[0], set.TopMiners[0].Address, UpdateMiner{})
+	requireAction(t, actions[1], set.TopMiners[1].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[2], set.TopMiners[2].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[3], set.TopMiners[3].Address, UpdateMiner{})
+	requireAction(t, actions[4], "NewMinerAddress", AddMiner{})
+	requireAction(t, actions[5], "NonQualAddress", DoNothing{})
+}
+
+func TestGetTopMinerActionsWithOneReward(t *testing.T) {
+	set := getTestSet()
+	set.TopMiners[0].RewardsPaidCount = defaultPayoutSettings.MaxPayoutsTotal - 1
+	actions := GetTopMinerActions(set)
+	require.Equal(t, 6, len(actions))
+	requireAction(t, actions[0], set.TopMiners[0].Address, UpdateMiner{})
+	requireAction(t, actions[1], set.TopMiners[1].Address, UpdateAndPayMiner{})
+	// No more rewards to give!
+	requireAction(t, actions[2], set.TopMiners[2].Address, UpdateMiner{})
+	requireAction(t, actions[3], set.TopMiners[3].Address, UpdateMiner{})
+	requireAction(t, actions[4], "NewMinerAddress", AddMiner{})
+	requireAction(t, actions[5], "NonQualAddress", DoNothing{})
+}
+
+func TestGetTopMinerOneLeftWithDisqualified(t *testing.T) {
+	set := getTestSet()
+	set.TopMiners[0].RewardsPaidCount = defaultPayoutSettings.MaxPayoutsTotal - 1
+	set.Participants[1].Qualified = false
+	set.TopMiners[1].MissedTime = defaultPayoutSettings.GetDisqualificationThreshold() - 100
+	actions := GetTopMinerActions(set)
+	require.Equal(t, 6, len(actions))
+	requireAction(t, actions[0], set.TopMiners[0].Address, UpdateMiner{})
+	requireAction(t, actions[1], set.TopMiners[1].Address, UpdateMiner{})
+	// No more rewards to give!
+	requireAction(t, actions[2], set.TopMiners[2].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[3], set.TopMiners[3].Address, UpdateMiner{})
+	requireAction(t, actions[4], "NewMinerAddress", AddMiner{})
+	requireAction(t, actions[5], "NonQualAddress", DoNothing{})
+}
+
+func Test3ToWithDisqualified(t *testing.T) {
+	set := getTestSet()
+	oldAddress := set.TopMiners[0].Address
+	set.TopMiners[0] = getTestMiner(days(365*1) - 1000)
+	set.TopMiners[0].Address = oldAddress
+	set.TopMiners[0].InitialPower = 1000
+	set.Participants[1].Qualified = false
+	set.TopMiners[1].MissedTime = defaultPayoutSettings.GetDisqualificationThreshold() - 100
+	actions := GetTopMinerActions(set)
+	require.Equal(t, 6, len(actions))
+	requireAction(t, actions[0], set.TopMiners[0].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[1], set.TopMiners[1].Address, UpdateMiner{})
+	requireAction(t, actions[2], set.TopMiners[2].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[3], set.TopMiners[3].Address, UpdateAndPayMiner{})
+	requireAction(t, actions[4], "NewMinerAddress", AddMiner{})
+	requireAction(t, actions[5], "NonQualAddress", DoNothing{})
+}
+
+func requireAction(t *testing.T, action TopMinerAction, address string, miner TopMinerAction) {
+	require.Equal(t, address, action.MinerAddress())
+	require.Equal(t, miner.TopMinerActionName(), action.TopMinerActionName())
 }
 
 func TestGetTestMiner(t *testing.T) {
