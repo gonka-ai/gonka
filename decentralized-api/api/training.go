@@ -3,6 +3,7 @@ package api
 import (
 	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
+	"github.com/productscience/inference/api/inference/inference"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -39,7 +40,32 @@ func handleCreateTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, w ht
 		return
 	}
 
-	_ = body
+	var hardwareResources = make([]*inference.TrainingHardwareResources, len(body.HardwareResources))
+	for i, hr := range body.HardwareResources {
+		hardwareResources[i] = &inference.TrainingHardwareResources{
+			Type_: hr.Type,
+			Count: hr.Count,
+		}
+	}
+
+	msg := &inference.MsgCreateTrainingTask{
+		HardwareResources: hardwareResources,
+		Config: &inference.TrainingConfig{
+			Datasets: &inference.TrainingDatasets{
+				Train: body.Config.Datasets.Train,
+				Test:  body.Config.Datasets.Test,
+			},
+			NumUocEstimationSteps: body.Config.NumUocEstimationSteps,
+		},
+	}
+
+	err = cosmosClient.CreateTrainingTask(msg)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleGetTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, id string, w http.ResponseWriter, r *http.Request) {

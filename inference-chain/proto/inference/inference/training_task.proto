@@ -9,7 +9,7 @@ message TrainingTask {
   uint64 created_at_block_height = 3;
   uint64 assigned_at_block_height = 4;
   uint64 finished_at_block_height = 5;
-  TrainingHardwareResources hardware_resources = 6;
+  repeated TrainingHardwareResources hardware_resources = 6;
   TrainingConfig config = 7;
 }
 

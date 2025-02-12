@@ -12,6 +12,57 @@ import (
 	sync "sync"
 )
 
+var _ protoreflect.List = (*_TrainingTask_6_list)(nil)
+
+type _TrainingTask_6_list struct {
+	list *[]*TrainingHardwareResources
+}
+
+func (x *_TrainingTask_6_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_TrainingTask_6_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_TrainingTask_6_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TrainingHardwareResources)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_TrainingTask_6_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TrainingHardwareResources)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_TrainingTask_6_list) AppendMutable() protoreflect.Value {
+	v := new(TrainingHardwareResources)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_TrainingTask_6_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_TrainingTask_6_list) NewElement() protoreflect.Value {
+	v := new(TrainingHardwareResources)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_TrainingTask_6_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_TrainingTask                          protoreflect.MessageDescriptor
 	fd_TrainingTask_id                       protoreflect.FieldDescriptor
@@ -130,8 +181,8 @@ func (x *fastReflection_TrainingTask) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if x.HardwareResources != nil {
-		value := protoreflect.ValueOfMessage(x.HardwareResources.ProtoReflect())
+	if len(x.HardwareResources) != 0 {
+		value := protoreflect.ValueOfList(&_TrainingTask_6_list{list: &x.HardwareResources})
 		if !f(fd_TrainingTask_hardware_resources, value) {
 			return
 		}
@@ -168,7 +219,7 @@ func (x *fastReflection_TrainingTask) Has(fd protoreflect.FieldDescriptor) bool 
 	case "inference.inference.TrainingTask.finished_at_block_height":
 		return x.FinishedAtBlockHeight != uint64(0)
 	case "inference.inference.TrainingTask.hardware_resources":
-		return x.HardwareResources != nil
+		return len(x.HardwareResources) != 0
 	case "inference.inference.TrainingTask.config":
 		return x.Config != nil
 	default:
@@ -233,8 +284,11 @@ func (x *fastReflection_TrainingTask) Get(descriptor protoreflect.FieldDescripto
 		value := x.FinishedAtBlockHeight
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.TrainingTask.hardware_resources":
-		value := x.HardwareResources
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
+		if len(x.HardwareResources) == 0 {
+			return protoreflect.ValueOfList(&_TrainingTask_6_list{})
+		}
+		listValue := &_TrainingTask_6_list{list: &x.HardwareResources}
+		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.TrainingTask.config":
 		value := x.Config
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
@@ -269,7 +323,9 @@ func (x *fastReflection_TrainingTask) Set(fd protoreflect.FieldDescriptor, value
 	case "inference.inference.TrainingTask.finished_at_block_height":
 		x.FinishedAtBlockHeight = value.Uint()
 	case "inference.inference.TrainingTask.hardware_resources":
-		x.HardwareResources = value.Message().Interface().(*TrainingHardwareResources)
+		lv := value.List()
+		clv := lv.(*_TrainingTask_6_list)
+		x.HardwareResources = *clv.list
 	case "inference.inference.TrainingTask.config":
 		x.Config = value.Message().Interface().(*TrainingConfig)
 	default:
@@ -294,9 +350,10 @@ func (x *fastReflection_TrainingTask) Mutable(fd protoreflect.FieldDescriptor) p
 	switch fd.FullName() {
 	case "inference.inference.TrainingTask.hardware_resources":
 		if x.HardwareResources == nil {
-			x.HardwareResources = new(TrainingHardwareResources)
+			x.HardwareResources = []*TrainingHardwareResources{}
 		}
-		return protoreflect.ValueOfMessage(x.HardwareResources.ProtoReflect())
+		value := &_TrainingTask_6_list{list: &x.HardwareResources}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.TrainingTask.config":
 		if x.Config == nil {
 			x.Config = new(TrainingConfig)
@@ -336,8 +393,8 @@ func (x *fastReflection_TrainingTask) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.TrainingTask.finished_at_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.TrainingTask.hardware_resources":
-		m := new(TrainingHardwareResources)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
+		list := []*TrainingHardwareResources{}
+		return protoreflect.ValueOfList(&_TrainingTask_6_list{list: &list})
 	case "inference.inference.TrainingTask.config":
 		m := new(TrainingConfig)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
@@ -426,9 +483,11 @@ func (x *fastReflection_TrainingTask) ProtoMethods() *protoiface.Methods {
 		if x.FinishedAtBlockHeight != 0 {
 			n += 1 + runtime.Sov(uint64(x.FinishedAtBlockHeight))
 		}
-		if x.HardwareResources != nil {
-			l = options.Size(x.HardwareResources)
-			n += 1 + l + runtime.Sov(uint64(l))
+		if len(x.HardwareResources) > 0 {
+			for _, e := range x.HardwareResources {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
 		}
 		if x.Config != nil {
 			l = options.Size(x.Config)
@@ -477,19 +536,21 @@ func (x *fastReflection_TrainingTask) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x3a
 		}
-		if x.HardwareResources != nil {
-			encoded, err := options.Marshal(x.HardwareResources)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
+		if len(x.HardwareResources) > 0 {
+			for iNdEx := len(x.HardwareResources) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.HardwareResources[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x32
 			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x32
 		}
 		if x.FinishedAtBlockHeight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.FinishedAtBlockHeight))
@@ -704,10 +765,8 @@ func (x *fastReflection_TrainingTask) ProtoMethods() *protoiface.Methods {
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				if x.HardwareResources == nil {
-					x.HardwareResources = &TrainingHardwareResources{}
-				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.HardwareResources); err != nil {
+				x.HardwareResources = append(x.HardwareResources, &TrainingHardwareResources{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.HardwareResources[len(x.HardwareResources)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -2235,13 +2294,13 @@ type TrainingTask struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Id                    uint64                     `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	RequestedBy           string                     `protobuf:"bytes,2,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
-	CreatedAtBlockHeight  uint64                     `protobuf:"varint,3,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"`
-	AssignedAtBlockHeight uint64                     `protobuf:"varint,4,opt,name=assigned_at_block_height,json=assignedAtBlockHeight,proto3" json:"assigned_at_block_height,omitempty"`
-	FinishedAtBlockHeight uint64                     `protobuf:"varint,5,opt,name=finished_at_block_height,json=finishedAtBlockHeight,proto3" json:"finished_at_block_height,omitempty"`
-	HardwareResources     *TrainingHardwareResources `protobuf:"bytes,6,opt,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
-	Config                *TrainingConfig            `protobuf:"bytes,7,opt,name=config,proto3" json:"config,omitempty"`
+	Id                    uint64                       `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	RequestedBy           string                       `protobuf:"bytes,2,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	CreatedAtBlockHeight  uint64                       `protobuf:"varint,3,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"`
+	AssignedAtBlockHeight uint64                       `protobuf:"varint,4,opt,name=assigned_at_block_height,json=assignedAtBlockHeight,proto3" json:"assigned_at_block_height,omitempty"`
+	FinishedAtBlockHeight uint64                       `protobuf:"varint,5,opt,name=finished_at_block_height,json=finishedAtBlockHeight,proto3" json:"finished_at_block_height,omitempty"`
+	HardwareResources     []*TrainingHardwareResources `protobuf:"bytes,6,rep,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
+	Config                *TrainingConfig              `protobuf:"bytes,7,opt,name=config,proto3" json:"config,omitempty"`
 }
 
 func (x *TrainingTask) Reset() {
@@ -2299,7 +2358,7 @@ func (x *TrainingTask) GetFinishedAtBlockHeight() uint64 {
 	return 0
 }
 
-func (x *TrainingTask) GetHardwareResources() *TrainingHardwareResources {
+func (x *TrainingTask) GetHardwareResources() []*TrainingHardwareResources {
 	if x != nil {
 		return x.HardwareResources
 	}
@@ -2465,7 +2524,7 @@ var file_inference_inference_training_task_proto_rawDesc = []byte{
 	0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x41, 0x74,
 	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x5d, 0x0a, 0x12, 0x68,
 	0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x5f, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65,
-	0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x72,
 	0x61, 0x69, 0x6e, 0x69, 0x6e, 0x67, 0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x52, 0x65,
 	0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x73, 0x52, 0x11, 0x68, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72,

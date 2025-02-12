@@ -15928,6 +15928,57 @@ func (x *fastReflection_MsgRegisterModelResponse) ProtoMethods() *protoiface.Met
 	}
 }
 
+var _ protoreflect.List = (*_MsgCreateTrainingTask_2_list)(nil)
+
+type _MsgCreateTrainingTask_2_list struct {
+	list *[]*TrainingHardwareResources
+}
+
+func (x *_MsgCreateTrainingTask_2_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_MsgCreateTrainingTask_2_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_MsgCreateTrainingTask_2_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TrainingHardwareResources)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_MsgCreateTrainingTask_2_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TrainingHardwareResources)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_MsgCreateTrainingTask_2_list) AppendMutable() protoreflect.Value {
+	v := new(TrainingHardwareResources)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_MsgCreateTrainingTask_2_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_MsgCreateTrainingTask_2_list) NewElement() protoreflect.Value {
+	v := new(TrainingHardwareResources)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_MsgCreateTrainingTask_2_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_MsgCreateTrainingTask                    protoreflect.MessageDescriptor
 	fd_MsgCreateTrainingTask_creator            protoreflect.FieldDescriptor
@@ -16014,8 +16065,8 @@ func (x *fastReflection_MsgCreateTrainingTask) Range(f func(protoreflect.FieldDe
 			return
 		}
 	}
-	if x.HardwareResources != nil {
-		value := protoreflect.ValueOfMessage(x.HardwareResources.ProtoReflect())
+	if len(x.HardwareResources) != 0 {
+		value := protoreflect.ValueOfList(&_MsgCreateTrainingTask_2_list{list: &x.HardwareResources})
 		if !f(fd_MsgCreateTrainingTask_hardware_resources, value) {
 			return
 		}
@@ -16044,7 +16095,7 @@ func (x *fastReflection_MsgCreateTrainingTask) Has(fd protoreflect.FieldDescript
 	case "inference.inference.MsgCreateTrainingTask.creator":
 		return x.Creator != ""
 	case "inference.inference.MsgCreateTrainingTask.hardware_resources":
-		return x.HardwareResources != nil
+		return len(x.HardwareResources) != 0
 	case "inference.inference.MsgCreateTrainingTask.config":
 		return x.Config != nil
 	default:
@@ -16089,8 +16140,11 @@ func (x *fastReflection_MsgCreateTrainingTask) Get(descriptor protoreflect.Field
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgCreateTrainingTask.hardware_resources":
-		value := x.HardwareResources
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
+		if len(x.HardwareResources) == 0 {
+			return protoreflect.ValueOfList(&_MsgCreateTrainingTask_2_list{})
+		}
+		listValue := &_MsgCreateTrainingTask_2_list{list: &x.HardwareResources}
+		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.MsgCreateTrainingTask.config":
 		value := x.Config
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
@@ -16117,7 +16171,9 @@ func (x *fastReflection_MsgCreateTrainingTask) Set(fd protoreflect.FieldDescript
 	case "inference.inference.MsgCreateTrainingTask.creator":
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgCreateTrainingTask.hardware_resources":
-		x.HardwareResources = value.Message().Interface().(*TrainingHardwareResources)
+		lv := value.List()
+		clv := lv.(*_MsgCreateTrainingTask_2_list)
+		x.HardwareResources = *clv.list
 	case "inference.inference.MsgCreateTrainingTask.config":
 		x.Config = value.Message().Interface().(*TrainingConfig)
 	default:
@@ -16142,9 +16198,10 @@ func (x *fastReflection_MsgCreateTrainingTask) Mutable(fd protoreflect.FieldDesc
 	switch fd.FullName() {
 	case "inference.inference.MsgCreateTrainingTask.hardware_resources":
 		if x.HardwareResources == nil {
-			x.HardwareResources = new(TrainingHardwareResources)
+			x.HardwareResources = []*TrainingHardwareResources{}
 		}
-		return protoreflect.ValueOfMessage(x.HardwareResources.ProtoReflect())
+		value := &_MsgCreateTrainingTask_2_list{list: &x.HardwareResources}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgCreateTrainingTask.config":
 		if x.Config == nil {
 			x.Config = new(TrainingConfig)
@@ -16168,8 +16225,8 @@ func (x *fastReflection_MsgCreateTrainingTask) NewField(fd protoreflect.FieldDes
 	case "inference.inference.MsgCreateTrainingTask.creator":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgCreateTrainingTask.hardware_resources":
-		m := new(TrainingHardwareResources)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
+		list := []*TrainingHardwareResources{}
+		return protoreflect.ValueOfList(&_MsgCreateTrainingTask_2_list{list: &list})
 	case "inference.inference.MsgCreateTrainingTask.config":
 		m := new(TrainingConfig)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
@@ -16246,9 +16303,11 @@ func (x *fastReflection_MsgCreateTrainingTask) ProtoMethods() *protoiface.Method
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.HardwareResources != nil {
-			l = options.Size(x.HardwareResources)
-			n += 1 + l + runtime.Sov(uint64(l))
+		if len(x.HardwareResources) > 0 {
+			for _, e := range x.HardwareResources {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
 		}
 		if x.Config != nil {
 			l = options.Size(x.Config)
@@ -16297,19 +16356,21 @@ func (x *fastReflection_MsgCreateTrainingTask) ProtoMethods() *protoiface.Method
 			i--
 			dAtA[i] = 0x1a
 		}
-		if x.HardwareResources != nil {
-			encoded, err := options.Marshal(x.HardwareResources)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
+		if len(x.HardwareResources) > 0 {
+			for iNdEx := len(x.HardwareResources) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.HardwareResources[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x12
 			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x12
 		}
 		if len(x.Creator) > 0 {
 			i -= len(x.Creator)
@@ -16428,10 +16489,8 @@ func (x *fastReflection_MsgCreateTrainingTask) ProtoMethods() *protoiface.Method
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				if x.HardwareResources == nil {
-					x.HardwareResources = &TrainingHardwareResources{}
-				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.HardwareResources); err != nil {
+				x.HardwareResources = append(x.HardwareResources, &TrainingHardwareResources{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.HardwareResources[len(x.HardwareResources)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -18340,9 +18399,9 @@ type MsgCreateTrainingTask struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Creator           string                     `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	HardwareResources *TrainingHardwareResources `protobuf:"bytes,2,opt,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
-	Config            *TrainingConfig            `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
+	Creator           string                       `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	HardwareResources []*TrainingHardwareResources `protobuf:"bytes,2,rep,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
+	Config            *TrainingConfig              `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
 }
 
 func (x *MsgCreateTrainingTask) Reset() {
@@ -18372,7 +18431,7 @@ func (x *MsgCreateTrainingTask) GetCreator() string {
 	return ""
 }
 
-func (x *MsgCreateTrainingTask) GetHardwareResources() *TrainingHardwareResources {
+func (x *MsgCreateTrainingTask) GetHardwareResources() []*TrainingHardwareResources {
 	if x != nil {
 		return x.HardwareResources
 	}
@@ -18668,7 +18727,7 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
 	0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x5d, 0x0a, 0x12, 0x68, 0x61, 0x72,
 	0x64, 0x77, 0x61, 0x72, 0x65, 0x5f, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x73, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
 	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x72, 0x61, 0x69,
 	0x6e, 0x69, 0x6e, 0x67, 0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x52, 0x65, 0x73, 0x6f,
 	0x75, 0x72, 0x63, 0x65, 0x73, 0x52, 0x11, 0x68, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x52,

@@ -218,7 +218,7 @@ message MsgRegisterModelResponse {}
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  TrainingHardwareResources hardware_resources = 2;
+  repeated TrainingHardwareResources hardware_resources = 2;
   TrainingConfig config = 3;
 }
 
