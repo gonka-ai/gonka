@@ -1,4 +1,4 @@
-package main
+package event_listener
 
 import (
 	"decentralized-api/chainevents"
