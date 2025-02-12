@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-	"github.com/spf13/cast"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +9,6 @@ import (
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
 	"cosmossdk.io/store/snapshots"
-	snapshottypes "cosmossdk.io/store/snapshots/types"
 	storetypes "cosmossdk.io/store/types"
 	_ "cosmossdk.io/x/circuit" // import for side-effects
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
@@ -93,8 +90,6 @@ const (
 var (
 	// DefaultNodeHome default home directories for the application daemon
 	DefaultNodeHome string
-
-	defaultSnapshotDir string
 )
 
 var (
@@ -160,7 +155,6 @@ func init() {
 	}
 
 	DefaultNodeHome = filepath.Join(userHomeDir, "."+Name)
-	defaultSnapshotDir = filepath.Join(DefaultNodeHome + "snapshots")
 }
 
 // getGovProposalHandlers return the chain proposal handlers.
@@ -360,25 +354,9 @@ func New(
 	// 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap())
 	// 	return app.App.InitChainer(ctx, req)
 	// })
-
 	if err := app.Load(loadLatest); err != nil {
 		return nil, err
 	}
-
-	snapshotStore, err := app.LoadSnapshotStore(defaultSnapshotDir)
-	if err != nil {
-		panic(fmt.Errorf("failed to create snapshot store: %w", err))
-	}
-
-	snapshotInterval := cast.ToUint64(appOpts.Get("snapshot-interval")) // TODO find better way to read this config values
-	snapshotKeepRecent := cast.ToUint32(appOpts.Get("snapshot-keep-recent"))
-
-	var opts snapshottypes.SnapshotOptions
-	if snapshotInterval > 0 {
-		opts = snapshottypes.NewSnapshotOptions(snapshotInterval, snapshotKeepRecent)
-	}
-
-	app.SetSnapshot(snapshotStore, opts)
 	return app, nil
 }
 
