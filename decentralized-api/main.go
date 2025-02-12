@@ -61,7 +61,7 @@ func main() {
 		return
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config.GetConfig(), nodeBroker); err != nil {
+	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
 		slog.Error("Failed to register participant", "error", err)
 		return
 	}

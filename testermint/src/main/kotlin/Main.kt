@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.google.gson.GsonBuilder
+import com.productscience.data.DurationDeserializer
 import com.productscience.data.InferenceNode
 import com.productscience.data.InferencePayload
 import com.productscience.data.InstantDeserializer
@@ -12,6 +13,7 @@ import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.kotlin.Logger
+import java.time.Duration
 import java.time.Instant
 
 fun main() {
@@ -80,8 +82,7 @@ data class InferenceResult(
 }
 
 private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
-    highestFunded.node.waitForMinimumBlock((EpochLength + setNewValidatorsStage + 1))
-
+    highestFunded.waitForFirstPoC()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
     val inferenceId = response.id
@@ -99,9 +100,10 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.node.waitForMinimumBlock(1)
+        it.node.exportState()
     }
 
-    val balances = pairs.zip(pairs.map { it.node.getSelfBalance("icoin") })
+    val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
 
     val (fundedPairs, unfundedPairs) = balances.partition { it.second > 0 }
     val funded = fundedPairs.map { it.first }
@@ -175,12 +177,14 @@ val defaultFunding = 20_000_000L
 val gsonSnakeCase = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+    .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
     .create()
 
 val gsonCamelCase = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+    .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .create()
 
 val inferenceConfig = ApplicationConfig(
@@ -190,7 +194,7 @@ val inferenceConfig = ApplicationConfig(
     genesisNodeImage = "gcr.io/decentralized-ai/inferenced",
     wireMockImageName = "wiremock/wiremock:latest",
     apiImageName = "gcr.io/decentralized-ai/api",
-    denom = "icoin",
+    denom = "nicoin",
     stateDirName = ".inference",
 )
 

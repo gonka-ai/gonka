@@ -64,6 +64,12 @@ func TestGenesisState_Validate(t *testing.T) {
 						PocStartBlockHeight: 1,
 					},
 				},
+				TokenomicsData: &types.TokenomicsData{
+					TotalFees:      76,
+					TotalSubsidies: 1,
+					TotalRefunded:  73,
+					TotalBurned:    23,
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,

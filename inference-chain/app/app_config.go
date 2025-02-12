@@ -152,8 +152,10 @@ var (
 		{Account: ibcfeetypes.ModuleName},
 		{Account: icatypes.ModuleName},
 		{Account: inferencemoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
+		{Account: inferencemoduletypes.TopRewardPoolAccName, Permissions: []string{authtypes.Minter}},
+		{Account: inferencemoduletypes.PreProgrammedSaleAccName, Permissions: []string{authtypes.Minter}},
 		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
-		// starport scaffolding # stargate/app/maccPerms
+		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
 	blockAccAddrs = []string{

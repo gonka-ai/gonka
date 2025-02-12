@@ -1,0 +1,10 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message Model {
+  string proposed_by = 1;
+  string id = 2;
+  uint64 units_of_compute_per_token = 3;
+}

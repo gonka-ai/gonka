@@ -128,11 +128,11 @@ var xxx_messageInfo_MsgUpdateParamsResponse proto.InternalMessageInfo
 
 type MsgStartInference struct {
 	Creator       string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId   string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	PromptHash    string `protobuf:"bytes,3,opt,name=promptHash,proto3" json:"promptHash,omitempty"`
-	PromptPayload string `protobuf:"bytes,4,opt,name=promptPayload,proto3" json:"promptPayload,omitempty"`
+	InferenceId   string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	PromptHash    string `protobuf:"bytes,3,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	PromptPayload string `protobuf:"bytes,4,opt,name=prompt_payload,json=promptPayload,proto3" json:"prompt_payload,omitempty"`
 	Model         string `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
-	RequestedBy   string `protobuf:"bytes,7,opt,name=requestedBy,proto3" json:"requestedBy,omitempty"`
+	RequestedBy   string `protobuf:"bytes,7,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
 }
 
 func (m *MsgStartInference) Reset()         { *m = MsgStartInference{} }
@@ -211,7 +211,7 @@ func (m *MsgStartInference) GetRequestedBy() string {
 }
 
 type MsgStartInferenceResponse struct {
-	InferenceIndex string `protobuf:"bytes,1,opt,name=inferenceIndex,proto3" json:"inferenceIndex,omitempty"`
+	InferenceIndex string `protobuf:"bytes,1,opt,name=inference_index,json=inferenceIndex,proto3" json:"inference_index,omitempty"`
 }
 
 func (m *MsgStartInferenceResponse) Reset()         { *m = MsgStartInferenceResponse{} }
@@ -256,12 +256,12 @@ func (m *MsgStartInferenceResponse) GetInferenceIndex() string {
 
 type MsgFinishInference struct {
 	Creator              string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId          string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	ResponseHash         string `protobuf:"bytes,3,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
-	ResponsePayload      string `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	PromptTokenCount     uint64 `protobuf:"varint,5,opt,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty"`
-	CompletionTokenCount uint64 `protobuf:"varint,6,opt,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty"`
-	ExecutedBy           string `protobuf:"bytes,7,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
+	InferenceId          string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ResponseHash         string `protobuf:"bytes,3,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	ResponsePayload      string `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	PromptTokenCount     uint64 `protobuf:"varint,5,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
+	CompletionTokenCount uint64 `protobuf:"varint,6,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
+	ExecutedBy           string `protobuf:"bytes,7,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
 }
 
 func (m *MsgFinishInference) Reset()         { *m = MsgFinishInference{} }
@@ -347,7 +347,7 @@ func (m *MsgFinishInference) GetExecutedBy() string {
 }
 
 type MsgFinishInferenceResponse struct {
-	InferenceIndex string `protobuf:"bytes,1,opt,name=inferenceIndex,proto3" json:"inferenceIndex,omitempty"`
+	InferenceIndex string `protobuf:"bytes,1,opt,name=inference_index,json=inferenceIndex,proto3" json:"inference_index,omitempty"`
 }
 
 func (m *MsgFinishInferenceResponse) Reset()         { *m = MsgFinishInferenceResponse{} }
@@ -394,7 +394,8 @@ type MsgSubmitNewParticipant struct {
 	Creator      string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Url          string   `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Models       []string `protobuf:"bytes,3,rep,name=models,proto3" json:"models,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,4,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	ValidatorKey string   `protobuf:"bytes,4,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string   `protobuf:"bytes,5,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (m *MsgSubmitNewParticipant) Reset()         { *m = MsgSubmitNewParticipant{} }
@@ -458,8 +459,15 @@ func (m *MsgSubmitNewParticipant) GetValidatorKey() string {
 	return ""
 }
 
+func (m *MsgSubmitNewParticipant) GetWorkerKey() string {
+	if m != nil {
+		return m.WorkerKey
+	}
+	return ""
+}
+
 type MsgSubmitNewParticipantResponse struct {
-	ParticipantIndex string `protobuf:"bytes,1,opt,name=participantIndex,proto3" json:"participantIndex,omitempty"`
+	ParticipantIndex string `protobuf:"bytes,1,opt,name=participant_index,json=participantIndex,proto3" json:"participant_index,omitempty"`
 	Status           string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 }
 
@@ -513,9 +521,9 @@ func (m *MsgSubmitNewParticipantResponse) GetStatus() string {
 type MsgValidation struct {
 	Creator         string  `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Id              string  `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
-	InferenceId     string  `protobuf:"bytes,3,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	ResponsePayload string  `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	ResponseHash    string  `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
+	InferenceId     string  `protobuf:"bytes,3,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ResponsePayload string  `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	ResponseHash    string  `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
 	Value           float64 `protobuf:"fixed64,6,opt,name=value,proto3" json:"value,omitempty"`
 	Revalidation    bool    `protobuf:"varint,7,opt,name=revalidation,proto3" json:"revalidation,omitempty"`
 }
@@ -640,9 +648,9 @@ var xxx_messageInfo_MsgValidationResponse proto.InternalMessageInfo
 
 type MsgSubmitPoC struct {
 	Creator       string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	BlockHeight   int64    `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight   int64    `protobuf:"varint,2,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
 	Nonce         []string `protobuf:"bytes,3,rep,name=nonce,proto3" json:"nonce,omitempty"`
-	SeedSignature string   `protobuf:"bytes,4,opt,name=seedSignature,proto3" json:"seedSignature,omitempty"`
+	SeedSignature string   `protobuf:"bytes,4,opt,name=seed_signature,json=seedSignature,proto3" json:"seed_signature,omitempty"`
 }
 
 func (m *MsgSubmitPoC) Reset()         { *m = MsgSubmitPoC{} }
@@ -747,8 +755,9 @@ type MsgSubmitNewUnfundedParticipant struct {
 	Address      string   `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
 	Url          string   `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	Models       []string `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	PubKey       string   `protobuf:"bytes,5,opt,name=pubKey,proto3" json:"pubKey,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,6,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	PubKey       string   `protobuf:"bytes,5,opt,name=pub_key,json=pubKey,proto3" json:"pub_key,omitempty"`
+	ValidatorKey string   `protobuf:"bytes,6,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string   `protobuf:"bytes,7,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (m *MsgSubmitNewUnfundedParticipant) Reset()         { *m = MsgSubmitNewUnfundedParticipant{} }
@@ -826,6 +835,13 @@ func (m *MsgSubmitNewUnfundedParticipant) GetValidatorKey() string {
 	return ""
 }
 
+func (m *MsgSubmitNewUnfundedParticipant) GetWorkerKey() string {
+	if m != nil {
+		return m.WorkerKey
+	}
+	return ""
+}
+
 type MsgSubmitNewUnfundedParticipantResponse struct {
 }
 
@@ -866,7 +882,7 @@ var xxx_messageInfo_MsgSubmitNewUnfundedParticipantResponse proto.InternalMessag
 
 type MsgInvalidateInference struct {
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	InferenceId string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 }
 
 func (m *MsgInvalidateInference) Reset()         { *m = MsgInvalidateInference{} }
@@ -954,7 +970,7 @@ var xxx_messageInfo_MsgInvalidateInferenceResponse proto.InternalMessageInfo
 
 type MsgRevalidateInference struct {
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	InferenceId string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 }
 
 func (m *MsgRevalidateInference) Reset()         { *m = MsgRevalidateInference{} }
@@ -1043,7 +1059,7 @@ var xxx_messageInfo_MsgRevalidateInferenceResponse proto.InternalMessageInfo
 type MsgClaimRewards struct {
 	Creator        string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Seed           int64  `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
-	PocStartHeight uint64 `protobuf:"varint,3,opt,name=pocStartHeight,proto3" json:"pocStartHeight,omitempty"`
+	PocStartHeight uint64 `protobuf:"varint,3,opt,name=poc_start_height,json=pocStartHeight,proto3" json:"poc_start_height,omitempty"`
 }
 
 func (m *MsgClaimRewards) Reset()         { *m = MsgClaimRewards{} }
@@ -1154,8 +1170,8 @@ func (m *MsgClaimRewardsResponse) GetResult() string {
 
 type MsgSubmitPocBatch struct {
 	Creator                  string    `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	PocStageStartBlockHeight int64     `protobuf:"varint,2,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
-	BatchId                  string    `protobuf:"bytes,3,opt,name=batchId,proto3" json:"batchId,omitempty"`
+	PocStageStartBlockHeight int64     `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
+	BatchId                  string    `protobuf:"bytes,3,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
 	Nonces                   []int64   `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
 	Dist                     []float64 `protobuf:"fixed64,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
 }
@@ -1266,16 +1282,16 @@ var xxx_messageInfo_MsgSubmitPocBatchResponse proto.InternalMessageInfo
 
 type MsgSubmitPocValidation struct {
 	Creator                  string    `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	ParticipantAddress       string    `protobuf:"bytes,2,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
-	PocStageStartBlockHeight int64     `protobuf:"varint,3,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
+	ParticipantAddress       string    `protobuf:"bytes,2,opt,name=participant_address,json=participantAddress,proto3" json:"participant_address,omitempty"`
+	PocStageStartBlockHeight int64     `protobuf:"varint,3,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
 	Nonces                   []int64   `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
 	Dist                     []float64 `protobuf:"fixed64,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
-	ReceivedDist             []float64 `protobuf:"fixed64,6,rep,packed,name=receivedDist,proto3" json:"receivedDist,omitempty"`
-	RTarget                  float64   `protobuf:"fixed64,7,opt,name=rTarget,proto3" json:"rTarget,omitempty"`
-	FraudThreshold           float64   `protobuf:"fixed64,8,opt,name=fraudThreshold,proto3" json:"fraudThreshold,omitempty"`
-	NInvalid                 int64     `protobuf:"varint,9,opt,name=nInvalid,proto3" json:"nInvalid,omitempty"`
-	ProbabilityHonest        float64   `protobuf:"fixed64,10,opt,name=probabilityHonest,proto3" json:"probabilityHonest,omitempty"`
-	FraudDetected            bool      `protobuf:"varint,11,opt,name=fraudDetected,proto3" json:"fraudDetected,omitempty"`
+	ReceivedDist             []float64 `protobuf:"fixed64,6,rep,packed,name=received_dist,json=receivedDist,proto3" json:"received_dist,omitempty"`
+	RTarget                  float64   `protobuf:"fixed64,7,opt,name=r_target,json=rTarget,proto3" json:"r_target,omitempty"`
+	FraudThreshold           float64   `protobuf:"fixed64,8,opt,name=fraud_threshold,json=fraudThreshold,proto3" json:"fraud_threshold,omitempty"`
+	NInvalid                 int64     `protobuf:"varint,9,opt,name=n_invalid,json=nInvalid,proto3" json:"n_invalid,omitempty"`
+	ProbabilityHonest        float64   `protobuf:"fixed64,10,opt,name=probability_honest,json=probabilityHonest,proto3" json:"probability_honest,omitempty"`
+	FraudDetected            bool      `protobuf:"varint,11,opt,name=fraud_detected,json=fraudDetected,proto3" json:"fraud_detected,omitempty"`
 }
 
 func (m *MsgSubmitPocValidation) Reset()         { *m = MsgSubmitPocValidation{} }
@@ -1426,7 +1442,7 @@ var xxx_messageInfo_MsgSubmitPocValidationResponse proto.InternalMessageInfo
 
 type MsgSubmitSeed struct {
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	BlockHeight int64  `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight int64  `protobuf:"varint,2,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
 	Signature   string `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
 }
 
@@ -1520,6 +1536,202 @@ func (m *MsgSubmitSeedResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgSubmitSeedResponse proto.InternalMessageInfo
 
+type MsgSubmitUnitOfComputePriceProposal struct {
+	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Price   uint64 `protobuf:"varint,2,opt,name=price,proto3" json:"price,omitempty"`
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposal) Reset()         { *m = MsgSubmitUnitOfComputePriceProposal{} }
+func (m *MsgSubmitUnitOfComputePriceProposal) String() string { return proto.CompactTextString(m) }
+func (*MsgSubmitUnitOfComputePriceProposal) ProtoMessage()    {}
+func (*MsgSubmitUnitOfComputePriceProposal) Descriptor() ([]byte, []int) {
+	return fileDescriptor_09b36d0241b9acd5, []int{26}
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgSubmitUnitOfComputePriceProposal.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgSubmitUnitOfComputePriceProposal.Merge(m, src)
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgSubmitUnitOfComputePriceProposal.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgSubmitUnitOfComputePriceProposal proto.InternalMessageInfo
+
+func (m *MsgSubmitUnitOfComputePriceProposal) GetCreator() string {
+	if m != nil {
+		return m.Creator
+	}
+	return ""
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposal) GetPrice() uint64 {
+	if m != nil {
+		return m.Price
+	}
+	return 0
+}
+
+type MsgSubmitUnitOfComputePriceProposalResponse struct {
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) Reset() {
+	*m = MsgSubmitUnitOfComputePriceProposalResponse{}
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) String() string {
+	return proto.CompactTextString(m)
+}
+func (*MsgSubmitUnitOfComputePriceProposalResponse) ProtoMessage() {}
+func (*MsgSubmitUnitOfComputePriceProposalResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_09b36d0241b9acd5, []int{27}
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgSubmitUnitOfComputePriceProposalResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgSubmitUnitOfComputePriceProposalResponse.Merge(m, src)
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgSubmitUnitOfComputePriceProposalResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgSubmitUnitOfComputePriceProposalResponse proto.InternalMessageInfo
+
+type MsgRegisterModel struct {
+	Authority              string `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
+	ProposedBy             string `protobuf:"bytes,2,opt,name=proposed_by,json=proposedBy,proto3" json:"proposed_by,omitempty"`
+	Id                     string `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
+	UnitsOfComputePerToken uint64 `protobuf:"varint,4,opt,name=units_of_compute_per_token,json=unitsOfComputePerToken,proto3" json:"units_of_compute_per_token,omitempty"`
+}
+
+func (m *MsgRegisterModel) Reset()         { *m = MsgRegisterModel{} }
+func (m *MsgRegisterModel) String() string { return proto.CompactTextString(m) }
+func (*MsgRegisterModel) ProtoMessage()    {}
+func (*MsgRegisterModel) Descriptor() ([]byte, []int) {
+	return fileDescriptor_09b36d0241b9acd5, []int{28}
+}
+func (m *MsgRegisterModel) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRegisterModel) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRegisterModel.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRegisterModel) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRegisterModel.Merge(m, src)
+}
+func (m *MsgRegisterModel) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRegisterModel) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRegisterModel.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRegisterModel proto.InternalMessageInfo
+
+func (m *MsgRegisterModel) GetAuthority() string {
+	if m != nil {
+		return m.Authority
+	}
+	return ""
+}
+
+func (m *MsgRegisterModel) GetProposedBy() string {
+	if m != nil {
+		return m.ProposedBy
+	}
+	return ""
+}
+
+func (m *MsgRegisterModel) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *MsgRegisterModel) GetUnitsOfComputePerToken() uint64 {
+	if m != nil {
+		return m.UnitsOfComputePerToken
+	}
+	return 0
+}
+
+type MsgRegisterModelResponse struct {
+}
+
+func (m *MsgRegisterModelResponse) Reset()         { *m = MsgRegisterModelResponse{} }
+func (m *MsgRegisterModelResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgRegisterModelResponse) ProtoMessage()    {}
+func (*MsgRegisterModelResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_09b36d0241b9acd5, []int{29}
+}
+func (m *MsgRegisterModelResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgRegisterModelResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgRegisterModelResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgRegisterModelResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgRegisterModelResponse.Merge(m, src)
+}
+func (m *MsgRegisterModelResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgRegisterModelResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgRegisterModelResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgRegisterModelResponse proto.InternalMessageInfo
+
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "inference.inference.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "inference.inference.MsgUpdateParamsResponse")
@@ -1547,100 +1759,121 @@ func init() {
 	proto.RegisterType((*MsgSubmitPocValidationResponse)(nil), "inference.inference.MsgSubmitPocValidationResponse")
 	proto.RegisterType((*MsgSubmitSeed)(nil), "inference.inference.MsgSubmitSeed")
 	proto.RegisterType((*MsgSubmitSeedResponse)(nil), "inference.inference.MsgSubmitSeedResponse")
+	proto.RegisterType((*MsgSubmitUnitOfComputePriceProposal)(nil), "inference.inference.MsgSubmitUnitOfComputePriceProposal")
+	proto.RegisterType((*MsgSubmitUnitOfComputePriceProposalResponse)(nil), "inference.inference.MsgSubmitUnitOfComputePriceProposalResponse")
+	proto.RegisterType((*MsgRegisterModel)(nil), "inference.inference.MsgRegisterModel")
+	proto.RegisterType((*MsgRegisterModelResponse)(nil), "inference.inference.MsgRegisterModelResponse")
 }
 
 func init() { proto.RegisterFile("inference/inference/tx.proto", fileDescriptor_09b36d0241b9acd5) }
 
 var fileDescriptor_09b36d0241b9acd5 = []byte{
-	// 1396 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xb4, 0x58, 0xcf, 0x6f, 0xdc, 0xc4,
-	0x17, 0x8f, 0xe3, 0x64, 0xdb, 0x7d, 0x49, 0x7f, 0xb9, 0xfb, 0x4d, 0x5d, 0xb7, 0xda, 0xee, 0x77,
-	0x55, 0xda, 0x34, 0x2d, 0xbb, 0xa2, 0x05, 0x84, 0x2a, 0x84, 0xd4, 0xa4, 0x42, 0x8d, 0x50, 0x20,
-	0x72, 0x5a, 0x24, 0x10, 0x12, 0x9a, 0xb5, 0x27, 0x5e, 0xab, 0xbb, 0x1e, 0xe3, 0x19, 0x27, 0x59,
-	0x4e, 0x88, 0x23, 0x17, 0x10, 0xe2, 0x8f, 0xe8, 0x01, 0xa1, 0x1c, 0xb8, 0x72, 0xe2, 0x52, 0x6e,
-	0x15, 0x27, 0x24, 0x24, 0x84, 0xda, 0x43, 0xce, 0xfc, 0x07, 0x68, 0x66, 0xec, 0x59, 0xdb, 0xeb,
-	0xfd, 0x11, 0x28, 0x97, 0xd6, 0xef, 0xcd, 0x9b, 0xf7, 0x3e, 0xef, 0xcd, 0xe7, 0xbd, 0x99, 0x2c,
-	0x5c, 0xf6, 0x83, 0x5d, 0x1c, 0xe1, 0xc0, 0xc1, 0xed, 0xe1, 0x17, 0x3b, 0x68, 0x85, 0x11, 0x61,
-	0xc4, 0x38, 0xaf, 0x74, 0x2d, 0xf5, 0x65, 0x9d, 0x43, 0x7d, 0x3f, 0x20, 0x6d, 0xf1, 0xaf, 0xb4,
-	0xb3, 0x2e, 0x38, 0x84, 0xf6, 0x09, 0x6d, 0xf7, 0xa9, 0xd7, 0xde, 0x7b, 0x8d, 0xff, 0x97, 0x2c,
-	0x5c, 0x94, 0x0b, 0x9f, 0x0a, 0xa9, 0x2d, 0x85, 0x64, 0xa9, 0xe6, 0x11, 0x8f, 0x48, 0x3d, 0xff,
-	0x4a, 0x37, 0x78, 0x84, 0x78, 0x3d, 0xdc, 0x16, 0x52, 0x27, 0xde, 0x6d, 0xa3, 0x60, 0x90, 0x2c,
-	0x35, 0xca, 0xa0, 0x86, 0x28, 0x42, 0xfd, 0xc4, 0x65, 0xf3, 0x67, 0x0d, 0xce, 0x6c, 0x51, 0xef,
-	0x51, 0xe8, 0x22, 0x86, 0xb7, 0xc5, 0x8a, 0xf1, 0x26, 0x54, 0x51, 0xcc, 0xba, 0x24, 0xf2, 0xd9,
-	0xc0, 0xd4, 0x1a, 0xda, 0x6a, 0x75, 0xdd, 0xfc, 0xf5, 0xc7, 0x57, 0x6b, 0x09, 0x96, 0x7b, 0xae,
-	0x1b, 0x61, 0x4a, 0x77, 0x58, 0xe4, 0x07, 0x9e, 0x3d, 0x34, 0x35, 0xde, 0x81, 0x8a, 0xf4, 0x6d,
-	0xce, 0x37, 0xb4, 0xd5, 0xa5, 0xdb, 0x97, 0x5a, 0x25, 0xb5, 0x68, 0xc9, 0x20, 0xeb, 0xd5, 0xa7,
-	0x7f, 0x5c, 0x99, 0x7b, 0x72, 0x74, 0xb8, 0xa6, 0xd9, 0xc9, 0xae, 0xbb, 0x6f, 0x7d, 0x79, 0x74,
-	0xb8, 0x36, 0xf4, 0xf7, 0xd5, 0xd1, 0xe1, 0xda, 0x2b, 0x43, 0xd8, 0x07, 0x99, 0x14, 0x0a, 0x88,
-	0x9b, 0x17, 0xe1, 0x42, 0x41, 0x65, 0x63, 0x1a, 0x92, 0x80, 0xe2, 0xe6, 0xef, 0x1a, 0x9c, 0xdb,
-	0xa2, 0xde, 0x0e, 0x43, 0x11, 0xdb, 0x4c, 0x1d, 0x18, 0x26, 0x9c, 0x70, 0x22, 0x8c, 0x18, 0x89,
-	0x64, 0x82, 0x76, 0x2a, 0x1a, 0x0d, 0x58, 0x52, 0x71, 0x36, 0x5d, 0x91, 0x49, 0xd5, 0xce, 0xaa,
-	0x8c, 0x3a, 0x40, 0x18, 0x91, 0x7e, 0xc8, 0x1e, 0x20, 0xda, 0x35, 0x75, 0x61, 0x90, 0xd1, 0x18,
-	0x57, 0xe1, 0x94, 0x94, 0xb6, 0xd1, 0xa0, 0x47, 0x90, 0x6b, 0x2e, 0x08, 0x93, 0xbc, 0xd2, 0xa8,
-	0xc1, 0x62, 0x9f, 0xb8, 0xb8, 0x67, 0x56, 0xc4, 0xaa, 0x14, 0x78, 0xf4, 0x08, 0x7f, 0x16, 0x63,
-	0xca, 0xb0, 0xbb, 0x3e, 0x30, 0x4f, 0xc8, 0xe8, 0x19, 0xd5, 0xdd, 0x65, 0x5e, 0xa4, 0x14, 0x6d,
-	0x73, 0x03, 0x2e, 0x8e, 0x24, 0x97, 0xa6, 0x6e, 0x5c, 0x83, 0xd3, 0x43, 0xdc, 0x81, 0x8b, 0x0f,
-	0x92, 0x5c, 0x0b, 0xda, 0xe6, 0xf7, 0xf3, 0x60, 0x6c, 0x51, 0xef, 0x5d, 0x3f, 0xf0, 0x69, 0xf7,
-	0xe5, 0xd4, 0xa8, 0x09, 0xcb, 0x51, 0x02, 0x23, 0x53, 0xa5, 0x9c, 0xce, 0x58, 0x85, 0x33, 0xa9,
-	0x9c, 0xaf, 0x54, 0x51, 0x6d, 0xac, 0xc1, 0x59, 0x59, 0xbc, 0x87, 0xe4, 0x31, 0x0e, 0x36, 0x48,
-	0x1c, 0x30, 0x73, 0xb1, 0xa1, 0xad, 0x2e, 0xd8, 0x23, 0x7a, 0xe3, 0x36, 0xd4, 0x1c, 0xd2, 0x0f,
-	0x7b, 0x98, 0xf9, 0x24, 0xc8, 0xd8, 0x57, 0x84, 0x7d, 0xe9, 0x1a, 0x3f, 0x51, 0x7c, 0x80, 0x9d,
-	0x38, 0x5b, 0xf4, 0x8c, 0xa6, 0x50, 0xf3, 0xfb, 0x60, 0x8d, 0x56, 0xeb, 0xd8, 0x45, 0xff, 0x5a,
-	0x13, 0x9c, 0xdd, 0x89, 0x3b, 0x7d, 0x9f, 0xbd, 0x8f, 0xf7, 0xb7, 0x51, 0xc4, 0x7c, 0xc7, 0x0f,
-	0x51, 0xc0, 0x26, 0x54, 0xfe, 0x2c, 0xe8, 0x71, 0xd4, 0x4b, 0x2a, 0xce, 0x3f, 0x8d, 0x15, 0xa8,
-	0x08, 0xea, 0x50, 0x53, 0x6f, 0xe8, 0xab, 0x55, 0x3b, 0x91, 0xf8, 0x09, 0xec, 0xa1, 0x9e, 0xef,
-	0xf2, 0x6d, 0xef, 0xe1, 0x41, 0x52, 0xda, 0x9c, 0xae, 0x90, 0x17, 0x86, 0x2b, 0x63, 0x00, 0xa9,
-	0xe4, 0xf8, 0x41, 0x0c, 0xd5, 0xd9, 0xf4, 0x46, 0xf4, 0x1c, 0x18, 0x65, 0x88, 0xc5, 0x34, 0x41,
-	0x9b, 0x48, 0xcd, 0xbf, 0x34, 0x38, 0xb5, 0x45, 0xbd, 0x0f, 0x25, 0x10, 0x9f, 0x04, 0x13, 0xd2,
-	0x3d, 0x0d, 0xf3, 0x7e, 0xca, 0xaf, 0x79, 0xdf, 0x2d, 0x12, 0x4f, 0x1f, 0x25, 0xde, 0xec, 0xa4,
-	0x2a, 0x52, 0x74, 0xb1, 0x84, 0xa2, 0x35, 0x58, 0xdc, 0x43, 0xbd, 0x18, 0x0b, 0xf6, 0x68, 0xb6,
-	0x14, 0xe4, 0xce, 0x3d, 0x85, 0x5f, 0x10, 0xe6, 0xa4, 0x9d, 0xd3, 0x15, 0x4a, 0x7b, 0x01, 0xfe,
-	0x97, 0x4b, 0x59, 0x4d, 0xa7, 0xef, 0x34, 0x58, 0x56, 0x45, 0xdf, 0x26, 0x1b, 0x93, 0x9b, 0xae,
-	0xd3, 0x23, 0xce, 0xe3, 0x07, 0xd8, 0xf7, 0xba, 0x4c, 0x14, 0x45, 0xb7, 0xb3, 0x2a, 0x8e, 0x36,
-	0x20, 0x81, 0x83, 0x13, 0x26, 0x48, 0x81, 0x8f, 0x23, 0x8a, 0xb1, 0xbb, 0xe3, 0x7b, 0x01, 0x62,
-	0x71, 0x84, 0xd3, 0x71, 0x94, 0x53, 0x16, 0xf0, 0xae, 0x40, 0x2d, 0x8b, 0x4a, 0xc1, 0xfd, 0x45,
-	0xcb, 0x73, 0xe4, 0x51, 0xb0, 0x1b, 0x07, 0x2e, 0x76, 0x67, 0x23, 0xaf, 0x09, 0x27, 0x90, 0xbc,
-	0x3b, 0x92, 0x23, 0x4d, 0xc5, 0x94, 0xd6, 0x7a, 0x19, 0xad, 0x17, 0x72, 0xb4, 0x5e, 0x81, 0x4a,
-	0x18, 0x77, 0x38, 0xa1, 0xe5, 0x79, 0x25, 0xd2, 0x08, 0xdd, 0x2b, 0x53, 0xe9, 0x7e, 0x03, 0xae,
-	0x4f, 0x49, 0x45, 0xa5, 0xdd, 0x81, 0x95, 0x2d, 0xea, 0x6d, 0x06, 0x89, 0x37, 0xfc, 0x52, 0x66,
-	0x64, 0x01, 0x4e, 0x03, 0xea, 0xe5, 0x31, 0x0a, 0x28, 0x6c, 0xfc, 0xdf, 0xa3, 0x28, 0x89, 0xa1,
-	0x50, 0xc4, 0xe2, 0xbd, 0xb0, 0xd1, 0x43, 0x7e, 0xdf, 0xc6, 0xfb, 0x28, 0x72, 0xe9, 0x84, 0xf0,
-	0x06, 0x2c, 0x70, 0x9a, 0x25, 0x64, 0x15, 0xdf, 0x7c, 0x40, 0x86, 0xc4, 0x11, 0x57, 0x56, 0x42,
-	0x65, 0x5d, 0x8c, 0xe6, 0x82, 0xb6, 0x00, 0x6c, 0x53, 0x4c, 0xcb, 0x6c, 0x58, 0x35, 0x94, 0x56,
-	0xa0, 0x82, 0xfa, 0x62, 0xc6, 0x6b, 0xc2, 0x51, 0x22, 0x71, 0x7d, 0x84, 0x69, 0xdc, 0x63, 0xe9,
-	0x00, 0x92, 0x52, 0xf3, 0xa7, 0xe4, 0x45, 0x90, 0xb0, 0xdb, 0x59, 0x47, 0xcc, 0xe9, 0x4e, 0x48,
-	0xe2, 0x2e, 0x98, 0x12, 0x9a, 0x87, 0x05, 0xbe, 0xf5, 0x91, 0x2e, 0x1c, 0xbb, 0xce, 0xbd, 0x76,
-	0xb8, 0x7b, 0x35, 0xac, 0x52, 0x91, 0xa3, 0x13, 0xfd, 0x29, 0x09, 0xae, 0xdb, 0x89, 0xc4, 0x4b,
-	0xe6, 0xfa, 0x94, 0xdf, 0x6f, 0xfa, 0xaa, 0x66, 0x8b, 0xef, 0x42, 0x29, 0x2e, 0xc9, 0x3b, 0x3f,
-	0x07, 0x5f, 0x1d, 0xcf, 0x0f, 0xba, 0x60, 0x89, 0x5a, 0x9d, 0x69, 0xcc, 0xb6, 0xc0, 0xc8, 0x8c,
-	0xef, 0x7b, 0xb9, 0x1e, 0x2d, 0x59, 0x99, 0x58, 0x11, 0x7d, 0x4a, 0x45, 0x8e, 0x91, 0xb7, 0x1c,
-	0xb4, 0x0e, 0xf6, 0xf7, 0xb0, 0x7b, 0x9f, 0xaf, 0x55, 0xc4, 0x5a, 0x4e, 0xc7, 0xb3, 0x8a, 0x1e,
-	0xa2, 0xc8, 0xc3, 0x4c, 0xcc, 0x61, 0xcd, 0x4e, 0x45, 0x4e, 0xb4, 0xdd, 0x08, 0xc5, 0xee, 0xc3,
-	0x6e, 0x84, 0x69, 0x97, 0xf4, 0x5c, 0xf3, 0xa4, 0x30, 0x28, 0x68, 0x0d, 0x0b, 0x4e, 0x06, 0x49,
-	0xdf, 0x99, 0x55, 0x81, 0x5e, 0xc9, 0xc6, 0x2d, 0x38, 0x17, 0x46, 0xa4, 0x83, 0x3a, 0x7e, 0xcf,
-	0x67, 0x83, 0x07, 0x24, 0xc0, 0x94, 0x99, 0x20, 0xdc, 0x8c, 0x2e, 0xf0, 0x51, 0x2b, 0x7c, 0xdf,
-	0xc7, 0x0c, 0x3b, 0x0c, 0xbb, 0xe6, 0x92, 0xb8, 0x19, 0xf2, 0xca, 0xd2, 0x8e, 0x2b, 0x39, 0x2f,
-	0x75, 0xa4, 0xfb, 0xe2, 0xbe, 0x94, 0x16, 0x3b, 0xbc, 0x83, 0xfe, 0xcd, 0x1d, 0x71, 0x19, 0xaa,
-	0x54, 0xdd, 0x04, 0x92, 0x92, 0x43, 0x45, 0xe9, 0xad, 0x35, 0x0c, 0x9c, 0x22, 0xba, 0xfd, 0x64,
-	0x09, 0xf4, 0x2d, 0xea, 0x19, 0x1d, 0x58, 0xce, 0xfd, 0xe1, 0x70, 0xb5, 0xf4, 0xc1, 0x5f, 0x78,
-	0x99, 0x5b, 0xb7, 0x66, 0xb1, 0x52, 0xdd, 0xdd, 0x85, 0xd3, 0x85, 0xb7, 0xfb, 0xb5, 0x71, 0xfb,
-	0xf3, 0x76, 0x56, 0x6b, 0x36, 0x3b, 0x15, 0xe9, 0x31, 0x9c, 0x29, 0x3e, 0x81, 0xaf, 0x8f, 0x73,
-	0x51, 0x30, 0xb4, 0xda, 0x33, 0x1a, 0xaa, 0x60, 0x9f, 0x43, 0xad, 0xf4, 0xe9, 0x37, 0xb6, 0x38,
-	0x65, 0xd6, 0xd6, 0xeb, 0xc7, 0xb1, 0x56, 0xb1, 0x3f, 0x01, 0xc8, 0x8c, 0x85, 0xe6, 0x38, 0x1f,
-	0x43, 0x1b, 0x6b, 0x6d, 0xba, 0x8d, 0xf2, 0xfe, 0x11, 0x54, 0x87, 0xcf, 0x99, 0xff, 0x4f, 0x06,
-	0xb8, 0x4d, 0x36, 0xac, 0x1b, 0x53, 0x4d, 0x94, 0xeb, 0x6f, 0x35, 0xb8, 0x3c, 0xf1, 0xed, 0x31,
-	0xbd, 0x1e, 0x25, 0xbb, 0xac, 0xb7, 0xff, 0xc9, 0x2e, 0x05, 0x6a, 0x1f, 0xce, 0x97, 0xbd, 0x0c,
-	0x6e, 0x8e, 0x73, 0x5a, 0x62, 0x6c, 0xdd, 0x39, 0x86, 0x71, 0x36, 0x70, 0xd9, 0x63, 0x60, 0x6c,
-	0xe0, 0x12, 0xe3, 0xf1, 0x81, 0x27, 0x3c, 0x01, 0x78, 0xdb, 0xe7, 0xee, 0xff, 0xb1, 0x6d, 0x9f,
-	0xb5, 0x1a, 0xdf, 0xf6, 0xa5, 0x97, 0x3a, 0x6f, 0xfb, 0xfc, 0x05, 0x7d, 0x6d, 0x1a, 0x4f, 0xa4,
-	0xdd, 0x84, 0xb6, 0x2f, 0xbd, 0x31, 0x79, 0x19, 0xcb, 0x6e, 0xcb, 0x9b, 0x53, 0xdd, 0x64, 0xfa,
-	0xe3, 0xce, 0x31, 0x8c, 0xb3, 0x6d, 0x98, 0x19, 0xea, 0xcd, 0xc9, 0x2e, 0xb8, 0xcd, 0xf8, 0x36,
-	0x1c, 0x9d, 0xd1, 0xd6, 0xe2, 0x17, 0x47, 0x87, 0x6b, 0xda, 0xfa, 0x07, 0x4f, 0x9f, 0xd7, 0xb5,
-	0x67, 0xcf, 0xeb, 0xda, 0x9f, 0xcf, 0xeb, 0xda, 0x37, 0x2f, 0xea, 0x73, 0xcf, 0x5e, 0xd4, 0xe7,
-	0x7e, 0x7b, 0x51, 0x9f, 0xfb, 0xf8, 0x0d, 0xcf, 0x67, 0xdd, 0xb8, 0xd3, 0x72, 0x48, 0xbf, 0x1d,
-	0x46, 0xc4, 0x8d, 0x1d, 0x46, 0x1d, 0xbf, 0xf0, 0x5b, 0x51, 0xf6, 0x47, 0x17, 0x36, 0x08, 0x31,
-	0xed, 0x54, 0xc4, 0xef, 0x46, 0x77, 0xfe, 0x0e, 0x00, 0x00, 0xff, 0xff, 0x43, 0xeb, 0x7c, 0xd6,
-	0x06, 0x13, 0x00, 0x00,
+	// 1675 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x58, 0xcd, 0x4f, 0xdc, 0xd6,
+	0x16, 0xc7, 0x0c, 0x0c, 0xcc, 0xe1, 0xdb, 0x99, 0x07, 0xc6, 0xe1, 0x01, 0x99, 0xbc, 0x24, 0x04,
+	0x02, 0xa3, 0x97, 0xe4, 0x3d, 0x45, 0xa8, 0x8a, 0x5a, 0x48, 0xab, 0xa0, 0x88, 0x06, 0x99, 0xa4,
+	0x52, 0xab, 0x4a, 0x96, 0xc7, 0xbe, 0x78, 0x2c, 0x66, 0x7c, 0x5d, 0xdf, 0x6b, 0x60, 0xba, 0xaa,
+	0xba, 0xec, 0xaa, 0xea, 0xa2, 0xcb, 0xae, 0xbb, 0xa9, 0xca, 0x22, 0x9b, 0x6e, 0xdb, 0x4d, 0x96,
+	0x51, 0x57, 0x5d, 0xb5, 0x55, 0xb2, 0x40, 0xea, 0xba, 0x7f, 0x40, 0x75, 0xef, 0xb5, 0x3d, 0xb6,
+	0xc7, 0x33, 0x03, 0x69, 0xd4, 0x0d, 0xf8, 0x7c, 0xdc, 0x7b, 0x7e, 0xe7, 0xf8, 0x7c, 0x79, 0x60,
+	0xc1, 0x71, 0x0f, 0x90, 0x8f, 0x5c, 0x13, 0x55, 0xdb, 0x4f, 0xf4, 0x64, 0xc3, 0xf3, 0x31, 0xc5,
+	0xf2, 0xa5, 0x98, 0xb7, 0x11, 0x3f, 0xa9, 0x33, 0x46, 0xd3, 0x71, 0x71, 0x95, 0xff, 0x15, 0x7a,
+	0xea, 0x9c, 0x89, 0x49, 0x13, 0x93, 0x6a, 0x93, 0xd8, 0xd5, 0xa3, 0xff, 0xb2, 0x7f, 0xa1, 0x60,
+	0x5e, 0x08, 0x74, 0x4e, 0x55, 0x05, 0x11, 0x8a, 0xca, 0x36, 0xb6, 0xb1, 0xe0, 0xb3, 0xa7, 0xe8,
+	0x80, 0x8d, 0xb1, 0xdd, 0x40, 0x55, 0x4e, 0xd5, 0x82, 0x83, 0xaa, 0xe1, 0xb6, 0x42, 0xd1, 0x72,
+	0x1e, 0x54, 0xcf, 0xf0, 0x8d, 0x66, 0x78, 0x65, 0xe5, 0x27, 0x09, 0xa6, 0x76, 0x89, 0xfd, 0xd4,
+	0xb3, 0x0c, 0x8a, 0xf6, 0xb8, 0x44, 0xfe, 0x3f, 0x94, 0x8c, 0x80, 0xd6, 0xb1, 0xef, 0xd0, 0x96,
+	0x22, 0x2d, 0x4b, 0x2b, 0xa5, 0x2d, 0xe5, 0xe7, 0x67, 0xeb, 0xe5, 0x10, 0xcb, 0x3b, 0x96, 0xe5,
+	0x23, 0x42, 0xf6, 0xa9, 0xef, 0xb8, 0xb6, 0xd6, 0x56, 0x95, 0xef, 0x43, 0x51, 0xdc, 0xad, 0x0c,
+	0x2e, 0x4b, 0x2b, 0x63, 0xb7, 0x2f, 0x6f, 0xe4, 0xc4, 0x62, 0x43, 0x18, 0xd9, 0x2a, 0x3d, 0xff,
+	0x75, 0x69, 0xe0, 0xdb, 0xb3, 0xd3, 0x55, 0x49, 0x0b, 0x4f, 0x6d, 0xde, 0xfb, 0xfc, 0xec, 0x74,
+	0xb5, 0x7d, 0xdf, 0x17, 0x67, 0xa7, 0xab, 0xd7, 0xda, 0xb0, 0x4f, 0x12, 0x2e, 0x64, 0x10, 0x57,
+	0xe6, 0x61, 0x2e, 0xc3, 0xd2, 0x10, 0xf1, 0xb0, 0x4b, 0x50, 0xe5, 0x37, 0x09, 0x66, 0x76, 0x89,
+	0xbd, 0x4f, 0x0d, 0x9f, 0xee, 0x44, 0x17, 0xc8, 0x0a, 0x8c, 0x98, 0x3e, 0x32, 0x28, 0xf6, 0x85,
+	0x83, 0x5a, 0x44, 0xca, 0x57, 0x60, 0x3c, 0xb6, 0xa3, 0x3b, 0x16, 0x77, 0xa5, 0xa4, 0x8d, 0xc5,
+	0xbc, 0x1d, 0x4b, 0x5e, 0x82, 0x31, 0xcf, 0xc7, 0x4d, 0x8f, 0xea, 0x75, 0x83, 0xd4, 0x95, 0x02,
+	0xd7, 0x00, 0xc1, 0x7a, 0x68, 0x90, 0xba, 0x7c, 0x0d, 0x26, 0x43, 0x05, 0xcf, 0x68, 0x35, 0xb0,
+	0x61, 0x29, 0x43, 0x5c, 0x67, 0x42, 0x70, 0xf7, 0x04, 0x53, 0x2e, 0xc3, 0x70, 0x13, 0x5b, 0xa8,
+	0xa1, 0x14, 0xb9, 0x54, 0x10, 0x0c, 0x80, 0x8f, 0x3e, 0x09, 0x10, 0xa1, 0xc8, 0xd2, 0x6b, 0x2d,
+	0x65, 0x44, 0x00, 0x88, 0x79, 0x5b, 0xad, 0xcd, 0x71, 0x16, 0xa8, 0x08, 0x71, 0xe5, 0x01, 0xcc,
+	0x77, 0x38, 0x18, 0xb9, 0x2f, 0xdf, 0x80, 0xa9, 0x84, 0x3b, 0xae, 0x85, 0x4e, 0x42, 0x87, 0x27,
+	0xdb, 0x1e, 0x31, 0x6e, 0xe5, 0xd9, 0x20, 0xc8, 0xbb, 0xc4, 0x7e, 0xcf, 0x71, 0x1d, 0x52, 0x7f,
+	0x43, 0x81, 0xba, 0x0a, 0x13, 0x7e, 0x08, 0x24, 0x19, 0xaa, 0xf1, 0x88, 0xc9, 0x83, 0x75, 0x13,
+	0xa6, 0x63, 0xa5, 0x74, 0xb8, 0xa6, 0x22, 0x7e, 0x14, 0xb0, 0x5b, 0x20, 0x87, 0x71, 0xa5, 0xf8,
+	0x10, 0xb9, 0xba, 0x89, 0x03, 0x97, 0x2a, 0xc3, 0xcb, 0xd2, 0xca, 0x90, 0x36, 0x2d, 0x24, 0x4f,
+	0x98, 0x60, 0x9b, 0xf1, 0xe5, 0xbb, 0x30, 0x6b, 0xe2, 0xa6, 0xd7, 0x40, 0xd4, 0xc1, 0x6e, 0xea,
+	0x44, 0x91, 0x9f, 0x28, 0xb7, 0xa5, 0x89, 0x53, 0x4b, 0x30, 0x86, 0x4e, 0x90, 0x19, 0xa4, 0xa2,
+	0x0f, 0x11, 0xab, 0x23, 0xf8, 0xef, 0x82, 0xda, 0x19, 0xb5, 0x8b, 0x47, 0xff, 0x7b, 0x89, 0x67,
+	0xf0, 0x7e, 0x50, 0x6b, 0x3a, 0xf4, 0x7d, 0x74, 0xbc, 0x67, 0xf8, 0xd4, 0x31, 0x1d, 0xcf, 0x70,
+	0x69, 0x8f, 0x57, 0x30, 0x0d, 0x85, 0xc0, 0x6f, 0x84, 0x91, 0x67, 0x8f, 0xf2, 0x2c, 0x14, 0x79,
+	0x16, 0x11, 0xa5, 0xb0, 0x5c, 0x58, 0x29, 0x69, 0x21, 0xc5, 0xde, 0xc4, 0x91, 0xd1, 0x70, 0x2c,
+	0x76, 0x4c, 0x3f, 0x44, 0xad, 0x30, 0xc2, 0xe3, 0x31, 0xf3, 0x11, 0x6a, 0xc9, 0xff, 0x06, 0x38,
+	0xc6, 0xfe, 0x21, 0x12, 0x1a, 0xc3, 0x5c, 0xa3, 0x24, 0x38, 0x8f, 0x50, 0xd6, 0xf1, 0x03, 0x58,
+	0xea, 0x02, 0x38, 0xf6, 0x7e, 0x0d, 0x66, 0xbc, 0x36, 0x3b, 0xe5, 0xff, 0x74, 0x42, 0xc0, 0x23,
+	0xc0, 0x90, 0x13, 0x6a, 0xd0, 0x80, 0x84, 0xee, 0x84, 0x54, 0xe5, 0x4f, 0x09, 0x26, 0x76, 0x89,
+	0xfd, 0x81, 0x00, 0xea, 0x60, 0xb7, 0x47, 0x3c, 0x26, 0x61, 0x30, 0x4e, 0xc4, 0x41, 0xc7, 0xea,
+	0x48, 0xd1, 0x42, 0x67, 0x8a, 0x5e, 0x20, 0xfb, 0x3a, 0xb2, 0x79, 0x38, 0x27, 0x9b, 0xcb, 0x30,
+	0x7c, 0x64, 0x34, 0x02, 0xc4, 0x73, 0x4c, 0xd2, 0x04, 0x21, 0x57, 0x58, 0x4d, 0x1f, 0xc5, 0x2e,
+	0xf0, 0xac, 0x1a, 0xd5, 0x52, 0xbc, 0x4c, 0x78, 0xe7, 0xe0, 0x5f, 0x29, 0xaf, 0xe3, 0x7e, 0xf6,
+	0xb5, 0x04, 0xe3, 0x71, 0xe0, 0xf7, 0xf0, 0x76, 0xef, 0x0a, 0xad, 0x35, 0xb0, 0x79, 0xa8, 0xd7,
+	0x91, 0x63, 0xd7, 0x29, 0x0f, 0x4c, 0x41, 0x1b, 0xe3, 0xbc, 0x87, 0x9c, 0xc5, 0xe0, 0xba, 0xd8,
+	0x35, 0x51, 0x98, 0x2e, 0x82, 0x60, 0xfd, 0x8b, 0x20, 0x64, 0xe9, 0xc4, 0xb1, 0x5d, 0x83, 0x06,
+	0x3e, 0x8a, 0xfa, 0x17, 0xe3, 0xee, 0x47, 0xcc, 0x0c, 0xe2, 0x59, 0x28, 0x27, 0x71, 0xc5, 0x80,
+	0xff, 0x90, 0xd2, 0x99, 0xf2, 0xd4, 0x3d, 0x08, 0x5c, 0x0b, 0x59, 0xe7, 0x4b, 0x71, 0x05, 0x46,
+	0x0c, 0x31, 0x6f, 0xc2, 0xf7, 0x1a, 0x91, 0x51, 0xf2, 0x17, 0xf2, 0x92, 0x7f, 0x28, 0x95, 0xfc,
+	0x73, 0x30, 0xe2, 0x05, 0xb5, 0x44, 0x52, 0x17, 0xbd, 0xa0, 0xc6, 0x12, 0xbe, 0xa3, 0x2a, 0x8a,
+	0x7d, 0xab, 0x62, 0xa4, 0x77, 0x55, 0xdc, 0x84, 0x1b, 0x7d, 0x7c, 0x8d, 0xe3, 0x62, 0xc2, 0xec,
+	0x2e, 0xb1, 0x77, 0xdc, 0xd0, 0x18, 0x7a, 0x33, 0x3d, 0x37, 0x83, 0x67, 0x19, 0x16, 0xf3, 0x8d,
+	0x64, 0x60, 0x68, 0xe8, 0x1f, 0x80, 0x91, 0x63, 0x24, 0x86, 0x71, 0xcc, 0xd7, 0x90, 0xed, 0x86,
+	0xe1, 0x34, 0x35, 0x74, 0x6c, 0xf8, 0x16, 0xe9, 0x61, 0x5f, 0x86, 0x21, 0x96, 0x89, 0x61, 0x42,
+	0xf3, 0x67, 0x79, 0x05, 0xa6, 0x3d, 0x6c, 0xea, 0x84, 0x8d, 0xc1, 0x28, 0xe1, 0x0b, 0xbc, 0xcf,
+	0x4f, 0x7a, 0xd8, 0xe4, 0xd3, 0x51, 0xe4, 0x7c, 0x06, 0xda, 0x0e, 0x6f, 0xbc, 0x49, 0xc3, 0x71,
+	0xff, 0x9a, 0x85, 0xa2, 0xd1, 0xe4, 0x03, 0x43, 0xe2, 0x17, 0x85, 0x14, 0xe3, 0xfb, 0x88, 0x04,
+	0x0d, 0x1a, 0xb5, 0x2a, 0x41, 0x55, 0x7e, 0x0c, 0x57, 0x8d, 0xb0, 0x04, 0xcc, 0x2d, 0x83, 0x9a,
+	0xf5, 0x1e, 0x6e, 0xdc, 0x87, 0x85, 0x10, 0xb2, 0x8d, 0x42, 0xe0, 0x39, 0xf5, 0xaa, 0x08, 0xf8,
+	0x36, 0xe2, 0x3e, 0x6c, 0x25, 0x8a, 0x77, 0x1e, 0x46, 0x6b, 0xcc, 0x44, 0xbb, 0xb5, 0x8d, 0x70,
+	0x7a, 0xc7, 0x62, 0x10, 0x79, 0x29, 0x8b, 0x52, 0x28, 0x68, 0x21, 0xc5, 0x22, 0x67, 0x39, 0x84,
+	0xcd, 0xcc, 0xc2, 0x8a, 0xa4, 0xf1, 0xe7, 0x4c, 0x3c, 0x2e, 0x8b, 0x6d, 0x22, 0xe5, 0x43, 0xfc,
+	0x96, 0x7e, 0x28, 0xf0, 0x6c, 0x89, 0xa5, 0xe7, 0xea, 0xca, 0x55, 0xb8, 0x94, 0x1c, 0x03, 0xe9,
+	0x72, 0x96, 0x13, 0xa2, 0x70, 0xb1, 0xec, 0x1b, 0x97, 0x42, 0x9f, 0xb8, 0x5c, 0xc0, 0x79, 0xd1,
+	0xd4, 0x4d, 0xe4, 0x1c, 0x21, 0x4b, 0xe7, 0xc2, 0x22, 0x17, 0x8e, 0x47, 0xcc, 0x07, 0x4c, 0x69,
+	0x1e, 0x46, 0x7d, 0x9d, 0x1a, 0xbe, 0x8d, 0x28, 0x6f, 0x00, 0x92, 0x36, 0xe2, 0x3f, 0xe1, 0x24,
+	0x9b, 0xf0, 0x07, 0xbe, 0x11, 0x58, 0x3a, 0xad, 0xfb, 0x88, 0xd4, 0x71, 0xc3, 0x52, 0x46, 0xb9,
+	0xc6, 0x24, 0x67, 0x3f, 0x89, 0xb8, 0xf2, 0x65, 0x28, 0xb9, 0xba, 0x23, 0x0a, 0x51, 0x29, 0x71,
+	0x0f, 0x46, 0xdd, 0xb0, 0x30, 0xe5, 0x75, 0xbe, 0xd8, 0xd4, 0x8c, 0x9a, 0xd3, 0x70, 0x68, 0x4b,
+	0xaf, 0x63, 0x17, 0x11, 0xaa, 0x00, 0xbf, 0x68, 0x26, 0x21, 0x79, 0xc8, 0x05, 0xac, 0x3f, 0x0b,
+	0xa3, 0x16, 0xa2, 0xc8, 0xa4, 0xc8, 0x52, 0xc6, 0xf8, 0x40, 0x99, 0xe0, 0xdc, 0x07, 0x21, 0x33,
+	0xb7, 0x06, 0x73, 0x5e, 0x5d, 0xfc, 0x76, 0x4f, 0xf8, 0xa4, 0x15, 0x1a, 0xfb, 0xac, 0xa6, 0xfe,
+	0xd6, 0x68, 0x59, 0x80, 0x52, 0x7b, 0x7e, 0x88, 0xf4, 0x6c, 0x33, 0x72, 0xa7, 0x5d, 0xdb, 0x72,
+	0xa2, 0x3b, 0x5d, 0x8d, 0x05, 0x4f, 0x5d, 0x87, 0x3e, 0x3e, 0xd8, 0xc6, 0x4d, 0x2f, 0xa0, 0x68,
+	0xcf, 0x77, 0x4c, 0xb4, 0xe7, 0x63, 0x0f, 0x13, 0xa3, 0xd1, 0x03, 0x68, 0x19, 0x86, 0x3d, 0xa6,
+	0xca, 0x11, 0x0e, 0x69, 0x82, 0xc8, 0x58, 0x5f, 0x87, 0xb5, 0x73, 0x18, 0x89, 0x31, 0x7d, 0x27,
+	0xc1, 0x34, 0xef, 0x66, 0xb6, 0x43, 0x28, 0xf2, 0x77, 0xf9, 0xd6, 0xbe, 0xd0, 0xf1, 0xcd, 0x94,
+	0xfc, 0x32, 0x12, 0x5f, 0x0c, 0x1e, 0x26, 0x62, 0xa9, 0x1c, 0x8c, 0xbf, 0x18, 0x38, 0x6b, 0xab,
+	0x15, 0x6e, 0x2e, 0x85, 0x78, 0x73, 0xd9, 0x04, 0x35, 0x70, 0x1d, 0x4a, 0x74, 0x7c, 0xa0, 0x9b,
+	0x02, 0x8c, 0xee, 0x21, 0x5f, 0x6c, 0xb1, 0x7c, 0x1a, 0x0f, 0x69, 0xb3, 0x5c, 0xa3, 0x0d, 0x16,
+	0xf9, 0x7c, 0x8d, 0xdd, 0x9c, 0x4c, 0x7f, 0x46, 0x55, 0x54, 0x50, 0xb2, 0x70, 0x23, 0x5f, 0x6e,
+	0x9f, 0x4e, 0x40, 0x61, 0x97, 0xd8, 0x72, 0x0d, 0xc6, 0x53, 0x9f, 0x80, 0xff, 0xc9, 0xfd, 0x74,
+	0xcb, 0x7c, 0x63, 0xa9, 0xb7, 0xce, 0xa3, 0x15, 0xb7, 0xd3, 0x3a, 0x4c, 0x66, 0xbe, 0xc2, 0xae,
+	0x77, 0x3b, 0x9f, 0xd6, 0x53, 0x37, 0xce, 0xa7, 0x17, 0x5b, 0x3a, 0x84, 0xa9, 0xec, 0x77, 0xcc,
+	0x8d, 0x6e, 0x57, 0x64, 0x14, 0xd5, 0xea, 0x39, 0x15, 0x63, 0x63, 0x9f, 0x42, 0x39, 0x77, 0x6d,
+	0xef, 0x1a, 0x9c, 0x3c, 0x6d, 0xf5, 0xee, 0x45, 0xb4, 0x63, 0xdb, 0x1f, 0x03, 0x24, 0x5a, 0x70,
+	0xa5, 0xdb, 0x1d, 0x6d, 0x1d, 0x75, 0xb5, 0xbf, 0x4e, 0x7c, 0xfb, 0x87, 0x50, 0x6a, 0xaf, 0x99,
+	0x57, 0x7a, 0x03, 0xdc, 0xc3, 0xdb, 0xea, 0xcd, 0xbe, 0x2a, 0xf1, 0xd5, 0x5f, 0x49, 0xb0, 0xd0,
+	0x73, 0x23, 0xec, 0x1f, 0x8f, 0x9c, 0x53, 0xea, 0x5b, 0xaf, 0x73, 0x2a, 0x06, 0x75, 0x0c, 0x97,
+	0xf2, 0xd6, 0xb1, 0xb5, 0x6e, 0x97, 0xe6, 0x28, 0xab, 0x77, 0x2e, 0xa0, 0x9c, 0x34, 0x9c, 0xb7,
+	0x80, 0x75, 0x35, 0x9c, 0xa3, 0xdc, 0xdd, 0x70, 0x8f, 0xad, 0x8b, 0x95, 0x7d, 0x6a, 0xe5, 0xea,
+	0x5a, 0xf6, 0x49, 0xad, 0xee, 0x65, 0x9f, 0xbb, 0x45, 0xb1, 0xb2, 0x4f, 0x6f, 0x44, 0xd7, 0xfb,
+	0xe5, 0x89, 0xd0, 0xeb, 0x51, 0xf6, 0xb9, 0xdb, 0x09, 0x0b, 0x63, 0xde, 0x66, 0xb2, 0xd6, 0xf7,
+	0x9a, 0x44, 0x7d, 0xdc, 0xb9, 0x80, 0x72, 0xb2, 0x0c, 0x13, 0x53, 0xb3, 0xd2, 0xfb, 0x0a, 0xa6,
+	0xd3, 0xbd, 0x0c, 0x3b, 0x67, 0xa0, 0xfc, 0x8d, 0x04, 0xcb, 0x7d, 0x27, 0xe0, 0xbd, 0xde, 0x17,
+	0x76, 0x3f, 0xa9, 0xbe, 0xfd, 0xba, 0x27, 0x63, 0x80, 0x08, 0x26, 0xd2, 0xc3, 0xf0, 0x5a, 0xf7,
+	0x5c, 0x4c, 0xa8, 0xa9, 0xeb, 0xe7, 0x52, 0x8b, 0xcc, 0xa8, 0xc3, 0x9f, 0x9d, 0x9d, 0xae, 0x4a,
+	0x5b, 0x8f, 0x9f, 0xbf, 0x5c, 0x94, 0x5e, 0xbc, 0x5c, 0x94, 0x7e, 0x7f, 0xb9, 0x28, 0x7d, 0xf9,
+	0x6a, 0x71, 0xe0, 0xc5, 0xab, 0xc5, 0x81, 0x5f, 0x5e, 0x2d, 0x0e, 0x7c, 0xf4, 0x3f, 0xdb, 0xa1,
+	0xf5, 0xa0, 0xb6, 0x61, 0xe2, 0x66, 0xd5, 0xf3, 0xb1, 0x15, 0x98, 0x94, 0x98, 0x4e, 0xe6, 0xd7,
+	0xcf, 0xe4, 0xcf, 0x88, 0xb4, 0xe5, 0x21, 0x52, 0x2b, 0xf2, 0x5f, 0x42, 0xef, 0xfc, 0x15, 0x00,
+	0x00, 0xff, 0xff, 0x07, 0x87, 0x83, 0xd3, 0xd8, 0x15, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1670,6 +1903,8 @@ type MsgClient interface {
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
+	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 }
 
 type msgClient struct {
@@ -1797,6 +2032,24 @@ func (c *msgClient) SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...g
 	return out, nil
 }
 
+func (c *msgClient) SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error) {
+	out := new(MsgSubmitUnitOfComputePriceProposalResponse)
+	err := c.cc.Invoke(ctx, "/inference.inference.Msg/SubmitUnitOfComputePriceProposal", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error) {
+	out := new(MsgRegisterModelResponse)
+	err := c.cc.Invoke(ctx, "/inference.inference.Msg/RegisterModel", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
@@ -1814,6 +2067,8 @@ type MsgServer interface {
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
+	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -1858,6 +2113,12 @@ func (*UnimplementedMsgServer) SubmitPocValidation(ctx context.Context, req *Msg
 }
 func (*UnimplementedMsgServer) SubmitSeed(ctx context.Context, req *MsgSubmitSeed) (*MsgSubmitSeedResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitSeed not implemented")
+}
+func (*UnimplementedMsgServer) SubmitUnitOfComputePriceProposal(ctx context.Context, req *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitUnitOfComputePriceProposal not implemented")
+}
+func (*UnimplementedMsgServer) RegisterModel(ctx context.Context, req *MsgRegisterModel) (*MsgRegisterModelResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterModel not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -2098,6 +2359,42 @@ func _Msg_SubmitSeed_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitUnitOfComputePriceProposal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitUnitOfComputePriceProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/SubmitUnitOfComputePriceProposal",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitUnitOfComputePriceProposal(ctx, req.(*MsgSubmitUnitOfComputePriceProposal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterModel)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.inference.Msg/RegisterModel",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterModel(ctx, req.(*MsgRegisterModel))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.inference.Msg",
@@ -2154,6 +2451,14 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitSeed",
 			Handler:    _Msg_SubmitSeed_Handler,
+		},
+		{
+			MethodName: "SubmitUnitOfComputePriceProposal",
+			Handler:    _Msg_SubmitUnitOfComputePriceProposal_Handler,
+		},
+		{
+			MethodName: "RegisterModel",
+			Handler:    _Msg_RegisterModel_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -2436,6 +2741,13 @@ func (m *MsgSubmitNewParticipant) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	_ = i
 	var l int
 	_ = l
+	if len(m.WorkerKey) > 0 {
+		i -= len(m.WorkerKey)
+		copy(dAtA[i:], m.WorkerKey)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.WorkerKey)))
+		i--
+		dAtA[i] = 0x2a
+	}
 	if len(m.ValidatorKey) > 0 {
 		i -= len(m.ValidatorKey)
 		copy(dAtA[i:], m.ValidatorKey)
@@ -2697,6 +3009,13 @@ func (m *MsgSubmitNewUnfundedParticipant) MarshalToSizedBuffer(dAtA []byte) (int
 	_ = i
 	var l int
 	_ = l
+	if len(m.WorkerKey) > 0 {
+		i -= len(m.WorkerKey)
+		copy(dAtA[i:], m.WorkerKey)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.WorkerKey)))
+		i--
+		dAtA[i] = 0x3a
+	}
 	if len(m.ValidatorKey) > 0 {
 		i -= len(m.ValidatorKey)
 		copy(dAtA[i:], m.ValidatorKey)
@@ -3258,6 +3577,136 @@ func (m *MsgSubmitSeedResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *MsgSubmitUnitOfComputePriceProposal) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposal) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposal) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Price != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.Price))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Creator) > 0 {
+		i -= len(m.Creator)
+		copy(dAtA[i:], m.Creator)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Creator)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgRegisterModel) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRegisterModel) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRegisterModel) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.UnitsOfComputePerToken != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.UnitsOfComputePerToken))
+		i--
+		dAtA[i] = 0x20
+	}
+	if len(m.Id) > 0 {
+		i -= len(m.Id)
+		copy(dAtA[i:], m.Id)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Id)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.ProposedBy) > 0 {
+		i -= len(m.ProposedBy)
+		copy(dAtA[i:], m.ProposedBy)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.ProposedBy)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Authority) > 0 {
+		i -= len(m.Authority)
+		copy(dAtA[i:], m.Authority)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Authority)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgRegisterModelResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgRegisterModelResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgRegisterModelResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTx(v)
 	base := offset
@@ -3411,6 +3860,10 @@ func (m *MsgSubmitNewParticipant) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
+	l = len(m.WorkerKey)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
 	return n
 }
 
@@ -3539,6 +3992,10 @@ func (m *MsgSubmitNewUnfundedParticipant) Size() (n int) {
 		n += 1 + l + sovTx(uint64(l))
 	}
 	l = len(m.ValidatorKey)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.WorkerKey)
 	if l > 0 {
 		n += 1 + l + sovTx(uint64(l))
 	}
@@ -3758,6 +4215,64 @@ func (m *MsgSubmitSeed) Size() (n int) {
 }
 
 func (m *MsgSubmitSeedResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposal) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Creator)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.Price != 0 {
+		n += 1 + sovTx(uint64(m.Price))
+	}
+	return n
+}
+
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *MsgRegisterModel) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Authority)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.ProposedBy)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = len(m.Id)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	if m.UnitsOfComputePerToken != 0 {
+		n += 1 + sovTx(uint64(m.UnitsOfComputePerToken))
+	}
+	return n
+}
+
+func (m *MsgRegisterModelResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -4748,6 +5263,38 @@ func (m *MsgSubmitNewParticipant) Unmarshal(dAtA []byte) error {
 			}
 			m.ValidatorKey = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.WorkerKey = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])
@@ -5609,6 +6156,38 @@ func (m *MsgSubmitNewUnfundedParticipant) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.ValidatorKey = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.WorkerKey = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -7142,6 +7721,372 @@ func (m *MsgSubmitSeedResponse) Unmarshal(dAtA []byte) error {
 		}
 		if fieldNum <= 0 {
 			return fmt.Errorf("proto: MsgSubmitSeedResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgSubmitUnitOfComputePriceProposal) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposal: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposal: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Creator = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Price", wireType)
+			}
+			m.Price = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Price |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgSubmitUnitOfComputePriceProposalResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposalResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposalResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRegisterModel) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRegisterModel: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRegisterModel: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Authority", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Authority = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ProposedBy", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ProposedBy = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Id", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Id = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field UnitsOfComputePerToken", wireType)
+			}
+			m.UnitsOfComputePerToken = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.UnitsOfComputePerToken |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgRegisterModelResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgRegisterModelResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgRegisterModelResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:

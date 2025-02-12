@@ -4,6 +4,8 @@ docker compose -p join2 down
 
 set -e
 
+export GENESIS_OVERRIDES_FILE="inference-chain/test_genesis_overrides.json"
+
 make build-docker
 
 export PORT=8080
@@ -15,7 +17,6 @@ export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="$PUBLIC_URL"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
-
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
 cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
 

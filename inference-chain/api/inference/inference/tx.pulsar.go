@@ -875,24 +875,24 @@ func (x *fastReflection_MsgUpdateParamsResponse) ProtoMethods() *protoiface.Meth
 }
 
 var (
-	md_MsgStartInference               protoreflect.MessageDescriptor
-	fd_MsgStartInference_creator       protoreflect.FieldDescriptor
-	fd_MsgStartInference_inferenceId   protoreflect.FieldDescriptor
-	fd_MsgStartInference_promptHash    protoreflect.FieldDescriptor
-	fd_MsgStartInference_promptPayload protoreflect.FieldDescriptor
-	fd_MsgStartInference_model         protoreflect.FieldDescriptor
-	fd_MsgStartInference_requestedBy   protoreflect.FieldDescriptor
+	md_MsgStartInference                protoreflect.MessageDescriptor
+	fd_MsgStartInference_creator        protoreflect.FieldDescriptor
+	fd_MsgStartInference_inference_id   protoreflect.FieldDescriptor
+	fd_MsgStartInference_prompt_hash    protoreflect.FieldDescriptor
+	fd_MsgStartInference_prompt_payload protoreflect.FieldDescriptor
+	fd_MsgStartInference_model          protoreflect.FieldDescriptor
+	fd_MsgStartInference_requested_by   protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgStartInference = File_inference_inference_tx_proto.Messages().ByName("MsgStartInference")
 	fd_MsgStartInference_creator = md_MsgStartInference.Fields().ByName("creator")
-	fd_MsgStartInference_inferenceId = md_MsgStartInference.Fields().ByName("inferenceId")
-	fd_MsgStartInference_promptHash = md_MsgStartInference.Fields().ByName("promptHash")
-	fd_MsgStartInference_promptPayload = md_MsgStartInference.Fields().ByName("promptPayload")
+	fd_MsgStartInference_inference_id = md_MsgStartInference.Fields().ByName("inference_id")
+	fd_MsgStartInference_prompt_hash = md_MsgStartInference.Fields().ByName("prompt_hash")
+	fd_MsgStartInference_prompt_payload = md_MsgStartInference.Fields().ByName("prompt_payload")
 	fd_MsgStartInference_model = md_MsgStartInference.Fields().ByName("model")
-	fd_MsgStartInference_requestedBy = md_MsgStartInference.Fields().ByName("requestedBy")
+	fd_MsgStartInference_requested_by = md_MsgStartInference.Fields().ByName("requested_by")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgStartInference)(nil)
@@ -968,19 +968,19 @@ func (x *fastReflection_MsgStartInference) Range(f func(protoreflect.FieldDescri
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_MsgStartInference_inferenceId, value) {
+		if !f(fd_MsgStartInference_inference_id, value) {
 			return
 		}
 	}
 	if x.PromptHash != "" {
 		value := protoreflect.ValueOfString(x.PromptHash)
-		if !f(fd_MsgStartInference_promptHash, value) {
+		if !f(fd_MsgStartInference_prompt_hash, value) {
 			return
 		}
 	}
 	if x.PromptPayload != "" {
 		value := protoreflect.ValueOfString(x.PromptPayload)
-		if !f(fd_MsgStartInference_promptPayload, value) {
+		if !f(fd_MsgStartInference_prompt_payload, value) {
 			return
 		}
 	}
@@ -992,7 +992,7 @@ func (x *fastReflection_MsgStartInference) Range(f func(protoreflect.FieldDescri
 	}
 	if x.RequestedBy != "" {
 		value := protoreflect.ValueOfString(x.RequestedBy)
-		if !f(fd_MsgStartInference_requestedBy, value) {
+		if !f(fd_MsgStartInference_requested_by, value) {
 			return
 		}
 	}
@@ -1013,15 +1013,15 @@ func (x *fastReflection_MsgStartInference) Has(fd protoreflect.FieldDescriptor) 
 	switch fd.FullName() {
 	case "inference.inference.MsgStartInference.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgStartInference.inferenceId":
+	case "inference.inference.MsgStartInference.inference_id":
 		return x.InferenceId != ""
-	case "inference.inference.MsgStartInference.promptHash":
+	case "inference.inference.MsgStartInference.prompt_hash":
 		return x.PromptHash != ""
-	case "inference.inference.MsgStartInference.promptPayload":
+	case "inference.inference.MsgStartInference.prompt_payload":
 		return x.PromptPayload != ""
 	case "inference.inference.MsgStartInference.model":
 		return x.Model != ""
-	case "inference.inference.MsgStartInference.requestedBy":
+	case "inference.inference.MsgStartInference.requested_by":
 		return x.RequestedBy != ""
 	default:
 		if fd.IsExtension() {
@@ -1041,15 +1041,15 @@ func (x *fastReflection_MsgStartInference) Clear(fd protoreflect.FieldDescriptor
 	switch fd.FullName() {
 	case "inference.inference.MsgStartInference.creator":
 		x.Creator = ""
-	case "inference.inference.MsgStartInference.inferenceId":
+	case "inference.inference.MsgStartInference.inference_id":
 		x.InferenceId = ""
-	case "inference.inference.MsgStartInference.promptHash":
+	case "inference.inference.MsgStartInference.prompt_hash":
 		x.PromptHash = ""
-	case "inference.inference.MsgStartInference.promptPayload":
+	case "inference.inference.MsgStartInference.prompt_payload":
 		x.PromptPayload = ""
 	case "inference.inference.MsgStartInference.model":
 		x.Model = ""
-	case "inference.inference.MsgStartInference.requestedBy":
+	case "inference.inference.MsgStartInference.requested_by":
 		x.RequestedBy = ""
 	default:
 		if fd.IsExtension() {
@@ -1070,19 +1070,19 @@ func (x *fastReflection_MsgStartInference) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.MsgStartInference.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgStartInference.inferenceId":
+	case "inference.inference.MsgStartInference.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgStartInference.promptHash":
+	case "inference.inference.MsgStartInference.prompt_hash":
 		value := x.PromptHash
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgStartInference.promptPayload":
+	case "inference.inference.MsgStartInference.prompt_payload":
 		value := x.PromptPayload
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgStartInference.model":
 		value := x.Model
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgStartInference.requestedBy":
+	case "inference.inference.MsgStartInference.requested_by":
 		value := x.RequestedBy
 		return protoreflect.ValueOfString(value)
 	default:
@@ -1107,15 +1107,15 @@ func (x *fastReflection_MsgStartInference) Set(fd protoreflect.FieldDescriptor, 
 	switch fd.FullName() {
 	case "inference.inference.MsgStartInference.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgStartInference.inferenceId":
+	case "inference.inference.MsgStartInference.inference_id":
 		x.InferenceId = value.Interface().(string)
-	case "inference.inference.MsgStartInference.promptHash":
+	case "inference.inference.MsgStartInference.prompt_hash":
 		x.PromptHash = value.Interface().(string)
-	case "inference.inference.MsgStartInference.promptPayload":
+	case "inference.inference.MsgStartInference.prompt_payload":
 		x.PromptPayload = value.Interface().(string)
 	case "inference.inference.MsgStartInference.model":
 		x.Model = value.Interface().(string)
-	case "inference.inference.MsgStartInference.requestedBy":
+	case "inference.inference.MsgStartInference.requested_by":
 		x.RequestedBy = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -1139,16 +1139,16 @@ func (x *fastReflection_MsgStartInference) Mutable(fd protoreflect.FieldDescript
 	switch fd.FullName() {
 	case "inference.inference.MsgStartInference.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgStartInference is not mutable"))
-	case "inference.inference.MsgStartInference.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.MsgStartInference is not mutable"))
-	case "inference.inference.MsgStartInference.promptHash":
-		panic(fmt.Errorf("field promptHash of message inference.inference.MsgStartInference is not mutable"))
-	case "inference.inference.MsgStartInference.promptPayload":
-		panic(fmt.Errorf("field promptPayload of message inference.inference.MsgStartInference is not mutable"))
+	case "inference.inference.MsgStartInference.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.MsgStartInference is not mutable"))
+	case "inference.inference.MsgStartInference.prompt_hash":
+		panic(fmt.Errorf("field prompt_hash of message inference.inference.MsgStartInference is not mutable"))
+	case "inference.inference.MsgStartInference.prompt_payload":
+		panic(fmt.Errorf("field prompt_payload of message inference.inference.MsgStartInference is not mutable"))
 	case "inference.inference.MsgStartInference.model":
 		panic(fmt.Errorf("field model of message inference.inference.MsgStartInference is not mutable"))
-	case "inference.inference.MsgStartInference.requestedBy":
-		panic(fmt.Errorf("field requestedBy of message inference.inference.MsgStartInference is not mutable"))
+	case "inference.inference.MsgStartInference.requested_by":
+		panic(fmt.Errorf("field requested_by of message inference.inference.MsgStartInference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgStartInference"))
@@ -1164,15 +1164,15 @@ func (x *fastReflection_MsgStartInference) NewField(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgStartInference.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgStartInference.inferenceId":
+	case "inference.inference.MsgStartInference.inference_id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgStartInference.promptHash":
+	case "inference.inference.MsgStartInference.prompt_hash":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgStartInference.promptPayload":
+	case "inference.inference.MsgStartInference.prompt_payload":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgStartInference.model":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgStartInference.requestedBy":
+	case "inference.inference.MsgStartInference.requested_by":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -1615,14 +1615,14 @@ func (x *fastReflection_MsgStartInference) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_MsgStartInferenceResponse                protoreflect.MessageDescriptor
-	fd_MsgStartInferenceResponse_inferenceIndex protoreflect.FieldDescriptor
+	md_MsgStartInferenceResponse                 protoreflect.MessageDescriptor
+	fd_MsgStartInferenceResponse_inference_index protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgStartInferenceResponse = File_inference_inference_tx_proto.Messages().ByName("MsgStartInferenceResponse")
-	fd_MsgStartInferenceResponse_inferenceIndex = md_MsgStartInferenceResponse.Fields().ByName("inferenceIndex")
+	fd_MsgStartInferenceResponse_inference_index = md_MsgStartInferenceResponse.Fields().ByName("inference_index")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgStartInferenceResponse)(nil)
@@ -1692,7 +1692,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Interface() protoreflect.Prot
 func (x *fastReflection_MsgStartInferenceResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.InferenceIndex != "" {
 		value := protoreflect.ValueOfString(x.InferenceIndex)
-		if !f(fd_MsgStartInferenceResponse_inferenceIndex, value) {
+		if !f(fd_MsgStartInferenceResponse_inference_index, value) {
 			return
 		}
 	}
@@ -1711,7 +1711,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Range(f func(protoreflect.Fie
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_MsgStartInferenceResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
 		return x.InferenceIndex != ""
 	default:
 		if fd.IsExtension() {
@@ -1729,7 +1729,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Has(fd protoreflect.FieldDesc
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgStartInferenceResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
 		x.InferenceIndex = ""
 	default:
 		if fd.IsExtension() {
@@ -1747,7 +1747,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Clear(fd protoreflect.FieldDe
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_MsgStartInferenceResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
 		value := x.InferenceIndex
 		return protoreflect.ValueOfString(value)
 	default:
@@ -1770,7 +1770,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Get(descriptor protoreflect.F
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgStartInferenceResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
 		x.InferenceIndex = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -1792,8 +1792,8 @@ func (x *fastReflection_MsgStartInferenceResponse) Set(fd protoreflect.FieldDesc
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgStartInferenceResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
-		panic(fmt.Errorf("field inferenceIndex of message inference.inference.MsgStartInferenceResponse is not mutable"))
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
+		panic(fmt.Errorf("field inference_index of message inference.inference.MsgStartInferenceResponse is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgStartInferenceResponse"))
@@ -1807,7 +1807,7 @@ func (x *fastReflection_MsgStartInferenceResponse) Mutable(fd protoreflect.Field
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_MsgStartInferenceResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgStartInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgStartInferenceResponse.inference_index":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -2035,26 +2035,26 @@ func (x *fastReflection_MsgStartInferenceResponse) ProtoMethods() *protoiface.Me
 }
 
 var (
-	md_MsgFinishInference                      protoreflect.MessageDescriptor
-	fd_MsgFinishInference_creator              protoreflect.FieldDescriptor
-	fd_MsgFinishInference_inferenceId          protoreflect.FieldDescriptor
-	fd_MsgFinishInference_responseHash         protoreflect.FieldDescriptor
-	fd_MsgFinishInference_responsePayload      protoreflect.FieldDescriptor
-	fd_MsgFinishInference_promptTokenCount     protoreflect.FieldDescriptor
-	fd_MsgFinishInference_completionTokenCount protoreflect.FieldDescriptor
-	fd_MsgFinishInference_executedBy           protoreflect.FieldDescriptor
+	md_MsgFinishInference                        protoreflect.MessageDescriptor
+	fd_MsgFinishInference_creator                protoreflect.FieldDescriptor
+	fd_MsgFinishInference_inference_id           protoreflect.FieldDescriptor
+	fd_MsgFinishInference_response_hash          protoreflect.FieldDescriptor
+	fd_MsgFinishInference_response_payload       protoreflect.FieldDescriptor
+	fd_MsgFinishInference_prompt_token_count     protoreflect.FieldDescriptor
+	fd_MsgFinishInference_completion_token_count protoreflect.FieldDescriptor
+	fd_MsgFinishInference_executed_by            protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgFinishInference = File_inference_inference_tx_proto.Messages().ByName("MsgFinishInference")
 	fd_MsgFinishInference_creator = md_MsgFinishInference.Fields().ByName("creator")
-	fd_MsgFinishInference_inferenceId = md_MsgFinishInference.Fields().ByName("inferenceId")
-	fd_MsgFinishInference_responseHash = md_MsgFinishInference.Fields().ByName("responseHash")
-	fd_MsgFinishInference_responsePayload = md_MsgFinishInference.Fields().ByName("responsePayload")
-	fd_MsgFinishInference_promptTokenCount = md_MsgFinishInference.Fields().ByName("promptTokenCount")
-	fd_MsgFinishInference_completionTokenCount = md_MsgFinishInference.Fields().ByName("completionTokenCount")
-	fd_MsgFinishInference_executedBy = md_MsgFinishInference.Fields().ByName("executedBy")
+	fd_MsgFinishInference_inference_id = md_MsgFinishInference.Fields().ByName("inference_id")
+	fd_MsgFinishInference_response_hash = md_MsgFinishInference.Fields().ByName("response_hash")
+	fd_MsgFinishInference_response_payload = md_MsgFinishInference.Fields().ByName("response_payload")
+	fd_MsgFinishInference_prompt_token_count = md_MsgFinishInference.Fields().ByName("prompt_token_count")
+	fd_MsgFinishInference_completion_token_count = md_MsgFinishInference.Fields().ByName("completion_token_count")
+	fd_MsgFinishInference_executed_by = md_MsgFinishInference.Fields().ByName("executed_by")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgFinishInference)(nil)
@@ -2130,37 +2130,37 @@ func (x *fastReflection_MsgFinishInference) Range(f func(protoreflect.FieldDescr
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_MsgFinishInference_inferenceId, value) {
+		if !f(fd_MsgFinishInference_inference_id, value) {
 			return
 		}
 	}
 	if x.ResponseHash != "" {
 		value := protoreflect.ValueOfString(x.ResponseHash)
-		if !f(fd_MsgFinishInference_responseHash, value) {
+		if !f(fd_MsgFinishInference_response_hash, value) {
 			return
 		}
 	}
 	if x.ResponsePayload != "" {
 		value := protoreflect.ValueOfString(x.ResponsePayload)
-		if !f(fd_MsgFinishInference_responsePayload, value) {
+		if !f(fd_MsgFinishInference_response_payload, value) {
 			return
 		}
 	}
 	if x.PromptTokenCount != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.PromptTokenCount)
-		if !f(fd_MsgFinishInference_promptTokenCount, value) {
+		if !f(fd_MsgFinishInference_prompt_token_count, value) {
 			return
 		}
 	}
 	if x.CompletionTokenCount != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.CompletionTokenCount)
-		if !f(fd_MsgFinishInference_completionTokenCount, value) {
+		if !f(fd_MsgFinishInference_completion_token_count, value) {
 			return
 		}
 	}
 	if x.ExecutedBy != "" {
 		value := protoreflect.ValueOfString(x.ExecutedBy)
-		if !f(fd_MsgFinishInference_executedBy, value) {
+		if !f(fd_MsgFinishInference_executed_by, value) {
 			return
 		}
 	}
@@ -2181,17 +2181,17 @@ func (x *fastReflection_MsgFinishInference) Has(fd protoreflect.FieldDescriptor)
 	switch fd.FullName() {
 	case "inference.inference.MsgFinishInference.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgFinishInference.inferenceId":
+	case "inference.inference.MsgFinishInference.inference_id":
 		return x.InferenceId != ""
-	case "inference.inference.MsgFinishInference.responseHash":
+	case "inference.inference.MsgFinishInference.response_hash":
 		return x.ResponseHash != ""
-	case "inference.inference.MsgFinishInference.responsePayload":
+	case "inference.inference.MsgFinishInference.response_payload":
 		return x.ResponsePayload != ""
-	case "inference.inference.MsgFinishInference.promptTokenCount":
+	case "inference.inference.MsgFinishInference.prompt_token_count":
 		return x.PromptTokenCount != uint64(0)
-	case "inference.inference.MsgFinishInference.completionTokenCount":
+	case "inference.inference.MsgFinishInference.completion_token_count":
 		return x.CompletionTokenCount != uint64(0)
-	case "inference.inference.MsgFinishInference.executedBy":
+	case "inference.inference.MsgFinishInference.executed_by":
 		return x.ExecutedBy != ""
 	default:
 		if fd.IsExtension() {
@@ -2211,17 +2211,17 @@ func (x *fastReflection_MsgFinishInference) Clear(fd protoreflect.FieldDescripto
 	switch fd.FullName() {
 	case "inference.inference.MsgFinishInference.creator":
 		x.Creator = ""
-	case "inference.inference.MsgFinishInference.inferenceId":
+	case "inference.inference.MsgFinishInference.inference_id":
 		x.InferenceId = ""
-	case "inference.inference.MsgFinishInference.responseHash":
+	case "inference.inference.MsgFinishInference.response_hash":
 		x.ResponseHash = ""
-	case "inference.inference.MsgFinishInference.responsePayload":
+	case "inference.inference.MsgFinishInference.response_payload":
 		x.ResponsePayload = ""
-	case "inference.inference.MsgFinishInference.promptTokenCount":
+	case "inference.inference.MsgFinishInference.prompt_token_count":
 		x.PromptTokenCount = uint64(0)
-	case "inference.inference.MsgFinishInference.completionTokenCount":
+	case "inference.inference.MsgFinishInference.completion_token_count":
 		x.CompletionTokenCount = uint64(0)
-	case "inference.inference.MsgFinishInference.executedBy":
+	case "inference.inference.MsgFinishInference.executed_by":
 		x.ExecutedBy = ""
 	default:
 		if fd.IsExtension() {
@@ -2242,22 +2242,22 @@ func (x *fastReflection_MsgFinishInference) Get(descriptor protoreflect.FieldDes
 	case "inference.inference.MsgFinishInference.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgFinishInference.inferenceId":
+	case "inference.inference.MsgFinishInference.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgFinishInference.responseHash":
+	case "inference.inference.MsgFinishInference.response_hash":
 		value := x.ResponseHash
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgFinishInference.responsePayload":
+	case "inference.inference.MsgFinishInference.response_payload":
 		value := x.ResponsePayload
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgFinishInference.promptTokenCount":
+	case "inference.inference.MsgFinishInference.prompt_token_count":
 		value := x.PromptTokenCount
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.MsgFinishInference.completionTokenCount":
+	case "inference.inference.MsgFinishInference.completion_token_count":
 		value := x.CompletionTokenCount
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.MsgFinishInference.executedBy":
+	case "inference.inference.MsgFinishInference.executed_by":
 		value := x.ExecutedBy
 		return protoreflect.ValueOfString(value)
 	default:
@@ -2282,17 +2282,17 @@ func (x *fastReflection_MsgFinishInference) Set(fd protoreflect.FieldDescriptor,
 	switch fd.FullName() {
 	case "inference.inference.MsgFinishInference.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgFinishInference.inferenceId":
+	case "inference.inference.MsgFinishInference.inference_id":
 		x.InferenceId = value.Interface().(string)
-	case "inference.inference.MsgFinishInference.responseHash":
+	case "inference.inference.MsgFinishInference.response_hash":
 		x.ResponseHash = value.Interface().(string)
-	case "inference.inference.MsgFinishInference.responsePayload":
+	case "inference.inference.MsgFinishInference.response_payload":
 		x.ResponsePayload = value.Interface().(string)
-	case "inference.inference.MsgFinishInference.promptTokenCount":
+	case "inference.inference.MsgFinishInference.prompt_token_count":
 		x.PromptTokenCount = value.Uint()
-	case "inference.inference.MsgFinishInference.completionTokenCount":
+	case "inference.inference.MsgFinishInference.completion_token_count":
 		x.CompletionTokenCount = value.Uint()
-	case "inference.inference.MsgFinishInference.executedBy":
+	case "inference.inference.MsgFinishInference.executed_by":
 		x.ExecutedBy = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -2316,18 +2316,18 @@ func (x *fastReflection_MsgFinishInference) Mutable(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgFinishInference.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.responseHash":
-		panic(fmt.Errorf("field responseHash of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.responsePayload":
-		panic(fmt.Errorf("field responsePayload of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.promptTokenCount":
-		panic(fmt.Errorf("field promptTokenCount of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.completionTokenCount":
-		panic(fmt.Errorf("field completionTokenCount of message inference.inference.MsgFinishInference is not mutable"))
-	case "inference.inference.MsgFinishInference.executedBy":
-		panic(fmt.Errorf("field executedBy of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.response_hash":
+		panic(fmt.Errorf("field response_hash of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.response_payload":
+		panic(fmt.Errorf("field response_payload of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.prompt_token_count":
+		panic(fmt.Errorf("field prompt_token_count of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.completion_token_count":
+		panic(fmt.Errorf("field completion_token_count of message inference.inference.MsgFinishInference is not mutable"))
+	case "inference.inference.MsgFinishInference.executed_by":
+		panic(fmt.Errorf("field executed_by of message inference.inference.MsgFinishInference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgFinishInference"))
@@ -2343,17 +2343,17 @@ func (x *fastReflection_MsgFinishInference) NewField(fd protoreflect.FieldDescri
 	switch fd.FullName() {
 	case "inference.inference.MsgFinishInference.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgFinishInference.inferenceId":
+	case "inference.inference.MsgFinishInference.inference_id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgFinishInference.responseHash":
+	case "inference.inference.MsgFinishInference.response_hash":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgFinishInference.responsePayload":
+	case "inference.inference.MsgFinishInference.response_payload":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgFinishInference.promptTokenCount":
+	case "inference.inference.MsgFinishInference.prompt_token_count":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.MsgFinishInference.completionTokenCount":
+	case "inference.inference.MsgFinishInference.completion_token_count":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.MsgFinishInference.executedBy":
+	case "inference.inference.MsgFinishInference.executed_by":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -2807,14 +2807,14 @@ func (x *fastReflection_MsgFinishInference) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_MsgFinishInferenceResponse                protoreflect.MessageDescriptor
-	fd_MsgFinishInferenceResponse_inferenceIndex protoreflect.FieldDescriptor
+	md_MsgFinishInferenceResponse                 protoreflect.MessageDescriptor
+	fd_MsgFinishInferenceResponse_inference_index protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgFinishInferenceResponse = File_inference_inference_tx_proto.Messages().ByName("MsgFinishInferenceResponse")
-	fd_MsgFinishInferenceResponse_inferenceIndex = md_MsgFinishInferenceResponse.Fields().ByName("inferenceIndex")
+	fd_MsgFinishInferenceResponse_inference_index = md_MsgFinishInferenceResponse.Fields().ByName("inference_index")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgFinishInferenceResponse)(nil)
@@ -2884,7 +2884,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Interface() protoreflect.Pro
 func (x *fastReflection_MsgFinishInferenceResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.InferenceIndex != "" {
 		value := protoreflect.ValueOfString(x.InferenceIndex)
-		if !f(fd_MsgFinishInferenceResponse_inferenceIndex, value) {
+		if !f(fd_MsgFinishInferenceResponse_inference_index, value) {
 			return
 		}
 	}
@@ -2903,7 +2903,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Range(f func(protoreflect.Fi
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_MsgFinishInferenceResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
 		return x.InferenceIndex != ""
 	default:
 		if fd.IsExtension() {
@@ -2921,7 +2921,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Has(fd protoreflect.FieldDes
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgFinishInferenceResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
 		x.InferenceIndex = ""
 	default:
 		if fd.IsExtension() {
@@ -2939,7 +2939,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Clear(fd protoreflect.FieldD
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_MsgFinishInferenceResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
 		value := x.InferenceIndex
 		return protoreflect.ValueOfString(value)
 	default:
@@ -2962,7 +2962,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Get(descriptor protoreflect.
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgFinishInferenceResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
 		x.InferenceIndex = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -2984,8 +2984,8 @@ func (x *fastReflection_MsgFinishInferenceResponse) Set(fd protoreflect.FieldDes
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgFinishInferenceResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
-		panic(fmt.Errorf("field inferenceIndex of message inference.inference.MsgFinishInferenceResponse is not mutable"))
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
+		panic(fmt.Errorf("field inference_index of message inference.inference.MsgFinishInferenceResponse is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgFinishInferenceResponse"))
@@ -2999,7 +2999,7 @@ func (x *fastReflection_MsgFinishInferenceResponse) Mutable(fd protoreflect.Fiel
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_MsgFinishInferenceResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgFinishInferenceResponse.inferenceIndex":
+	case "inference.inference.MsgFinishInferenceResponse.inference_index":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -3273,11 +3273,12 @@ func (x *_MsgSubmitNewParticipant_3_list) IsValid() bool {
 }
 
 var (
-	md_MsgSubmitNewParticipant              protoreflect.MessageDescriptor
-	fd_MsgSubmitNewParticipant_creator      protoreflect.FieldDescriptor
-	fd_MsgSubmitNewParticipant_url          protoreflect.FieldDescriptor
-	fd_MsgSubmitNewParticipant_models       protoreflect.FieldDescriptor
-	fd_MsgSubmitNewParticipant_validatorKey protoreflect.FieldDescriptor
+	md_MsgSubmitNewParticipant               protoreflect.MessageDescriptor
+	fd_MsgSubmitNewParticipant_creator       protoreflect.FieldDescriptor
+	fd_MsgSubmitNewParticipant_url           protoreflect.FieldDescriptor
+	fd_MsgSubmitNewParticipant_models        protoreflect.FieldDescriptor
+	fd_MsgSubmitNewParticipant_validator_key protoreflect.FieldDescriptor
+	fd_MsgSubmitNewParticipant_worker_key    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -3286,7 +3287,8 @@ func init() {
 	fd_MsgSubmitNewParticipant_creator = md_MsgSubmitNewParticipant.Fields().ByName("creator")
 	fd_MsgSubmitNewParticipant_url = md_MsgSubmitNewParticipant.Fields().ByName("url")
 	fd_MsgSubmitNewParticipant_models = md_MsgSubmitNewParticipant.Fields().ByName("models")
-	fd_MsgSubmitNewParticipant_validatorKey = md_MsgSubmitNewParticipant.Fields().ByName("validatorKey")
+	fd_MsgSubmitNewParticipant_validator_key = md_MsgSubmitNewParticipant.Fields().ByName("validator_key")
+	fd_MsgSubmitNewParticipant_worker_key = md_MsgSubmitNewParticipant.Fields().ByName("worker_key")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgSubmitNewParticipant)(nil)
@@ -3374,7 +3376,13 @@ func (x *fastReflection_MsgSubmitNewParticipant) Range(f func(protoreflect.Field
 	}
 	if x.ValidatorKey != "" {
 		value := protoreflect.ValueOfString(x.ValidatorKey)
-		if !f(fd_MsgSubmitNewParticipant_validatorKey, value) {
+		if !f(fd_MsgSubmitNewParticipant_validator_key, value) {
+			return
+		}
+	}
+	if x.WorkerKey != "" {
+		value := protoreflect.ValueOfString(x.WorkerKey)
+		if !f(fd_MsgSubmitNewParticipant_worker_key, value) {
 			return
 		}
 	}
@@ -3399,8 +3407,10 @@ func (x *fastReflection_MsgSubmitNewParticipant) Has(fd protoreflect.FieldDescri
 		return x.Url != ""
 	case "inference.inference.MsgSubmitNewParticipant.models":
 		return len(x.Models) != 0
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		return x.ValidatorKey != ""
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
+		return x.WorkerKey != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewParticipant"))
@@ -3423,8 +3433,10 @@ func (x *fastReflection_MsgSubmitNewParticipant) Clear(fd protoreflect.FieldDesc
 		x.Url = ""
 	case "inference.inference.MsgSubmitNewParticipant.models":
 		x.Models = nil
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		x.ValidatorKey = ""
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
+		x.WorkerKey = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewParticipant"))
@@ -3453,8 +3465,11 @@ func (x *fastReflection_MsgSubmitNewParticipant) Get(descriptor protoreflect.Fie
 		}
 		listValue := &_MsgSubmitNewParticipant_3_list{list: &x.Models}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		value := x.ValidatorKey
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
+		value := x.WorkerKey
 		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
@@ -3484,8 +3499,10 @@ func (x *fastReflection_MsgSubmitNewParticipant) Set(fd protoreflect.FieldDescri
 		lv := value.List()
 		clv := lv.(*_MsgSubmitNewParticipant_3_list)
 		x.Models = *clv.list
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		x.ValidatorKey = value.Interface().(string)
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
+		x.WorkerKey = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewParticipant"))
@@ -3516,8 +3533,10 @@ func (x *fastReflection_MsgSubmitNewParticipant) Mutable(fd protoreflect.FieldDe
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitNewParticipant is not mutable"))
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		panic(fmt.Errorf("field url of message inference.inference.MsgSubmitNewParticipant is not mutable"))
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
-		panic(fmt.Errorf("field validatorKey of message inference.inference.MsgSubmitNewParticipant is not mutable"))
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
+		panic(fmt.Errorf("field validator_key of message inference.inference.MsgSubmitNewParticipant is not mutable"))
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
+		panic(fmt.Errorf("field worker_key of message inference.inference.MsgSubmitNewParticipant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewParticipant"))
@@ -3538,7 +3557,9 @@ func (x *fastReflection_MsgSubmitNewParticipant) NewField(fd protoreflect.FieldD
 	case "inference.inference.MsgSubmitNewParticipant.models":
 		list := []string{}
 		return protoreflect.ValueOfList(&_MsgSubmitNewParticipant_3_list{list: &list})
-	case "inference.inference.MsgSubmitNewParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewParticipant.validator_key":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgSubmitNewParticipant.worker_key":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -3627,6 +3648,10 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		l = len(x.WorkerKey)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3655,6 +3680,13 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.WorkerKey) > 0 {
+			i -= len(x.WorkerKey)
+			copy(dAtA[i:], x.WorkerKey)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.WorkerKey)))
+			i--
+			dAtA[i] = 0x2a
 		}
 		if len(x.ValidatorKey) > 0 {
 			i -= len(x.ValidatorKey)
@@ -3863,6 +3895,38 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 				}
 				x.ValidatorKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.WorkerKey = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -3899,15 +3963,15 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 }
 
 var (
-	md_MsgSubmitNewParticipantResponse                  protoreflect.MessageDescriptor
-	fd_MsgSubmitNewParticipantResponse_participantIndex protoreflect.FieldDescriptor
-	fd_MsgSubmitNewParticipantResponse_status           protoreflect.FieldDescriptor
+	md_MsgSubmitNewParticipantResponse                   protoreflect.MessageDescriptor
+	fd_MsgSubmitNewParticipantResponse_participant_index protoreflect.FieldDescriptor
+	fd_MsgSubmitNewParticipantResponse_status            protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgSubmitNewParticipantResponse = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitNewParticipantResponse")
-	fd_MsgSubmitNewParticipantResponse_participantIndex = md_MsgSubmitNewParticipantResponse.Fields().ByName("participantIndex")
+	fd_MsgSubmitNewParticipantResponse_participant_index = md_MsgSubmitNewParticipantResponse.Fields().ByName("participant_index")
 	fd_MsgSubmitNewParticipantResponse_status = md_MsgSubmitNewParticipantResponse.Fields().ByName("status")
 }
 
@@ -3978,7 +4042,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Interface() protoreflec
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.ParticipantIndex != "" {
 		value := protoreflect.ValueOfString(x.ParticipantIndex)
-		if !f(fd_MsgSubmitNewParticipantResponse_participantIndex, value) {
+		if !f(fd_MsgSubmitNewParticipantResponse_participant_index, value) {
 			return
 		}
 	}
@@ -4003,7 +4067,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Range(f func(protorefle
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
 		return x.ParticipantIndex != ""
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
 		return x.Status != ""
@@ -4023,7 +4087,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Has(fd protoreflect.Fie
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
 		x.ParticipantIndex = ""
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
 		x.Status = ""
@@ -4043,7 +4107,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Clear(fd protoreflect.F
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
 		value := x.ParticipantIndex
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
@@ -4069,7 +4133,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Get(descriptor protoref
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
 		x.ParticipantIndex = value.Interface().(string)
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
 		x.Status = value.Interface().(string)
@@ -4093,8 +4157,8 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Set(fd protoreflect.Fie
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
-		panic(fmt.Errorf("field participantIndex of message inference.inference.MsgSubmitNewParticipantResponse is not mutable"))
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
+		panic(fmt.Errorf("field participant_index of message inference.inference.MsgSubmitNewParticipantResponse is not mutable"))
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
 		panic(fmt.Errorf("field status of message inference.inference.MsgSubmitNewParticipantResponse is not mutable"))
 	default:
@@ -4110,7 +4174,7 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) Mutable(fd protoreflect
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_MsgSubmitNewParticipantResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipantResponse.participantIndex":
+	case "inference.inference.MsgSubmitNewParticipantResponse.participant_index":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitNewParticipantResponse.status":
 		return protoreflect.ValueOfString("")
@@ -4383,14 +4447,14 @@ func (x *fastReflection_MsgSubmitNewParticipantResponse) ProtoMethods() *protoif
 }
 
 var (
-	md_MsgValidation                 protoreflect.MessageDescriptor
-	fd_MsgValidation_creator         protoreflect.FieldDescriptor
-	fd_MsgValidation_id              protoreflect.FieldDescriptor
-	fd_MsgValidation_inferenceId     protoreflect.FieldDescriptor
-	fd_MsgValidation_responsePayload protoreflect.FieldDescriptor
-	fd_MsgValidation_responseHash    protoreflect.FieldDescriptor
-	fd_MsgValidation_value           protoreflect.FieldDescriptor
-	fd_MsgValidation_revalidation    protoreflect.FieldDescriptor
+	md_MsgValidation                  protoreflect.MessageDescriptor
+	fd_MsgValidation_creator          protoreflect.FieldDescriptor
+	fd_MsgValidation_id               protoreflect.FieldDescriptor
+	fd_MsgValidation_inference_id     protoreflect.FieldDescriptor
+	fd_MsgValidation_response_payload protoreflect.FieldDescriptor
+	fd_MsgValidation_response_hash    protoreflect.FieldDescriptor
+	fd_MsgValidation_value            protoreflect.FieldDescriptor
+	fd_MsgValidation_revalidation     protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -4398,9 +4462,9 @@ func init() {
 	md_MsgValidation = File_inference_inference_tx_proto.Messages().ByName("MsgValidation")
 	fd_MsgValidation_creator = md_MsgValidation.Fields().ByName("creator")
 	fd_MsgValidation_id = md_MsgValidation.Fields().ByName("id")
-	fd_MsgValidation_inferenceId = md_MsgValidation.Fields().ByName("inferenceId")
-	fd_MsgValidation_responsePayload = md_MsgValidation.Fields().ByName("responsePayload")
-	fd_MsgValidation_responseHash = md_MsgValidation.Fields().ByName("responseHash")
+	fd_MsgValidation_inference_id = md_MsgValidation.Fields().ByName("inference_id")
+	fd_MsgValidation_response_payload = md_MsgValidation.Fields().ByName("response_payload")
+	fd_MsgValidation_response_hash = md_MsgValidation.Fields().ByName("response_hash")
 	fd_MsgValidation_value = md_MsgValidation.Fields().ByName("value")
 	fd_MsgValidation_revalidation = md_MsgValidation.Fields().ByName("revalidation")
 }
@@ -4484,19 +4548,19 @@ func (x *fastReflection_MsgValidation) Range(f func(protoreflect.FieldDescriptor
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_MsgValidation_inferenceId, value) {
+		if !f(fd_MsgValidation_inference_id, value) {
 			return
 		}
 	}
 	if x.ResponsePayload != "" {
 		value := protoreflect.ValueOfString(x.ResponsePayload)
-		if !f(fd_MsgValidation_responsePayload, value) {
+		if !f(fd_MsgValidation_response_payload, value) {
 			return
 		}
 	}
 	if x.ResponseHash != "" {
 		value := protoreflect.ValueOfString(x.ResponseHash)
-		if !f(fd_MsgValidation_responseHash, value) {
+		if !f(fd_MsgValidation_response_hash, value) {
 			return
 		}
 	}
@@ -4531,11 +4595,11 @@ func (x *fastReflection_MsgValidation) Has(fd protoreflect.FieldDescriptor) bool
 		return x.Creator != ""
 	case "inference.inference.MsgValidation.id":
 		return x.Id != ""
-	case "inference.inference.MsgValidation.inferenceId":
+	case "inference.inference.MsgValidation.inference_id":
 		return x.InferenceId != ""
-	case "inference.inference.MsgValidation.responsePayload":
+	case "inference.inference.MsgValidation.response_payload":
 		return x.ResponsePayload != ""
-	case "inference.inference.MsgValidation.responseHash":
+	case "inference.inference.MsgValidation.response_hash":
 		return x.ResponseHash != ""
 	case "inference.inference.MsgValidation.value":
 		return x.Value != float64(0) || math.Signbit(x.Value)
@@ -4561,11 +4625,11 @@ func (x *fastReflection_MsgValidation) Clear(fd protoreflect.FieldDescriptor) {
 		x.Creator = ""
 	case "inference.inference.MsgValidation.id":
 		x.Id = ""
-	case "inference.inference.MsgValidation.inferenceId":
+	case "inference.inference.MsgValidation.inference_id":
 		x.InferenceId = ""
-	case "inference.inference.MsgValidation.responsePayload":
+	case "inference.inference.MsgValidation.response_payload":
 		x.ResponsePayload = ""
-	case "inference.inference.MsgValidation.responseHash":
+	case "inference.inference.MsgValidation.response_hash":
 		x.ResponseHash = ""
 	case "inference.inference.MsgValidation.value":
 		x.Value = float64(0)
@@ -4593,13 +4657,13 @@ func (x *fastReflection_MsgValidation) Get(descriptor protoreflect.FieldDescript
 	case "inference.inference.MsgValidation.id":
 		value := x.Id
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgValidation.inferenceId":
+	case "inference.inference.MsgValidation.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgValidation.responsePayload":
+	case "inference.inference.MsgValidation.response_payload":
 		value := x.ResponsePayload
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgValidation.responseHash":
+	case "inference.inference.MsgValidation.response_hash":
 		value := x.ResponseHash
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgValidation.value":
@@ -4632,11 +4696,11 @@ func (x *fastReflection_MsgValidation) Set(fd protoreflect.FieldDescriptor, valu
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgValidation.id":
 		x.Id = value.Interface().(string)
-	case "inference.inference.MsgValidation.inferenceId":
+	case "inference.inference.MsgValidation.inference_id":
 		x.InferenceId = value.Interface().(string)
-	case "inference.inference.MsgValidation.responsePayload":
+	case "inference.inference.MsgValidation.response_payload":
 		x.ResponsePayload = value.Interface().(string)
-	case "inference.inference.MsgValidation.responseHash":
+	case "inference.inference.MsgValidation.response_hash":
 		x.ResponseHash = value.Interface().(string)
 	case "inference.inference.MsgValidation.value":
 		x.Value = value.Float()
@@ -4666,12 +4730,12 @@ func (x *fastReflection_MsgValidation) Mutable(fd protoreflect.FieldDescriptor) 
 		panic(fmt.Errorf("field creator of message inference.inference.MsgValidation is not mutable"))
 	case "inference.inference.MsgValidation.id":
 		panic(fmt.Errorf("field id of message inference.inference.MsgValidation is not mutable"))
-	case "inference.inference.MsgValidation.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.MsgValidation is not mutable"))
-	case "inference.inference.MsgValidation.responsePayload":
-		panic(fmt.Errorf("field responsePayload of message inference.inference.MsgValidation is not mutable"))
-	case "inference.inference.MsgValidation.responseHash":
-		panic(fmt.Errorf("field responseHash of message inference.inference.MsgValidation is not mutable"))
+	case "inference.inference.MsgValidation.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.MsgValidation is not mutable"))
+	case "inference.inference.MsgValidation.response_payload":
+		panic(fmt.Errorf("field response_payload of message inference.inference.MsgValidation is not mutable"))
+	case "inference.inference.MsgValidation.response_hash":
+		panic(fmt.Errorf("field response_hash of message inference.inference.MsgValidation is not mutable"))
 	case "inference.inference.MsgValidation.value":
 		panic(fmt.Errorf("field value of message inference.inference.MsgValidation is not mutable"))
 	case "inference.inference.MsgValidation.revalidation":
@@ -4693,11 +4757,11 @@ func (x *fastReflection_MsgValidation) NewField(fd protoreflect.FieldDescriptor)
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgValidation.id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgValidation.inferenceId":
+	case "inference.inference.MsgValidation.inference_id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgValidation.responsePayload":
+	case "inference.inference.MsgValidation.response_payload":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgValidation.responseHash":
+	case "inference.inference.MsgValidation.response_hash":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgValidation.value":
 		return protoreflect.ValueOfFloat64(float64(0))
@@ -5556,20 +5620,20 @@ func (x *_MsgSubmitPoC_3_list) IsValid() bool {
 }
 
 var (
-	md_MsgSubmitPoC               protoreflect.MessageDescriptor
-	fd_MsgSubmitPoC_creator       protoreflect.FieldDescriptor
-	fd_MsgSubmitPoC_blockHeight   protoreflect.FieldDescriptor
-	fd_MsgSubmitPoC_nonce         protoreflect.FieldDescriptor
-	fd_MsgSubmitPoC_seedSignature protoreflect.FieldDescriptor
+	md_MsgSubmitPoC                protoreflect.MessageDescriptor
+	fd_MsgSubmitPoC_creator        protoreflect.FieldDescriptor
+	fd_MsgSubmitPoC_block_height   protoreflect.FieldDescriptor
+	fd_MsgSubmitPoC_nonce          protoreflect.FieldDescriptor
+	fd_MsgSubmitPoC_seed_signature protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgSubmitPoC = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPoC")
 	fd_MsgSubmitPoC_creator = md_MsgSubmitPoC.Fields().ByName("creator")
-	fd_MsgSubmitPoC_blockHeight = md_MsgSubmitPoC.Fields().ByName("blockHeight")
+	fd_MsgSubmitPoC_block_height = md_MsgSubmitPoC.Fields().ByName("block_height")
 	fd_MsgSubmitPoC_nonce = md_MsgSubmitPoC.Fields().ByName("nonce")
-	fd_MsgSubmitPoC_seedSignature = md_MsgSubmitPoC.Fields().ByName("seedSignature")
+	fd_MsgSubmitPoC_seed_signature = md_MsgSubmitPoC.Fields().ByName("seed_signature")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgSubmitPoC)(nil)
@@ -5645,7 +5709,7 @@ func (x *fastReflection_MsgSubmitPoC) Range(f func(protoreflect.FieldDescriptor,
 	}
 	if x.BlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_MsgSubmitPoC_blockHeight, value) {
+		if !f(fd_MsgSubmitPoC_block_height, value) {
 			return
 		}
 	}
@@ -5657,7 +5721,7 @@ func (x *fastReflection_MsgSubmitPoC) Range(f func(protoreflect.FieldDescriptor,
 	}
 	if x.SeedSignature != "" {
 		value := protoreflect.ValueOfString(x.SeedSignature)
-		if !f(fd_MsgSubmitPoC_seedSignature, value) {
+		if !f(fd_MsgSubmitPoC_seed_signature, value) {
 			return
 		}
 	}
@@ -5678,11 +5742,11 @@ func (x *fastReflection_MsgSubmitPoC) Has(fd protoreflect.FieldDescriptor) bool 
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPoC.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgSubmitPoC.blockHeight":
+	case "inference.inference.MsgSubmitPoC.block_height":
 		return x.BlockHeight != int64(0)
 	case "inference.inference.MsgSubmitPoC.nonce":
 		return len(x.Nonce) != 0
-	case "inference.inference.MsgSubmitPoC.seedSignature":
+	case "inference.inference.MsgSubmitPoC.seed_signature":
 		return x.SeedSignature != ""
 	default:
 		if fd.IsExtension() {
@@ -5702,11 +5766,11 @@ func (x *fastReflection_MsgSubmitPoC) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPoC.creator":
 		x.Creator = ""
-	case "inference.inference.MsgSubmitPoC.blockHeight":
+	case "inference.inference.MsgSubmitPoC.block_height":
 		x.BlockHeight = int64(0)
 	case "inference.inference.MsgSubmitPoC.nonce":
 		x.Nonce = nil
-	case "inference.inference.MsgSubmitPoC.seedSignature":
+	case "inference.inference.MsgSubmitPoC.seed_signature":
 		x.SeedSignature = ""
 	default:
 		if fd.IsExtension() {
@@ -5727,7 +5791,7 @@ func (x *fastReflection_MsgSubmitPoC) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.MsgSubmitPoC.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitPoC.blockHeight":
+	case "inference.inference.MsgSubmitPoC.block_height":
 		value := x.BlockHeight
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitPoC.nonce":
@@ -5736,7 +5800,7 @@ func (x *fastReflection_MsgSubmitPoC) Get(descriptor protoreflect.FieldDescripto
 		}
 		listValue := &_MsgSubmitPoC_3_list{list: &x.Nonce}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.MsgSubmitPoC.seedSignature":
+	case "inference.inference.MsgSubmitPoC.seed_signature":
 		value := x.SeedSignature
 		return protoreflect.ValueOfString(value)
 	default:
@@ -5761,13 +5825,13 @@ func (x *fastReflection_MsgSubmitPoC) Set(fd protoreflect.FieldDescriptor, value
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPoC.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgSubmitPoC.blockHeight":
+	case "inference.inference.MsgSubmitPoC.block_height":
 		x.BlockHeight = value.Int()
 	case "inference.inference.MsgSubmitPoC.nonce":
 		lv := value.List()
 		clv := lv.(*_MsgSubmitPoC_3_list)
 		x.Nonce = *clv.list
-	case "inference.inference.MsgSubmitPoC.seedSignature":
+	case "inference.inference.MsgSubmitPoC.seed_signature":
 		x.SeedSignature = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -5797,10 +5861,10 @@ func (x *fastReflection_MsgSubmitPoC) Mutable(fd protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitPoC.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitPoC is not mutable"))
-	case "inference.inference.MsgSubmitPoC.blockHeight":
-		panic(fmt.Errorf("field blockHeight of message inference.inference.MsgSubmitPoC is not mutable"))
-	case "inference.inference.MsgSubmitPoC.seedSignature":
-		panic(fmt.Errorf("field seedSignature of message inference.inference.MsgSubmitPoC is not mutable"))
+	case "inference.inference.MsgSubmitPoC.block_height":
+		panic(fmt.Errorf("field block_height of message inference.inference.MsgSubmitPoC is not mutable"))
+	case "inference.inference.MsgSubmitPoC.seed_signature":
+		panic(fmt.Errorf("field seed_signature of message inference.inference.MsgSubmitPoC is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPoC"))
@@ -5816,12 +5880,12 @@ func (x *fastReflection_MsgSubmitPoC) NewField(fd protoreflect.FieldDescriptor) 
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPoC.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitPoC.blockHeight":
+	case "inference.inference.MsgSubmitPoC.block_height":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitPoC.nonce":
 		list := []string{}
 		return protoreflect.ValueOfList(&_MsgSubmitPoC_3_list{list: &list})
-	case "inference.inference.MsgSubmitPoC.seedSignature":
+	case "inference.inference.MsgSubmitPoC.seed_signature":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -6568,13 +6632,14 @@ func (x *_MsgSubmitNewUnfundedParticipant_4_list) IsValid() bool {
 }
 
 var (
-	md_MsgSubmitNewUnfundedParticipant              protoreflect.MessageDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_creator      protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_address      protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_url          protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_models       protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_pubKey       protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_validatorKey protoreflect.FieldDescriptor
+	md_MsgSubmitNewUnfundedParticipant               protoreflect.MessageDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_creator       protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_address       protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_url           protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_models        protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_pub_key       protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_validator_key protoreflect.FieldDescriptor
+	fd_MsgSubmitNewUnfundedParticipant_worker_key    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -6584,8 +6649,9 @@ func init() {
 	fd_MsgSubmitNewUnfundedParticipant_address = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("address")
 	fd_MsgSubmitNewUnfundedParticipant_url = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("url")
 	fd_MsgSubmitNewUnfundedParticipant_models = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("models")
-	fd_MsgSubmitNewUnfundedParticipant_pubKey = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("pubKey")
-	fd_MsgSubmitNewUnfundedParticipant_validatorKey = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("validatorKey")
+	fd_MsgSubmitNewUnfundedParticipant_pub_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("pub_key")
+	fd_MsgSubmitNewUnfundedParticipant_validator_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("validator_key")
+	fd_MsgSubmitNewUnfundedParticipant_worker_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("worker_key")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgSubmitNewUnfundedParticipant)(nil)
@@ -6679,13 +6745,19 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Range(f func(protorefle
 	}
 	if x.PubKey != "" {
 		value := protoreflect.ValueOfString(x.PubKey)
-		if !f(fd_MsgSubmitNewUnfundedParticipant_pubKey, value) {
+		if !f(fd_MsgSubmitNewUnfundedParticipant_pub_key, value) {
 			return
 		}
 	}
 	if x.ValidatorKey != "" {
 		value := protoreflect.ValueOfString(x.ValidatorKey)
-		if !f(fd_MsgSubmitNewUnfundedParticipant_validatorKey, value) {
+		if !f(fd_MsgSubmitNewUnfundedParticipant_validator_key, value) {
+			return
+		}
+	}
+	if x.WorkerKey != "" {
+		value := protoreflect.ValueOfString(x.WorkerKey)
+		if !f(fd_MsgSubmitNewUnfundedParticipant_worker_key, value) {
 			return
 		}
 	}
@@ -6712,10 +6784,12 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Has(fd protoreflect.Fie
 		return x.Url != ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
 		return len(x.Models) != 0
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		return x.PubKey != ""
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
 		return x.ValidatorKey != ""
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
+		return x.WorkerKey != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewUnfundedParticipant"))
@@ -6740,10 +6814,12 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Clear(fd protoreflect.F
 		x.Url = ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
 		x.Models = nil
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		x.PubKey = ""
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
 		x.ValidatorKey = ""
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
+		x.WorkerKey = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewUnfundedParticipant"))
@@ -6775,11 +6851,14 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Get(descriptor protoref
 		}
 		listValue := &_MsgSubmitNewUnfundedParticipant_4_list{list: &x.Models}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		value := x.PubKey
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
 		value := x.ValidatorKey
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
+		value := x.WorkerKey
 		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
@@ -6811,10 +6890,12 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Set(fd protoreflect.Fie
 		lv := value.List()
 		clv := lv.(*_MsgSubmitNewUnfundedParticipant_4_list)
 		x.Models = *clv.list
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		x.PubKey = value.Interface().(string)
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
 		x.ValidatorKey = value.Interface().(string)
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
+		x.WorkerKey = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewUnfundedParticipant"))
@@ -6847,10 +6928,12 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Mutable(fd protoreflect
 		panic(fmt.Errorf("field address of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		panic(fmt.Errorf("field url of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
-		panic(fmt.Errorf("field pubKey of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
-		panic(fmt.Errorf("field validatorKey of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
+		panic(fmt.Errorf("field pub_key of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
+		panic(fmt.Errorf("field validator_key of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
+		panic(fmt.Errorf("field worker_key of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitNewUnfundedParticipant"))
@@ -6873,9 +6956,11 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) NewField(fd protoreflec
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
 		list := []string{}
 		return protoreflect.ValueOfList(&_MsgSubmitNewUnfundedParticipant_4_list{list: &list})
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.pubKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.validatorKey":
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgSubmitNewUnfundedParticipant.worker_key":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -6972,6 +7057,10 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		l = len(x.WorkerKey)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -7000,6 +7089,13 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.WorkerKey) > 0 {
+			i -= len(x.WorkerKey)
+			copy(dAtA[i:], x.WorkerKey)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.WorkerKey)))
+			i--
+			dAtA[i] = 0x3a
 		}
 		if len(x.ValidatorKey) > 0 {
 			i -= len(x.ValidatorKey)
@@ -7285,6 +7381,38 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
 				x.ValidatorKey = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.WorkerKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
@@ -7678,16 +7806,16 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipantResponse) ProtoMethods() 
 }
 
 var (
-	md_MsgInvalidateInference             protoreflect.MessageDescriptor
-	fd_MsgInvalidateInference_creator     protoreflect.FieldDescriptor
-	fd_MsgInvalidateInference_inferenceId protoreflect.FieldDescriptor
+	md_MsgInvalidateInference              protoreflect.MessageDescriptor
+	fd_MsgInvalidateInference_creator      protoreflect.FieldDescriptor
+	fd_MsgInvalidateInference_inference_id protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgInvalidateInference = File_inference_inference_tx_proto.Messages().ByName("MsgInvalidateInference")
 	fd_MsgInvalidateInference_creator = md_MsgInvalidateInference.Fields().ByName("creator")
-	fd_MsgInvalidateInference_inferenceId = md_MsgInvalidateInference.Fields().ByName("inferenceId")
+	fd_MsgInvalidateInference_inference_id = md_MsgInvalidateInference.Fields().ByName("inference_id")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgInvalidateInference)(nil)
@@ -7763,7 +7891,7 @@ func (x *fastReflection_MsgInvalidateInference) Range(f func(protoreflect.FieldD
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_MsgInvalidateInference_inferenceId, value) {
+		if !f(fd_MsgInvalidateInference_inference_id, value) {
 			return
 		}
 	}
@@ -7784,7 +7912,7 @@ func (x *fastReflection_MsgInvalidateInference) Has(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgInvalidateInference.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgInvalidateInference.inferenceId":
+	case "inference.inference.MsgInvalidateInference.inference_id":
 		return x.InferenceId != ""
 	default:
 		if fd.IsExtension() {
@@ -7804,7 +7932,7 @@ func (x *fastReflection_MsgInvalidateInference) Clear(fd protoreflect.FieldDescr
 	switch fd.FullName() {
 	case "inference.inference.MsgInvalidateInference.creator":
 		x.Creator = ""
-	case "inference.inference.MsgInvalidateInference.inferenceId":
+	case "inference.inference.MsgInvalidateInference.inference_id":
 		x.InferenceId = ""
 	default:
 		if fd.IsExtension() {
@@ -7825,7 +7953,7 @@ func (x *fastReflection_MsgInvalidateInference) Get(descriptor protoreflect.Fiel
 	case "inference.inference.MsgInvalidateInference.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgInvalidateInference.inferenceId":
+	case "inference.inference.MsgInvalidateInference.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
 	default:
@@ -7850,7 +7978,7 @@ func (x *fastReflection_MsgInvalidateInference) Set(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgInvalidateInference.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgInvalidateInference.inferenceId":
+	case "inference.inference.MsgInvalidateInference.inference_id":
 		x.InferenceId = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -7874,8 +8002,8 @@ func (x *fastReflection_MsgInvalidateInference) Mutable(fd protoreflect.FieldDes
 	switch fd.FullName() {
 	case "inference.inference.MsgInvalidateInference.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgInvalidateInference is not mutable"))
-	case "inference.inference.MsgInvalidateInference.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.MsgInvalidateInference is not mutable"))
+	case "inference.inference.MsgInvalidateInference.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.MsgInvalidateInference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgInvalidateInference"))
@@ -7891,7 +8019,7 @@ func (x *fastReflection_MsgInvalidateInference) NewField(fd protoreflect.FieldDe
 	switch fd.FullName() {
 	case "inference.inference.MsgInvalidateInference.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgInvalidateInference.inferenceId":
+	case "inference.inference.MsgInvalidateInference.inference_id":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -8518,16 +8646,16 @@ func (x *fastReflection_MsgInvalidateInferenceResponse) ProtoMethods() *protoifa
 }
 
 var (
-	md_MsgRevalidateInference             protoreflect.MessageDescriptor
-	fd_MsgRevalidateInference_creator     protoreflect.FieldDescriptor
-	fd_MsgRevalidateInference_inferenceId protoreflect.FieldDescriptor
+	md_MsgRevalidateInference              protoreflect.MessageDescriptor
+	fd_MsgRevalidateInference_creator      protoreflect.FieldDescriptor
+	fd_MsgRevalidateInference_inference_id protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgRevalidateInference = File_inference_inference_tx_proto.Messages().ByName("MsgRevalidateInference")
 	fd_MsgRevalidateInference_creator = md_MsgRevalidateInference.Fields().ByName("creator")
-	fd_MsgRevalidateInference_inferenceId = md_MsgRevalidateInference.Fields().ByName("inferenceId")
+	fd_MsgRevalidateInference_inference_id = md_MsgRevalidateInference.Fields().ByName("inference_id")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgRevalidateInference)(nil)
@@ -8603,7 +8731,7 @@ func (x *fastReflection_MsgRevalidateInference) Range(f func(protoreflect.FieldD
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_MsgRevalidateInference_inferenceId, value) {
+		if !f(fd_MsgRevalidateInference_inference_id, value) {
 			return
 		}
 	}
@@ -8624,7 +8752,7 @@ func (x *fastReflection_MsgRevalidateInference) Has(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgRevalidateInference.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgRevalidateInference.inferenceId":
+	case "inference.inference.MsgRevalidateInference.inference_id":
 		return x.InferenceId != ""
 	default:
 		if fd.IsExtension() {
@@ -8644,7 +8772,7 @@ func (x *fastReflection_MsgRevalidateInference) Clear(fd protoreflect.FieldDescr
 	switch fd.FullName() {
 	case "inference.inference.MsgRevalidateInference.creator":
 		x.Creator = ""
-	case "inference.inference.MsgRevalidateInference.inferenceId":
+	case "inference.inference.MsgRevalidateInference.inference_id":
 		x.InferenceId = ""
 	default:
 		if fd.IsExtension() {
@@ -8665,7 +8793,7 @@ func (x *fastReflection_MsgRevalidateInference) Get(descriptor protoreflect.Fiel
 	case "inference.inference.MsgRevalidateInference.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgRevalidateInference.inferenceId":
+	case "inference.inference.MsgRevalidateInference.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
 	default:
@@ -8690,7 +8818,7 @@ func (x *fastReflection_MsgRevalidateInference) Set(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgRevalidateInference.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgRevalidateInference.inferenceId":
+	case "inference.inference.MsgRevalidateInference.inference_id":
 		x.InferenceId = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -8714,8 +8842,8 @@ func (x *fastReflection_MsgRevalidateInference) Mutable(fd protoreflect.FieldDes
 	switch fd.FullName() {
 	case "inference.inference.MsgRevalidateInference.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgRevalidateInference is not mutable"))
-	case "inference.inference.MsgRevalidateInference.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.MsgRevalidateInference is not mutable"))
+	case "inference.inference.MsgRevalidateInference.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.MsgRevalidateInference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRevalidateInference"))
@@ -8731,7 +8859,7 @@ func (x *fastReflection_MsgRevalidateInference) NewField(fd protoreflect.FieldDe
 	switch fd.FullName() {
 	case "inference.inference.MsgRevalidateInference.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgRevalidateInference.inferenceId":
+	case "inference.inference.MsgRevalidateInference.inference_id":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -9358,10 +9486,10 @@ func (x *fastReflection_MsgRevalidateInferenceResponse) ProtoMethods() *protoifa
 }
 
 var (
-	md_MsgClaimRewards                protoreflect.MessageDescriptor
-	fd_MsgClaimRewards_creator        protoreflect.FieldDescriptor
-	fd_MsgClaimRewards_seed           protoreflect.FieldDescriptor
-	fd_MsgClaimRewards_pocStartHeight protoreflect.FieldDescriptor
+	md_MsgClaimRewards                  protoreflect.MessageDescriptor
+	fd_MsgClaimRewards_creator          protoreflect.FieldDescriptor
+	fd_MsgClaimRewards_seed             protoreflect.FieldDescriptor
+	fd_MsgClaimRewards_poc_start_height protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -9369,7 +9497,7 @@ func init() {
 	md_MsgClaimRewards = File_inference_inference_tx_proto.Messages().ByName("MsgClaimRewards")
 	fd_MsgClaimRewards_creator = md_MsgClaimRewards.Fields().ByName("creator")
 	fd_MsgClaimRewards_seed = md_MsgClaimRewards.Fields().ByName("seed")
-	fd_MsgClaimRewards_pocStartHeight = md_MsgClaimRewards.Fields().ByName("pocStartHeight")
+	fd_MsgClaimRewards_poc_start_height = md_MsgClaimRewards.Fields().ByName("poc_start_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgClaimRewards)(nil)
@@ -9451,7 +9579,7 @@ func (x *fastReflection_MsgClaimRewards) Range(f func(protoreflect.FieldDescript
 	}
 	if x.PocStartHeight != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.PocStartHeight)
-		if !f(fd_MsgClaimRewards_pocStartHeight, value) {
+		if !f(fd_MsgClaimRewards_poc_start_height, value) {
 			return
 		}
 	}
@@ -9474,7 +9602,7 @@ func (x *fastReflection_MsgClaimRewards) Has(fd protoreflect.FieldDescriptor) bo
 		return x.Creator != ""
 	case "inference.inference.MsgClaimRewards.seed":
 		return x.Seed != int64(0)
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
+	case "inference.inference.MsgClaimRewards.poc_start_height":
 		return x.PocStartHeight != uint64(0)
 	default:
 		if fd.IsExtension() {
@@ -9496,7 +9624,7 @@ func (x *fastReflection_MsgClaimRewards) Clear(fd protoreflect.FieldDescriptor) 
 		x.Creator = ""
 	case "inference.inference.MsgClaimRewards.seed":
 		x.Seed = int64(0)
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
+	case "inference.inference.MsgClaimRewards.poc_start_height":
 		x.PocStartHeight = uint64(0)
 	default:
 		if fd.IsExtension() {
@@ -9520,7 +9648,7 @@ func (x *fastReflection_MsgClaimRewards) Get(descriptor protoreflect.FieldDescri
 	case "inference.inference.MsgClaimRewards.seed":
 		value := x.Seed
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
+	case "inference.inference.MsgClaimRewards.poc_start_height":
 		value := x.PocStartHeight
 		return protoreflect.ValueOfUint64(value)
 	default:
@@ -9547,7 +9675,7 @@ func (x *fastReflection_MsgClaimRewards) Set(fd protoreflect.FieldDescriptor, va
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgClaimRewards.seed":
 		x.Seed = value.Int()
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
+	case "inference.inference.MsgClaimRewards.poc_start_height":
 		x.PocStartHeight = value.Uint()
 	default:
 		if fd.IsExtension() {
@@ -9573,8 +9701,8 @@ func (x *fastReflection_MsgClaimRewards) Mutable(fd protoreflect.FieldDescriptor
 		panic(fmt.Errorf("field creator of message inference.inference.MsgClaimRewards is not mutable"))
 	case "inference.inference.MsgClaimRewards.seed":
 		panic(fmt.Errorf("field seed of message inference.inference.MsgClaimRewards is not mutable"))
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
-		panic(fmt.Errorf("field pocStartHeight of message inference.inference.MsgClaimRewards is not mutable"))
+	case "inference.inference.MsgClaimRewards.poc_start_height":
+		panic(fmt.Errorf("field poc_start_height of message inference.inference.MsgClaimRewards is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgClaimRewards"))
@@ -9592,7 +9720,7 @@ func (x *fastReflection_MsgClaimRewards) NewField(fd protoreflect.FieldDescripto
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgClaimRewards.seed":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.MsgClaimRewards.pocStartHeight":
+	case "inference.inference.MsgClaimRewards.poc_start_height":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
@@ -10434,20 +10562,20 @@ func (x *_MsgSubmitPocBatch_5_list) IsValid() bool {
 }
 
 var (
-	md_MsgSubmitPocBatch                          protoreflect.MessageDescriptor
-	fd_MsgSubmitPocBatch_creator                  protoreflect.FieldDescriptor
-	fd_MsgSubmitPocBatch_pocStageStartBlockHeight protoreflect.FieldDescriptor
-	fd_MsgSubmitPocBatch_batchId                  protoreflect.FieldDescriptor
-	fd_MsgSubmitPocBatch_nonces                   protoreflect.FieldDescriptor
-	fd_MsgSubmitPocBatch_dist                     protoreflect.FieldDescriptor
+	md_MsgSubmitPocBatch                              protoreflect.MessageDescriptor
+	fd_MsgSubmitPocBatch_creator                      protoreflect.FieldDescriptor
+	fd_MsgSubmitPocBatch_poc_stage_start_block_height protoreflect.FieldDescriptor
+	fd_MsgSubmitPocBatch_batch_id                     protoreflect.FieldDescriptor
+	fd_MsgSubmitPocBatch_nonces                       protoreflect.FieldDescriptor
+	fd_MsgSubmitPocBatch_dist                         protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgSubmitPocBatch = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPocBatch")
 	fd_MsgSubmitPocBatch_creator = md_MsgSubmitPocBatch.Fields().ByName("creator")
-	fd_MsgSubmitPocBatch_pocStageStartBlockHeight = md_MsgSubmitPocBatch.Fields().ByName("pocStageStartBlockHeight")
-	fd_MsgSubmitPocBatch_batchId = md_MsgSubmitPocBatch.Fields().ByName("batchId")
+	fd_MsgSubmitPocBatch_poc_stage_start_block_height = md_MsgSubmitPocBatch.Fields().ByName("poc_stage_start_block_height")
+	fd_MsgSubmitPocBatch_batch_id = md_MsgSubmitPocBatch.Fields().ByName("batch_id")
 	fd_MsgSubmitPocBatch_nonces = md_MsgSubmitPocBatch.Fields().ByName("nonces")
 	fd_MsgSubmitPocBatch_dist = md_MsgSubmitPocBatch.Fields().ByName("dist")
 }
@@ -10525,13 +10653,13 @@ func (x *fastReflection_MsgSubmitPocBatch) Range(f func(protoreflect.FieldDescri
 	}
 	if x.PocStageStartBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_MsgSubmitPocBatch_pocStageStartBlockHeight, value) {
+		if !f(fd_MsgSubmitPocBatch_poc_stage_start_block_height, value) {
 			return
 		}
 	}
 	if x.BatchId != "" {
 		value := protoreflect.ValueOfString(x.BatchId)
-		if !f(fd_MsgSubmitPocBatch_batchId, value) {
+		if !f(fd_MsgSubmitPocBatch_batch_id, value) {
 			return
 		}
 	}
@@ -10564,9 +10692,9 @@ func (x *fastReflection_MsgSubmitPocBatch) Has(fd protoreflect.FieldDescriptor) 
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
 		return x.PocStageStartBlockHeight != int64(0)
-	case "inference.inference.MsgSubmitPocBatch.batchId":
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
 		return x.BatchId != ""
 	case "inference.inference.MsgSubmitPocBatch.nonces":
 		return len(x.Nonces) != 0
@@ -10590,9 +10718,9 @@ func (x *fastReflection_MsgSubmitPocBatch) Clear(fd protoreflect.FieldDescriptor
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		x.Creator = ""
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
 		x.PocStageStartBlockHeight = int64(0)
-	case "inference.inference.MsgSubmitPocBatch.batchId":
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
 		x.BatchId = ""
 	case "inference.inference.MsgSubmitPocBatch.nonces":
 		x.Nonces = nil
@@ -10617,10 +10745,10 @@ func (x *fastReflection_MsgSubmitPocBatch) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
 		value := x.PocStageStartBlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.MsgSubmitPocBatch.batchId":
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
 		value := x.BatchId
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.MsgSubmitPocBatch.nonces":
@@ -10657,9 +10785,9 @@ func (x *fastReflection_MsgSubmitPocBatch) Set(fd protoreflect.FieldDescriptor, 
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
 		x.PocStageStartBlockHeight = value.Int()
-	case "inference.inference.MsgSubmitPocBatch.batchId":
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
 		x.BatchId = value.Interface().(string)
 	case "inference.inference.MsgSubmitPocBatch.nonces":
 		lv := value.List()
@@ -10703,10 +10831,10 @@ func (x *fastReflection_MsgSubmitPocBatch) Mutable(fd protoreflect.FieldDescript
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitPocBatch is not mutable"))
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
-		panic(fmt.Errorf("field pocStageStartBlockHeight of message inference.inference.MsgSubmitPocBatch is not mutable"))
-	case "inference.inference.MsgSubmitPocBatch.batchId":
-		panic(fmt.Errorf("field batchId of message inference.inference.MsgSubmitPocBatch is not mutable"))
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
+		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.MsgSubmitPocBatch is not mutable"))
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
+		panic(fmt.Errorf("field batch_id of message inference.inference.MsgSubmitPocBatch is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPocBatch"))
@@ -10722,9 +10850,9 @@ func (x *fastReflection_MsgSubmitPocBatch) NewField(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocBatch.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitPocBatch.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocBatch.poc_stage_start_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.MsgSubmitPocBatch.batchId":
+	case "inference.inference.MsgSubmitPocBatch.batch_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitPocBatch.nonces":
 		list := []int64{}
@@ -11693,34 +11821,34 @@ func (x *_MsgSubmitPocValidation_6_list) IsValid() bool {
 }
 
 var (
-	md_MsgSubmitPocValidation                          protoreflect.MessageDescriptor
-	fd_MsgSubmitPocValidation_creator                  protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_participantAddress       protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_pocStageStartBlockHeight protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_nonces                   protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_dist                     protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_receivedDist             protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_rTarget                  protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_fraudThreshold           protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_nInvalid                 protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_probabilityHonest        protoreflect.FieldDescriptor
-	fd_MsgSubmitPocValidation_fraudDetected            protoreflect.FieldDescriptor
+	md_MsgSubmitPocValidation                              protoreflect.MessageDescriptor
+	fd_MsgSubmitPocValidation_creator                      protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_participant_address          protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_poc_stage_start_block_height protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_nonces                       protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_dist                         protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_received_dist                protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_r_target                     protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_fraud_threshold              protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_n_invalid                    protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_probability_honest           protoreflect.FieldDescriptor
+	fd_MsgSubmitPocValidation_fraud_detected               protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgSubmitPocValidation = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitPocValidation")
 	fd_MsgSubmitPocValidation_creator = md_MsgSubmitPocValidation.Fields().ByName("creator")
-	fd_MsgSubmitPocValidation_participantAddress = md_MsgSubmitPocValidation.Fields().ByName("participantAddress")
-	fd_MsgSubmitPocValidation_pocStageStartBlockHeight = md_MsgSubmitPocValidation.Fields().ByName("pocStageStartBlockHeight")
+	fd_MsgSubmitPocValidation_participant_address = md_MsgSubmitPocValidation.Fields().ByName("participant_address")
+	fd_MsgSubmitPocValidation_poc_stage_start_block_height = md_MsgSubmitPocValidation.Fields().ByName("poc_stage_start_block_height")
 	fd_MsgSubmitPocValidation_nonces = md_MsgSubmitPocValidation.Fields().ByName("nonces")
 	fd_MsgSubmitPocValidation_dist = md_MsgSubmitPocValidation.Fields().ByName("dist")
-	fd_MsgSubmitPocValidation_receivedDist = md_MsgSubmitPocValidation.Fields().ByName("receivedDist")
-	fd_MsgSubmitPocValidation_rTarget = md_MsgSubmitPocValidation.Fields().ByName("rTarget")
-	fd_MsgSubmitPocValidation_fraudThreshold = md_MsgSubmitPocValidation.Fields().ByName("fraudThreshold")
-	fd_MsgSubmitPocValidation_nInvalid = md_MsgSubmitPocValidation.Fields().ByName("nInvalid")
-	fd_MsgSubmitPocValidation_probabilityHonest = md_MsgSubmitPocValidation.Fields().ByName("probabilityHonest")
-	fd_MsgSubmitPocValidation_fraudDetected = md_MsgSubmitPocValidation.Fields().ByName("fraudDetected")
+	fd_MsgSubmitPocValidation_received_dist = md_MsgSubmitPocValidation.Fields().ByName("received_dist")
+	fd_MsgSubmitPocValidation_r_target = md_MsgSubmitPocValidation.Fields().ByName("r_target")
+	fd_MsgSubmitPocValidation_fraud_threshold = md_MsgSubmitPocValidation.Fields().ByName("fraud_threshold")
+	fd_MsgSubmitPocValidation_n_invalid = md_MsgSubmitPocValidation.Fields().ByName("n_invalid")
+	fd_MsgSubmitPocValidation_probability_honest = md_MsgSubmitPocValidation.Fields().ByName("probability_honest")
+	fd_MsgSubmitPocValidation_fraud_detected = md_MsgSubmitPocValidation.Fields().ByName("fraud_detected")
 }
 
 var _ protoreflect.Message = (*fastReflection_MsgSubmitPocValidation)(nil)
@@ -11796,13 +11924,13 @@ func (x *fastReflection_MsgSubmitPocValidation) Range(f func(protoreflect.FieldD
 	}
 	if x.ParticipantAddress != "" {
 		value := protoreflect.ValueOfString(x.ParticipantAddress)
-		if !f(fd_MsgSubmitPocValidation_participantAddress, value) {
+		if !f(fd_MsgSubmitPocValidation_participant_address, value) {
 			return
 		}
 	}
 	if x.PocStageStartBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_MsgSubmitPocValidation_pocStageStartBlockHeight, value) {
+		if !f(fd_MsgSubmitPocValidation_poc_stage_start_block_height, value) {
 			return
 		}
 	}
@@ -11820,37 +11948,37 @@ func (x *fastReflection_MsgSubmitPocValidation) Range(f func(protoreflect.FieldD
 	}
 	if len(x.ReceivedDist) != 0 {
 		value := protoreflect.ValueOfList(&_MsgSubmitPocValidation_6_list{list: &x.ReceivedDist})
-		if !f(fd_MsgSubmitPocValidation_receivedDist, value) {
+		if !f(fd_MsgSubmitPocValidation_received_dist, value) {
 			return
 		}
 	}
 	if x.RTarget != float64(0) || math.Signbit(x.RTarget) {
 		value := protoreflect.ValueOfFloat64(x.RTarget)
-		if !f(fd_MsgSubmitPocValidation_rTarget, value) {
+		if !f(fd_MsgSubmitPocValidation_r_target, value) {
 			return
 		}
 	}
 	if x.FraudThreshold != float64(0) || math.Signbit(x.FraudThreshold) {
 		value := protoreflect.ValueOfFloat64(x.FraudThreshold)
-		if !f(fd_MsgSubmitPocValidation_fraudThreshold, value) {
+		if !f(fd_MsgSubmitPocValidation_fraud_threshold, value) {
 			return
 		}
 	}
 	if x.NInvalid != int64(0) {
 		value := protoreflect.ValueOfInt64(x.NInvalid)
-		if !f(fd_MsgSubmitPocValidation_nInvalid, value) {
+		if !f(fd_MsgSubmitPocValidation_n_invalid, value) {
 			return
 		}
 	}
 	if x.ProbabilityHonest != float64(0) || math.Signbit(x.ProbabilityHonest) {
 		value := protoreflect.ValueOfFloat64(x.ProbabilityHonest)
-		if !f(fd_MsgSubmitPocValidation_probabilityHonest, value) {
+		if !f(fd_MsgSubmitPocValidation_probability_honest, value) {
 			return
 		}
 	}
 	if x.FraudDetected != false {
 		value := protoreflect.ValueOfBool(x.FraudDetected)
-		if !f(fd_MsgSubmitPocValidation_fraudDetected, value) {
+		if !f(fd_MsgSubmitPocValidation_fraud_detected, value) {
 			return
 		}
 	}
@@ -11871,25 +11999,25 @@ func (x *fastReflection_MsgSubmitPocValidation) Has(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
 		return x.ParticipantAddress != ""
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
 		return x.PocStageStartBlockHeight != int64(0)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		return len(x.Nonces) != 0
 	case "inference.inference.MsgSubmitPocValidation.dist":
 		return len(x.Dist) != 0
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		return len(x.ReceivedDist) != 0
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
+	case "inference.inference.MsgSubmitPocValidation.r_target":
 		return x.RTarget != float64(0) || math.Signbit(x.RTarget)
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
 		return x.FraudThreshold != float64(0) || math.Signbit(x.FraudThreshold)
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
 		return x.NInvalid != int64(0)
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
 		return x.ProbabilityHonest != float64(0) || math.Signbit(x.ProbabilityHonest)
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
 		return x.FraudDetected != false
 	default:
 		if fd.IsExtension() {
@@ -11909,25 +12037,25 @@ func (x *fastReflection_MsgSubmitPocValidation) Clear(fd protoreflect.FieldDescr
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		x.Creator = ""
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
 		x.ParticipantAddress = ""
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
 		x.PocStageStartBlockHeight = int64(0)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		x.Nonces = nil
 	case "inference.inference.MsgSubmitPocValidation.dist":
 		x.Dist = nil
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		x.ReceivedDist = nil
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
+	case "inference.inference.MsgSubmitPocValidation.r_target":
 		x.RTarget = float64(0)
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
 		x.FraudThreshold = float64(0)
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
 		x.NInvalid = int64(0)
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
 		x.ProbabilityHonest = float64(0)
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
 		x.FraudDetected = false
 	default:
 		if fd.IsExtension() {
@@ -11948,10 +12076,10 @@ func (x *fastReflection_MsgSubmitPocValidation) Get(descriptor protoreflect.Fiel
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
 		value := x.ParticipantAddress
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
 		value := x.PocStageStartBlockHeight
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitPocValidation.nonces":
@@ -11966,25 +12094,25 @@ func (x *fastReflection_MsgSubmitPocValidation) Get(descriptor protoreflect.Fiel
 		}
 		listValue := &_MsgSubmitPocValidation_5_list{list: &x.Dist}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		if len(x.ReceivedDist) == 0 {
 			return protoreflect.ValueOfList(&_MsgSubmitPocValidation_6_list{})
 		}
 		listValue := &_MsgSubmitPocValidation_6_list{list: &x.ReceivedDist}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
+	case "inference.inference.MsgSubmitPocValidation.r_target":
 		value := x.RTarget
 		return protoreflect.ValueOfFloat64(value)
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
 		value := x.FraudThreshold
 		return protoreflect.ValueOfFloat64(value)
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
 		value := x.NInvalid
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
 		value := x.ProbabilityHonest
 		return protoreflect.ValueOfFloat64(value)
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
 		value := x.FraudDetected
 		return protoreflect.ValueOfBool(value)
 	default:
@@ -12009,9 +12137,9 @@ func (x *fastReflection_MsgSubmitPocValidation) Set(fd protoreflect.FieldDescrip
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
 		x.ParticipantAddress = value.Interface().(string)
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
 		x.PocStageStartBlockHeight = value.Int()
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		lv := value.List()
@@ -12021,19 +12149,19 @@ func (x *fastReflection_MsgSubmitPocValidation) Set(fd protoreflect.FieldDescrip
 		lv := value.List()
 		clv := lv.(*_MsgSubmitPocValidation_5_list)
 		x.Dist = *clv.list
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		lv := value.List()
 		clv := lv.(*_MsgSubmitPocValidation_6_list)
 		x.ReceivedDist = *clv.list
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
+	case "inference.inference.MsgSubmitPocValidation.r_target":
 		x.RTarget = value.Float()
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
 		x.FraudThreshold = value.Float()
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
 		x.NInvalid = value.Int()
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
 		x.ProbabilityHonest = value.Float()
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
 		x.FraudDetected = value.Bool()
 	default:
 		if fd.IsExtension() {
@@ -12067,7 +12195,7 @@ func (x *fastReflection_MsgSubmitPocValidation) Mutable(fd protoreflect.FieldDes
 		}
 		value := &_MsgSubmitPocValidation_5_list{list: &x.Dist}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		if x.ReceivedDist == nil {
 			x.ReceivedDist = []float64{}
 		}
@@ -12075,20 +12203,20 @@ func (x *fastReflection_MsgSubmitPocValidation) Mutable(fd protoreflect.FieldDes
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
-		panic(fmt.Errorf("field participantAddress of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
-		panic(fmt.Errorf("field pocStageStartBlockHeight of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
-		panic(fmt.Errorf("field rTarget of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
-		panic(fmt.Errorf("field fraudThreshold of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
-		panic(fmt.Errorf("field nInvalid of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
-		panic(fmt.Errorf("field probabilityHonest of message inference.inference.MsgSubmitPocValidation is not mutable"))
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
-		panic(fmt.Errorf("field fraudDetected of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
+		panic(fmt.Errorf("field participant_address of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
+		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.r_target":
+		panic(fmt.Errorf("field r_target of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
+		panic(fmt.Errorf("field fraud_threshold of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
+		panic(fmt.Errorf("field n_invalid of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
+		panic(fmt.Errorf("field probability_honest of message inference.inference.MsgSubmitPocValidation is not mutable"))
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
+		panic(fmt.Errorf("field fraud_detected of message inference.inference.MsgSubmitPocValidation is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitPocValidation"))
@@ -12104,9 +12232,9 @@ func (x *fastReflection_MsgSubmitPocValidation) NewField(fd protoreflect.FieldDe
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitPocValidation.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitPocValidation.participantAddress":
+	case "inference.inference.MsgSubmitPocValidation.participant_address":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitPocValidation.pocStageStartBlockHeight":
+	case "inference.inference.MsgSubmitPocValidation.poc_stage_start_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitPocValidation.nonces":
 		list := []int64{}
@@ -12114,18 +12242,18 @@ func (x *fastReflection_MsgSubmitPocValidation) NewField(fd protoreflect.FieldDe
 	case "inference.inference.MsgSubmitPocValidation.dist":
 		list := []float64{}
 		return protoreflect.ValueOfList(&_MsgSubmitPocValidation_5_list{list: &list})
-	case "inference.inference.MsgSubmitPocValidation.receivedDist":
+	case "inference.inference.MsgSubmitPocValidation.received_dist":
 		list := []float64{}
 		return protoreflect.ValueOfList(&_MsgSubmitPocValidation_6_list{list: &list})
-	case "inference.inference.MsgSubmitPocValidation.rTarget":
+	case "inference.inference.MsgSubmitPocValidation.r_target":
 		return protoreflect.ValueOfFloat64(float64(0))
-	case "inference.inference.MsgSubmitPocValidation.fraudThreshold":
+	case "inference.inference.MsgSubmitPocValidation.fraud_threshold":
 		return protoreflect.ValueOfFloat64(float64(0))
-	case "inference.inference.MsgSubmitPocValidation.nInvalid":
+	case "inference.inference.MsgSubmitPocValidation.n_invalid":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.MsgSubmitPocValidation.probabilityHonest":
+	case "inference.inference.MsgSubmitPocValidation.probability_honest":
 		return protoreflect.ValueOfFloat64(float64(0))
-	case "inference.inference.MsgSubmitPocValidation.fraudDetected":
+	case "inference.inference.MsgSubmitPocValidation.fraud_detected":
 		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
@@ -13137,17 +13265,17 @@ func (x *fastReflection_MsgSubmitPocValidationResponse) ProtoMethods() *protoifa
 }
 
 var (
-	md_MsgSubmitSeed             protoreflect.MessageDescriptor
-	fd_MsgSubmitSeed_creator     protoreflect.FieldDescriptor
-	fd_MsgSubmitSeed_blockHeight protoreflect.FieldDescriptor
-	fd_MsgSubmitSeed_signature   protoreflect.FieldDescriptor
+	md_MsgSubmitSeed              protoreflect.MessageDescriptor
+	fd_MsgSubmitSeed_creator      protoreflect.FieldDescriptor
+	fd_MsgSubmitSeed_block_height protoreflect.FieldDescriptor
+	fd_MsgSubmitSeed_signature    protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_tx_proto_init()
 	md_MsgSubmitSeed = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitSeed")
 	fd_MsgSubmitSeed_creator = md_MsgSubmitSeed.Fields().ByName("creator")
-	fd_MsgSubmitSeed_blockHeight = md_MsgSubmitSeed.Fields().ByName("blockHeight")
+	fd_MsgSubmitSeed_block_height = md_MsgSubmitSeed.Fields().ByName("block_height")
 	fd_MsgSubmitSeed_signature = md_MsgSubmitSeed.Fields().ByName("signature")
 }
 
@@ -13224,7 +13352,7 @@ func (x *fastReflection_MsgSubmitSeed) Range(f func(protoreflect.FieldDescriptor
 	}
 	if x.BlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.BlockHeight)
-		if !f(fd_MsgSubmitSeed_blockHeight, value) {
+		if !f(fd_MsgSubmitSeed_block_height, value) {
 			return
 		}
 	}
@@ -13251,7 +13379,7 @@ func (x *fastReflection_MsgSubmitSeed) Has(fd protoreflect.FieldDescriptor) bool
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitSeed.creator":
 		return x.Creator != ""
-	case "inference.inference.MsgSubmitSeed.blockHeight":
+	case "inference.inference.MsgSubmitSeed.block_height":
 		return x.BlockHeight != int64(0)
 	case "inference.inference.MsgSubmitSeed.signature":
 		return x.Signature != ""
@@ -13273,7 +13401,7 @@ func (x *fastReflection_MsgSubmitSeed) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitSeed.creator":
 		x.Creator = ""
-	case "inference.inference.MsgSubmitSeed.blockHeight":
+	case "inference.inference.MsgSubmitSeed.block_height":
 		x.BlockHeight = int64(0)
 	case "inference.inference.MsgSubmitSeed.signature":
 		x.Signature = ""
@@ -13296,7 +13424,7 @@ func (x *fastReflection_MsgSubmitSeed) Get(descriptor protoreflect.FieldDescript
 	case "inference.inference.MsgSubmitSeed.creator":
 		value := x.Creator
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitSeed.blockHeight":
+	case "inference.inference.MsgSubmitSeed.block_height":
 		value := x.BlockHeight
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.MsgSubmitSeed.signature":
@@ -13324,7 +13452,7 @@ func (x *fastReflection_MsgSubmitSeed) Set(fd protoreflect.FieldDescriptor, valu
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitSeed.creator":
 		x.Creator = value.Interface().(string)
-	case "inference.inference.MsgSubmitSeed.blockHeight":
+	case "inference.inference.MsgSubmitSeed.block_height":
 		x.BlockHeight = value.Int()
 	case "inference.inference.MsgSubmitSeed.signature":
 		x.Signature = value.Interface().(string)
@@ -13350,8 +13478,8 @@ func (x *fastReflection_MsgSubmitSeed) Mutable(fd protoreflect.FieldDescriptor) 
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitSeed.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitSeed is not mutable"))
-	case "inference.inference.MsgSubmitSeed.blockHeight":
-		panic(fmt.Errorf("field blockHeight of message inference.inference.MsgSubmitSeed is not mutable"))
+	case "inference.inference.MsgSubmitSeed.block_height":
+		panic(fmt.Errorf("field block_height of message inference.inference.MsgSubmitSeed is not mutable"))
 	case "inference.inference.MsgSubmitSeed.signature":
 		panic(fmt.Errorf("field signature of message inference.inference.MsgSubmitSeed is not mutable"))
 	default:
@@ -13369,7 +13497,7 @@ func (x *fastReflection_MsgSubmitSeed) NewField(fd protoreflect.FieldDescriptor)
 	switch fd.FullName() {
 	case "inference.inference.MsgSubmitSeed.creator":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitSeed.blockHeight":
+	case "inference.inference.MsgSubmitSeed.block_height":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MsgSubmitSeed.signature":
 		return protoreflect.ValueOfString("")
@@ -14024,6 +14152,1782 @@ func (x *fastReflection_MsgSubmitSeedResponse) ProtoMethods() *protoiface.Method
 	}
 }
 
+var (
+	md_MsgSubmitUnitOfComputePriceProposal         protoreflect.MessageDescriptor
+	fd_MsgSubmitUnitOfComputePriceProposal_creator protoreflect.FieldDescriptor
+	fd_MsgSubmitUnitOfComputePriceProposal_price   protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_tx_proto_init()
+	md_MsgSubmitUnitOfComputePriceProposal = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitUnitOfComputePriceProposal")
+	fd_MsgSubmitUnitOfComputePriceProposal_creator = md_MsgSubmitUnitOfComputePriceProposal.Fields().ByName("creator")
+	fd_MsgSubmitUnitOfComputePriceProposal_price = md_MsgSubmitUnitOfComputePriceProposal.Fields().ByName("price")
+}
+
+var _ protoreflect.Message = (*fastReflection_MsgSubmitUnitOfComputePriceProposal)(nil)
+
+type fastReflection_MsgSubmitUnitOfComputePriceProposal MsgSubmitUnitOfComputePriceProposal
+
+func (x *MsgSubmitUnitOfComputePriceProposal) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgSubmitUnitOfComputePriceProposal)(x)
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposal) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_tx_proto_msgTypes[26]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType
+var _ protoreflect.MessageType = fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType{}
+
+type fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType struct{}
+
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgSubmitUnitOfComputePriceProposal)(nil)
+}
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitUnitOfComputePriceProposal)
+}
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitUnitOfComputePriceProposal
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitUnitOfComputePriceProposal
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Type() protoreflect.MessageType {
+	return _fastReflection_MsgSubmitUnitOfComputePriceProposal_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitUnitOfComputePriceProposal)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Interface() protoreflect.ProtoMessage {
+	return (*MsgSubmitUnitOfComputePriceProposal)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Creator != "" {
+		value := protoreflect.ValueOfString(x.Creator)
+		if !f(fd_MsgSubmitUnitOfComputePriceProposal_creator, value) {
+			return
+		}
+	}
+	if x.Price != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.Price)
+		if !f(fd_MsgSubmitUnitOfComputePriceProposal_price, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		return x.Creator != ""
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		return x.Price != uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		x.Creator = ""
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		x.Price = uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		value := x.Creator
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		value := x.Price
+		return protoreflect.ValueOfUint64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		x.Creator = value.Interface().(string)
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		x.Price = value.Uint()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitUnitOfComputePriceProposal is not mutable"))
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		panic(fmt.Errorf("field price of message inference.inference.MsgSubmitUnitOfComputePriceProposal is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.creator":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgSubmitUnitOfComputePriceProposal.price":
+		return protoreflect.ValueOfUint64(uint64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposal"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposal does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitUnitOfComputePriceProposal", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposal) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposal)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Creator)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.Price != 0 {
+			n += 1 + runtime.Sov(uint64(x.Price))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposal)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Price != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Price))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.Creator) > 0 {
+			i -= len(x.Creator)
+			copy(dAtA[i:], x.Creator)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Creator)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposal)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposal: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposal: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Creator", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Creator = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Price", wireType)
+				}
+				x.Price = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Price |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_MsgSubmitUnitOfComputePriceProposalResponse protoreflect.MessageDescriptor
+)
+
+func init() {
+	file_inference_inference_tx_proto_init()
+	md_MsgSubmitUnitOfComputePriceProposalResponse = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitUnitOfComputePriceProposalResponse")
+}
+
+var _ protoreflect.Message = (*fastReflection_MsgSubmitUnitOfComputePriceProposalResponse)(nil)
+
+type fastReflection_MsgSubmitUnitOfComputePriceProposalResponse MsgSubmitUnitOfComputePriceProposalResponse
+
+func (x *MsgSubmitUnitOfComputePriceProposalResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgSubmitUnitOfComputePriceProposalResponse)(x)
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposalResponse) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_tx_proto_msgTypes[27]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType
+var _ protoreflect.MessageType = fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType{}
+
+type fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType struct{}
+
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgSubmitUnitOfComputePriceProposalResponse)(nil)
+}
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitUnitOfComputePriceProposalResponse)
+}
+func (x fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitUnitOfComputePriceProposalResponse
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgSubmitUnitOfComputePriceProposalResponse
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Type() protoreflect.MessageType {
+	return _fastReflection_MsgSubmitUnitOfComputePriceProposalResponse_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) New() protoreflect.Message {
+	return new(fastReflection_MsgSubmitUnitOfComputePriceProposalResponse)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Interface() protoreflect.ProtoMessage {
+	return (*MsgSubmitUnitOfComputePriceProposalResponse)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgSubmitUnitOfComputePriceProposalResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgSubmitUnitOfComputePriceProposalResponse", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_MsgSubmitUnitOfComputePriceProposalResponse) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposalResponse)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposalResponse)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*MsgSubmitUnitOfComputePriceProposalResponse)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposalResponse: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgSubmitUnitOfComputePriceProposalResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_MsgRegisterModel                            protoreflect.MessageDescriptor
+	fd_MsgRegisterModel_authority                  protoreflect.FieldDescriptor
+	fd_MsgRegisterModel_proposed_by                protoreflect.FieldDescriptor
+	fd_MsgRegisterModel_id                         protoreflect.FieldDescriptor
+	fd_MsgRegisterModel_units_of_compute_per_token protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_tx_proto_init()
+	md_MsgRegisterModel = File_inference_inference_tx_proto.Messages().ByName("MsgRegisterModel")
+	fd_MsgRegisterModel_authority = md_MsgRegisterModel.Fields().ByName("authority")
+	fd_MsgRegisterModel_proposed_by = md_MsgRegisterModel.Fields().ByName("proposed_by")
+	fd_MsgRegisterModel_id = md_MsgRegisterModel.Fields().ByName("id")
+	fd_MsgRegisterModel_units_of_compute_per_token = md_MsgRegisterModel.Fields().ByName("units_of_compute_per_token")
+}
+
+var _ protoreflect.Message = (*fastReflection_MsgRegisterModel)(nil)
+
+type fastReflection_MsgRegisterModel MsgRegisterModel
+
+func (x *MsgRegisterModel) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgRegisterModel)(x)
+}
+
+func (x *MsgRegisterModel) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_tx_proto_msgTypes[28]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_MsgRegisterModel_messageType fastReflection_MsgRegisterModel_messageType
+var _ protoreflect.MessageType = fastReflection_MsgRegisterModel_messageType{}
+
+type fastReflection_MsgRegisterModel_messageType struct{}
+
+func (x fastReflection_MsgRegisterModel_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgRegisterModel)(nil)
+}
+func (x fastReflection_MsgRegisterModel_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgRegisterModel)
+}
+func (x fastReflection_MsgRegisterModel_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgRegisterModel
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_MsgRegisterModel) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgRegisterModel
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_MsgRegisterModel) Type() protoreflect.MessageType {
+	return _fastReflection_MsgRegisterModel_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_MsgRegisterModel) New() protoreflect.Message {
+	return new(fastReflection_MsgRegisterModel)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_MsgRegisterModel) Interface() protoreflect.ProtoMessage {
+	return (*MsgRegisterModel)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_MsgRegisterModel) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Authority != "" {
+		value := protoreflect.ValueOfString(x.Authority)
+		if !f(fd_MsgRegisterModel_authority, value) {
+			return
+		}
+	}
+	if x.ProposedBy != "" {
+		value := protoreflect.ValueOfString(x.ProposedBy)
+		if !f(fd_MsgRegisterModel_proposed_by, value) {
+			return
+		}
+	}
+	if x.Id != "" {
+		value := protoreflect.ValueOfString(x.Id)
+		if !f(fd_MsgRegisterModel_id, value) {
+			return
+		}
+	}
+	if x.UnitsOfComputePerToken != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.UnitsOfComputePerToken)
+		if !f(fd_MsgRegisterModel_units_of_compute_per_token, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_MsgRegisterModel) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		return x.Authority != ""
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		return x.ProposedBy != ""
+	case "inference.inference.MsgRegisterModel.id":
+		return x.Id != ""
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		return x.UnitsOfComputePerToken != uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModel) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		x.Authority = ""
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		x.ProposedBy = ""
+	case "inference.inference.MsgRegisterModel.id":
+		x.Id = ""
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		x.UnitsOfComputePerToken = uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_MsgRegisterModel) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		value := x.Authority
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		value := x.ProposedBy
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgRegisterModel.id":
+		value := x.Id
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		value := x.UnitsOfComputePerToken
+		return protoreflect.ValueOfUint64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModel) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		x.Authority = value.Interface().(string)
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		x.ProposedBy = value.Interface().(string)
+	case "inference.inference.MsgRegisterModel.id":
+		x.Id = value.Interface().(string)
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		x.UnitsOfComputePerToken = value.Uint()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModel) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		panic(fmt.Errorf("field authority of message inference.inference.MsgRegisterModel is not mutable"))
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		panic(fmt.Errorf("field proposed_by of message inference.inference.MsgRegisterModel is not mutable"))
+	case "inference.inference.MsgRegisterModel.id":
+		panic(fmt.Errorf("field id of message inference.inference.MsgRegisterModel is not mutable"))
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		panic(fmt.Errorf("field units_of_compute_per_token of message inference.inference.MsgRegisterModel is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_MsgRegisterModel) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.MsgRegisterModel.authority":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgRegisterModel.proposed_by":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgRegisterModel.id":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.MsgRegisterModel.units_of_compute_per_token":
+		return protoreflect.ValueOfUint64(uint64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModel"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModel does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_MsgRegisterModel) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgRegisterModel", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_MsgRegisterModel) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModel) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_MsgRegisterModel) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_MsgRegisterModel) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*MsgRegisterModel)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Authority)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ProposedBy)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.Id)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.UnitsOfComputePerToken != 0 {
+			n += 1 + runtime.Sov(uint64(x.UnitsOfComputePerToken))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*MsgRegisterModel)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.UnitsOfComputePerToken != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.UnitsOfComputePerToken))
+			i--
+			dAtA[i] = 0x20
+		}
+		if len(x.Id) > 0 {
+			i -= len(x.Id)
+			copy(dAtA[i:], x.Id)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Id)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if len(x.ProposedBy) > 0 {
+			i -= len(x.ProposedBy)
+			copy(dAtA[i:], x.ProposedBy)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ProposedBy)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if len(x.Authority) > 0 {
+			i -= len(x.Authority)
+			copy(dAtA[i:], x.Authority)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Authority)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*MsgRegisterModel)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgRegisterModel: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgRegisterModel: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Authority", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Authority = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ProposedBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ProposedBy = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Id", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Id = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field UnitsOfComputePerToken", wireType)
+				}
+				x.UnitsOfComputePerToken = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.UnitsOfComputePerToken |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_MsgRegisterModelResponse protoreflect.MessageDescriptor
+)
+
+func init() {
+	file_inference_inference_tx_proto_init()
+	md_MsgRegisterModelResponse = File_inference_inference_tx_proto.Messages().ByName("MsgRegisterModelResponse")
+}
+
+var _ protoreflect.Message = (*fastReflection_MsgRegisterModelResponse)(nil)
+
+type fastReflection_MsgRegisterModelResponse MsgRegisterModelResponse
+
+func (x *MsgRegisterModelResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_MsgRegisterModelResponse)(x)
+}
+
+func (x *MsgRegisterModelResponse) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_tx_proto_msgTypes[29]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_MsgRegisterModelResponse_messageType fastReflection_MsgRegisterModelResponse_messageType
+var _ protoreflect.MessageType = fastReflection_MsgRegisterModelResponse_messageType{}
+
+type fastReflection_MsgRegisterModelResponse_messageType struct{}
+
+func (x fastReflection_MsgRegisterModelResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_MsgRegisterModelResponse)(nil)
+}
+func (x fastReflection_MsgRegisterModelResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_MsgRegisterModelResponse)
+}
+func (x fastReflection_MsgRegisterModelResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgRegisterModelResponse
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_MsgRegisterModelResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_MsgRegisterModelResponse
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_MsgRegisterModelResponse) Type() protoreflect.MessageType {
+	return _fastReflection_MsgRegisterModelResponse_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_MsgRegisterModelResponse) New() protoreflect.Message {
+	return new(fastReflection_MsgRegisterModelResponse)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_MsgRegisterModelResponse) Interface() protoreflect.ProtoMessage {
+	return (*MsgRegisterModelResponse)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_MsgRegisterModelResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_MsgRegisterModelResponse) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModelResponse) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_MsgRegisterModelResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModelResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModelResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_MsgRegisterModelResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MsgRegisterModelResponse"))
+		}
+		panic(fmt.Errorf("message inference.inference.MsgRegisterModelResponse does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_MsgRegisterModelResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.MsgRegisterModelResponse", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_MsgRegisterModelResponse) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_MsgRegisterModelResponse) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_MsgRegisterModelResponse) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_MsgRegisterModelResponse) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*MsgRegisterModelResponse)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*MsgRegisterModelResponse)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*MsgRegisterModelResponse)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgRegisterModelResponse: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: MsgRegisterModelResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 // Code generated by protoc-gen-go. DO NOT EDIT.
 // versions:
 // 	protoc-gen-go v1.27.0
@@ -14117,11 +16021,11 @@ type MsgStartInference struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator       string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId   string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	PromptHash    string `protobuf:"bytes,3,opt,name=promptHash,proto3" json:"promptHash,omitempty"`
-	PromptPayload string `protobuf:"bytes,4,opt,name=promptPayload,proto3" json:"promptPayload,omitempty"`
+	InferenceId   string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	PromptHash    string `protobuf:"bytes,3,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	PromptPayload string `protobuf:"bytes,4,opt,name=prompt_payload,json=promptPayload,proto3" json:"prompt_payload,omitempty"`
 	Model         string `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
-	RequestedBy   string `protobuf:"bytes,7,opt,name=requestedBy,proto3" json:"requestedBy,omitempty"`
+	RequestedBy   string `protobuf:"bytes,7,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
 }
 
 func (x *MsgStartInference) Reset() {
@@ -14191,7 +16095,7 @@ type MsgStartInferenceResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	InferenceIndex string `protobuf:"bytes,1,opt,name=inferenceIndex,proto3" json:"inferenceIndex,omitempty"`
+	InferenceIndex string `protobuf:"bytes,1,opt,name=inference_index,json=inferenceIndex,proto3" json:"inference_index,omitempty"`
 }
 
 func (x *MsgStartInferenceResponse) Reset() {
@@ -14227,12 +16131,12 @@ type MsgFinishInference struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator              string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId          string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	ResponseHash         string `protobuf:"bytes,3,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
-	ResponsePayload      string `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	PromptTokenCount     uint64 `protobuf:"varint,5,opt,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty"`
-	CompletionTokenCount uint64 `protobuf:"varint,6,opt,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty"`
-	ExecutedBy           string `protobuf:"bytes,7,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
+	InferenceId          string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ResponseHash         string `protobuf:"bytes,3,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	ResponsePayload      string `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	PromptTokenCount     uint64 `protobuf:"varint,5,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
+	CompletionTokenCount uint64 `protobuf:"varint,6,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
+	ExecutedBy           string `protobuf:"bytes,7,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
 }
 
 func (x *MsgFinishInference) Reset() {
@@ -14309,7 +16213,7 @@ type MsgFinishInferenceResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	InferenceIndex string `protobuf:"bytes,1,opt,name=inferenceIndex,proto3" json:"inferenceIndex,omitempty"`
+	InferenceIndex string `protobuf:"bytes,1,opt,name=inference_index,json=inferenceIndex,proto3" json:"inference_index,omitempty"`
 }
 
 func (x *MsgFinishInferenceResponse) Reset() {
@@ -14347,7 +16251,8 @@ type MsgSubmitNewParticipant struct {
 	Creator      string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Url          string   `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
 	Models       []string `protobuf:"bytes,3,rep,name=models,proto3" json:"models,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,4,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	ValidatorKey string   `protobuf:"bytes,4,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string   `protobuf:"bytes,5,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (x *MsgSubmitNewParticipant) Reset() {
@@ -14398,12 +16303,19 @@ func (x *MsgSubmitNewParticipant) GetValidatorKey() string {
 	return ""
 }
 
+func (x *MsgSubmitNewParticipant) GetWorkerKey() string {
+	if x != nil {
+		return x.WorkerKey
+	}
+	return ""
+}
+
 type MsgSubmitNewParticipantResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ParticipantIndex string `protobuf:"bytes,1,opt,name=participantIndex,proto3" json:"participantIndex,omitempty"`
+	ParticipantIndex string `protobuf:"bytes,1,opt,name=participant_index,json=participantIndex,proto3" json:"participant_index,omitempty"`
 	Status           string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 }
 
@@ -14448,9 +16360,9 @@ type MsgValidation struct {
 
 	Creator         string  `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Id              string  `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
-	InferenceId     string  `protobuf:"bytes,3,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	ResponsePayload string  `protobuf:"bytes,4,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	ResponseHash    string  `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
+	InferenceId     string  `protobuf:"bytes,3,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ResponsePayload string  `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	ResponseHash    string  `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
 	Value           float64 `protobuf:"fixed64,6,opt,name=value,proto3" json:"value,omitempty"`
 	Revalidation    bool    `protobuf:"varint,7,opt,name=revalidation,proto3" json:"revalidation,omitempty"`
 }
@@ -14556,9 +16468,9 @@ type MsgSubmitPoC struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator       string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	BlockHeight   int64    `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight   int64    `protobuf:"varint,2,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
 	Nonce         []string `protobuf:"bytes,3,rep,name=nonce,proto3" json:"nonce,omitempty"`
-	SeedSignature string   `protobuf:"bytes,4,opt,name=seedSignature,proto3" json:"seedSignature,omitempty"`
+	SeedSignature string   `protobuf:"bytes,4,opt,name=seed_signature,json=seedSignature,proto3" json:"seed_signature,omitempty"`
 }
 
 func (x *MsgSubmitPoC) Reset() {
@@ -14644,8 +16556,9 @@ type MsgSubmitNewUnfundedParticipant struct {
 	Address      string   `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
 	Url          string   `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	Models       []string `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	PubKey       string   `protobuf:"bytes,5,opt,name=pubKey,proto3" json:"pubKey,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,6,opt,name=validatorKey,proto3" json:"validatorKey,omitempty"`
+	PubKey       string   `protobuf:"bytes,5,opt,name=pub_key,json=pubKey,proto3" json:"pub_key,omitempty"`
+	ValidatorKey string   `protobuf:"bytes,6,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string   `protobuf:"bytes,7,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (x *MsgSubmitNewUnfundedParticipant) Reset() {
@@ -14710,6 +16623,13 @@ func (x *MsgSubmitNewUnfundedParticipant) GetValidatorKey() string {
 	return ""
 }
 
+func (x *MsgSubmitNewUnfundedParticipant) GetWorkerKey() string {
+	if x != nil {
+		return x.WorkerKey
+	}
+	return ""
+}
+
 type MsgSubmitNewUnfundedParticipantResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -14742,7 +16662,7 @@ type MsgInvalidateInference struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	InferenceId string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 }
 
 func (x *MsgInvalidateInference) Reset() {
@@ -14811,7 +16731,7 @@ type MsgRevalidateInference struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	InferenceId string `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
+	InferenceId string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 }
 
 func (x *MsgRevalidateInference) Reset() {
@@ -14881,7 +16801,7 @@ type MsgClaimRewards struct {
 
 	Creator        string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
 	Seed           int64  `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
-	PocStartHeight uint64 `protobuf:"varint,3,opt,name=pocStartHeight,proto3" json:"pocStartHeight,omitempty"`
+	PocStartHeight uint64 `protobuf:"varint,3,opt,name=poc_start_height,json=pocStartHeight,proto3" json:"poc_start_height,omitempty"`
 }
 
 func (x *MsgClaimRewards) Reset() {
@@ -14974,8 +16894,8 @@ type MsgSubmitPocBatch struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator                  string    `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	PocStageStartBlockHeight int64     `protobuf:"varint,2,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
-	BatchId                  string    `protobuf:"bytes,3,opt,name=batchId,proto3" json:"batchId,omitempty"`
+	PocStageStartBlockHeight int64     `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
+	BatchId                  string    `protobuf:"bytes,3,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
 	Nonces                   []int64   `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
 	Dist                     []float64 `protobuf:"fixed64,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
 }
@@ -15067,16 +16987,16 @@ type MsgSubmitPocValidation struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator                  string    `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	ParticipantAddress       string    `protobuf:"bytes,2,opt,name=participantAddress,proto3" json:"participantAddress,omitempty"`
-	PocStageStartBlockHeight int64     `protobuf:"varint,3,opt,name=pocStageStartBlockHeight,proto3" json:"pocStageStartBlockHeight,omitempty"`
+	ParticipantAddress       string    `protobuf:"bytes,2,opt,name=participant_address,json=participantAddress,proto3" json:"participant_address,omitempty"`
+	PocStageStartBlockHeight int64     `protobuf:"varint,3,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
 	Nonces                   []int64   `protobuf:"varint,4,rep,packed,name=nonces,proto3" json:"nonces,omitempty"`
 	Dist                     []float64 `protobuf:"fixed64,5,rep,packed,name=dist,proto3" json:"dist,omitempty"`
-	ReceivedDist             []float64 `protobuf:"fixed64,6,rep,packed,name=receivedDist,proto3" json:"receivedDist,omitempty"`
-	RTarget                  float64   `protobuf:"fixed64,7,opt,name=rTarget,proto3" json:"rTarget,omitempty"`
-	FraudThreshold           float64   `protobuf:"fixed64,8,opt,name=fraudThreshold,proto3" json:"fraudThreshold,omitempty"`
-	NInvalid                 int64     `protobuf:"varint,9,opt,name=nInvalid,proto3" json:"nInvalid,omitempty"`
-	ProbabilityHonest        float64   `protobuf:"fixed64,10,opt,name=probabilityHonest,proto3" json:"probabilityHonest,omitempty"`
-	FraudDetected            bool      `protobuf:"varint,11,opt,name=fraudDetected,proto3" json:"fraudDetected,omitempty"`
+	ReceivedDist             []float64 `protobuf:"fixed64,6,rep,packed,name=received_dist,json=receivedDist,proto3" json:"received_dist,omitempty"`
+	RTarget                  float64   `protobuf:"fixed64,7,opt,name=r_target,json=rTarget,proto3" json:"r_target,omitempty"`
+	FraudThreshold           float64   `protobuf:"fixed64,8,opt,name=fraud_threshold,json=fraudThreshold,proto3" json:"fraud_threshold,omitempty"`
+	NInvalid                 int64     `protobuf:"varint,9,opt,name=n_invalid,json=nInvalid,proto3" json:"n_invalid,omitempty"`
+	ProbabilityHonest        float64   `protobuf:"fixed64,10,opt,name=probability_honest,json=probabilityHonest,proto3" json:"probability_honest,omitempty"`
+	FraudDetected            bool      `protobuf:"varint,11,opt,name=fraud_detected,json=fraudDetected,proto3" json:"fraud_detected,omitempty"`
 }
 
 func (x *MsgSubmitPocValidation) Reset() {
@@ -15208,7 +17128,7 @@ type MsgSubmitSeed struct {
 	unknownFields protoimpl.UnknownFields
 
 	Creator     string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	BlockHeight int64  `protobuf:"varint,2,opt,name=blockHeight,proto3" json:"blockHeight,omitempty"`
+	BlockHeight int64  `protobuf:"varint,2,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
 	Signature   string `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
 }
 
@@ -15279,6 +17199,160 @@ func (*MsgSubmitSeedResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{25}
 }
 
+type MsgSubmitUnitOfComputePriceProposal struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Creator string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Price   uint64 `protobuf:"varint,2,opt,name=price,proto3" json:"price,omitempty"`
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposal) Reset() {
+	*x = MsgSubmitUnitOfComputePriceProposal{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_tx_proto_msgTypes[26]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgSubmitUnitOfComputePriceProposal) ProtoMessage() {}
+
+// Deprecated: Use MsgSubmitUnitOfComputePriceProposal.ProtoReflect.Descriptor instead.
+func (*MsgSubmitUnitOfComputePriceProposal) Descriptor() ([]byte, []int) {
+	return file_inference_inference_tx_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposal) GetCreator() string {
+	if x != nil {
+		return x.Creator
+	}
+	return ""
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposal) GetPrice() uint64 {
+	if x != nil {
+		return x.Price
+	}
+	return 0
+}
+
+type MsgSubmitUnitOfComputePriceProposalResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposalResponse) Reset() {
+	*x = MsgSubmitUnitOfComputePriceProposalResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_tx_proto_msgTypes[27]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MsgSubmitUnitOfComputePriceProposalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgSubmitUnitOfComputePriceProposalResponse) ProtoMessage() {}
+
+// Deprecated: Use MsgSubmitUnitOfComputePriceProposalResponse.ProtoReflect.Descriptor instead.
+func (*MsgSubmitUnitOfComputePriceProposalResponse) Descriptor() ([]byte, []int) {
+	return file_inference_inference_tx_proto_rawDescGZIP(), []int{27}
+}
+
+type MsgRegisterModel struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Authority              string `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
+	ProposedBy             string `protobuf:"bytes,2,opt,name=proposed_by,json=proposedBy,proto3" json:"proposed_by,omitempty"`
+	Id                     string `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
+	UnitsOfComputePerToken uint64 `protobuf:"varint,4,opt,name=units_of_compute_per_token,json=unitsOfComputePerToken,proto3" json:"units_of_compute_per_token,omitempty"`
+}
+
+func (x *MsgRegisterModel) Reset() {
+	*x = MsgRegisterModel{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_tx_proto_msgTypes[28]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MsgRegisterModel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgRegisterModel) ProtoMessage() {}
+
+// Deprecated: Use MsgRegisterModel.ProtoReflect.Descriptor instead.
+func (*MsgRegisterModel) Descriptor() ([]byte, []int) {
+	return file_inference_inference_tx_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *MsgRegisterModel) GetAuthority() string {
+	if x != nil {
+		return x.Authority
+	}
+	return ""
+}
+
+func (x *MsgRegisterModel) GetProposedBy() string {
+	if x != nil {
+		return x.ProposedBy
+	}
+	return ""
+}
+
+func (x *MsgRegisterModel) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *MsgRegisterModel) GetUnitsOfComputePerToken() uint64 {
+	if x != nil {
+		return x.UnitsOfComputePerToken
+	}
+	return 0
+}
+
+type MsgRegisterModelResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *MsgRegisterModelResponse) Reset() {
+	*x = MsgRegisterModelResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_tx_proto_msgTypes[29]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MsgRegisterModelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgRegisterModelResponse) ProtoMessage() {}
+
+// Deprecated: Use MsgRegisterModelResponse.ProtoReflect.Descriptor instead.
+func (*MsgRegisterModelResponse) Descriptor() ([]byte, []int) {
+	return file_inference_inference_tx_proto_rawDescGZIP(), []int{29}
+}
+
 var File_inference_inference_tx_proto protoreflect.FileDescriptor
 
 var file_inference_inference_tx_proto_rawDesc = []byte{
@@ -15308,291 +17382,336 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2f, 0x4d, 0x73, 0x67, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x50, 0x61, 0x72,
 	0x61, 0x6d, 0x73, 0x22, 0x19, 0x0a, 0x17, 0x4d, 0x73, 0x67, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xdb,
+	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xdf,
 	0x01, 0x0a, 0x11, 0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72,
 	0x65, 0x6e, 0x63, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20,
-	0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64,
-	0x12, 0x1e, 0x0a, 0x0a, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61, 0x73, 0x68, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61, 0x73, 0x68,
-	0x12, 0x24, 0x0a, 0x0d, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61,
-	0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x50,
-	0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x18,
-	0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x20, 0x0a, 0x0b,
-	0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x42, 0x79, 0x18, 0x07, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0b, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x42, 0x79, 0x3a, 0x0c,
-	0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x43, 0x0a, 0x19,
-	0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x26, 0x0a, 0x0e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65,
-	0x78, 0x22, 0xac, 0x02, 0x0a, 0x12, 0x4d, 0x73, 0x67, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74,
-	0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49,
-	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x49, 0x64, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x48, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x28, 0x0a, 0x0f, 0x72, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f,
-	0x61, 0x64, 0x12, 0x2a, 0x0a, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65,
-	0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72,
-	0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x32,
-	0x0a, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65,
-	0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f,
-	0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75,
-	0x6e, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x42, 0x79,
-	0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64,
+	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x21,
+	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49,
+	0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x68, 0x61, 0x73, 0x68,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61,
+	0x73, 0x68, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x70, 0x61, 0x79,
+	0x6c, 0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x72, 0x6f, 0x6d,
+	0x70, 0x74, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64,
+	0x65, 0x6c, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12,
+	0x21, 0x0a, 0x0c, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18,
+	0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64,
 	0x42, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
-	0x22, 0x44, 0x0a, 0x1a, 0x4d, 0x73, 0x67, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x26,
-	0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78,
+	0x22, 0x44, 0x0a, 0x19, 0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x27, 0x0a,
+	0x0f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78,
 	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x22, 0x8f, 0x01, 0x0a, 0x17, 0x4d, 0x73, 0x67, 0x53, 0x75,
-	0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x10, 0x0a, 0x03,
-	0x75, 0x72, 0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x16,
-	0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
-	0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a,
-	0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x65, 0x0a, 0x1f, 0x4d, 0x73, 0x67, 0x53,
-	0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2a, 0x0a, 0x10, 0x70,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
-	0x6e, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75,
-	0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x22,
-	0xf1, 0x01, 0x0a, 0x0d, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x0e, 0x0a, 0x02, 0x69,
-	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x64, 0x12, 0x20, 0x0a, 0x0b, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12, 0x28, 0x0a,
-	0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72,
-	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x14, 0x0a, 0x05, 0x76,
-	0x61, 0x6c, 0x75, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x01, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75,
-	0x65, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
-	0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x94, 0x01, 0x0a,
-	0x0c, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12, 0x18, 0x0a,
+	0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x22, 0xb4, 0x02, 0x0a, 0x12, 0x4d, 0x73, 0x67, 0x46, 0x69,
+	0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x18, 0x0a,
 	0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
-	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b,
-	0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c,
-	0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x6e, 0x6f, 0x6e,
-	0x63, 0x65, 0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x05, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x12,
-	0x24, 0x0a, 0x0d, 0x73, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x73, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e,
-	0x61, 0x74, 0x75, 0x72, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x22, 0x16, 0x0a, 0x14, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74,
-	0x50, 0x6f, 0x43, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xc9, 0x01, 0x0a, 0x1f,
-	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75,
-	0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12,
+	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x21, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12,
+	0x29, 0x0a, 0x10, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x70, 0x61, 0x79, 0x6c,
+	0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f,
+	0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x2c, 0x0a, 0x12, 0x70, 0x72,
+	0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f,
+	0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x63, 0x6f, 0x6d, 0x70,
+	0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63, 0x6f, 0x75,
+	0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65,
+	0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1f,
+	0x0a, 0x0b, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18, 0x07, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x42, 0x79, 0x3a,
+	0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x45, 0x0a,
+	0x1a, 0x4d, 0x73, 0x67, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x27, 0x0a, 0x0f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49,
+	0x6e, 0x64, 0x65, 0x78, 0x22, 0xaf, 0x01, 0x0a, 0x17, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d,
+	0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x72,
+	0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06,
+	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f,
+	0x64, 0x65, 0x6c, 0x73, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f,
+	0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c,
+	0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x1d, 0x0a, 0x0a, 0x77, 0x6f, 0x72,
+	0x6b, 0x65, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x77,
+	0x6f, 0x72, 0x6b, 0x65, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63,
+	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x66, 0x0a, 0x1f, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62,
+	0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2b, 0x0a, 0x11, 0x70, 0x61, 0x72,
+	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x22, 0xf4,
+	0x01, 0x0a, 0x0d, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12, 0x29, 0x0a,
+	0x10, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61,
+	0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x14, 0x0a,
+	0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x01, 0x52, 0x05, 0x76, 0x61,
+	0x6c, 0x75, 0x65, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c,
+	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72,
+	0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x96,
+	0x01, 0x0a, 0x0c, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12,
 	0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72,
-	0x65, 0x73, 0x73, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18,
-	0x04, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x16, 0x0a,
-	0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x70,
-	0x75, 0x62, 0x4b, 0x65, 0x79, 0x12, 0x22, 0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x6f, 0x72, 0x4b, 0x65, 0x79, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c,
-	0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07,
-	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x29, 0x0a, 0x27, 0x4d, 0x73, 0x67, 0x53, 0x75,
-	0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x62, 0x0a, 0x16, 0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x18, 0x0a, 0x07,
-	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63,
-	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63,
-	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x20, 0x0a, 0x1e, 0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x62, 0x0a, 0x16, 0x4d, 0x73, 0x67, 0x52,
-	0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f,
+	0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x14, 0x0a, 0x05,
+	0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x05, 0x6e, 0x6f, 0x6e,
+	0x63, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x73, 0x65, 0x65, 0x64, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x61,
+	0x74, 0x75, 0x72, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x73, 0x65, 0x65, 0x64,
+	0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07,
+	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x16, 0x0a, 0x14, 0x4d, 0x73, 0x67, 0x53, 0x75,
+	0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
+	0xea, 0x01, 0x0a, 0x1f, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77,
+	0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
+	0x61, 0x6e, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x18, 0x0a,
+	0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
+	0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64,
+	0x65, 0x6c, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c,
+	0x73, 0x12, 0x17, 0x0a, 0x07, 0x70, 0x75, 0x62, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x05, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x06, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12,
+	0x1d, 0x0a, 0x0a, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x07, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x09, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c,
+	0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x29, 0x0a, 0x27,
+	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75,
+	0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x63, 0x0a, 0x16, 0x4d, 0x73, 0x67, 0x49, 0x6e,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x21, 0x0a, 0x0c, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28,
 	0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x3a, 0x0c,
 	0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x20, 0x0a, 0x1e,
-	0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x75,
-	0x0a, 0x0f, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64,
-	0x73, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x73,
-	0x65, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12,
-	0x26, 0x0a, 0x0e, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72,
-	0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72,
-	0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x49, 0x0a, 0x17, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69,
-	0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x12, 0x16, 0x0a, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x73, 0x75,
-	0x6c, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74,
-	0x22, 0xbd, 0x01, 0x0a, 0x11, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f,
-	0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
-	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
-	0x12, 0x3a, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72,
-	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72,
-	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x18, 0x0a, 0x07,
-	0x62, 0x61, 0x74, 0x63, 0x68, 0x49, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x62,
-	0x61, 0x74, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73,
-	0x18, 0x04, 0x20, 0x03, 0x28, 0x03, 0x52, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x12,
-	0x0a, 0x04, 0x64, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x01, 0x52, 0x04, 0x64, 0x69,
-	0x73, 0x74, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
-	0x22, 0x1b, 0x0a, 0x19, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63,
-	0x42, 0x61, 0x74, 0x63, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xae, 0x03,
-	0x0a, 0x16, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61,
+	0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x63,
+	0x0a, 0x16, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61,
 	0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74,
-	0x6f, 0x72, 0x12, 0x2e, 0x0a, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x12,
-	0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65,
-	0x73, 0x73, 0x12, 0x3a, 0x0a, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74,
-	0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74,
-	0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x16,
-	0x0a, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x03, 0x52, 0x06,
-	0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x12, 0x0a, 0x04, 0x64, 0x69, 0x73, 0x74, 0x18, 0x05,
-	0x20, 0x03, 0x28, 0x01, 0x52, 0x04, 0x64, 0x69, 0x73, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65,
-	0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x44, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28, 0x01,
-	0x52, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x44, 0x69, 0x73, 0x74, 0x12, 0x18,
-	0x0a, 0x07, 0x72, 0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x01, 0x52,
-	0x07, 0x72, 0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x12, 0x26, 0x0a, 0x0e, 0x66, 0x72, 0x61, 0x75,
-	0x64, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x01,
-	0x52, 0x0e, 0x66, 0x72, 0x61, 0x75, 0x64, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64,
-	0x12, 0x1a, 0x0a, 0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x09, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x2c, 0x0a, 0x11,
-	0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79, 0x48, 0x6f, 0x6e, 0x65, 0x73,
-	0x74, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69,
-	0x6c, 0x69, 0x74, 0x79, 0x48, 0x6f, 0x6e, 0x65, 0x73, 0x74, 0x12, 0x24, 0x0a, 0x0d, 0x66, 0x72,
-	0x61, 0x75, 0x64, 0x44, 0x65, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64, 0x18, 0x0b, 0x20, 0x01, 0x28,
-	0x08, 0x52, 0x0d, 0x66, 0x72, 0x61, 0x75, 0x64, 0x44, 0x65, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64,
-	0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x20,
-	0x0a, 0x1e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x77, 0x0a, 0x0d, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65,
-	0x64, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x20, 0x0a, 0x0b, 0x62,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1c, 0x0a,
-	0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0,
-	0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d, 0x73, 0x67,
-	0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x32, 0xa8, 0x0b, 0x0a, 0x03, 0x4d, 0x73, 0x67, 0x12, 0x62, 0x0a, 0x0c, 0x55, 0x70,
-	0x64, 0x61, 0x74, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x24, 0x2e, 0x69, 0x6e, 0x66,
+	0x6f, 0x72, 0x12, 0x21, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x49, 0x64, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61,
+	0x74, 0x6f, 0x72, 0x22, 0x20, 0x0a, 0x1e, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x77, 0x0a, 0x0f, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69,
+	0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61,
+	0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74,
+	0x6f, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12, 0x28, 0x0a, 0x10, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74,
+	0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x0e, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x49,
+	0x0a, 0x17, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64,
+	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x61, 0x6d, 0x6f,
+	0x75, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x06, 0x61, 0x6d, 0x6f, 0x75, 0x6e,
+	0x74, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x22, 0xc2, 0x01, 0x0a, 0x11, 0x4d, 0x73,
+	0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x12,
+	0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63,
+	0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f,
+	0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c,
+	0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x19, 0x0a, 0x08, 0x62, 0x61, 0x74,
+	0x63, 0x68, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x62, 0x61, 0x74,
+	0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x04,
+	0x20, 0x03, 0x28, 0x03, 0x52, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x12, 0x0a, 0x04,
+	0x64, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x01, 0x52, 0x04, 0x64, 0x69, 0x73, 0x74,
+	0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x1b,
+	0x0a, 0x19, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x42, 0x61,
+	0x74, 0x63, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xb9, 0x03, 0x0a, 0x16,
+	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
+	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
+	0x12, 0x2f, 0x0a, 0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f,
+	0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x12, 0x70,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73,
+	0x73, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x73,
+	0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67,
+	0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x12, 0x16, 0x0a, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28,
+	0x03, 0x52, 0x06, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x12, 0x0a, 0x04, 0x64, 0x69, 0x73,
+	0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x01, 0x52, 0x04, 0x64, 0x69, 0x73, 0x74, 0x12, 0x23, 0x0a,
+	0x0d, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x5f, 0x64, 0x69, 0x73, 0x74, 0x18, 0x06,
+	0x20, 0x03, 0x28, 0x01, 0x52, 0x0c, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x44, 0x69,
+	0x73, 0x74, 0x12, 0x19, 0x0a, 0x08, 0x72, 0x5f, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x07,
+	0x20, 0x01, 0x28, 0x01, 0x52, 0x07, 0x72, 0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x12, 0x27, 0x0a,
+	0x0f, 0x66, 0x72, 0x61, 0x75, 0x64, 0x5f, 0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64,
+	0x18, 0x08, 0x20, 0x01, 0x28, 0x01, 0x52, 0x0e, 0x66, 0x72, 0x61, 0x75, 0x64, 0x54, 0x68, 0x72,
+	0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x12, 0x1b, 0x0a, 0x09, 0x6e, 0x5f, 0x69, 0x6e, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x08, 0x6e, 0x49, 0x6e, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x12, 0x2d, 0x0a, 0x12, 0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69, 0x6c, 0x69,
+	0x74, 0x79, 0x5f, 0x68, 0x6f, 0x6e, 0x65, 0x73, 0x74, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x01, 0x52,
+	0x11, 0x70, 0x72, 0x6f, 0x62, 0x61, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79, 0x48, 0x6f, 0x6e, 0x65,
+	0x73, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x66, 0x72, 0x61, 0x75, 0x64, 0x5f, 0x64, 0x65, 0x74, 0x65,
+	0x63, 0x74, 0x65, 0x64, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0d, 0x66, 0x72, 0x61, 0x75,
+	0x64, 0x44, 0x65, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07,
+	0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x20, 0x0a, 0x1e, 0x4d, 0x73, 0x67, 0x53, 0x75,
+	0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x78, 0x0a, 0x0d, 0x4d, 0x73, 0x67,
+	0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72,
+	0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65,
+	0x61, 0x74, 0x6f, 0x72, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65,
+	0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61,
+	0x74, 0x75, 0x72, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e,
+	0x61, 0x74, 0x75, 0x72, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61,
+	0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74,
+	0x53, 0x65, 0x65, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x63, 0x0a, 0x23,
+	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43,
+	0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x70, 0x6f,
+	0x73, 0x61, 0x6c, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x14, 0x0a,
+	0x05, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x70, 0x72,
+	0x69, 0x63, 0x65, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
+	0x72, 0x22, 0x2d, 0x0a, 0x2b, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x55, 0x6e,
+	0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65,
+	0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x22, 0xad, 0x01, 0x0a, 0x10, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72,
+	0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x1c, 0x0a, 0x09, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72, 0x69,
+	0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72,
+	0x69, 0x74, 0x79, 0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x64, 0x5f,
+	0x62, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73,
+	0x65, 0x64, 0x42, 0x79, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x02, 0x69, 0x64, 0x12, 0x3a, 0x0a, 0x1a, 0x75, 0x6e, 0x69, 0x74, 0x73, 0x5f, 0x6f, 0x66,
+	0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x74, 0x6f, 0x6b,
+	0x65, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x16, 0x75, 0x6e, 0x69, 0x74, 0x73, 0x4f,
+	0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x65, 0x72, 0x54, 0x6f, 0x6b, 0x65, 0x6e,
+	0x3a, 0x0e, 0x82, 0xe7, 0xb0, 0x2a, 0x09, 0x61, 0x75, 0x74, 0x68, 0x6f, 0x72, 0x69, 0x74, 0x79,
+	0x22, 0x1a, 0x0a, 0x18, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x4d,
+	0x6f, 0x64, 0x65, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x32, 0xb0, 0x0d, 0x0a,
+	0x03, 0x4d, 0x73, 0x67, 0x12, 0x62, 0x0a, 0x0c, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x50, 0x61,
+	0x72, 0x61, 0x6d, 0x73, 0x12, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x55, 0x70,
+	0x64, 0x61, 0x74, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x1a, 0x2c, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x4d, 0x73, 0x67, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x1a, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x68,
-	0x0a, 0x0e, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x12, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d,
-	0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x6b, 0x0a, 0x0f, 0x46, 0x69, 0x6e, 0x69,
-	0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x27, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x1a, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x46, 0x69,
-	0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x7a, 0x0a, 0x14, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e,
-	0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x2c, 0x2e,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x68, 0x0a, 0x0e, 0x53, 0x74, 0x61, 0x72,
+	0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x26, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x74, 0x61, 0x72,
+	0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x12, 0x6b, 0x0a, 0x0f, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x46,
+	0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x2f,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x46, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x7a, 0x0a, 0x14, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74,
+	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73,
+	0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
+	0x69, 0x70, 0x61, 0x6e, 0x74, 0x1a, 0x34, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53,
+	0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
+	0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x5c, 0x0a, 0x0a, 0x56,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x1a, 0x2a, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77,
-	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x1a, 0x34, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x12, 0x5c, 0x0a, 0x0a, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12,
-	0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x1a, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c,
-	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
-	0x59, 0x0a, 0x09, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12, 0x21, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x1a,
-	0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50,
-	0x6f, 0x43, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x92, 0x01, 0x0a, 0x1c, 0x53,
+	0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x59, 0x0a, 0x09, 0x53, 0x75, 0x62,
+	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x12, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
+	0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x1a, 0x29, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x43, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x92, 0x01, 0x0a, 0x1c, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e,
+	0x65, 0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63,
+	0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x34, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53,
 	0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64,
-	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x34, 0x2e, 0x69, 0x6e,
+	0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x1a, 0x3c, 0x2e, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
 	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e,
 	0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
-	0x74, 0x1a, 0x3c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69,
-	0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
-	0x77, 0x0a, 0x13, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
-	0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x1a, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76,
+	0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x77, 0x0a, 0x13, 0x49, 0x6e, 0x76,
 	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x77, 0x0a, 0x13, 0x52, 0x65, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12,
-	0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x33, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x12, 0x62, 0x0a, 0x0c, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64,
-	0x73, 0x12, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x12, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x33, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x49, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x12, 0x77, 0x0a, 0x13, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x4d, 0x73, 0x67, 0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
+	0x52, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x62, 0x0a, 0x0c, 0x43,
+	0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x12, 0x24, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64,
+	0x73, 0x1a, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d,
-	0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x1a, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73,
-	0x67, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x68, 0x0a, 0x0e, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50,
-	0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x12, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73,
-	0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x1a,
-	0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50,
-	0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
-	0x77, 0x0a, 0x13, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
-	0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x1a, 0x33, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62,
+	0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x68, 0x0a, 0x0e, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63,
+	0x68, 0x12, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69,
+	0x74, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63, 0x68, 0x1a, 0x2e, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x42, 0x61, 0x74, 0x63,
+	0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x77, 0x0a, 0x13, 0x53, 0x75, 0x62,
 	0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x5c, 0x0a, 0x0a, 0x53, 0x75, 0x62, 0x6d,
-	0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x12, 0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67,
-	0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x1a, 0x2a, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x1a, 0x05, 0x80, 0xe7, 0xb0, 0x2a, 0x01, 0x42, 0xb5, 0x01,
-	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x07, 0x54, 0x78, 0x50, 0x72, 0x6f,
-	0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e,
-	0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58,
-	0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x12, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74,
+	0x50, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x1a, 0x33, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x50, 0x6f, 0x63,
+	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x12, 0x5c, 0x0a, 0x0a, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64,
+	0x12, 0x22, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74,
+	0x53, 0x65, 0x65, 0x64, 0x1a, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75,
+	0x62, 0x6d, 0x69, 0x74, 0x53, 0x65, 0x65, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x12, 0x9e, 0x01, 0x0a, 0x20, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f,
+	0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x50, 0x72, 0x6f,
+	0x70, 0x6f, 0x73, 0x61, 0x6c, 0x12, 0x38, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53,
+	0x75, 0x62, 0x6d, 0x69, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75,
+	0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x1a,
+	0x40, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x55,
+	0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63,
+	0x65, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x12, 0x65, 0x0a, 0x0d, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x4d, 0x6f, 0x64,
+	0x65, 0x6c, 0x12, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x52, 0x65, 0x67, 0x69,
+	0x73, 0x74, 0x65, 0x72, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x1a, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x4d, 0x73, 0x67, 0x52, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72, 0x4d, 0x6f, 0x64, 0x65, 0x6c,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x1a, 0x05, 0x80, 0xe7, 0xb0, 0x2a, 0x01, 0x42,
+	0xb5, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x07, 0x54, 0x78, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
+	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
+	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
+	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
+	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -15607,38 +17726,42 @@ func file_inference_inference_tx_proto_rawDescGZIP() []byte {
 	return file_inference_inference_tx_proto_rawDescData
 }
 
-var file_inference_inference_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_inference_inference_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_inference_inference_tx_proto_goTypes = []interface{}{
-	(*MsgUpdateParams)(nil),                         // 0: inference.inference.MsgUpdateParams
-	(*MsgUpdateParamsResponse)(nil),                 // 1: inference.inference.MsgUpdateParamsResponse
-	(*MsgStartInference)(nil),                       // 2: inference.inference.MsgStartInference
-	(*MsgStartInferenceResponse)(nil),               // 3: inference.inference.MsgStartInferenceResponse
-	(*MsgFinishInference)(nil),                      // 4: inference.inference.MsgFinishInference
-	(*MsgFinishInferenceResponse)(nil),              // 5: inference.inference.MsgFinishInferenceResponse
-	(*MsgSubmitNewParticipant)(nil),                 // 6: inference.inference.MsgSubmitNewParticipant
-	(*MsgSubmitNewParticipantResponse)(nil),         // 7: inference.inference.MsgSubmitNewParticipantResponse
-	(*MsgValidation)(nil),                           // 8: inference.inference.MsgValidation
-	(*MsgValidationResponse)(nil),                   // 9: inference.inference.MsgValidationResponse
-	(*MsgSubmitPoC)(nil),                            // 10: inference.inference.MsgSubmitPoC
-	(*MsgSubmitPoCResponse)(nil),                    // 11: inference.inference.MsgSubmitPoCResponse
-	(*MsgSubmitNewUnfundedParticipant)(nil),         // 12: inference.inference.MsgSubmitNewUnfundedParticipant
-	(*MsgSubmitNewUnfundedParticipantResponse)(nil), // 13: inference.inference.MsgSubmitNewUnfundedParticipantResponse
-	(*MsgInvalidateInference)(nil),                  // 14: inference.inference.MsgInvalidateInference
-	(*MsgInvalidateInferenceResponse)(nil),          // 15: inference.inference.MsgInvalidateInferenceResponse
-	(*MsgRevalidateInference)(nil),                  // 16: inference.inference.MsgRevalidateInference
-	(*MsgRevalidateInferenceResponse)(nil),          // 17: inference.inference.MsgRevalidateInferenceResponse
-	(*MsgClaimRewards)(nil),                         // 18: inference.inference.MsgClaimRewards
-	(*MsgClaimRewardsResponse)(nil),                 // 19: inference.inference.MsgClaimRewardsResponse
-	(*MsgSubmitPocBatch)(nil),                       // 20: inference.inference.MsgSubmitPocBatch
-	(*MsgSubmitPocBatchResponse)(nil),               // 21: inference.inference.MsgSubmitPocBatchResponse
-	(*MsgSubmitPocValidation)(nil),                  // 22: inference.inference.MsgSubmitPocValidation
-	(*MsgSubmitPocValidationResponse)(nil),          // 23: inference.inference.MsgSubmitPocValidationResponse
-	(*MsgSubmitSeed)(nil),                           // 24: inference.inference.MsgSubmitSeed
-	(*MsgSubmitSeedResponse)(nil),                   // 25: inference.inference.MsgSubmitSeedResponse
-	(*Params)(nil),                                  // 26: inference.inference.Params
+	(*MsgUpdateParams)(nil),                             // 0: inference.inference.MsgUpdateParams
+	(*MsgUpdateParamsResponse)(nil),                     // 1: inference.inference.MsgUpdateParamsResponse
+	(*MsgStartInference)(nil),                           // 2: inference.inference.MsgStartInference
+	(*MsgStartInferenceResponse)(nil),                   // 3: inference.inference.MsgStartInferenceResponse
+	(*MsgFinishInference)(nil),                          // 4: inference.inference.MsgFinishInference
+	(*MsgFinishInferenceResponse)(nil),                  // 5: inference.inference.MsgFinishInferenceResponse
+	(*MsgSubmitNewParticipant)(nil),                     // 6: inference.inference.MsgSubmitNewParticipant
+	(*MsgSubmitNewParticipantResponse)(nil),             // 7: inference.inference.MsgSubmitNewParticipantResponse
+	(*MsgValidation)(nil),                               // 8: inference.inference.MsgValidation
+	(*MsgValidationResponse)(nil),                       // 9: inference.inference.MsgValidationResponse
+	(*MsgSubmitPoC)(nil),                                // 10: inference.inference.MsgSubmitPoC
+	(*MsgSubmitPoCResponse)(nil),                        // 11: inference.inference.MsgSubmitPoCResponse
+	(*MsgSubmitNewUnfundedParticipant)(nil),             // 12: inference.inference.MsgSubmitNewUnfundedParticipant
+	(*MsgSubmitNewUnfundedParticipantResponse)(nil),     // 13: inference.inference.MsgSubmitNewUnfundedParticipantResponse
+	(*MsgInvalidateInference)(nil),                      // 14: inference.inference.MsgInvalidateInference
+	(*MsgInvalidateInferenceResponse)(nil),              // 15: inference.inference.MsgInvalidateInferenceResponse
+	(*MsgRevalidateInference)(nil),                      // 16: inference.inference.MsgRevalidateInference
+	(*MsgRevalidateInferenceResponse)(nil),              // 17: inference.inference.MsgRevalidateInferenceResponse
+	(*MsgClaimRewards)(nil),                             // 18: inference.inference.MsgClaimRewards
+	(*MsgClaimRewardsResponse)(nil),                     // 19: inference.inference.MsgClaimRewardsResponse
+	(*MsgSubmitPocBatch)(nil),                           // 20: inference.inference.MsgSubmitPocBatch
+	(*MsgSubmitPocBatchResponse)(nil),                   // 21: inference.inference.MsgSubmitPocBatchResponse
+	(*MsgSubmitPocValidation)(nil),                      // 22: inference.inference.MsgSubmitPocValidation
+	(*MsgSubmitPocValidationResponse)(nil),              // 23: inference.inference.MsgSubmitPocValidationResponse
+	(*MsgSubmitSeed)(nil),                               // 24: inference.inference.MsgSubmitSeed
+	(*MsgSubmitSeedResponse)(nil),                       // 25: inference.inference.MsgSubmitSeedResponse
+	(*MsgSubmitUnitOfComputePriceProposal)(nil),         // 26: inference.inference.MsgSubmitUnitOfComputePriceProposal
+	(*MsgSubmitUnitOfComputePriceProposalResponse)(nil), // 27: inference.inference.MsgSubmitUnitOfComputePriceProposalResponse
+	(*MsgRegisterModel)(nil),                            // 28: inference.inference.MsgRegisterModel
+	(*MsgRegisterModelResponse)(nil),                    // 29: inference.inference.MsgRegisterModelResponse
+	(*Params)(nil),                                      // 30: inference.inference.Params
 }
 var file_inference_inference_tx_proto_depIdxs = []int32{
-	26, // 0: inference.inference.MsgUpdateParams.params:type_name -> inference.inference.Params
+	30, // 0: inference.inference.MsgUpdateParams.params:type_name -> inference.inference.Params
 	0,  // 1: inference.inference.Msg.UpdateParams:input_type -> inference.inference.MsgUpdateParams
 	2,  // 2: inference.inference.Msg.StartInference:input_type -> inference.inference.MsgStartInference
 	4,  // 3: inference.inference.Msg.FinishInference:input_type -> inference.inference.MsgFinishInference
@@ -15652,21 +17775,25 @@ var file_inference_inference_tx_proto_depIdxs = []int32{
 	20, // 11: inference.inference.Msg.SubmitPocBatch:input_type -> inference.inference.MsgSubmitPocBatch
 	22, // 12: inference.inference.Msg.SubmitPocValidation:input_type -> inference.inference.MsgSubmitPocValidation
 	24, // 13: inference.inference.Msg.SubmitSeed:input_type -> inference.inference.MsgSubmitSeed
-	1,  // 14: inference.inference.Msg.UpdateParams:output_type -> inference.inference.MsgUpdateParamsResponse
-	3,  // 15: inference.inference.Msg.StartInference:output_type -> inference.inference.MsgStartInferenceResponse
-	5,  // 16: inference.inference.Msg.FinishInference:output_type -> inference.inference.MsgFinishInferenceResponse
-	7,  // 17: inference.inference.Msg.SubmitNewParticipant:output_type -> inference.inference.MsgSubmitNewParticipantResponse
-	9,  // 18: inference.inference.Msg.Validation:output_type -> inference.inference.MsgValidationResponse
-	11, // 19: inference.inference.Msg.SubmitPoC:output_type -> inference.inference.MsgSubmitPoCResponse
-	13, // 20: inference.inference.Msg.SubmitNewUnfundedParticipant:output_type -> inference.inference.MsgSubmitNewUnfundedParticipantResponse
-	15, // 21: inference.inference.Msg.InvalidateInference:output_type -> inference.inference.MsgInvalidateInferenceResponse
-	17, // 22: inference.inference.Msg.RevalidateInference:output_type -> inference.inference.MsgRevalidateInferenceResponse
-	19, // 23: inference.inference.Msg.ClaimRewards:output_type -> inference.inference.MsgClaimRewardsResponse
-	21, // 24: inference.inference.Msg.SubmitPocBatch:output_type -> inference.inference.MsgSubmitPocBatchResponse
-	23, // 25: inference.inference.Msg.SubmitPocValidation:output_type -> inference.inference.MsgSubmitPocValidationResponse
-	25, // 26: inference.inference.Msg.SubmitSeed:output_type -> inference.inference.MsgSubmitSeedResponse
-	14, // [14:27] is the sub-list for method output_type
-	1,  // [1:14] is the sub-list for method input_type
+	26, // 14: inference.inference.Msg.SubmitUnitOfComputePriceProposal:input_type -> inference.inference.MsgSubmitUnitOfComputePriceProposal
+	28, // 15: inference.inference.Msg.RegisterModel:input_type -> inference.inference.MsgRegisterModel
+	1,  // 16: inference.inference.Msg.UpdateParams:output_type -> inference.inference.MsgUpdateParamsResponse
+	3,  // 17: inference.inference.Msg.StartInference:output_type -> inference.inference.MsgStartInferenceResponse
+	5,  // 18: inference.inference.Msg.FinishInference:output_type -> inference.inference.MsgFinishInferenceResponse
+	7,  // 19: inference.inference.Msg.SubmitNewParticipant:output_type -> inference.inference.MsgSubmitNewParticipantResponse
+	9,  // 20: inference.inference.Msg.Validation:output_type -> inference.inference.MsgValidationResponse
+	11, // 21: inference.inference.Msg.SubmitPoC:output_type -> inference.inference.MsgSubmitPoCResponse
+	13, // 22: inference.inference.Msg.SubmitNewUnfundedParticipant:output_type -> inference.inference.MsgSubmitNewUnfundedParticipantResponse
+	15, // 23: inference.inference.Msg.InvalidateInference:output_type -> inference.inference.MsgInvalidateInferenceResponse
+	17, // 24: inference.inference.Msg.RevalidateInference:output_type -> inference.inference.MsgRevalidateInferenceResponse
+	19, // 25: inference.inference.Msg.ClaimRewards:output_type -> inference.inference.MsgClaimRewardsResponse
+	21, // 26: inference.inference.Msg.SubmitPocBatch:output_type -> inference.inference.MsgSubmitPocBatchResponse
+	23, // 27: inference.inference.Msg.SubmitPocValidation:output_type -> inference.inference.MsgSubmitPocValidationResponse
+	25, // 28: inference.inference.Msg.SubmitSeed:output_type -> inference.inference.MsgSubmitSeedResponse
+	27, // 29: inference.inference.Msg.SubmitUnitOfComputePriceProposal:output_type -> inference.inference.MsgSubmitUnitOfComputePriceProposalResponse
+	29, // 30: inference.inference.Msg.RegisterModel:output_type -> inference.inference.MsgRegisterModelResponse
+	16, // [16:31] is the sub-list for method output_type
+	1,  // [1:16] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
@@ -15991,6 +18118,54 @@ func file_inference_inference_tx_proto_init() {
 				return nil
 			}
 		}
+		file_inference_inference_tx_proto_msgTypes[26].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*MsgSubmitUnitOfComputePriceProposal); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_tx_proto_msgTypes[27].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*MsgSubmitUnitOfComputePriceProposalResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_tx_proto_msgTypes[28].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*MsgRegisterModel); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_tx_proto_msgTypes[29].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*MsgRegisterModelResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -15998,7 +18173,7 @@ func file_inference_inference_tx_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_tx_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

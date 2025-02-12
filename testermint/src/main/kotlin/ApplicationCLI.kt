@@ -5,10 +5,14 @@ import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
+import com.productscience.data.AppExport
 import com.productscience.data.BalanceResponse
+import com.productscience.data.InferenceParams
 import com.productscience.data.NodeInfoResponse
+import com.productscience.data.TokenomicsData
 import com.productscience.data.TxResponse
 import com.productscience.data.Validator
+import com.productscience.data.parseProto
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
@@ -16,7 +20,11 @@ import java.time.Instant
 import java.time.format.DateTimeParseException
 
 // Usage
-data class ApplicationCLI(val containerId: String, override val config: ApplicationConfig) : HasConfig, Closeable {
+data class ApplicationCLI(
+    val containerId: String,
+    override val config: ApplicationConfig,
+    var mostRecentExport: AppExport? = null,
+) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
 
@@ -88,12 +96,22 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         }
     }
 
+    fun exportState(height: Int? = null): AppExport =
+        wrapLog<AppExport>("GetFullState", false) {
+            execAndParse(
+                listOfNotNull("export", "--height".takeIf { height != null }, height?.toString()),
+                includeOutputFlag = false
+            )
+        }.also { this.mostRecentExport = it }
+
+
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
     var addresss: String? = null
     fun getAddress(): String = wrapLog("getAddress", false) {
         if (addresss == null) {
-            addresss = getKeys()[0].address
+            val keys = getKeys()
+            addresss = keys.first { it.name == this.config.pairName.drop(1) }.address
         }
         addresss!!
     }
@@ -126,12 +144,26 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
+    fun getInferenceParams(): InferenceParams = wrapLog("getInferenceParams", false) {
+        // At present, there is a bug in Cosmos that causes this to fail, but it gives us something we can parse anyhow
+        val response = exec(listOf(config.appName) + listOf("query", "inference", "params"))
+        val protoText = """\{.*\}""".toRegex().find(response.first())?.value
+        parseProto(protoText!!)
+    }
+
+    data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
+
+    fun getTokenomics(): TokenomicsWrapper = wrapLog("getTokenomics", false) {
+        execAndParse(listOf("query", "inference", "show-tokenomics-data"))
+    }
+
     // Reified type parameter to abstract out exec and then json to a particular type
-    private inline fun <reified T> execAndParse(args: List<String>): T {
-        val argsWithJson = listOf(config.appName) + args + "--output" + "json"
+    private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+        val argsWithJson = listOf(config.appName) +
+                args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
-        val output = response.joinToString("\n")
+        val output = response.joinToString("")
         Logger.debug("Output: {}", output)
         return gsonSnakeCase.fromJson(output, T::class.java)
     }
@@ -236,7 +268,8 @@ data class ApplicationCLI(val containerId: String, override val config: Applicat
                 "--summary",
                 description,
                 "--deposit",
-                "100000icoin",
+                // TODO: Denom and amount should not be hardcoded
+                "100000nicoin",
                 "--from",
                 proposer,
             )

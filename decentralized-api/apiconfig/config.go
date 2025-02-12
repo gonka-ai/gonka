@@ -14,6 +14,7 @@ type Config struct {
 	PreviousSeed       SeedInfo               `koanf:"previous_seed"`
 	CurrentHeight      int64                  `koanf:"current_height"`
 	UpgradePlan        UpgradePlan            `koanf:"upgrade_plan"`
+	KeyConfig          KeyConfig              `koanf:"key_config"`
 }
 
 type UpgradePlan struct {
@@ -41,4 +42,9 @@ type ChainNodeConfig struct {
 	KeyringDir     string `koanf:"keyring_dir"`
 	IsGenesis      bool   `koanf:"is_genesis"`
 	SeedApiUrl     string `koanf:"seed_api_url"`
+}
+
+type KeyConfig struct {
+	WorkerPublicKey  string `koanf:"worker_public"`
+	WorkerPrivateKey string `koanf:"worker_private"`
 }

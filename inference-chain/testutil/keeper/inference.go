@@ -47,6 +47,9 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
 	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock)
+	keep.SetTokenomicsData(context, types.TokenomicsData{})
+	genesisParams := types.DefaultGenesisOnlyParams()
+	keep.SetGenesisOnlyParams(context, &genesisParams)
 	mocks := InferenceMocks{
 		BankKeeper:    escrowKeeper,
 		AccountKeeper: accountKeeperMock,

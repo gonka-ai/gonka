@@ -19,19 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName                 = "/inference.inference.Msg/UpdateParams"
-	Msg_StartInference_FullMethodName               = "/inference.inference.Msg/StartInference"
-	Msg_FinishInference_FullMethodName              = "/inference.inference.Msg/FinishInference"
-	Msg_SubmitNewParticipant_FullMethodName         = "/inference.inference.Msg/SubmitNewParticipant"
-	Msg_Validation_FullMethodName                   = "/inference.inference.Msg/Validation"
-	Msg_SubmitPoC_FullMethodName                    = "/inference.inference.Msg/SubmitPoC"
-	Msg_SubmitNewUnfundedParticipant_FullMethodName = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
-	Msg_InvalidateInference_FullMethodName          = "/inference.inference.Msg/InvalidateInference"
-	Msg_RevalidateInference_FullMethodName          = "/inference.inference.Msg/RevalidateInference"
-	Msg_ClaimRewards_FullMethodName                 = "/inference.inference.Msg/ClaimRewards"
-	Msg_SubmitPocBatch_FullMethodName               = "/inference.inference.Msg/SubmitPocBatch"
-	Msg_SubmitPocValidation_FullMethodName          = "/inference.inference.Msg/SubmitPocValidation"
-	Msg_SubmitSeed_FullMethodName                   = "/inference.inference.Msg/SubmitSeed"
+	Msg_UpdateParams_FullMethodName                     = "/inference.inference.Msg/UpdateParams"
+	Msg_StartInference_FullMethodName                   = "/inference.inference.Msg/StartInference"
+	Msg_FinishInference_FullMethodName                  = "/inference.inference.Msg/FinishInference"
+	Msg_SubmitNewParticipant_FullMethodName             = "/inference.inference.Msg/SubmitNewParticipant"
+	Msg_Validation_FullMethodName                       = "/inference.inference.Msg/Validation"
+	Msg_SubmitPoC_FullMethodName                        = "/inference.inference.Msg/SubmitPoC"
+	Msg_SubmitNewUnfundedParticipant_FullMethodName     = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
+	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
+	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
+	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
+	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
+	Msg_SubmitPocValidation_FullMethodName              = "/inference.inference.Msg/SubmitPocValidation"
+	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
+	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
+	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
 )
 
 // MsgClient is the client API for Msg service.
@@ -53,6 +55,8 @@ type MsgClient interface {
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(ctx context.Context, in *MsgSubmitPocValidation, opts ...grpc.CallOption) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
+	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 }
 
 type msgClient struct {
@@ -180,6 +184,24 @@ func (c *msgClient) SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...g
 	return out, nil
 }
 
+func (c *msgClient) SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error) {
+	out := new(MsgSubmitUnitOfComputePriceProposalResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitUnitOfComputePriceProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error) {
+	out := new(MsgRegisterModelResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterModel_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -199,6 +221,8 @@ type MsgServer interface {
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
 	SubmitPocValidation(context.Context, *MsgSubmitPocValidation) (*MsgSubmitPocValidationResponse, error)
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
+	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
+	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -244,6 +268,12 @@ func (UnimplementedMsgServer) SubmitPocValidation(context.Context, *MsgSubmitPoc
 }
 func (UnimplementedMsgServer) SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitSeed not implemented")
+}
+func (UnimplementedMsgServer) SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitUnitOfComputePriceProposal not implemented")
+}
+func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterModel not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -492,6 +522,42 @@ func _Msg_SubmitSeed_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitUnitOfComputePriceProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitUnitOfComputePriceProposal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitUnitOfComputePriceProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitUnitOfComputePriceProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitUnitOfComputePriceProposal(ctx, req.(*MsgSubmitUnitOfComputePriceProposal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterModel)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterModel(ctx, req.(*MsgRegisterModel))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -550,6 +616,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitSeed",
 			Handler:    _Msg_SubmitSeed_Handler,
+		},
+		{
+			MethodName: "SubmitUnitOfComputePriceProposal",
+			Handler:    _Msg_SubmitUnitOfComputePriceProposal_Handler,
+		},
+		{
+			MethodName: "RegisterModel",
+			Handler:    _Msg_RegisterModel_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -13,18 +13,18 @@ import (
 )
 
 var (
-	md_ProposalDetails                    protoreflect.MessageDescriptor
-	fd_ProposalDetails_reValidatePolicyId protoreflect.FieldDescriptor
-	fd_ProposalDetails_invalidatePolicyId protoreflect.FieldDescriptor
-	fd_ProposalDetails_policyAddress      protoreflect.FieldDescriptor
+	md_ProposalDetails                       protoreflect.MessageDescriptor
+	fd_ProposalDetails_re_validate_policy_id protoreflect.FieldDescriptor
+	fd_ProposalDetails_invalidate_policy_id  protoreflect.FieldDescriptor
+	fd_ProposalDetails_policy_address        protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_inference_proto_init()
 	md_ProposalDetails = File_inference_inference_inference_proto.Messages().ByName("ProposalDetails")
-	fd_ProposalDetails_reValidatePolicyId = md_ProposalDetails.Fields().ByName("reValidatePolicyId")
-	fd_ProposalDetails_invalidatePolicyId = md_ProposalDetails.Fields().ByName("invalidatePolicyId")
-	fd_ProposalDetails_policyAddress = md_ProposalDetails.Fields().ByName("policyAddress")
+	fd_ProposalDetails_re_validate_policy_id = md_ProposalDetails.Fields().ByName("re_validate_policy_id")
+	fd_ProposalDetails_invalidate_policy_id = md_ProposalDetails.Fields().ByName("invalidate_policy_id")
+	fd_ProposalDetails_policy_address = md_ProposalDetails.Fields().ByName("policy_address")
 }
 
 var _ protoreflect.Message = (*fastReflection_ProposalDetails)(nil)
@@ -94,19 +94,19 @@ func (x *fastReflection_ProposalDetails) Interface() protoreflect.ProtoMessage {
 func (x *fastReflection_ProposalDetails) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if x.ReValidatePolicyId != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.ReValidatePolicyId)
-		if !f(fd_ProposalDetails_reValidatePolicyId, value) {
+		if !f(fd_ProposalDetails_re_validate_policy_id, value) {
 			return
 		}
 	}
 	if x.InvalidatePolicyId != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.InvalidatePolicyId)
-		if !f(fd_ProposalDetails_invalidatePolicyId, value) {
+		if !f(fd_ProposalDetails_invalidate_policy_id, value) {
 			return
 		}
 	}
 	if x.PolicyAddress != "" {
 		value := protoreflect.ValueOfString(x.PolicyAddress)
-		if !f(fd_ProposalDetails_policyAddress, value) {
+		if !f(fd_ProposalDetails_policy_address, value) {
 			return
 		}
 	}
@@ -125,11 +125,11 @@ func (x *fastReflection_ProposalDetails) Range(f func(protoreflect.FieldDescript
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_ProposalDetails) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
 		return x.ReValidatePolicyId != uint64(0)
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
 		return x.InvalidatePolicyId != uint64(0)
-	case "inference.inference.ProposalDetails.policyAddress":
+	case "inference.inference.ProposalDetails.policy_address":
 		return x.PolicyAddress != ""
 	default:
 		if fd.IsExtension() {
@@ -147,11 +147,11 @@ func (x *fastReflection_ProposalDetails) Has(fd protoreflect.FieldDescriptor) bo
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ProposalDetails) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
 		x.ReValidatePolicyId = uint64(0)
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
 		x.InvalidatePolicyId = uint64(0)
-	case "inference.inference.ProposalDetails.policyAddress":
+	case "inference.inference.ProposalDetails.policy_address":
 		x.PolicyAddress = ""
 	default:
 		if fd.IsExtension() {
@@ -169,13 +169,13 @@ func (x *fastReflection_ProposalDetails) Clear(fd protoreflect.FieldDescriptor) 
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_ProposalDetails) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
 		value := x.ReValidatePolicyId
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
 		value := x.InvalidatePolicyId
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.ProposalDetails.policyAddress":
+	case "inference.inference.ProposalDetails.policy_address":
 		value := x.PolicyAddress
 		return protoreflect.ValueOfString(value)
 	default:
@@ -198,11 +198,11 @@ func (x *fastReflection_ProposalDetails) Get(descriptor protoreflect.FieldDescri
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ProposalDetails) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
 		x.ReValidatePolicyId = value.Uint()
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
 		x.InvalidatePolicyId = value.Uint()
-	case "inference.inference.ProposalDetails.policyAddress":
+	case "inference.inference.ProposalDetails.policy_address":
 		x.PolicyAddress = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
@@ -224,12 +224,12 @@ func (x *fastReflection_ProposalDetails) Set(fd protoreflect.FieldDescriptor, va
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_ProposalDetails) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
-		panic(fmt.Errorf("field reValidatePolicyId of message inference.inference.ProposalDetails is not mutable"))
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
-		panic(fmt.Errorf("field invalidatePolicyId of message inference.inference.ProposalDetails is not mutable"))
-	case "inference.inference.ProposalDetails.policyAddress":
-		panic(fmt.Errorf("field policyAddress of message inference.inference.ProposalDetails is not mutable"))
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
+		panic(fmt.Errorf("field re_validate_policy_id of message inference.inference.ProposalDetails is not mutable"))
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
+		panic(fmt.Errorf("field invalidate_policy_id of message inference.inference.ProposalDetails is not mutable"))
+	case "inference.inference.ProposalDetails.policy_address":
+		panic(fmt.Errorf("field policy_address of message inference.inference.ProposalDetails is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ProposalDetails"))
@@ -243,11 +243,11 @@ func (x *fastReflection_ProposalDetails) Mutable(fd protoreflect.FieldDescriptor
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_ProposalDetails) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.ProposalDetails.reValidatePolicyId":
+	case "inference.inference.ProposalDetails.re_validate_policy_id":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.ProposalDetails.invalidatePolicyId":
+	case "inference.inference.ProposalDetails.invalidate_policy_id":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.ProposalDetails.policyAddress":
+	case "inference.inference.ProposalDetails.policy_address":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -529,54 +529,54 @@ func (x *fastReflection_ProposalDetails) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_Inference                      protoreflect.MessageDescriptor
-	fd_Inference_index                protoreflect.FieldDescriptor
-	fd_Inference_inferenceId          protoreflect.FieldDescriptor
-	fd_Inference_promptHash           protoreflect.FieldDescriptor
-	fd_Inference_promptPayload        protoreflect.FieldDescriptor
-	fd_Inference_responseHash         protoreflect.FieldDescriptor
-	fd_Inference_responsePayload      protoreflect.FieldDescriptor
-	fd_Inference_promptTokenCount     protoreflect.FieldDescriptor
-	fd_Inference_completionTokenCount protoreflect.FieldDescriptor
-	fd_Inference_requestedBy          protoreflect.FieldDescriptor
-	fd_Inference_executedBy           protoreflect.FieldDescriptor
-	fd_Inference_status               protoreflect.FieldDescriptor
-	fd_Inference_startBlockHeight     protoreflect.FieldDescriptor
-	fd_Inference_endBlockHeight       protoreflect.FieldDescriptor
-	fd_Inference_startBlockTimestamp  protoreflect.FieldDescriptor
-	fd_Inference_endBlockTimestamp    protoreflect.FieldDescriptor
-	fd_Inference_model                protoreflect.FieldDescriptor
-	fd_Inference_maxTokens            protoreflect.FieldDescriptor
-	fd_Inference_actualCost           protoreflect.FieldDescriptor
-	fd_Inference_escrowAmount         protoreflect.FieldDescriptor
-	fd_Inference_proposalDetails      protoreflect.FieldDescriptor
-	fd_Inference_epochGroupId         protoreflect.FieldDescriptor
+	md_Inference                        protoreflect.MessageDescriptor
+	fd_Inference_index                  protoreflect.FieldDescriptor
+	fd_Inference_inference_id           protoreflect.FieldDescriptor
+	fd_Inference_prompt_hash            protoreflect.FieldDescriptor
+	fd_Inference_prompt_payload         protoreflect.FieldDescriptor
+	fd_Inference_response_hash          protoreflect.FieldDescriptor
+	fd_Inference_response_payload       protoreflect.FieldDescriptor
+	fd_Inference_prompt_token_count     protoreflect.FieldDescriptor
+	fd_Inference_completion_token_count protoreflect.FieldDescriptor
+	fd_Inference_requested_by           protoreflect.FieldDescriptor
+	fd_Inference_executed_by            protoreflect.FieldDescriptor
+	fd_Inference_status                 protoreflect.FieldDescriptor
+	fd_Inference_start_block_height     protoreflect.FieldDescriptor
+	fd_Inference_end_block_height       protoreflect.FieldDescriptor
+	fd_Inference_start_block_timestamp  protoreflect.FieldDescriptor
+	fd_Inference_end_block_timestamp    protoreflect.FieldDescriptor
+	fd_Inference_model                  protoreflect.FieldDescriptor
+	fd_Inference_max_tokens             protoreflect.FieldDescriptor
+	fd_Inference_actual_cost            protoreflect.FieldDescriptor
+	fd_Inference_escrow_amount          protoreflect.FieldDescriptor
+	fd_Inference_proposal_details       protoreflect.FieldDescriptor
+	fd_Inference_epoch_group_id         protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_inference_proto_init()
 	md_Inference = File_inference_inference_inference_proto.Messages().ByName("Inference")
 	fd_Inference_index = md_Inference.Fields().ByName("index")
-	fd_Inference_inferenceId = md_Inference.Fields().ByName("inferenceId")
-	fd_Inference_promptHash = md_Inference.Fields().ByName("promptHash")
-	fd_Inference_promptPayload = md_Inference.Fields().ByName("promptPayload")
-	fd_Inference_responseHash = md_Inference.Fields().ByName("responseHash")
-	fd_Inference_responsePayload = md_Inference.Fields().ByName("responsePayload")
-	fd_Inference_promptTokenCount = md_Inference.Fields().ByName("promptTokenCount")
-	fd_Inference_completionTokenCount = md_Inference.Fields().ByName("completionTokenCount")
-	fd_Inference_requestedBy = md_Inference.Fields().ByName("requestedBy")
-	fd_Inference_executedBy = md_Inference.Fields().ByName("executedBy")
+	fd_Inference_inference_id = md_Inference.Fields().ByName("inference_id")
+	fd_Inference_prompt_hash = md_Inference.Fields().ByName("prompt_hash")
+	fd_Inference_prompt_payload = md_Inference.Fields().ByName("prompt_payload")
+	fd_Inference_response_hash = md_Inference.Fields().ByName("response_hash")
+	fd_Inference_response_payload = md_Inference.Fields().ByName("response_payload")
+	fd_Inference_prompt_token_count = md_Inference.Fields().ByName("prompt_token_count")
+	fd_Inference_completion_token_count = md_Inference.Fields().ByName("completion_token_count")
+	fd_Inference_requested_by = md_Inference.Fields().ByName("requested_by")
+	fd_Inference_executed_by = md_Inference.Fields().ByName("executed_by")
 	fd_Inference_status = md_Inference.Fields().ByName("status")
-	fd_Inference_startBlockHeight = md_Inference.Fields().ByName("startBlockHeight")
-	fd_Inference_endBlockHeight = md_Inference.Fields().ByName("endBlockHeight")
-	fd_Inference_startBlockTimestamp = md_Inference.Fields().ByName("startBlockTimestamp")
-	fd_Inference_endBlockTimestamp = md_Inference.Fields().ByName("endBlockTimestamp")
+	fd_Inference_start_block_height = md_Inference.Fields().ByName("start_block_height")
+	fd_Inference_end_block_height = md_Inference.Fields().ByName("end_block_height")
+	fd_Inference_start_block_timestamp = md_Inference.Fields().ByName("start_block_timestamp")
+	fd_Inference_end_block_timestamp = md_Inference.Fields().ByName("end_block_timestamp")
 	fd_Inference_model = md_Inference.Fields().ByName("model")
-	fd_Inference_maxTokens = md_Inference.Fields().ByName("maxTokens")
-	fd_Inference_actualCost = md_Inference.Fields().ByName("actualCost")
-	fd_Inference_escrowAmount = md_Inference.Fields().ByName("escrowAmount")
-	fd_Inference_proposalDetails = md_Inference.Fields().ByName("proposalDetails")
-	fd_Inference_epochGroupId = md_Inference.Fields().ByName("epochGroupId")
+	fd_Inference_max_tokens = md_Inference.Fields().ByName("max_tokens")
+	fd_Inference_actual_cost = md_Inference.Fields().ByName("actual_cost")
+	fd_Inference_escrow_amount = md_Inference.Fields().ByName("escrow_amount")
+	fd_Inference_proposal_details = md_Inference.Fields().ByName("proposal_details")
+	fd_Inference_epoch_group_id = md_Inference.Fields().ByName("epoch_group_id")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -652,55 +652,55 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 	}
 	if x.InferenceId != "" {
 		value := protoreflect.ValueOfString(x.InferenceId)
-		if !f(fd_Inference_inferenceId, value) {
+		if !f(fd_Inference_inference_id, value) {
 			return
 		}
 	}
 	if x.PromptHash != "" {
 		value := protoreflect.ValueOfString(x.PromptHash)
-		if !f(fd_Inference_promptHash, value) {
+		if !f(fd_Inference_prompt_hash, value) {
 			return
 		}
 	}
 	if x.PromptPayload != "" {
 		value := protoreflect.ValueOfString(x.PromptPayload)
-		if !f(fd_Inference_promptPayload, value) {
+		if !f(fd_Inference_prompt_payload, value) {
 			return
 		}
 	}
 	if x.ResponseHash != "" {
 		value := protoreflect.ValueOfString(x.ResponseHash)
-		if !f(fd_Inference_responseHash, value) {
+		if !f(fd_Inference_response_hash, value) {
 			return
 		}
 	}
 	if x.ResponsePayload != "" {
 		value := protoreflect.ValueOfString(x.ResponsePayload)
-		if !f(fd_Inference_responsePayload, value) {
+		if !f(fd_Inference_response_payload, value) {
 			return
 		}
 	}
 	if x.PromptTokenCount != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.PromptTokenCount)
-		if !f(fd_Inference_promptTokenCount, value) {
+		if !f(fd_Inference_prompt_token_count, value) {
 			return
 		}
 	}
 	if x.CompletionTokenCount != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.CompletionTokenCount)
-		if !f(fd_Inference_completionTokenCount, value) {
+		if !f(fd_Inference_completion_token_count, value) {
 			return
 		}
 	}
 	if x.RequestedBy != "" {
 		value := protoreflect.ValueOfString(x.RequestedBy)
-		if !f(fd_Inference_requestedBy, value) {
+		if !f(fd_Inference_requested_by, value) {
 			return
 		}
 	}
 	if x.ExecutedBy != "" {
 		value := protoreflect.ValueOfString(x.ExecutedBy)
-		if !f(fd_Inference_executedBy, value) {
+		if !f(fd_Inference_executed_by, value) {
 			return
 		}
 	}
@@ -712,25 +712,25 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 	}
 	if x.StartBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.StartBlockHeight)
-		if !f(fd_Inference_startBlockHeight, value) {
+		if !f(fd_Inference_start_block_height, value) {
 			return
 		}
 	}
 	if x.EndBlockHeight != int64(0) {
 		value := protoreflect.ValueOfInt64(x.EndBlockHeight)
-		if !f(fd_Inference_endBlockHeight, value) {
+		if !f(fd_Inference_end_block_height, value) {
 			return
 		}
 	}
 	if x.StartBlockTimestamp != int64(0) {
 		value := protoreflect.ValueOfInt64(x.StartBlockTimestamp)
-		if !f(fd_Inference_startBlockTimestamp, value) {
+		if !f(fd_Inference_start_block_timestamp, value) {
 			return
 		}
 	}
 	if x.EndBlockTimestamp != int64(0) {
 		value := protoreflect.ValueOfInt64(x.EndBlockTimestamp)
-		if !f(fd_Inference_endBlockTimestamp, value) {
+		if !f(fd_Inference_end_block_timestamp, value) {
 			return
 		}
 	}
@@ -742,31 +742,31 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 	}
 	if x.MaxTokens != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.MaxTokens)
-		if !f(fd_Inference_maxTokens, value) {
+		if !f(fd_Inference_max_tokens, value) {
 			return
 		}
 	}
 	if x.ActualCost != int64(0) {
 		value := protoreflect.ValueOfInt64(x.ActualCost)
-		if !f(fd_Inference_actualCost, value) {
+		if !f(fd_Inference_actual_cost, value) {
 			return
 		}
 	}
 	if x.EscrowAmount != int64(0) {
 		value := protoreflect.ValueOfInt64(x.EscrowAmount)
-		if !f(fd_Inference_escrowAmount, value) {
+		if !f(fd_Inference_escrow_amount, value) {
 			return
 		}
 	}
 	if x.ProposalDetails != nil {
 		value := protoreflect.ValueOfMessage(x.ProposalDetails.ProtoReflect())
-		if !f(fd_Inference_proposalDetails, value) {
+		if !f(fd_Inference_proposal_details, value) {
 			return
 		}
 	}
 	if x.EpochGroupId != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.EpochGroupId)
-		if !f(fd_Inference_epochGroupId, value) {
+		if !f(fd_Inference_epoch_group_id, value) {
 			return
 		}
 	}
@@ -787,45 +787,45 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.Inference.index":
 		return x.Index != ""
-	case "inference.inference.Inference.inferenceId":
+	case "inference.inference.Inference.inference_id":
 		return x.InferenceId != ""
-	case "inference.inference.Inference.promptHash":
+	case "inference.inference.Inference.prompt_hash":
 		return x.PromptHash != ""
-	case "inference.inference.Inference.promptPayload":
+	case "inference.inference.Inference.prompt_payload":
 		return x.PromptPayload != ""
-	case "inference.inference.Inference.responseHash":
+	case "inference.inference.Inference.response_hash":
 		return x.ResponseHash != ""
-	case "inference.inference.Inference.responsePayload":
+	case "inference.inference.Inference.response_payload":
 		return x.ResponsePayload != ""
-	case "inference.inference.Inference.promptTokenCount":
+	case "inference.inference.Inference.prompt_token_count":
 		return x.PromptTokenCount != uint64(0)
-	case "inference.inference.Inference.completionTokenCount":
+	case "inference.inference.Inference.completion_token_count":
 		return x.CompletionTokenCount != uint64(0)
-	case "inference.inference.Inference.requestedBy":
+	case "inference.inference.Inference.requested_by":
 		return x.RequestedBy != ""
-	case "inference.inference.Inference.executedBy":
+	case "inference.inference.Inference.executed_by":
 		return x.ExecutedBy != ""
 	case "inference.inference.Inference.status":
 		return x.Status != 0
-	case "inference.inference.Inference.startBlockHeight":
+	case "inference.inference.Inference.start_block_height":
 		return x.StartBlockHeight != int64(0)
-	case "inference.inference.Inference.endBlockHeight":
+	case "inference.inference.Inference.end_block_height":
 		return x.EndBlockHeight != int64(0)
-	case "inference.inference.Inference.startBlockTimestamp":
+	case "inference.inference.Inference.start_block_timestamp":
 		return x.StartBlockTimestamp != int64(0)
-	case "inference.inference.Inference.endBlockTimestamp":
+	case "inference.inference.Inference.end_block_timestamp":
 		return x.EndBlockTimestamp != int64(0)
 	case "inference.inference.Inference.model":
 		return x.Model != ""
-	case "inference.inference.Inference.maxTokens":
+	case "inference.inference.Inference.max_tokens":
 		return x.MaxTokens != uint64(0)
-	case "inference.inference.Inference.actualCost":
+	case "inference.inference.Inference.actual_cost":
 		return x.ActualCost != int64(0)
-	case "inference.inference.Inference.escrowAmount":
+	case "inference.inference.Inference.escrow_amount":
 		return x.EscrowAmount != int64(0)
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		return x.ProposalDetails != nil
-	case "inference.inference.Inference.epochGroupId":
+	case "inference.inference.Inference.epoch_group_id":
 		return x.EpochGroupId != uint64(0)
 	default:
 		if fd.IsExtension() {
@@ -845,45 +845,45 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.Inference.index":
 		x.Index = ""
-	case "inference.inference.Inference.inferenceId":
+	case "inference.inference.Inference.inference_id":
 		x.InferenceId = ""
-	case "inference.inference.Inference.promptHash":
+	case "inference.inference.Inference.prompt_hash":
 		x.PromptHash = ""
-	case "inference.inference.Inference.promptPayload":
+	case "inference.inference.Inference.prompt_payload":
 		x.PromptPayload = ""
-	case "inference.inference.Inference.responseHash":
+	case "inference.inference.Inference.response_hash":
 		x.ResponseHash = ""
-	case "inference.inference.Inference.responsePayload":
+	case "inference.inference.Inference.response_payload":
 		x.ResponsePayload = ""
-	case "inference.inference.Inference.promptTokenCount":
+	case "inference.inference.Inference.prompt_token_count":
 		x.PromptTokenCount = uint64(0)
-	case "inference.inference.Inference.completionTokenCount":
+	case "inference.inference.Inference.completion_token_count":
 		x.CompletionTokenCount = uint64(0)
-	case "inference.inference.Inference.requestedBy":
+	case "inference.inference.Inference.requested_by":
 		x.RequestedBy = ""
-	case "inference.inference.Inference.executedBy":
+	case "inference.inference.Inference.executed_by":
 		x.ExecutedBy = ""
 	case "inference.inference.Inference.status":
 		x.Status = 0
-	case "inference.inference.Inference.startBlockHeight":
+	case "inference.inference.Inference.start_block_height":
 		x.StartBlockHeight = int64(0)
-	case "inference.inference.Inference.endBlockHeight":
+	case "inference.inference.Inference.end_block_height":
 		x.EndBlockHeight = int64(0)
-	case "inference.inference.Inference.startBlockTimestamp":
+	case "inference.inference.Inference.start_block_timestamp":
 		x.StartBlockTimestamp = int64(0)
-	case "inference.inference.Inference.endBlockTimestamp":
+	case "inference.inference.Inference.end_block_timestamp":
 		x.EndBlockTimestamp = int64(0)
 	case "inference.inference.Inference.model":
 		x.Model = ""
-	case "inference.inference.Inference.maxTokens":
+	case "inference.inference.Inference.max_tokens":
 		x.MaxTokens = uint64(0)
-	case "inference.inference.Inference.actualCost":
+	case "inference.inference.Inference.actual_cost":
 		x.ActualCost = int64(0)
-	case "inference.inference.Inference.escrowAmount":
+	case "inference.inference.Inference.escrow_amount":
 		x.EscrowAmount = int64(0)
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		x.ProposalDetails = nil
-	case "inference.inference.Inference.epochGroupId":
+	case "inference.inference.Inference.epoch_group_id":
 		x.EpochGroupId = uint64(0)
 	default:
 		if fd.IsExtension() {
@@ -904,64 +904,64 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.index":
 		value := x.Index
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.inferenceId":
+	case "inference.inference.Inference.inference_id":
 		value := x.InferenceId
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.promptHash":
+	case "inference.inference.Inference.prompt_hash":
 		value := x.PromptHash
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.promptPayload":
+	case "inference.inference.Inference.prompt_payload":
 		value := x.PromptPayload
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.responseHash":
+	case "inference.inference.Inference.response_hash":
 		value := x.ResponseHash
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.responsePayload":
+	case "inference.inference.Inference.response_payload":
 		value := x.ResponsePayload
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.promptTokenCount":
+	case "inference.inference.Inference.prompt_token_count":
 		value := x.PromptTokenCount
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Inference.completionTokenCount":
+	case "inference.inference.Inference.completion_token_count":
 		value := x.CompletionTokenCount
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Inference.requestedBy":
+	case "inference.inference.Inference.requested_by":
 		value := x.RequestedBy
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.executedBy":
+	case "inference.inference.Inference.executed_by":
 		value := x.ExecutedBy
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.Inference.status":
 		value := x.Status
 		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
-	case "inference.inference.Inference.startBlockHeight":
+	case "inference.inference.Inference.start_block_height":
 		value := x.StartBlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.Inference.endBlockHeight":
+	case "inference.inference.Inference.end_block_height":
 		value := x.EndBlockHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.Inference.startBlockTimestamp":
+	case "inference.inference.Inference.start_block_timestamp":
 		value := x.StartBlockTimestamp
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.Inference.endBlockTimestamp":
+	case "inference.inference.Inference.end_block_timestamp":
 		value := x.EndBlockTimestamp
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.Inference.model":
 		value := x.Model
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Inference.maxTokens":
+	case "inference.inference.Inference.max_tokens":
 		value := x.MaxTokens
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Inference.actualCost":
+	case "inference.inference.Inference.actual_cost":
 		value := x.ActualCost
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.Inference.escrowAmount":
+	case "inference.inference.Inference.escrow_amount":
 		value := x.EscrowAmount
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		value := x.ProposalDetails
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.Inference.epochGroupId":
+	case "inference.inference.Inference.epoch_group_id":
 		value := x.EpochGroupId
 		return protoreflect.ValueOfUint64(value)
 	default:
@@ -986,45 +986,45 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 	switch fd.FullName() {
 	case "inference.inference.Inference.index":
 		x.Index = value.Interface().(string)
-	case "inference.inference.Inference.inferenceId":
+	case "inference.inference.Inference.inference_id":
 		x.InferenceId = value.Interface().(string)
-	case "inference.inference.Inference.promptHash":
+	case "inference.inference.Inference.prompt_hash":
 		x.PromptHash = value.Interface().(string)
-	case "inference.inference.Inference.promptPayload":
+	case "inference.inference.Inference.prompt_payload":
 		x.PromptPayload = value.Interface().(string)
-	case "inference.inference.Inference.responseHash":
+	case "inference.inference.Inference.response_hash":
 		x.ResponseHash = value.Interface().(string)
-	case "inference.inference.Inference.responsePayload":
+	case "inference.inference.Inference.response_payload":
 		x.ResponsePayload = value.Interface().(string)
-	case "inference.inference.Inference.promptTokenCount":
+	case "inference.inference.Inference.prompt_token_count":
 		x.PromptTokenCount = value.Uint()
-	case "inference.inference.Inference.completionTokenCount":
+	case "inference.inference.Inference.completion_token_count":
 		x.CompletionTokenCount = value.Uint()
-	case "inference.inference.Inference.requestedBy":
+	case "inference.inference.Inference.requested_by":
 		x.RequestedBy = value.Interface().(string)
-	case "inference.inference.Inference.executedBy":
+	case "inference.inference.Inference.executed_by":
 		x.ExecutedBy = value.Interface().(string)
 	case "inference.inference.Inference.status":
 		x.Status = (InferenceStatus)(value.Enum())
-	case "inference.inference.Inference.startBlockHeight":
+	case "inference.inference.Inference.start_block_height":
 		x.StartBlockHeight = value.Int()
-	case "inference.inference.Inference.endBlockHeight":
+	case "inference.inference.Inference.end_block_height":
 		x.EndBlockHeight = value.Int()
-	case "inference.inference.Inference.startBlockTimestamp":
+	case "inference.inference.Inference.start_block_timestamp":
 		x.StartBlockTimestamp = value.Int()
-	case "inference.inference.Inference.endBlockTimestamp":
+	case "inference.inference.Inference.end_block_timestamp":
 		x.EndBlockTimestamp = value.Int()
 	case "inference.inference.Inference.model":
 		x.Model = value.Interface().(string)
-	case "inference.inference.Inference.maxTokens":
+	case "inference.inference.Inference.max_tokens":
 		x.MaxTokens = value.Uint()
-	case "inference.inference.Inference.actualCost":
+	case "inference.inference.Inference.actual_cost":
 		x.ActualCost = value.Int()
-	case "inference.inference.Inference.escrowAmount":
+	case "inference.inference.Inference.escrow_amount":
 		x.EscrowAmount = value.Int()
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		x.ProposalDetails = value.Message().Interface().(*ProposalDetails)
-	case "inference.inference.Inference.epochGroupId":
+	case "inference.inference.Inference.epoch_group_id":
 		x.EpochGroupId = value.Uint()
 	default:
 		if fd.IsExtension() {
@@ -1046,51 +1046,51 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		if x.ProposalDetails == nil {
 			x.ProposalDetails = new(ProposalDetails)
 		}
 		return protoreflect.ValueOfMessage(x.ProposalDetails.ProtoReflect())
 	case "inference.inference.Inference.index":
 		panic(fmt.Errorf("field index of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.inferenceId":
-		panic(fmt.Errorf("field inferenceId of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.promptHash":
-		panic(fmt.Errorf("field promptHash of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.promptPayload":
-		panic(fmt.Errorf("field promptPayload of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.responseHash":
-		panic(fmt.Errorf("field responseHash of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.responsePayload":
-		panic(fmt.Errorf("field responsePayload of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.promptTokenCount":
-		panic(fmt.Errorf("field promptTokenCount of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.completionTokenCount":
-		panic(fmt.Errorf("field completionTokenCount of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.requestedBy":
-		panic(fmt.Errorf("field requestedBy of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.executedBy":
-		panic(fmt.Errorf("field executedBy of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.inference_id":
+		panic(fmt.Errorf("field inference_id of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.prompt_hash":
+		panic(fmt.Errorf("field prompt_hash of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.prompt_payload":
+		panic(fmt.Errorf("field prompt_payload of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.response_hash":
+		panic(fmt.Errorf("field response_hash of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.response_payload":
+		panic(fmt.Errorf("field response_payload of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.prompt_token_count":
+		panic(fmt.Errorf("field prompt_token_count of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.completion_token_count":
+		panic(fmt.Errorf("field completion_token_count of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.requested_by":
+		panic(fmt.Errorf("field requested_by of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.executed_by":
+		panic(fmt.Errorf("field executed_by of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.status":
 		panic(fmt.Errorf("field status of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.startBlockHeight":
-		panic(fmt.Errorf("field startBlockHeight of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.endBlockHeight":
-		panic(fmt.Errorf("field endBlockHeight of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.startBlockTimestamp":
-		panic(fmt.Errorf("field startBlockTimestamp of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.endBlockTimestamp":
-		panic(fmt.Errorf("field endBlockTimestamp of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.start_block_height":
+		panic(fmt.Errorf("field start_block_height of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.end_block_height":
+		panic(fmt.Errorf("field end_block_height of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.start_block_timestamp":
+		panic(fmt.Errorf("field start_block_timestamp of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.end_block_timestamp":
+		panic(fmt.Errorf("field end_block_timestamp of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.model":
 		panic(fmt.Errorf("field model of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.maxTokens":
-		panic(fmt.Errorf("field maxTokens of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.actualCost":
-		panic(fmt.Errorf("field actualCost of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.escrowAmount":
-		panic(fmt.Errorf("field escrowAmount of message inference.inference.Inference is not mutable"))
-	case "inference.inference.Inference.epochGroupId":
-		panic(fmt.Errorf("field epochGroupId of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.max_tokens":
+		panic(fmt.Errorf("field max_tokens of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.actual_cost":
+		panic(fmt.Errorf("field actual_cost of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.escrow_amount":
+		panic(fmt.Errorf("field escrow_amount of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.epoch_group_id":
+		panic(fmt.Errorf("field epoch_group_id of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1106,46 +1106,46 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 	switch fd.FullName() {
 	case "inference.inference.Inference.index":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.inferenceId":
+	case "inference.inference.Inference.inference_id":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.promptHash":
+	case "inference.inference.Inference.prompt_hash":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.promptPayload":
+	case "inference.inference.Inference.prompt_payload":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.responseHash":
+	case "inference.inference.Inference.response_hash":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.responsePayload":
+	case "inference.inference.Inference.response_payload":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.promptTokenCount":
+	case "inference.inference.Inference.prompt_token_count":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Inference.completionTokenCount":
+	case "inference.inference.Inference.completion_token_count":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Inference.requestedBy":
+	case "inference.inference.Inference.requested_by":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.executedBy":
+	case "inference.inference.Inference.executed_by":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Inference.status":
 		return protoreflect.ValueOfEnum(0)
-	case "inference.inference.Inference.startBlockHeight":
+	case "inference.inference.Inference.start_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.Inference.endBlockHeight":
+	case "inference.inference.Inference.end_block_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.Inference.startBlockTimestamp":
+	case "inference.inference.Inference.start_block_timestamp":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.Inference.endBlockTimestamp":
+	case "inference.inference.Inference.end_block_timestamp":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Inference.model":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Inference.maxTokens":
+	case "inference.inference.Inference.max_tokens":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Inference.actualCost":
+	case "inference.inference.Inference.actual_cost":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.Inference.escrowAmount":
+	case "inference.inference.Inference.escrow_amount":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.Inference.proposalDetails":
+	case "inference.inference.Inference.proposal_details":
 		m := new(ProposalDetails)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.Inference.epochGroupId":
+	case "inference.inference.Inference.epoch_group_id":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
@@ -2152,9 +2152,9 @@ type ProposalDetails struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ReValidatePolicyId uint64 `protobuf:"varint,1,opt,name=reValidatePolicyId,proto3" json:"reValidatePolicyId,omitempty"`
-	InvalidatePolicyId uint64 `protobuf:"varint,2,opt,name=invalidatePolicyId,proto3" json:"invalidatePolicyId,omitempty"`
-	PolicyAddress      string `protobuf:"bytes,3,opt,name=policyAddress,proto3" json:"policyAddress,omitempty"`
+	ReValidatePolicyId uint64 `protobuf:"varint,1,opt,name=re_validate_policy_id,json=reValidatePolicyId,proto3" json:"re_validate_policy_id,omitempty"`
+	InvalidatePolicyId uint64 `protobuf:"varint,2,opt,name=invalidate_policy_id,json=invalidatePolicyId,proto3" json:"invalidate_policy_id,omitempty"`
+	PolicyAddress      string `protobuf:"bytes,3,opt,name=policy_address,json=policyAddress,proto3" json:"policy_address,omitempty"`
 }
 
 func (x *ProposalDetails) Reset() {
@@ -2204,26 +2204,26 @@ type Inference struct {
 	unknownFields protoimpl.UnknownFields
 
 	Index                string           `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	InferenceId          string           `protobuf:"bytes,2,opt,name=inferenceId,proto3" json:"inferenceId,omitempty"`
-	PromptHash           string           `protobuf:"bytes,3,opt,name=promptHash,proto3" json:"promptHash,omitempty"`
-	PromptPayload        string           `protobuf:"bytes,4,opt,name=promptPayload,proto3" json:"promptPayload,omitempty"`
-	ResponseHash         string           `protobuf:"bytes,5,opt,name=responseHash,proto3" json:"responseHash,omitempty"`
-	ResponsePayload      string           `protobuf:"bytes,6,opt,name=responsePayload,proto3" json:"responsePayload,omitempty"`
-	PromptTokenCount     uint64           `protobuf:"varint,7,opt,name=promptTokenCount,proto3" json:"promptTokenCount,omitempty"`
-	CompletionTokenCount uint64           `protobuf:"varint,8,opt,name=completionTokenCount,proto3" json:"completionTokenCount,omitempty"`
-	RequestedBy          string           `protobuf:"bytes,9,opt,name=requestedBy,proto3" json:"requestedBy,omitempty"`
-	ExecutedBy           string           `protobuf:"bytes,10,opt,name=executedBy,proto3" json:"executedBy,omitempty"`
+	InferenceId          string           `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	PromptHash           string           `protobuf:"bytes,3,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	PromptPayload        string           `protobuf:"bytes,4,opt,name=prompt_payload,json=promptPayload,proto3" json:"prompt_payload,omitempty"`
+	ResponseHash         string           `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	ResponsePayload      string           `protobuf:"bytes,6,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	PromptTokenCount     uint64           `protobuf:"varint,7,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
+	CompletionTokenCount uint64           `protobuf:"varint,8,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
+	RequestedBy          string           `protobuf:"bytes,9,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	ExecutedBy           string           `protobuf:"bytes,10,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
 	Status               InferenceStatus  `protobuf:"varint,11,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
-	StartBlockHeight     int64            `protobuf:"varint,12,opt,name=startBlockHeight,proto3" json:"startBlockHeight,omitempty"`
-	EndBlockHeight       int64            `protobuf:"varint,13,opt,name=endBlockHeight,proto3" json:"endBlockHeight,omitempty"`
-	StartBlockTimestamp  int64            `protobuf:"varint,14,opt,name=startBlockTimestamp,proto3" json:"startBlockTimestamp,omitempty"`
-	EndBlockTimestamp    int64            `protobuf:"varint,15,opt,name=endBlockTimestamp,proto3" json:"endBlockTimestamp,omitempty"`
+	StartBlockHeight     int64            `protobuf:"varint,12,opt,name=start_block_height,json=startBlockHeight,proto3" json:"start_block_height,omitempty"`
+	EndBlockHeight       int64            `protobuf:"varint,13,opt,name=end_block_height,json=endBlockHeight,proto3" json:"end_block_height,omitempty"`
+	StartBlockTimestamp  int64            `protobuf:"varint,14,opt,name=start_block_timestamp,json=startBlockTimestamp,proto3" json:"start_block_timestamp,omitempty"`
+	EndBlockTimestamp    int64            `protobuf:"varint,15,opt,name=end_block_timestamp,json=endBlockTimestamp,proto3" json:"end_block_timestamp,omitempty"`
 	Model                string           `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
-	MaxTokens            uint64           `protobuf:"varint,17,opt,name=maxTokens,proto3" json:"maxTokens,omitempty"`
-	ActualCost           int64            `protobuf:"varint,18,opt,name=actualCost,proto3" json:"actualCost,omitempty"`
-	EscrowAmount         int64            `protobuf:"varint,19,opt,name=escrowAmount,proto3" json:"escrowAmount,omitempty"`
-	ProposalDetails      *ProposalDetails `protobuf:"bytes,20,opt,name=proposalDetails,proto3" json:"proposalDetails,omitempty"`
-	EpochGroupId         uint64           `protobuf:"varint,21,opt,name=epochGroupId,proto3" json:"epochGroupId,omitempty"`
+	MaxTokens            uint64           `protobuf:"varint,17,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	ActualCost           int64            `protobuf:"varint,18,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
+	EscrowAmount         int64            `protobuf:"varint,19,opt,name=escrow_amount,json=escrowAmount,proto3" json:"escrow_amount,omitempty"`
+	ProposalDetails      *ProposalDetails `protobuf:"bytes,20,opt,name=proposal_details,json=proposalDetails,proto3" json:"proposal_details,omitempty"`
+	EpochGroupId         uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -2399,88 +2399,90 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x0a, 0x23, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x97, 0x01, 0x0a, 0x0f, 0x50,
-	0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x2e,
-	0x0a, 0x12, 0x72, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x49, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x72, 0x65, 0x56, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x49, 0x64, 0x12, 0x2e,
-	0x0a, 0x12, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69,
-	0x63, 0x79, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x69, 0x6e, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x49, 0x64, 0x12, 0x24,
-	0x0a, 0x0d, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x41, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x22, 0xd7, 0x06, 0x0a, 0x09, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x20, 0x0a, 0x0b, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12, 0x1e, 0x0a, 0x0a, 0x70, 0x72,
-	0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a,
-	0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61, 0x73, 0x68, 0x12, 0x24, 0x0a, 0x0d, 0x70, 0x72,
-	0x6f, 0x6d, 0x70, 0x74, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0d, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64,
-	0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68,
-	0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x48, 0x61, 0x73, 0x68, 0x12, 0x28, 0x0a, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72,
-	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x2a,
-	0x0a, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75,
-	0x6e, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74,
-	0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x32, 0x0a, 0x14, 0x63, 0x6f,
-	0x6d, 0x70, 0x6c, 0x65, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75,
-	0x6e, 0x74, 0x18, 0x08, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65,
-	0x74, 0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x20,
-	0x0a, 0x0b, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x42, 0x79, 0x18, 0x09, 0x20,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x9d, 0x01, 0x0a, 0x0f, 0x50,
+	0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x31,
+	0x0a, 0x15, 0x72, 0x65, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x5f, 0x70, 0x6f,
+	0x6c, 0x69, 0x63, 0x79, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x72,
+	0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x49,
+	0x64, 0x12, 0x30, 0x0a, 0x14, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x5f,
+	0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x12, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63,
+	0x79, 0x49, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x61, 0x64,
+	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x6f, 0x6c,
+	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xf0, 0x06, 0x0a, 0x09, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
+	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21,
+	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49,
+	0x64, 0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x68, 0x61, 0x73, 0x68,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x48, 0x61,
+	0x73, 0x68, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x5f, 0x70, 0x61, 0x79,
+	0x6c, 0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x72, 0x6f, 0x6d,
+	0x70, 0x74, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x29,
+	0x0a, 0x10, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x70, 0x61, 0x79, 0x6c, 0x6f,
+	0x61, 0x64, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x2c, 0x0a, 0x12, 0x70, 0x72, 0x6f,
+	0x6d, 0x70, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18,
+	0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x54, 0x6f, 0x6b,
+	0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x63, 0x6f, 0x6d, 0x70, 0x6c,
+	0x65, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e,
+	0x74, 0x18, 0x08, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74,
+	0x69, 0x6f, 0x6e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x21, 0x0a,
+	0x0c, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18, 0x09, 0x20,
 	0x01, 0x28, 0x09, 0x52, 0x0b, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x65, 0x64, 0x42, 0x79,
-	0x12, 0x1e, 0x0a, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x42, 0x79, 0x18, 0x0a,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x42, 0x79,
-	0x12, 0x3c, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x0e,
+	0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18,
+	0x0a, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x65, 0x64, 0x42,
+	0x79, 0x12, 0x3c, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x0b, 0x20, 0x01, 0x28,
+	0x0e, 0x32, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
+	0x2c, 0x0a, 0x12, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68,
+	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x73, 0x74, 0x61,
+	0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x28, 0x0a,
+	0x10, 0x65, 0x6e, 0x64, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0e, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63,
+	0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x32, 0x0a, 0x15, 0x73, 0x74, 0x61, 0x72, 0x74,
+	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70,
+	0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x2e, 0x0a, 0x13, 0x65,
+	0x6e, 0x64, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61,
+	0x6d, 0x70, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x03, 0x52, 0x11, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f,
+	0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x14, 0x0a, 0x05, 0x6d,
+	0x6f, 0x64, 0x65, 0x6c, 0x18, 0x10, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65,
+	0x6c, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x78, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18,
+	0x11, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73,
+	0x12, 0x1f, 0x0a, 0x0b, 0x61, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x5f, 0x63, 0x6f, 0x73, 0x74, 0x18,
+	0x12, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x61, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x43, 0x6f, 0x73,
+	0x74, 0x12, 0x23, 0x0a, 0x0d, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x5f, 0x61, 0x6d, 0x6f, 0x75,
+	0x6e, 0x74, 0x18, 0x13, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0c, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77,
+	0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x4f, 0x0a, 0x10, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73,
+	0x61, 0x6c, 0x5f, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x18, 0x14, 0x20, 0x01, 0x28, 0x0b,
 	0x32, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x2a,
-	0x0a, 0x10, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42,
-	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x26, 0x0a, 0x0e, 0x65, 0x6e,
-	0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0d, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x0e, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x30, 0x0a, 0x13, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
-	0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x13, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73,
-	0x74, 0x61, 0x6d, 0x70, 0x12, 0x2c, 0x0a, 0x11, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
-	0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x11, 0x65, 0x6e, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61,
-	0x6d, 0x70, 0x12, 0x14, 0x0a, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x18, 0x10, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x05, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x12, 0x1c, 0x0a, 0x09, 0x6d, 0x61, 0x78, 0x54,
-	0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x11, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78,
-	0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x1e, 0x0a, 0x0a, 0x61, 0x63, 0x74, 0x75, 0x61, 0x6c,
-	0x43, 0x6f, 0x73, 0x74, 0x18, 0x12, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x61, 0x63, 0x74, 0x75,
-	0x61, 0x6c, 0x43, 0x6f, 0x73, 0x74, 0x12, 0x22, 0x0a, 0x0c, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77,
-	0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x13, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0c, 0x65, 0x73,
-	0x63, 0x72, 0x6f, 0x77, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x4e, 0x0a, 0x0f, 0x70, 0x72,
-	0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x18, 0x14, 0x20,
-	0x01, 0x28, 0x0b, 0x32, 0x24, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73,
-	0x61, 0x6c, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x52, 0x0f, 0x70, 0x72, 0x6f, 0x70, 0x6f,
-	0x73, 0x61, 0x6c, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x22, 0x0a, 0x0c, 0x65, 0x70,
-	0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x18, 0x15, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x2a, 0x58,
-	0x0a, 0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75,
-	0x73, 0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c,
-	0x0a, 0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09,
-	0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49,
-	0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06,
-	0x56, 0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50,
-	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
-	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
-	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
-	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c, 0x44,
+	0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x52, 0x0f, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c,
+	0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x69, 0x64, 0x18, 0x15, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x2a, 0x58, 0x0a,
+	0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
+	0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a,
+	0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56,
+	0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49, 0x4e,
+	0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06, 0x56,
+	0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
+	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
+	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
+	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -2504,7 +2506,7 @@ var file_inference_inference_inference_proto_goTypes = []interface{}{
 }
 var file_inference_inference_inference_proto_depIdxs = []int32{
 	0, // 0: inference.inference.Inference.status:type_name -> inference.inference.InferenceStatus
-	1, // 1: inference.inference.Inference.proposalDetails:type_name -> inference.inference.ProposalDetails
+	1, // 1: inference.inference.Inference.proposal_details:type_name -> inference.inference.ProposalDetails
 	2, // [2:2] is the sub-list for method output_type
 	2, // [2:2] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name

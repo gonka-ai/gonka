@@ -75,6 +75,10 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(configManager))
+	mux.HandleFunc("/v1/pricing", api.WrapPricing(transactionRecorder))
+	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
+	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(transactionRecorder))
+	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
@@ -865,6 +869,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w 
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
 		PubKey:       body.PubKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Debug("Submitting NewUnfundedParticipant", "message", msg)
@@ -895,6 +900,7 @@ func submitNewParticipant(recorder cosmos_client.CosmosMessageClient, w http.Res
 		Url:          body.Url,
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Info("ValidatorKey in dapi", "key", body.ValidatorKey)
@@ -936,7 +942,7 @@ func getParticipants(recorder cosmos_client.CosmosMessageClient, w http.Response
 		if err == nil {
 			for _, balance := range balances {
 				// TODO: surely there is a place to get denom from
-				if balance.Denom == "icoin" {
+				if balance.Denom == "nicoin" {
 					pBalance = balance.Amount.Int64()
 				}
 			}

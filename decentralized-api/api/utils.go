@@ -18,3 +18,18 @@ func RespondWithJson(w http.ResponseWriter, response interface{}) {
 	w.WriteHeader(http.StatusOK)
 	w.Write(respBytes)
 }
+
+func parseJsonBody[T any](r *http.Request) (T, error) {
+	var t T
+	defer r.Body.Close()
+
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		slog.Error("failed to decode request body",
+			"path", r.URL.Path,
+			"error", err,
+		)
+		return t, err
+	}
+
+	return t, nil
+}
