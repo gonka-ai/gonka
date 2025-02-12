@@ -1,33 +1,80 @@
 package com.productscience
 
+import com.productscience.data.EpochParams
 
-const val Multiplier = 1L
-const val EpochLength = 20 * Multiplier
-const val startOfPocStage = 0 * Multiplier
-const val endOfPocStage = 3 * Multiplier
-const val pocExchangeDeadline = endOfPocStage + 5
-const val setNewValidatorsStage = pocExchangeDeadline + 1
+private const val SHIFT_VAL = 0L
 
-const val EPOCH_NEW_COIN = 1_048_576L
-const val COIN_HALVING_HEIGHT = 100
+private fun shift(blockHeight: Long): Long = blockHeight + SHIFT_VAL
+private fun unshift(blockHeight: Long): Long = blockHeight - SHIFT_VAL
 
-fun isStartOfPoCStage(blockHeight: Long): Boolean {
-    return isNotZeroEpoch(blockHeight) && blockHeight % EpochLength == startOfPocStage
+fun EpochParams.isStartOfPoCStage(blockHeight: Long): Boolean {
+    val shiftedBlockHeight = shift(blockHeight)
+    return this.isNotZeroEpoch(shiftedBlockHeight) &&
+            (shiftedBlockHeight % epochLength == this.getStartOfPoCStage())
 }
 
-fun isEndOfPoCStage(blockHeight: Long): Boolean {
-    return isNotZeroEpoch(blockHeight) && blockHeight % EpochLength == endOfPocStage
+fun EpochParams.isEndOfPoCStage(blockHeight: Long): Boolean {
+    val shiftedBlockHeight = shift(blockHeight)
+    return this.isNotZeroEpoch(shiftedBlockHeight) &&
+            (shiftedBlockHeight % epochLength == this.getEndOfPoCStage())
 }
 
-fun isPoCExchangeWindow(startBlockHeight: Long, currentBlockHeight: Long): Boolean {
-    val elapsedEpochs = currentBlockHeight - startBlockHeight
-    return isNotZeroEpoch(startBlockHeight) && elapsedEpochs > 0 && elapsedEpochs <= pocExchangeDeadline
+fun EpochParams.isPoCExchangeWindow(startBlockHeight: Long, currentBlockHeight: Long): Boolean {
+    val shiftedStart = shift(startBlockHeight)
+    val shiftedCurrent = shift(currentBlockHeight)
+    val elapsedEpochs = shiftedCurrent - shiftedStart
+    return this.isNotZeroEpoch(shiftedStart) &&
+            (elapsedEpochs > 0) &&
+            (elapsedEpochs <= this.getPoCExchangeDeadline())
 }
 
-fun isSetNewValidatorsStage(blockHeight: Long): Boolean {
-    return isNotZeroEpoch(blockHeight) && blockHeight % EpochLength == setNewValidatorsStage
+fun EpochParams.isStartOfPoCValidationStage(blockHeight: Long): Boolean {
+    val shiftedBlockHeight = shift(blockHeight)
+    return this.isNotZeroEpoch(shiftedBlockHeight) &&
+            (shiftedBlockHeight % epochLength == this.getStartOfPoCValidationStage())
 }
 
-fun isNotZeroEpoch(blockHeight: Long): Boolean {
-    return blockHeight >= EpochLength
+fun EpochParams.isValidationExchangeWindow(startBlockHeight: Long, currentBlockHeight: Long): Boolean {
+    val shiftedStart = shift(startBlockHeight)
+    val shiftedCurrent = shift(currentBlockHeight)
+    val elapsedEpochs = shiftedCurrent - shiftedStart
+    return this.isNotZeroEpoch(shiftedStart) &&
+            (elapsedEpochs > 0) &&
+            (elapsedEpochs <= this.getSetNewValidatorsStage())
 }
+
+fun EpochParams.isEndOfPoCValidationStage(blockHeight: Long): Boolean {
+    val shiftedBlockHeight = shift(blockHeight)
+    return this.isNotZeroEpoch(shiftedBlockHeight) &&
+            (shiftedBlockHeight % epochLength == this.getEndOfPoCValidationStage())
+}
+
+fun EpochParams.isSetNewValidatorsStage(blockHeight: Long): Boolean {
+    val shiftedBlockHeight = shift(blockHeight)
+    return this.isNotZeroEpoch(shiftedBlockHeight) &&
+            (shiftedBlockHeight % epochLength == this.getSetNewValidatorsStage())
+}
+
+fun EpochParams.getStartBlockHeightFromEndOfPocStage(blockHeight: Long): Long {
+    return unshift(shift(blockHeight) - this.getEndOfPoCStage())
+}
+
+fun EpochParams.getStartBlockHeightFromStartOfPocValidationStage(blockHeight: Long): Long {
+    return unshift(shift(blockHeight) - this.getStartOfPoCValidationStage())
+}
+
+fun EpochParams.getStartOfPoCStage(): Long = 0L
+
+fun EpochParams.getEndOfPoCStage(): Long = 10L * epochMultiplier
+
+fun EpochParams.getPoCExchangeDeadline(): Long = (this.getEndOfPoCStage() + 2) * epochMultiplier
+
+fun EpochParams.getStartOfPoCValidationStage(): Long = (this.getEndOfPoCStage() + 2) * epochMultiplier
+
+fun EpochParams.getEndOfPoCValidationStage(): Long = (this.getStartOfPoCValidationStage() + 4) * epochMultiplier
+
+fun EpochParams.getSetNewValidatorsStage(): Long = (this.getEndOfPoCValidationStage() + 1) * epochMultiplier
+
+fun EpochParams.isNotZeroEpoch(blockHeight: Long): Boolean = !this.isZeroEpoch(blockHeight)
+
+fun EpochParams.isZeroEpoch(blockHeight: Long): Boolean = blockHeight < epochLength

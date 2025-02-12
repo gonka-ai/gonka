@@ -15,6 +15,7 @@ func DefaultGenesis() *GenesisState {
 		EpochGroupDataList:        []EpochGroupData{},
 		SettleAmountList:          []SettleAmount{},
 		EpochGroupValidationsList: []EpochGroupValidations{},
+		TokenomicsData:            &TokenomicsData{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),

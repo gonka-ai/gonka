@@ -14,15 +14,5 @@ const (
 func ParticipantKey(
 	index string,
 ) []byte {
-	var key []byte
-
-	indexBytes := []byte(index)
-	key = append(key, indexBytes...)
-	key = append(key, []byte("/")...)
-
-	return key
-}
-
-func ParticipantCounterKey() []byte {
-	return []byte(participantCounterKey)
+	return stringKey(index)
 }

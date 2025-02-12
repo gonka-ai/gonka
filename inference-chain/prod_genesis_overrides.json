@@ -13,8 +13,18 @@
     "inference": {
       "params": {
         "epochParams": {
-          "epochLength": "2000"
+          "epochLength": "2000",
+          "default_unit_of_compute_price": "100"
         }
+      },
+      "genesis_only_params": {
+        "total_supply": "1000",
+        "originator_supply": "160",
+        "top_reward_amount": "120",
+        "standard_reward_amount": "600",
+        "pre_programmed_sale_amount": "120",
+        "top_rewards": 3,
+        "supply_denom": "mcicoin"
       }
     }
   }

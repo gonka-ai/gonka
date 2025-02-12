@@ -173,17 +173,14 @@ func (eg *EpochGroup) UpdateMember(ctx context.Context, previousVersion *types.P
 }
 
 func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeResult, error) {
-	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
-		GroupId: eg.GroupData.EpochGroupId,
-	})
+	members, err := eg.getGroupMembers(ctx)
 	if err != nil {
-		eg.Logger.LogError("Error getting group members", "error", err)
 		return nil, err
 	}
 
 	var computeResults []keeper.ComputeResult
 
-	for _, member := range members.Members {
+	for _, member := range members {
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(member.Member.Metadata)
 		if err != nil {
 			eg.Logger.LogError("Error decoding pubkey", "error", err)
@@ -200,4 +197,15 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 	}
 
 	return computeResults, nil
+}
+
+func (eg *EpochGroup) getGroupMembers(ctx context.Context) ([]*group.GroupMember, error) {
+	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
+		GroupId: eg.GroupData.EpochGroupId,
+	})
+	if err != nil {
+		eg.Logger.LogError("Error getting group members", "error", err)
+		return nil, err
+	}
+	return members.Members, nil
 }

@@ -2,8 +2,10 @@ package apiconfig
 
 import (
 	"decentralized-api/broker"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
@@ -116,6 +118,21 @@ func (cm *ConfigManager) SetNodes(nodes []broker.InferenceNode) error {
 	cm.currentConfig.Nodes = nodes
 	slog.Info("Setting nodes", "nodes", nodes)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+func (cm *ConfigManager) CreateWorkerKey() (string, error) {
+	workerKey := ed25519.GenPrivKey()
+	workerPublicKey := workerKey.PubKey()
+	workerPublicKeyString := base64.StdEncoding.EncodeToString(workerPublicKey.Bytes())
+	workerPrivateKey := workerKey.Bytes()
+	workerPrivateKeyString := base64.StdEncoding.EncodeToString(workerPrivateKey)
+	cm.currentConfig.KeyConfig.WorkerPrivateKey = workerPrivateKeyString
+	cm.currentConfig.KeyConfig.WorkerPublicKey = workerPublicKeyString
+	err := cm.Write()
+	if err != nil {
+		return "", err
+	}
+	return workerPublicKeyString, nil
 }
 
 func getFileProvider() koanf.Provider {

@@ -1,6 +1,8 @@
 package inference_test
 
 import (
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -12,7 +14,8 @@ import (
 
 func TestGenesis(t *testing.T) {
 	genesisState := types.GenesisState{
-		Params: types.DefaultParams(),
+		Params:            types.DefaultParams(),
+		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
 
 		InferenceList: []types.Inference{
 			{
@@ -56,10 +59,35 @@ func TestGenesis(t *testing.T) {
 				PocStartBlockHeight: 1,
 			},
 		},
+		TokenomicsData: &types.TokenomicsData{
+			TotalFees:      85,
+			TotalSubsidies: 11,
+			TotalRefunded:  99,
+			TotalBurned:    5,
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
-	k, ctx := keepertest.InferenceKeeper(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+		Base: types.BaseCoin,
+		DenomUnits: []*banktypes.DenomUnit{
+			{
+				Denom:    types.BaseCoin,
+				Exponent: 0,
+			},
+			{
+				Denom:    types.NativeCoin,
+				Exponent: 9,
+			},
+		},
+	}, true)
+
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
 	require.NotNil(t, got)
@@ -72,5 +100,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.EpochGroupDataList, got.EpochGroupDataList)
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
+	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

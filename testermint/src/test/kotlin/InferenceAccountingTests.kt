@@ -1,20 +1,19 @@
 import com.productscience.ApplicationCLI
-import com.productscience.COIN_HALVING_HEIGHT
-import com.productscience.EPOCH_NEW_COIN
-import com.productscience.EpochLength
+import com.productscience.InferenceResult
 import com.productscience.LocalInferencePair
+import com.productscience.data.AppExport
+import com.productscience.data.InferenceParams
 import com.productscience.data.Participant
+import com.productscience.data.TokenomicsData
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initialize
-import com.productscience.setNewValidatorsStage
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import kotlin.math.pow
 import kotlin.test.assertNotNull
 
 class InferenceAccountingTests : TestermintTest() {
@@ -27,7 +26,7 @@ class InferenceAccountingTests : TestermintTest() {
         val participants = highestFunded.api.getParticipants()
         Logger.debug(participants)
         assertThat(participants).hasSize(3)
-        val nextSettleBlock = getNextSettleBlock(highestFunded.node.getStatus().syncInfo.latestBlockHeight)
+        val nextSettleBlock = highestFunded.getNextSettleBlock()
         highestFunded.node.waitForMinimumBlock(nextSettleBlock)
         val participantsAfterEach = highestFunded.api.getParticipants()
         Logger.debug(participantsAfterEach)
@@ -39,6 +38,14 @@ class InferenceAccountingTests : TestermintTest() {
         val highestFunded = initialize(pairs)
         val state = highestFunded.node.exportState()
         Logger.debug(state)
+    }
+
+    @Test
+    fun `test get inference params`() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val highestFunded = initialize(pairs)
+        val params = highestFunded.node.getInferenceParams()
+        Logger.info(params)
     }
 
     @Test
@@ -65,31 +72,45 @@ class InferenceAccountingTests : TestermintTest() {
     fun `test post settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
+        val tokenomicsAtStart = highestFunded.node.getTokenomics().tokenomicsData
         val participants = highestFunded.api.getParticipants()
         participants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
-        verifySettledInferences(highestFunded, 4)
+        val inferences: Sequence<InferenceResult> = generateSequence {
+            getInferenceResult(highestFunded)
+        }.take(4)
+        val newTokens = verifySettledInferences(highestFunded, inferences)
+        val tokenomicsAtEnd = highestFunded.node.getTokenomics().tokenomicsData
+        val expectedTokens = tokenomicsAtStart.copy(
+            totalSubsidies = tokenomicsAtStart.totalSubsidies + newTokens.totalSubsidies,
+            totalFees = tokenomicsAtStart.totalFees + newTokens.totalFees,
+            totalRefunded = tokenomicsAtStart.totalRefunded + newTokens.totalRefunded,
+            totalBurned = tokenomicsAtStart.totalBurned + newTokens.totalBurned
+        )
+        assertThat(tokenomicsAtEnd).isEqualTo(expectedTokens)
         val postParticipants = highestFunded.api.getParticipants()
         postParticipants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
 
+
     }
 
-    private fun verifySettledInferences(highestFunded: LocalInferencePair, inferenceCount: Int) {
-        val inferences = generateSequence {
-            getInferenceResult(highestFunded)
-        }.take(inferenceCount)
+    private fun verifySettledInferences(
+        highestFunded: LocalInferencePair,
+        inferences: Sequence<InferenceResult>,
+    ): TokenomicsData {
         // More than just debugging, this forces the evaluation of the sequence
         Logger.info("Inference count: ${inferences.count()}")
-        val currentHeight = highestFunded.getCurrentBlockHeight()
         val preSettle = highestFunded.api.getParticipants()
-        val nextSettleBlock = getNextSettleBlock(currentHeight)
+        val nextSettleBlock = highestFunded.getNextSettleBlock()
         highestFunded.node.waitForMinimumBlock(nextSettleBlock + 10)
 
         val afterSettle = highestFunded.api.getParticipants()
-        val coinRewards = calculateCoinRewards(preSettle, EPOCH_NEW_COIN, nextSettleBlock - 1)
+        val params = highestFunded.node.getInferenceParams()
+        val coinRewards = calculateCoinRewards(preSettle, highestFunded.node.mostRecentExport, params)
+        var tokenomics = TokenomicsData(0, 0, 0, 0)
         // Represents the change from when we first made the inference to after the settle
         for (participant in preSettle) {
             val participantAfter = afterSettle.first { it.id == participant.id }
@@ -100,20 +121,21 @@ class InferenceAccountingTests : TestermintTest() {
                     participant.coinsOwed + // Coins earned for performing inferences
                     participant.refundsOwed + // refunds from excess escrow
                     coinRewards[participant]!! // coins earned from the epoch
+            Logger.info(
+                "Existing Balance: ${participant.balance}, Earned:${participant.coinsOwed}, " +
+                        "Refunds:${participant.refundsOwed}, Rewards:${coinRewards[participant]}"
+            )
             assertThat(participantAfter.balance)
                 .`as`("Balance has previous coinsOwed and refundsOwed for ${participant.id}")
                 .isEqualTo(expectedTotal)
+            tokenomics = tokenomics.copy(
+                totalSubsidies = tokenomics.totalSubsidies + coinRewards[participant]!!,
+                totalFees = tokenomics.totalFees + participant.coinsOwed,
+                totalRefunded = tokenomics.totalRefunded + participant.refundsOwed
+            )
         }
-    }
+        return tokenomics
 
-    @Test
-    fun `test post settle amounts with halving`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        if (highestFunded.getCurrentBlockHeight() < COIN_HALVING_HEIGHT) {
-            highestFunded.node.waitForMinimumBlock(COIN_HALVING_HEIGHT.toLong())
-        }
-        verifySettledInferences(highestFunded, 4)
     }
 
     @Test
@@ -164,31 +186,17 @@ class InferenceAccountingTests : TestermintTest() {
 
     private fun calculateCoinRewards(
         preSettle: List<Participant>,
-        rewards: Long,
-        blockHeight: Long,
+        mostRecentExport: AppExport?,
+        params: InferenceParams,
     ): Map<Participant, Long> {
-        val halvings: Long = blockHeight / COIN_HALVING_HEIGHT
-        val adjustedRewards = rewards / (2.0.pow(halvings.toInt())).toLong()
-        Logger.debug(
-            "Rewards calculation: baseRewards:$rewards, height:$blockHeight halvings:$halvings, " +
-                    "adjusted:$adjustedRewards"
-        )
-        val totalWork = preSettle.sumOf { it.coinsOwed }
+        val bonusPercentage = params.tokenomicsParams.currentSubsidyPercentage
         return preSettle.associateWith { participant ->
-            val share = participant.coinsOwed.toDouble() / totalWork
-            Logger.debug("Participant ${participant.id} share: $share")
-            Logger.debug("Participant ${participant.id} reward: ${(adjustedRewards * share).toLong()}")
-            (adjustedRewards * share).toLong()
+            val coinsForParticipant = (participant.coinsOwed / (1 - bonusPercentage)).toLong()
+            Logger.info(
+                "Participant: ${participant.id}, Owed: ${participant.coinsOwed}, " +
+                        "Bonus: $bonusPercentage, RewardCoins: $coinsForParticipant"
+            )
+            coinsForParticipant
         }
-    }
-
-    private fun getNextSettleBlock(currentHeight: Long): Long {
-        val blocksTillEpoch = EpochLength - (currentHeight % EpochLength)
-
-        val nextSettle = currentHeight + blocksTillEpoch + setNewValidatorsStage + 1
-        return if (nextSettle - EpochLength > currentHeight)
-            nextSettle - EpochLength
-        else
-            return nextSettle
     }
 }

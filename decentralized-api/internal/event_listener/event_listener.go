@@ -5,12 +5,12 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
-	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server"
 	"decentralized-api/poc"
 	"decentralized-api/upgrade"
 	"encoding/json"
-	fmt "fmt"
+	 "fmt"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	finishInferenceAction = "/inference.inference.MsgFinishInference"
-	validationAction      = "/inference.inference.MsgValidation"
+	finishInferenceAction   = "/inference.inference.MsgFinishInference"
+	validationAction        = "/inference.inference.MsgValidation"
+	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
 )
 
 func StartEventListener(
@@ -46,6 +47,7 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -82,7 +84,7 @@ func StartEventListener(
 				slog.Warn("Websocket connection closed", "errorType", fmt.Sprintf("%T", err), "error", err)
 				if upgrade.CheckForUpgrade(configManager) {
 					slog.Error("Upgrade required! Exiting...")
-					panic("Upgrade required") // TODO: better not use panic in code
+					panic("Upgrade required")
 				}
 				continue
 			}
@@ -121,7 +123,15 @@ func handleMessage(
 		return
 	}
 
-	var action = event.Result.Events["message.action"][0]
+	actions, ok := event.Result.Events["message.action"]
+	if !ok || len(actions) == 0 {
+		// Handle the missing key or empty slice.
+		// For example, log an error, return from the function, etc.
+		slog.Info("No message.action event found", "event", event)
+		return // or handle it accordingly
+	}
+
+	action := actions[0]
 	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
@@ -134,6 +144,10 @@ func handleMessage(
 		server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
 		server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	case submitGovProposalAction:
+		handleGovProposal(event.Result.Events, transactionRecorder)
+	default:
+		slog.Debug("Unhandled action received", "action", action)
 	}
 }
 
@@ -196,4 +210,8 @@ func GetParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 	}
 	slog.Error("Exhausted all retries to get chain params", "error", err)
 	return nil, err
+}
+
+func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+
 }

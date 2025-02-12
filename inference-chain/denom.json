@@ -24,6 +24,14 @@
             {
               "denom": "icoin",
               "exponent": 9
+            },
+            {
+              "denom": "kicoin",
+              "exponent": 12
+            },
+            {
+              "denom": "mcicoin",
+              "exponent": 15
             }
           ]
         }

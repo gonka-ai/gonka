@@ -106,6 +106,32 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query getCurrentEpoch",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod: "TokenomicsData",
+					Use:       "show-tokenomics-data",
+					Short:     "show tokenomics_data",
+				},
+				{
+					RpcMethod:      "GetUnitOfComputePriceProposal",
+					Use:            "get-unit-of-compute-price-proposal",
+					Short:          "Query get-unit-of-compute-price-proposal",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "CurrentEpochGroupData",
+					Use:            "current-epoch-group-data",
+					Short:          "Query CurrentEpochGroupData",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "ModelsAll",
+					Use:            "models-all",
+					Short:          "Query modelsAll",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -188,6 +214,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "submit-seed [block-height] [signature]",
 					Short:          "Send a submit-seed tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "signature"}},
+				},
+				{
+					RpcMethod:      "SubmitUnitOfComputePriceProposal",
+					Use:            "submit-unit-of-compute-price-proposal [price]",
+					Short:          "Send a submit-unit-of-compute-price-proposal tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

@@ -140,3 +140,8 @@ package:
 			fi; \
 		done; \
 	done
+
+mock-expected-keepers:
+	@mockgen -source=x/inference/types/expected_keepers.go \
+		-package keeper \
+		-destination=testutil/keeper/expected_keepers_mocks.go
