@@ -6,8 +6,8 @@ type StartTrainingDto struct {
 }
 
 type HardwareResourcesDto struct {
-	Type   string `json:"type"`
-	Amount uint32 `json:"amount"`
+	Type  string `json:"type"`
+	Count uint32 `json:"count"`
 }
 
 type TrainingConfigDto struct {

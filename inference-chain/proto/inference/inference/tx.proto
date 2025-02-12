@@ -8,6 +8,7 @@ import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
+import "inference/inference/training_task.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -217,6 +218,8 @@ message MsgRegisterModelResponse {}
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
+  TrainingHardwareResources hardware_resources = 2;
+  TrainingConfig config = 3;
 }
 
 message MsgCreateTrainingTaskResponse {
