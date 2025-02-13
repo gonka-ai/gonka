@@ -24,12 +24,14 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 	}
 
 	actions := keeper.GetTopMinerActions(minerSet)
+	minerFound := false
 	for _, action := range actions {
 		switch typedAction := action.(type) {
 		case keeper.DoNothing:
 			continue
 		case keeper.AddMiner:
 		case keeper.UpdateMiner:
+			minerFound = true
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
 		case keeper.UpdateAndPayMiner:
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
@@ -39,7 +41,16 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 			}
 		}
 	}
+	if payoutSettings.FirstQualifiedTime == 0 && minerFound {
+		am.updateTopMinerFirstQualified(ctx, time)
+	}
 	return nil
+}
+
+func (am AppModule) updateTopMinerFirstQualified(ctx context.Context, time int64) {
+	data, _ := am.keeper.GetTokenomicsData(ctx)
+	data.TopRewardStart = time
+	am.keeper.SetTokenomicsData(ctx, data)
 }
 
 func (am AppModule) qualifiedParticipantList(participants []*types.ActiveParticipant, threshold int64) []*keeper.Miner {
@@ -58,5 +69,17 @@ func (am AppModule) minerIsQualified(participant *types.ActiveParticipant, thres
 }
 
 func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.PayoutSettings {
-	return keeper.PayoutSettings{}
+	genesisOnlyParams, _ := am.keeper.GetGenesisOnlyParams(ctx)
+	params := am.keeper.GetParams(ctx)
+	tokenomicsData, _ := am.keeper.GetTokenomicsData(ctx)
+	return keeper.PayoutSettings{
+		PayoutPeriod:       genesisOnlyParams.TopRewardPeriod,
+		TotalRewards:       genesisOnlyParams.TopRewardAmount,
+		TopNumberOfMiners:  genesisOnlyParams.TopRewards,
+		MaxPayoutsTotal:    int32(genesisOnlyParams.TopRewardPayouts),
+		MaxPayoutsPerMiner: int32(genesisOnlyParams.TopRewardPayoutsPerMiner),
+		AllowedFailureRate: params.TokenomicsParams.TopRewardAllowedFailure,
+		MaximumTime:        genesisOnlyParams.TopRewardMaxDuration,
+		FirstQualifiedTime: tokenomicsData.TopRewardStart,
+	}
 }

@@ -30,6 +30,7 @@ data class ApplicationCLI(
 
     fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {
+            dockerClient.waitContainerCmd()
             Logger.info("Creating container,  id={}", containerId)
             var createCmd = dockerClient.createContainerCmd(config.nodeImageName)
                 .withName(containerId)

@@ -25,6 +25,10 @@ message GenesisOnlyParams {
   int64 pre_programmed_sale_amount = 5;
   int32 top_rewards = 6;
   string supply_denom = 7;
+  int64 top_reward_period = 8;
+  int64 top_reward_payouts = 9;
+  int64 top_reward_payouts_per_miner = 10;
+  int64 top_reward_max_duration = 11;
 }
 
 message TokenomicsParams {
@@ -32,6 +36,7 @@ message TokenomicsParams {
   double subsidy_reduction_interval = 1;
   float subsidy_reduction_amount = 2;
   float current_subsidy_percentage = 3;
+  float top_reward_allowed_failure = 4;
 }
 
 message EpochParams {
