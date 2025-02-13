@@ -150,39 +150,46 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.Address
 	transaction.ExecutedBy = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.Address
 	slog.Info("Validation: Reporting validation", "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
@@ -191,27 +198,32 @@ func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address stri
 
 func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -279,7 +291,7 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 	return &factory, nil
 }
 
-func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) error {
+func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error) {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
@@ -290,13 +302,13 @@ func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) error {
 	slog.Debug("Finish broadcast", "id", id)
 	if err != nil {
 		slog.Error("Failed to broadcast transaction", "error", err)
-		return err
+		return response, err
 	}
 	slog.Debug("Transaction broadcast successfully", "response", response.Data)
 	if response.Code != 0 {
 		slog.Error("Transaction failed", "response", response)
 	}
-	return nil
+	return response, nil
 }
 
 func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
