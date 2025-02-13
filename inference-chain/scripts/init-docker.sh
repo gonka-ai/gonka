@@ -35,11 +35,14 @@ $APP_NAME init \
   --default-denom $COIN_DENOM \
   my-node
 
+ls -l $STATE_DIR/config/
+cat $STATE_DIR/config/app.toml
+
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
-$APP_NAME config set state-sync.snapshot-interval 10
-$APP_NAME config set state-sync.snapshot-keep-recent 2
+$APP_NAME config set app state-sync.snapshot-interval 10
+$APP_NAME config set app state-sync.snapshot-keep-recent 2
 
 # Allow access to RPC
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \

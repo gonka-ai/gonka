@@ -1,16 +1,30 @@
-# inference
+# Inference
 **inference** is a blockchain built using Cosmos SDK and Tendermint and created with [Ignite CLI](https://ignite.com/cli).
 
+## Prerequisites
+Make sure, you have installed:
+- at least Go 1.21
+- cosmovisor v1.7.0
+
 ## Get started
-
+### Local run single node (Linux)
+**Being in root of inference-ignite repo**
+build binary:
+```shell
+go build -mod=readonly -ldflags "$LDFLAGS" -o ./build/inferenced ./cmd/inferenced/main.go
 ```
-ignite chain serve
+
+set up envs and basic config:
+```shell
+./srcipts/init-local.sh
 ```
 
-`serve` command installs dependencies, builds, initializes, and starts your blockchain in development.
+start a full node:
+```shell
+./build/inferenced start
+```
 
 ### Configure
-
 Your blockchain in development can be configured with `config.yml`. To learn more, see the [Ignite CLI docs](https://docs.ignite.com).
 
 ### Web Frontend

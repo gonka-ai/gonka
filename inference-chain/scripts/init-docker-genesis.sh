@@ -29,6 +29,8 @@ echo "Setting the chain configuration"
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
+$APP_NAME config set app state-sync.snapshot-interval 10
+$APP_NAME config set app state-sync.snapshot-keep-recent 2
 
 echo "Setting the node configuration (config.toml)"
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
