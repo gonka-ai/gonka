@@ -18,6 +18,8 @@ func (k msgServer) CreateTrainingTask(goCtx context.Context, msg *types.MsgCreat
 		CreatedAtBlockHeight:  uint64(ctx.BlockHeight()),
 		AssignedAtBlockHeight: 0,
 		FinishedAtBlockHeight: 0,
+		HardwareResources:     msg.HardwareResources,
+		Config:                msg.Config,
 	}
 
 	err := k.CreateTask(ctx, task)
