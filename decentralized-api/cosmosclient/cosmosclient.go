@@ -120,7 +120,7 @@ type CosmosMessageClient interface {
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTransaction(msg sdk.Msg) error
+	SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error)
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
