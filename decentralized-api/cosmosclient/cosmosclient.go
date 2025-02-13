@@ -222,7 +222,15 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 
 func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) error {
 	transaction.Creator = icc.Address
-	_, err := icc.SendTransaction(transaction)
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		return err
+	}
+	msg := inference.MsgCreateTrainingTaskResponse{}
+	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](result, 0, &msg)
+	if err != nil {
+		return err
+	}
 	return err
 }
 
@@ -332,21 +340,19 @@ func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, err
 	return &resp.Executor, nil
 }
 
-func ParseMsgResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) (T, error) {
-	var empty T
-
+func ParseMsgResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) error {
 	rawData, err := base64.StdEncoding.DecodeString(txResp.Data)
 	if err != nil {
-		return empty, fmt.Errorf("failed to base64-decode TxResponse.Data: %w", err)
+		return fmt.Errorf("failed to base64-decode TxResponse.Data: %w", err)
 	}
 
 	var txMsgData sdk.TxMsgData
 	if err := proto.Unmarshal(rawData, &txMsgData); err != nil {
-		return empty, fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
+		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
-		return empty, fmt.Errorf(
+		return fmt.Errorf(
 			"message index %d out of range: got %d responses",
 			msgIndex, len(txMsgData.MsgResponses),
 		)
@@ -355,8 +361,8 @@ func ParseMsgResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dst
 	anyResp := txMsgData.MsgResponses[msgIndex]
 
 	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
-		return empty, fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
+		return fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
 	}
 
-	return dstMsg, nil
+	return nil
 }
