@@ -46,11 +46,11 @@ type TopMinerAction interface {
 }
 
 type AddMiner struct {
-	miner types.TopMiner
+	Miner types.TopMiner
 }
 
 func (a AddMiner) MinerAddress() string {
-	return a.miner.Address
+	return a.Miner.Address
 }
 
 func (a AddMiner) TopMinerActionName() string {
@@ -58,7 +58,7 @@ func (a AddMiner) TopMinerActionName() string {
 }
 
 type UpdateMiner struct {
-	miner types.TopMiner
+	Miner types.TopMiner
 }
 
 func (u UpdateMiner) TopMinerActionName() string {
@@ -66,7 +66,7 @@ func (u UpdateMiner) TopMinerActionName() string {
 }
 
 func (u UpdateMiner) MinerAddress() string {
-	return u.miner.Address
+	return u.Miner.Address
 }
 
 type DoNothing struct {
@@ -82,8 +82,8 @@ func (d DoNothing) TopMinerActionName() string {
 }
 
 type UpdateAndPayMiner struct {
-	miner  types.TopMiner
-	payout int64
+	Miner  types.TopMiner
+	Payout int64
 }
 
 func (u UpdateAndPayMiner) TopMinerActionName() string {
@@ -91,7 +91,7 @@ func (u UpdateAndPayMiner) TopMinerActionName() string {
 }
 
 func (u UpdateAndPayMiner) MinerAddress() string {
-	return u.miner.Address
+	return u.Miner.Address
 }
 
 type Miner struct {
@@ -157,12 +157,11 @@ func GetTopMinerActions(set *TopMinerSet) []TopMinerAction {
 func applyAction(action TopMinerAction, miners []*types.TopMiner) []*types.TopMiner {
 	switch typedAction := action.(type) {
 	case UpdateMiner:
-		return replace(miners, typedAction.miner)
+		return replace(miners, typedAction.Miner)
 	case UpdateAndPayMiner:
-		return replace(miners, typedAction.miner)
-	// Handle UpdateAndPayMiner action here
+		return replace(miners, typedAction.Miner)
 	case AddMiner:
-		return append(miners, &typedAction.miner)
+		return append(miners, &typedAction.Miner)
 	default:
 		return miners
 	}
@@ -210,7 +209,7 @@ func minerWillBeDisqualified(timeSinceLastUpdate int64, factors *TopMinerFactors
 func addDisqualifyingPeriod(timeSinceLastUpdate int64, existingMiner *types.TopMiner) TopMinerAction {
 	existingMiner.MissedPeriods++
 	existingMiner.MissedTime += timeSinceLastUpdate
-	return UpdateMiner{miner: *existingMiner}
+	return UpdateMiner{Miner: *existingMiner}
 }
 
 func minerShouldGetPayout(factors *TopMinerFactors, existingMiner *types.TopMiner) bool {
@@ -272,13 +271,13 @@ func disqualifyMiner(existingMiner *types.TopMiner) TopMinerAction {
 	existingMiner.MissedPeriods = 0
 	existingMiner.QualifiedTime = 0
 	existingMiner.MissedTime = 0
-	return UpdateMiner{miner: *existingMiner}
+	return UpdateMiner{Miner: *existingMiner}
 }
 
 func extendQualification(timeSinceLastUpdate int64, existingMiner *types.TopMiner) TopMinerAction {
 	existingMiner.QualifiedPeriods++
 	existingMiner.QualifiedTime += timeSinceLastUpdate
-	return UpdateMiner{miner: *existingMiner}
+	return UpdateMiner{Miner: *existingMiner}
 }
 
 func payMiner(factors *TopMinerFactors, existingMiner *types.TopMiner) TopMinerAction {
@@ -290,7 +289,7 @@ func payMiner(factors *TopMinerFactors, existingMiner *types.TopMiner) TopMinerA
 	existingMiner.MissedPeriods = 0
 	existingMiner.MissedTime = 0
 	payout := factors.PayoutSettings.TotalRewards / int64(factors.PayoutSettings.MaxPayoutsTotal)
-	return UpdateAndPayMiner{miner: *existingMiner, payout: payout}
+	return UpdateAndPayMiner{Miner: *existingMiner, Payout: payout}
 }
 
 func addNewMiner(factors *TopMinerFactors) TopMinerAction {
@@ -306,7 +305,7 @@ func addNewMiner(factors *TopMinerFactors) TopMinerAction {
 		QualifiedTime:         0,
 		MissedTime:            0,
 	}
-	return AddMiner{miner: newMiner}
+	return AddMiner{Miner: newMiner}
 }
 
 // TODO: consider perf here? Default is this should be a TINY list, so no big hit

@@ -7,38 +7,50 @@ import (
 )
 
 func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types.ActiveParticipant, time int64) error {
-	//existingTopMiners := am.keeper.GetAllTopMiner(ctx)
-	//payoutSettings := am.GetTopMinerPayoutSettings(ctx)
-	//qualificationThreshold := 10
-	//qualificationMap := am.qualifiedParticipantMap(participants)
-	//minerSet := &keeper.TopMinerSet{
-	//	TopMiners:         existingTopMiners,
-	//	TimeOfCalculation: time,
-	//	PayoutSettings:    payoutSettings,
-	//	Qualified:         qualificationMap,
-	//}
-	//
-	//// THE ORDER MATTERS!!!!
-	//for _, participant := range participants {
-	//	factors := &keeper.TopMinerFactors{
-	//		TopMiners:         existingTopMiners,
-	//		PayoutSettings:    payoutSettings,
-	//		Qualified:         am.minerIsQualified(participant, int64(qualificationThreshold)),
-	//		MinerAddress:      participant.Index,
-	//		TimeOfCalculation: time,
-	//	}
-	//	action, _ := keeper.GetTopMinerAction(factors)
-	//
-	//}
+	existingTopMiners := am.keeper.GetAllTopMiner(ctx)
+	payoutSettings := am.GetTopMinerPayoutSettings(ctx)
+	qualificationThreshold := int64(10)
+	participantList := am.qualifiedParticipantList(participants, qualificationThreshold)
+
+	var referenceTopMiners []*types.TopMiner
+	for _, miner := range existingTopMiners {
+		referenceTopMiners = append(referenceTopMiners, &miner)
+	}
+	minerSet := &keeper.TopMinerSet{
+		TopMiners:         referenceTopMiners,
+		TimeOfCalculation: time,
+		PayoutSettings:    payoutSettings,
+		Participants:      participantList,
+	}
+
+	actions := keeper.GetTopMinerActions(minerSet)
+	for _, action := range actions {
+		switch typedAction := action.(type) {
+		case keeper.DoNothing:
+			continue
+		case keeper.AddMiner:
+		case keeper.UpdateMiner:
+			am.keeper.SetTopMiner(ctx, typedAction.Miner)
+		case keeper.UpdateAndPayMiner:
+			am.keeper.SetTopMiner(ctx, typedAction.Miner)
+			err := am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, uint64(typedAction.Payout), types.TopRewardPoolAccName)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
-func (am AppModule) qualifiedParticipantMap(participants []*types.ActiveParticipant) map[string]bool {
-	qualifiedMap := make(map[string]bool)
+func (am AppModule) qualifiedParticipantList(participants []*types.ActiveParticipant, threshold int64) []*keeper.Miner {
+	var participantList []*keeper.Miner
 	for _, participant := range participants {
-		qualifiedMap[participant.Index] = am.minerIsQualified(participant, 10)
+		participantList = append(participantList, &keeper.Miner{
+			Address:   participant.Index,
+			Qualified: am.minerIsQualified(participant, threshold),
+		})
 	}
-	return qualifiedMap
+	return participantList
 }
 
 func (am AppModule) minerIsQualified(participant *types.ActiveParticipant, threshold int64) bool {
@@ -46,5 +58,5 @@ func (am AppModule) minerIsQualified(participant *types.ActiveParticipant, thres
 }
 
 func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.PayoutSettings {
-
+	return keeper.PayoutSettings{}
 }

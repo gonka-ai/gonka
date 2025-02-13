@@ -47,7 +47,7 @@ var startingFactors = &TopMinerFactors{
 func TestAddNewMiner(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
 	require.IsType(t, AddMiner{}, action)
-	newMiner := action.(AddMiner).miner
+	newMiner := action.(AddMiner).Miner
 	require.Equal(t, startingFactors.MinerAddress, newMiner.Address)
 	require.Equal(t, startingFactors.TimeOfCalculation, newMiner.LastUpdatedTime)
 	require.Equal(t, startingFactors.TimeOfCalculation, newMiner.LastQualifiedStarted)
@@ -62,7 +62,7 @@ func TestAddNewMiner(t *testing.T) {
 
 func TestUpdateMinerOnce(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
-	newMiner := action.(AddMiner).miner
+	newMiner := action.(AddMiner).Miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
@@ -72,7 +72,7 @@ func TestUpdateMinerOnce(t *testing.T) {
 	}
 	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateMiner{}, action)
-	updatedMiner := action.(UpdateMiner).miner
+	updatedMiner := action.(UpdateMiner).Miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
 	require.Equal(t, updatedFactors.TimeOfCalculation, updatedMiner.LastUpdatedTime)
 	require.Equal(t, newMiner.LastQualifiedStarted, updatedMiner.LastQualifiedStarted)
@@ -87,7 +87,7 @@ func TestUpdateMinerOnce(t *testing.T) {
 
 func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
-	newMiner := action.(AddMiner).miner
+	newMiner := action.(AddMiner).Miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
@@ -96,7 +96,7 @@ func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 		TopMiners:         []*types.TopMiner{&newMiner},
 	}
 	action = GetTopMinerAction(updatedFactors)
-	updatedMiner := action.(UpdateMiner).miner
+	updatedMiner := action.(UpdateMiner).Miner
 	updatedFactors = &TopMinerFactors{
 		MinerAddress:      updatedMiner.Address,
 		Qualified:         false,
@@ -106,7 +106,7 @@ func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 	}
 	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateMiner{}, action)
-	updatedMiner = action.(UpdateMiner).miner
+	updatedMiner = action.(UpdateMiner).Miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
 	require.Equal(t, updatedFactors.TimeOfCalculation, updatedMiner.LastUpdatedTime)
 	require.Equal(t, newMiner.LastQualifiedStarted, updatedMiner.LastQualifiedStarted)
@@ -120,7 +120,7 @@ func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 
 func TestMinerDisqualifiedForPeriod(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
-	newMiner := action.(AddMiner).miner
+	newMiner := action.(AddMiner).Miner
 	disqualificationThreshold := decimal.NewFromInt(defaultPayoutSettings.PayoutPeriod).Mul(decimal.NewFromFloat32(defaultPayoutSettings.AllowedFailureRate))
 	// Simulate many periods
 	newMiner.QualifiedPeriods = 100
@@ -135,7 +135,7 @@ func TestMinerDisqualifiedForPeriod(t *testing.T) {
 		TopMiners:         []*types.TopMiner{&newMiner},
 	}
 	action = GetTopMinerAction(disqualifyingFactors)
-	updatedMiner := action.(UpdateMiner).miner
+	updatedMiner := action.(UpdateMiner).Miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
 	require.Equal(t, int32(0), updatedMiner.QualifiedPeriods)
 	require.Equal(t, int64(0), updatedMiner.QualifiedTime)
@@ -148,7 +148,7 @@ func TestMinerDisqualifiedForPeriod(t *testing.T) {
 
 func TestMinerGetsPaid(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
-	newMiner := action.(AddMiner).miner
+	newMiner := action.(AddMiner).Miner
 	updatedFactors := &TopMinerFactors{
 		MinerAddress:      newMiner.Address,
 		Qualified:         true,
@@ -158,7 +158,7 @@ func TestMinerGetsPaid(t *testing.T) {
 	}
 	action = GetTopMinerAction(updatedFactors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
-	updatedMiner := action.(UpdateAndPayMiner).miner
+	updatedMiner := action.(UpdateAndPayMiner).Miner
 	require.Equal(t, newMiner.Address, updatedMiner.Address)
 	require.Equal(t, updatedFactors.TimeOfCalculation, updatedMiner.LastUpdatedTime)
 	require.Equal(t, updatedFactors.TimeOfCalculation, updatedMiner.LastQualifiedStarted)
@@ -168,7 +168,7 @@ func TestMinerGetsPaid(t *testing.T) {
 	require.Equal(t, int32(0), updatedMiner.MissedPeriods)
 	require.Equal(t, int64(0), updatedMiner.QualifiedTime)
 	require.Equal(t, int64(0), updatedMiner.MissedTime)
-	require.Equal(t, defaultPayoutSettings.TotalRewards/int64(defaultPayoutSettings.MaxPayoutsTotal), action.(UpdateAndPayMiner).payout)
+	require.Equal(t, defaultPayoutSettings.TotalRewards/int64(defaultPayoutSettings.MaxPayoutsTotal), action.(UpdateAndPayMiner).Payout)
 }
 
 func Test4thMinerDoesNotGetPaid(t *testing.T) {
@@ -204,8 +204,8 @@ func TestMinerGetsSecondReward(t *testing.T) {
 	}
 	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
-	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).payout)
-	newMiner := action.(UpdateAndPayMiner).miner
+	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).Payout)
+	newMiner := action.(UpdateAndPayMiner).Miner
 	require.Equal(t, int32(2), newMiner.RewardsPaidCount)
 	require.Equal(t, int32(0), newMiner.QualifiedPeriods)
 	require.Equal(t, int32(0), newMiner.MissedPeriods)
@@ -271,7 +271,7 @@ func getDisqualifiedMiner(miner *types.TopMiner) *types.TopMiner {
 		},
 	}
 	action := GetTopMinerAction(disqFactors)
-	topMiner := action.(UpdateMiner).miner
+	topMiner := action.(UpdateMiner).Miner
 	return &topMiner
 }
 
@@ -295,8 +295,8 @@ func TestMinerGetsPaidAfterOthersDisqualified(t *testing.T) {
 	}
 	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
-	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).payout)
-	paidMiner := action.(UpdateAndPayMiner).miner
+	require.Equal(t, defaultPayoutSettings.GetPayoutAmount(), action.(UpdateAndPayMiner).Payout)
+	paidMiner := action.(UpdateAndPayMiner).Miner
 	require.Equal(t, int32(1), paidMiner.RewardsPaidCount)
 	require.Equal(t, int32(0), paidMiner.QualifiedPeriods)
 	require.Equal(t, int32(0), paidMiner.MissedPeriods)
@@ -326,7 +326,7 @@ func TestMinerDoesNotGetPaidAfterOthersMaxedOut(t *testing.T) {
 	}
 	action := GetTopMinerAction(disqFactors)
 	require.IsType(t, UpdateMiner{}, action)
-	disqMiner := action.(UpdateMiner).miner
+	disqMiner := action.(UpdateMiner).Miner
 	miner4 := getTestMiner(days(365) - 1000)
 	factors := &TopMinerFactors{
 		MinerAddress:      miner4.Address,
@@ -342,7 +342,7 @@ func TestMinerDoesNotGetPaidAfterOthersMaxedOut(t *testing.T) {
 	}
 	action = GetTopMinerAction(factors)
 	require.IsType(t, UpdateMiner{}, action)
-	paidMiner := action.(UpdateMiner).miner
+	paidMiner := action.(UpdateMiner).Miner
 	require.Equal(t, int32(0), paidMiner.RewardsPaidCount)
 	require.Equal(t, int32(365), paidMiner.QualifiedPeriods)
 	require.Equal(t, int32(0), paidMiner.MissedPeriods)
@@ -437,7 +437,7 @@ func TestMinerShouldGetPaidOnceAfterCutoff(t *testing.T) {
 	}
 	action := GetTopMinerAction(factors)
 	require.IsType(t, UpdateAndPayMiner{}, action)
-	paidMiner := action.(UpdateAndPayMiner).miner
+	paidMiner := action.(UpdateAndPayMiner).Miner
 	secondFactors := &TopMinerFactors{
 		MinerAddress:      paidMiner.Address,
 		Qualified:         true,
