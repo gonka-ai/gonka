@@ -4,6 +4,7 @@ import (
 	"context"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -11,6 +12,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
@@ -316,4 +318,33 @@ func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, err
 		return nil, err
 	}
 	return &resp.Executor, nil
+}
+
+func ParseMsgResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) (T, error) {
+	var empty T
+
+	rawData, err := base64.StdEncoding.DecodeString(txResp.Data)
+	if err != nil {
+		return empty, fmt.Errorf("failed to base64-decode TxResponse.Data: %w", err)
+	}
+
+	var txMsgData sdk.TxMsgData
+	if err := proto.Unmarshal(rawData, &txMsgData); err != nil {
+		return empty, fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
+	}
+
+	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
+		return empty, fmt.Errorf(
+			"message index %d out of range: got %d responses",
+			msgIndex, len(txMsgData.MsgResponses),
+		)
+	}
+
+	anyResp := txMsgData.MsgResponses[msgIndex]
+
+	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
+		return empty, fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
+	}
+
+	return dstMsg, nil
 }
