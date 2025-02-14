@@ -371,12 +371,3 @@ func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
 
 	return block.Block.Hash().String(), err
 }
-
-func (o *NodePoCOrchestrator) getCurrentEpochGroupData() (*types.EpochGroupData, error) {
-	queryClient := o.cosmosClient.NewInferenceQueryClient()
-	resp, err := queryClient.CurrentEpochGroupData(o.cosmosClient.Context, &types.QueryCurrentEpochGroupDataRequest{})
-	if err != nil {
-		return nil, err
-	}
-	return &resp.EpochGroupData, nil
-}
