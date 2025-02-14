@@ -59,23 +59,23 @@ func (p *EpochParams) GetStartOfPoCStage() int64 {
 }
 
 func (p *EpochParams) GetEndOfPoCStage() int64 {
-	return 10 * p.EpochMultiplier
+	return p.GetStartOfPoCStage() + (10 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetPoCExchangeDeadline() int64 {
-	return (p.GetEndOfPoCStage() + 2) * p.EpochMultiplier
+	return p.GetEndOfPoCStage() + (2 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetStartOfPoCValidationStage() int64 {
-	return (p.GetEndOfPoCStage() + 2) * p.EpochMultiplier
+	return p.GetEndOfPoCStage() + (2 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetEndOfPoCValidationStage() int64 {
-	return (p.GetStartOfPoCValidationStage() + 4) * p.EpochMultiplier
+	return p.GetStartOfPoCValidationStage() + (6 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetSetNewValidatorsStage() int64 {
-	return (p.GetEndOfPoCValidationStage() + 1) * p.EpochMultiplier
+	return p.GetEndOfPoCValidationStage() + (1 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) isNotZeroEpoch(blockHeight int64) bool {

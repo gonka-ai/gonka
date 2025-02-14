@@ -22,6 +22,9 @@ func TestEpochParamsStages(t *testing.T) {
 	if !params.IsEndOfPoCStage(pocEnd) {
 		t.Errorf("Expected %d to be the end of PoC stage", pocEnd)
 	}
+	if pocEnd != pocStart+params.EpochMultiplier*10 {
+		t.Errorf("Expected %d to be the end of PoC stage", pocEnd)
+	}
 
 	for i := pocStart + 1; i <= pocStart+params.GetPoCExchangeDeadline(); i++ {
 		if !params.IsPoCExchangeWindow(pocStart, i) {
@@ -37,7 +40,10 @@ func TestEpochParamsStages(t *testing.T) {
 		t.Errorf("Expected block %d not to be in PoC exchange window (beyond deadline)", pocStart+params.GetPoCExchangeDeadline()+1)
 	}
 
-	pocValStart := int64(54)
+	pocValStart := pocStart + params.GetStartOfPoCValidationStage()
+	if pocValStart != pocEnd+(2*params.EpochMultiplier) {
+		t.Errorf("Expected %d to be the start of PoC Validation stage", pocValStart)
+	}
 	if !params.IsStartOfPoCValidationStage(pocValStart) {
 		t.Errorf("Expected %d to be the start of PoC Validation stage", pocValStart)
 	}
@@ -56,12 +62,12 @@ func TestEpochParamsStages(t *testing.T) {
 		t.Errorf("Expected block %d not to be in Validation exchange window (beyond deadline)", pocValStart+params.GetSetNewValidatorsStage()+1)
 	}
 
-	pocValEnd := int64(106)
+	pocValEnd := pocStart + params.GetEndOfPoCValidationStage()
 	if !params.IsEndOfPoCValidationStage(pocValEnd) {
 		t.Errorf("Expected %d to be the end of PoC Validation stage", pocValEnd)
 	}
 
-	setNewValidatorsBlock := int64(204)
+	setNewValidatorsBlock := pocStart + params.GetSetNewValidatorsStage()
 	if !params.IsSetNewValidatorsStage(setNewValidatorsBlock) {
 		t.Errorf("Expected %d to be the Set New Validators stage", setNewValidatorsBlock)
 	}
