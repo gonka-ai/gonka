@@ -55,7 +55,7 @@ data class TokenomicsParams(
 )
 
 data class EpochParams(
-    val epochLength: Int,
+    val epochLength: Long,
     val epochMultiplier: Int,
 )
 
