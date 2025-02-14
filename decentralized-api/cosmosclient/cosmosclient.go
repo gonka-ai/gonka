@@ -224,13 +224,22 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	transaction.Creator = icc.Address
 	result, err := icc.SendTransaction(transaction)
 	if err != nil {
+		slog.Error("Failed to send transaction", "error", err, "result", result)
 		return err
 	}
+
+	transactionAppliedResult, err := icc.Client.WaitForTx(icc.Context, result.TxHash)
+	if err != nil {
+		slog.Error("Failed to wait for transaction", "error", err, "result", transactionAppliedResult)
+		return err
+	}
+
 	msg := inference.MsgCreateTrainingTaskResponse{}
-	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](result, 0, &msg)
+	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](transactionAppliedResult.TxResult.Data, 0, &msg)
 	if err != nil {
 		return err
 	}
+
 	return err
 }
 
@@ -340,17 +349,22 @@ func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, err
 	return &resp.Executor, nil
 }
 
-func ParseMsgResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) error {
+func ParseMsgFromTxResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) error {
 	rawData, err := base64.StdEncoding.DecodeString(txResp.Data)
 	if err != nil {
 		return fmt.Errorf("failed to base64-decode TxResponse.Data: %w", err)
 	}
 
+	return ParseMsgResponse(rawData, msgIndex, dstMsg)
+}
+
+func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) error {
 	var txMsgData sdk.TxMsgData
-	if err := proto.Unmarshal(rawData, &txMsgData); err != nil {
+	if err := proto.Unmarshal(data, &txMsgData); err != nil {
 		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
+	slog.Info("Found messages", "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
 		return fmt.Errorf(
 			"message index %d out of range: got %d responses",
