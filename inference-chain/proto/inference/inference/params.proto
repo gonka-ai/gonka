@@ -38,9 +38,10 @@ message EpochParams {
   option (gogoproto.equal) = true;
   int64 epoch_length = 1;
   int64 epoch_multiplier = 2;
-  uint64 epoch_new_coin = 3;
-  int64 coin_halving_interval = 4;
-  uint64 default_unit_of_compute_price = 5;
+  int64 epoch_shift = 3;
+  uint64 epoch_new_coin = 4;
+  int64 coin_halving_interval = 5;
+  uint64 default_unit_of_compute_price = 6;
 }
 
 message ValidationParams {
