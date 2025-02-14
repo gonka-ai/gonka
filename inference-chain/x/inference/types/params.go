@@ -34,10 +34,8 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 func DefaultParams() Params {
 	return Params{
 		EpochParams: &EpochParams{
-			EpochLength:         40,
-			EpochMultiplier:     1,
-			EpochNewCoin:        1_048_576,
-			CoinHalvingInterval: 100,
+			EpochLength:     40,
+			EpochMultiplier: 1,
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:     0.05,
@@ -53,6 +51,8 @@ func DefaultParams() Params {
 			SubsidyReductionInterval: 0.05,
 			SubsidyReductionAmount:   0.20,
 			CurrentSubsidyPercentage: 0.90,
+			TopRewardAllowedFailure:  0.10,
+			TopMinerPocQualification: 10,
 		},
 	}
 }

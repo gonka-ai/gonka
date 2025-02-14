@@ -57,8 +57,6 @@ data class TokenomicsParams(
 data class EpochParams(
     val epochLength: Int,
     val epochMultiplier: Int,
-    val epochNewCoin: Long,
-    val coinHalvingInterval: Int,
 )
 
 data class ValidationParams(

@@ -9,7 +9,7 @@ import (
 func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types.ActiveParticipant, time int64) error {
 	existingTopMiners := am.keeper.GetAllTopMiner(ctx)
 	payoutSettings := am.GetTopMinerPayoutSettings(ctx)
-	qualificationThreshold := int64(10)
+	qualificationThreshold := am.keeper.GetParams(ctx).TokenomicsParams.TopMinerPocQualification
 	participantList := am.qualifiedParticipantList(participants, qualificationThreshold)
 
 	var referenceTopMiners []*types.TopMiner
