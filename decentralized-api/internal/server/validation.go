@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bytes"
@@ -144,7 +144,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 		return
 	}
 
-	msgValidation, err := ToMsgValidation(valResult)
+	msgValidation, err := toMsgValidation(valResult)
 	if err != nil {
 		slog.Error("Validation: Failed to convert to MsgValidation.", "id", inf.InferenceId, "error", err)
 		return
@@ -159,7 +159,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	slog.Info("Validation: Successfully validated inference", "id", inf.InferenceId)
 }
 
-func ValidateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
+func validateByInferenceId(id string, node *broker.InferenceNode, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
@@ -425,7 +425,7 @@ func cosineSimilarity(a, b []float64) float64 {
 	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
 }
 
-func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
+func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
 	var cosineSimVal float64
 	switch result.(type) {
