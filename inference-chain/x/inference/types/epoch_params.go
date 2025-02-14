@@ -79,10 +79,10 @@ func (p *EpochParams) GetSetNewValidatorsStage() int64 {
 }
 
 func (p *EpochParams) isNotZeroEpoch(blockHeight int64) bool {
-	return !p.IsZeroEpoch(blockHeight)
+	return !p.isZeroEpoch(blockHeight)
 }
 
-func (p *EpochParams) IsZeroEpoch(blockHeight int64) bool {
+func (p *EpochParams) isZeroEpoch(blockHeight int64) bool {
 	return blockHeight < p.EpochLength
 }
 
