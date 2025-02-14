@@ -36,6 +36,7 @@ func DefaultParams() Params {
 		EpochParams: &EpochParams{
 			EpochLength:         40,
 			EpochMultiplier:     1,
+			EpochShift:          0,
 			EpochNewCoin:        1_048_576,
 			CoinHalvingInterval: 100,
 		},
