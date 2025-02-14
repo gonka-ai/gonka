@@ -3,13 +3,21 @@ import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.initialize
 import com.productscience.initializeCluster
+import com.productscience.setupLocalCluster
 import org.junit.jupiter.api.Test
+import kotlin.test.assertNotNull
 
 class InitializationTests {
 
     @Test
     fun init3() {
         initializeCluster(2, inferenceConfig)
+    }
+
+    @Test
+    fun initOrReuse() {
+        val localCluster = setupLocalCluster(2, inferenceConfig)
+        assertNotNull(localCluster)
     }
 
     @Test

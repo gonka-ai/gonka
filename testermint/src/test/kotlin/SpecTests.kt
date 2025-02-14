@@ -1,5 +1,6 @@
 import com.productscience.data.spec
 import com.productscience.gsonSnakeCase
+import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
@@ -41,6 +42,13 @@ class SpecTests {
         // Nice, huh? Trickier than it seemed, but totally works
         val json = spec.toJson(gsonSnakeCase)
         assertThat(json).isEqualTo("""{"camel_cased_value":"test"}""".trimMargin())
+    }
+
+    @Test
+    fun `output actual app_state`() {
+        val spec = inferenceConfig.genesisSpec
+        val json = spec?.toJson(gsonSnakeCase)
+        println(json)
     }
 }
 

@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
@@ -79,6 +80,7 @@ data class DockerGroup(
             prodLocal.deleteRecursively()
         }
 
+        val inferenceDir = baseDir.resolve("prod-local/$keyName")
         val mappingsDir = baseDir.resolve("prod-local/wiremock/$keyName/mappings")
         val filesDir = baseDir.resolve("prod-local/wiremock/$keyName/__files")
         val mappingsSourceDir = baseDir.resolve("testermint/src/main/resources/mappings")
@@ -86,9 +88,11 @@ data class DockerGroup(
 
         Files.createDirectories(mappingsDir)
         Files.createDirectories(filesDir)
-
+        Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
         publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
+        val jsonOverrides = config.genesisSpec?.toJson(gsonSnakeCase)?.let { "{ \"app_state\": $it }" } ?: "{}"
+        Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
     }
 
     val apiUrl = "http://$keyName-api:8080"
@@ -171,15 +175,12 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
     if (cluster == null) return false
     if (cluster.joinPairs.size != joinCount) return false
     val genesisState = cluster.genesis.node.getGenesisState()
-    if (config.genesisSpec?.matches(genesisState.appState) == false) {
-        return false
-    }
-    return true
+    return config.genesisSpec?.matches(genesisState.appState) != false
 }
 
 fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
     val currentPairs = getLocalInferencePairs(config)
-    val (genesis, join) = currentPairs.partition { it.name == config.genesisName }
+    val (genesis, join) = currentPairs.partition { it.name == "/${config.genesisName}" }
     return genesis.singleOrNull()?.let {
         LocalCluster(it, join)
     }
