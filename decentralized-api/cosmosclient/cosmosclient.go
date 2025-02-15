@@ -237,6 +237,7 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	msg := inference.MsgCreateTrainingTaskResponse{}
 	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](transactionAppliedResult.TxResult.Data, 0, &msg)
 	if err != nil {
+		slog.Error("Failed to parse message response", "error", err)
 		return nil, err
 	}
 
