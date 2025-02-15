@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+/*
+	curl -X POST http://localhost:8080/v1/training-jobs \
+		  -H "Content-Type: application/json" \
+		  -d '{"hardware_resources": [{"type": "cpu", "count": 1}],"config": {"datasets": {"train": "train-dataset","test": "test-dataset"},"num_uoc_estimation_steps": 100}}'
+*/
 func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
@@ -59,13 +64,13 @@ func handleCreateTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, w ht
 		},
 	}
 
-	err = cosmosClient.CreateTrainingTask(msg)
+	msgResponse, err := cosmosClient.CreateTrainingTask(msg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	RespondWithJson(w, msgResponse)
 }
 
 func handleGetTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, id string, w http.ResponseWriter, r *http.Request) {

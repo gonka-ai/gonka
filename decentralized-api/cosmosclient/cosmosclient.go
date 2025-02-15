@@ -116,7 +116,7 @@ type CosmosMessageClient interface {
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
-	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) error
+	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -220,27 +220,27 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 	return err
 }
 
-func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) error {
+func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error) {
 	transaction.Creator = icc.Address
 	result, err := icc.SendTransaction(transaction)
 	if err != nil {
 		slog.Error("Failed to send transaction", "error", err, "result", result)
-		return err
+		return nil, err
 	}
 
 	transactionAppliedResult, err := icc.Client.WaitForTx(icc.Context, result.TxHash)
 	if err != nil {
 		slog.Error("Failed to wait for transaction", "error", err, "result", transactionAppliedResult)
-		return err
+		return nil, err
 	}
 
 	msg := inference.MsgCreateTrainingTaskResponse{}
 	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](transactionAppliedResult.TxResult.Data, 0, &msg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return err
+	return &msg, err
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
