@@ -1,16 +1,22 @@
 import com.productscience.ApplicationCLI
 import com.productscience.InferenceResult
+import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
 import com.productscience.data.AppExport
+import com.productscience.data.AppState
+import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceState
 import com.productscience.data.Participant
 import com.productscience.data.TokenomicsData
 import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.spec
 import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initialize
+import com.productscience.setupLocalCluster
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
@@ -162,7 +168,7 @@ class InferenceAccountingTests : TestermintTest() {
             val participants = genesis.api.getParticipants()
             val consumerParticipant = participants.first { it.id == newKey.address }
             assertThat(consumerParticipant.balance).isGreaterThan(100_000_000)
-            val consumerPair = LocalInferencePair(consumer, genesis.api, null, consumerKey)
+            val consumerPair = LocalInferencePair(consumer, genesis.api, null, consumerKey, inferenceConfig)
             val result = consumerPair.makeInferenceRequest(inferenceRequest, newKey.address)
             assertThat(result).isNotNull
             val inference = generateSequence {
@@ -184,6 +190,77 @@ class InferenceAccountingTests : TestermintTest() {
             assertThat(executor.coinsOwed).isEqualTo(inference.actualCost).`as`("Coins owed does not match cost")
         }
     }
+
+    @Test
+    fun createTopMiner() {
+        val localCluster = setupLocalCluster(2, inferenceConfig, reboot = true)
+        initialize(localCluster.allPairs)
+        localCluster.genesis.mock?.setPocResponse(100)
+        val nextSettle = localCluster.genesis.getNextSettleBlock()
+        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 20)
+        val topMiners = localCluster.genesis.node.getTopMiners()
+        println(topMiners)
+        assertThat(topMiners.topMiner).hasSize(1)
+        val topMiner = topMiners.topMiner.first()
+        assertThat(topMiner.address).isEqualTo(localCluster.genesis.node.addresss)
+        val startTime = topMiner.firstQualifiedStarted
+        assertThat(topMiner.lastQualifiedStarted).isEqualTo(startTime)
+        assertThat(topMiner.lastUpdatedTime).isEqualTo(startTime)
+        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 40)
+        val topMiners2 = localCluster.genesis.node.getTopMiners()
+        assertThat(topMiners2.topMiner).hasSize(1)
+        val topMiner2 = topMiners2.topMiner.first()
+        assertThat(topMiner2.address).isEqualTo(localCluster.genesis.node.addresss)
+        assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
+        assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
+        assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(2))
+        assertThat(topMiner2.lastUpdatedTime).isEqualTo(startTime + topMiner2.qualifiedTime!!)
+    }
+
+    @Test
+    fun payTopMiner() {
+        val fastRewardSpec = spec {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+                    this[GenesisOnlyParams::topRewardPeriod] = 100L
+                }
+            }
+        }
+
+        val fastRewards = inferenceConfig.copy(
+            genesisSpec = inferenceConfig.genesisSpec?.merge(fastRewardSpec) ?: fastRewardSpec
+        )
+        val localCluster = setupLocalCluster(2, fastRewards, reboot = true)
+        initialize(localCluster.allPairs)
+        localCluster.genesis.mock?.setPocResponse(100)
+        val initialBalance = localCluster.genesis.node.getSelfBalance("nicoin")
+        val nextSettle = localCluster.genesis.getNextSettleBlock()
+        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 40)
+        val topMiners = localCluster.genesis.node.getTopMiners()
+        assertThat(topMiners.topMiner).hasSize(1)
+        val topMiner = topMiners.topMiner.first()
+        assertThat(topMiner.address).isEqualTo(localCluster.genesis.node.addresss)
+        val standardizedExpectedReward = getTopMinerReward(localCluster)
+        val currentBalance = localCluster.genesis.node.getSelfBalance("nicoin")
+        assertThat(currentBalance - initialBalance).isEqualTo(standardizedExpectedReward)
+    }
+
+    private fun getTopMinerReward(localCluster: LocalCluster): Long {
+        val genesisState = localCluster.genesis.node.getGenesisState()
+        val genesisParams = genesisState.appState.inference.genesisOnlyParams
+        val expectedReward = genesisParams.topRewardAmount / genesisParams.topRewardPayouts
+        val standardizedExpectedReward =
+            genesisState.appState.bank.denomMetadata.first().convertAmount(expectedReward, genesisParams.supplyDenom)
+        return standardizedExpectedReward
+    }
+
+    @Test
+    fun testCoinConversion() {
+        val localCluster = setupLocalCluster(2, inferenceConfig)
+        initialize(localCluster.allPairs)
+        println(getTopMinerReward(localCluster))
+    }
+
 
     private fun calculateCoinRewards(
         preSettle: List<Participant>,

@@ -1,7 +1,9 @@
+import com.productscience.data.TopMinersResponse
 import com.productscience.data.spec
 import com.productscience.gsonSnakeCase
 import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
+
 import org.junit.jupiter.api.Test
 
 class SpecTests {
@@ -50,7 +52,69 @@ class SpecTests {
         val json = spec?.toJson(gsonSnakeCase)
         println(json)
     }
+
+    @Test
+    fun `merge specs`() {
+        val spec1 = spec<Person>{
+            this[Person::age] = 10
+        }
+        val spec2 = spec<Person>{
+            this[Person::name] = "John"
+        }
+        val merged = spec1.merge(spec2)
+        println(merged.toJson(gsonSnakeCase))
+    }
+
+    @Test
+    fun `merge nested`() {
+        val spec1 = spec<Nested>{
+            this[Nested::person] = spec<Person>{
+                this[Person::age] = 10
+            }
+        }
+        val spec2 = spec<Nested>{
+            this[Nested::person] = spec<Person>{
+                this[Person::name] = "John"
+            }
+        }
+        val merged = spec1.merge(spec2)
+        println(merged.toJson(gsonSnakeCase))
+    }
+
+    @Test
+    fun `parse top miner`() {
+        val topMiners = gsonSnakeCase.fromJson(topMinerJson, TopMinersResponse::class.java)
+        println(topMiners)
+    }
+
+    @Test
+    fun `invalid argument if type does not match`() {
+        val result = runCatching {
+            val spec = spec<Person>{
+                this[Person::age] = "test"
+            }
+        }
+        assertThat(result.isFailure).isTrue()
+    }
 }
 
+data class Nested(val group:String, val person:Person)
 
 data class Person(val name: String, val age: Int, val gender: String, val camelCasedValue: String)
+
+
+val topMinerJson = """
+    {
+      "top_miner": [
+        {
+          "address": "cosmos1nrsklffzkzj3lhrmup3vwx9xv8usnz8wqdv0pr",
+          "last_qualified_started": "1739651467",
+          "last_updated_time": "1739651467",
+          "first_qualified_started": "1739651467"
+        }
+      ],
+      "pagination": {
+        "total": "1"
+      }
+    }
+""".trimIndent()

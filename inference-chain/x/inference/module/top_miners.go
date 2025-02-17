@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -26,10 +27,13 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 	actions := keeper.GetTopMinerActions(minerSet)
 	minerFound := false
 	for _, action := range actions {
+		am.LogInfo("top miner action", "address", action.MinerAddress(), "action", action.TopMinerActionName(), "object", action)
 		switch typedAction := action.(type) {
 		case keeper.DoNothing:
 			continue
 		case keeper.AddMiner:
+			minerFound = true
+			am.keeper.SetTopMiner(ctx, typedAction.Miner)
 		case keeper.UpdateMiner:
 			minerFound = true
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
@@ -72,9 +76,10 @@ func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.Payout
 	genesisOnlyParams, _ := am.keeper.GetGenesisOnlyParams(ctx)
 	params := am.keeper.GetParams(ctx)
 	tokenomicsData, _ := am.keeper.GetTokenomicsData(ctx)
+	fullCoin := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.TopRewardAmount))
 	return keeper.PayoutSettings{
 		PayoutPeriod:       genesisOnlyParams.TopRewardPeriod,
-		TotalRewards:       genesisOnlyParams.TopRewardAmount,
+		TotalRewards:       fullCoin.Amount.Int64(),
 		TopNumberOfMiners:  genesisOnlyParams.TopRewards,
 		MaxPayoutsTotal:    int32(genesisOnlyParams.TopRewardPayouts),
 		MaxPayoutsPerMiner: int32(genesisOnlyParams.TopRewardPayoutsPerMiner),

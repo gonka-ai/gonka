@@ -328,7 +328,7 @@ message QueryGetTopMinerRequest {
 }
 
 message QueryGetTopMinerResponse {
-  TopMiner topMiner = 1 [(gogoproto.nullable) = false];
+  TopMiner top_miner = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryAllTopMinerRequest {
@@ -336,7 +336,7 @@ message QueryAllTopMinerRequest {
 }
 
 message QueryAllTopMinerResponse {
-  repeated TopMiner                               topMiner   = 1 [(gogoproto.nullable) = false];
+  repeated TopMiner                               top_miner   = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 

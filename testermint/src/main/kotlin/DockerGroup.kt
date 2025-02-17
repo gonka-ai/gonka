@@ -5,12 +5,20 @@ import com.github.dockerjava.core.DockerClientBuilder
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import kotlin.contracts.ExperimentalContracts
+import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 
 const val GENESIS_COMPOSE_FILE = "docker-compose-local-genesis.yml"
 const val NODE_COMPOSE_FILE = "docker-compose-local.yml"
+
+data class GenesisUrls(val keyName: String) {
+    val apiUrl = "http://$keyName-api:8080"
+    val rpcUrl = "http://$keyName-node:26657"
+    val p2pUrl = "http://$keyName-node:26656"
+}
 
 data class DockerGroup(
     val dockerClient: DockerClient,
@@ -20,7 +28,7 @@ data class DockerGroup(
     val isGenesis: Boolean = false,
     val wiremockExternalPort: Int,
     val workingDirectory: String,
-    val genesisGroup: DockerGroup? = null,
+    val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
     val publicUrl: String = "http://$keyName-api:8080",
     val pocCallbackUrl: String = publicUrl,
@@ -104,7 +112,7 @@ data class DockerGroup(
     }
 }
 
-fun createDockerGroup(iteration: Int, genesisGroup: DockerGroup?, config: ApplicationConfig): DockerGroup {
+fun createDockerGroup(iteration: Int, genesisUrls: GenesisUrls?, config: ApplicationConfig): DockerGroup {
     val keyName = if (iteration == 0) "genesis" else "join$iteration"
     val nodeConfigFile = "node_payload_wiremock_$keyName.json"
     val repoRoot = getRepoRoot()
@@ -137,7 +145,7 @@ fun createDockerGroup(iteration: Int, genesisGroup: DockerGroup?, config: Applic
         wiremockExternalPort = 8090 + iteration,
         workingDirectory = repoRoot,
         genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
-        genesisGroup = genesisGroup,
+        genesisGroup = genesisUrls,
         config = config
     )
 }
@@ -152,7 +160,8 @@ fun getRepoRoot(): String {
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<DockerGroup> {
     val genesisGroup = createDockerGroup(0, null, config)
-    val joinGroups = (1..joinCount).map { createDockerGroup(it, genesisGroup, config) }
+    val joinGroups =
+        (1..joinCount).map { createDockerGroup(it, GenesisUrls(genesisGroup.keyName.trimStart('/')), config) }
     val allGroups = listOf(genesisGroup) + joinGroups
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
@@ -161,17 +170,21 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     return allGroups
 }
 
-fun setupLocalCluster(joinCount: Int, config: ApplicationConfig): LocalCluster? {
+fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = getLocalCluster(config)
-    if (clusterMatchesConfig(currentCluster, joinCount, config)) {
+    if (clusterMatchesConfig(currentCluster, joinCount, config) && !reboot) {
         return currentCluster
     } else {
         initializeCluster(joinCount, config)
-        return getLocalCluster(config)
+        return getLocalCluster(config) ?: error("Local cluster not initialized")
     }
 }
 
+@OptIn(ExperimentalContracts::class)
 fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: ApplicationConfig): Boolean {
+    contract {
+        returns(true) implies (cluster != null)
+    }
     if (cluster == null) return false
     if (cluster.joinPairs.size != joinCount) return false
     val genesisState = cluster.genesis.node.getGenesisState()
@@ -191,4 +204,18 @@ data class LocalCluster(
     val joinPairs: List<LocalInferencePair>,
 ) {
     val allPairs = listOf(genesis) + joinPairs
+    fun withAdditionalJoin(joinCount: Int = 1): LocalCluster {
+        val newJoinGroups =
+            (1..joinCount).map {
+                createDockerGroup(
+                    iteration = it + this.joinPairs.size,
+                    genesisUrls = GenesisUrls(this.genesis.name.trimStart('/')),
+                    config = this.genesis.config
+                )
+            }
+        newJoinGroups.forEach { it.tearDownExisting() }
+        newJoinGroups.forEach { it.init() }
+        return getLocalCluster(this.genesis.config)!!
+    }
+
 }
