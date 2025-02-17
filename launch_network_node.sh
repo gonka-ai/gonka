@@ -1,3 +1,4 @@
+#!/bin/bash
 set -e
 
 mode="$1"
@@ -62,7 +63,7 @@ echo "project_name=$project_name"
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
 mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
 cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
-cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
+# cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
 
 #!!!
 docker compose -p "$project_name" -f "$compose_file" up -d

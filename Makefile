@@ -28,3 +28,10 @@ decentralized-api-release:
 inference-chain-release:
 	@echo "Releasing inference-chain..."
 	@make -C inference-chain release
+
+launch-test-chain:
+	./launch-local-test-chain.sh
+
+stop-test-chain:
+	./stop-test-local-chain.sh
+
