@@ -73,7 +73,6 @@ $APP_NAME keys \
     add "$KEY_NAME"
 
 # Need to join network? Or is that solely from the compose file?
-
 GENESIS_FILE="./.inference/genesis.json"
 $APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
 
