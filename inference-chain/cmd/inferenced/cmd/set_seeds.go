@@ -1,26 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/internal/rpc"
 	"github.com/spf13/cobra"
-	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 )
-
-type statusResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int    `json:"id"`
-	Result  struct {
-		NodeInfo nodeInfo `json:"node_info"`
-	} `json:"result"`
-}
-
-type nodeInfo struct {
-	ID string `json:"id"`
-}
 
 func SetSeedCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -45,31 +32,19 @@ func SetSeedCommand() *cobra.Command {
 }
 
 func setSeeds(configFilePath string, nodeRpcUrl string, nodeP2PUrl string) error {
-	statusUrl := fmt.Sprintf("%s/status", nodeRpcUrl)
-
-	resp, err := http.Get(statusUrl)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received non-OK HTTP status: %s", resp.Status)
-	}
-
-	var genResp statusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return fmt.Errorf("failed to decode genesis JSON: %w", err)
-	}
-
-	fmt.Printf("Performed status request to seed node. Node id: %s\n", genResp.Result.NodeInfo.ID)
-
 	p2pHostAndPort, err := parseURL(nodeP2PUrl)
 	if err != nil {
 		return fmt.Errorf("failed to parse seed URL: %w", err)
 	}
 
-	seedString := fmt.Sprintf("%s@%s:%s", genResp.Result.NodeInfo.ID, p2pHostAndPort.Host, p2pHostAndPort.Port)
+	nodeId, err := rpc.GetNodeId(nodeRpcUrl)
+	if err != nil {
+		return fmt.Errorf("failed to get node id: %w", err)
+	}
+
+	fmt.Printf("Performed status request to seed node. Node id: %s\n", nodeId)
+
+	seedString := fmt.Sprintf("%s@%s:%s", nodeId, p2pHostAndPort.Host, p2pHostAndPort.Port)
 
 	fmt.Printf("Seed string = %s\n", seedString)
 

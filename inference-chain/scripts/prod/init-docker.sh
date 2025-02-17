@@ -55,9 +55,17 @@ sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 
 $APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
-
 echo "Grepping seeds =:"
 grep "seeds =" $STATE_DIR/config/config.toml
+
+ if [ "$SYNC_WITH_SNAPSHOTS" = "true" ]; then
+     echo "Node must sync using snapshots"
+ $APP_NAME set-statesync "$STATE_DIR/config/config.toml" true
+ $APP_NAME set-statesync-rpc-servers "$STATE_DIR/config/config.toml"  "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
+ $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL"
+ else
+     echo "Node will sync WITHOUT snapshots"
+ fi
 
 # Create a key
 $APP_NAME keys \

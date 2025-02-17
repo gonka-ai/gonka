@@ -11,7 +11,7 @@ Make sure, you have installed:
 **Being in root of inference-ignite repo**
 build binary:
 ```shell
-go build -mod=readonly -ldflags "$LDFLAGS" -o ./build/inferenced ./cmd/inferenced/main.go
+make build
 ```
 
 set up envs and basic config:
