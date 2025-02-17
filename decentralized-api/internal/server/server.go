@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bufio"
@@ -10,48 +10,36 @@ import (
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
+	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
-	"net/url"
-	"time"
-
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/types"
+	"time"
 )
-
-type InferenceTransaction struct {
-	PromptHash           string `json:"promptHash"`
-	PromptPayload        string `json:"promptPayload"`
-	ResponseHash         string `json:"responseHash"`
-	ResponsePayload      string `json:"responsePayload"`
-	PromptTokenCount     uint64 `json:"promptTokenCount"`
-	CompletionTokenCount uint64 `json:"completionTokenCount"`
-	Model                string `json:"model"`
-	Id                   string `json:"id"`
-}
 
 const testModel = "unsloth/llama-3-8b-Instruct"
 
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("Received request", "method", r.Method, "path", r.URL.Path)
-		slog.Debug("Request headers", "headers", r.Header)
-		next.ServeHTTP(w, r)
-	})
-}
+const (
+	authorizationHeader     = "Authorization"
+	xPublicKeyHeader        = "X-Public-Key"
+	xSeedHeader             = "X-Seed"
+	xInferenceIdHeader      = "X-Inference-Id"
+	xRequesterAddressHeader = "X-Requester-Address"
+)
 
 func StartInferenceServerWrapper(
 	nodeBroker *broker.Broker,
@@ -64,6 +52,7 @@ func StartInferenceServerWrapper(
 	mux := http.NewServeMux()
 
 	// Create an HTTP server
+	// TODO: some of handlers defined here and some in api package. Suggest to put it in 1 place
 	mux.HandleFunc("/v1/chat/completions/", wrapGetCompletion(transactionRecorder))
 	mux.HandleFunc("/v1/chat/completions", wrapChat(nodeBroker, transactionRecorder, configManager))
 	mux.HandleFunc("/v1/validation", wrapValidation(nodeBroker, transactionRecorder))
@@ -75,6 +64,10 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(transactionRecorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(configManager))
+	mux.HandleFunc("/v1/pricing", api.WrapPricing(transactionRecorder))
+	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
+	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(transactionRecorder))
+	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
@@ -86,7 +79,7 @@ func StartInferenceServerWrapper(
 		}
 
 		writer.WriteHeader(http.StatusOK)
-		writer.Write([]byte(addr))
+		writer.Write([]byte(addr)) // TODO handle error??
 	})
 	mux.HandleFunc("/v1/debug/verify/", func(writer http.ResponseWriter, request *http.Request) {
 		height, err := strconv.ParseInt(strings.TrimPrefix(request.URL.Path, "/v1/debug/verify/"), 10, 64)
@@ -104,17 +97,17 @@ func StartInferenceServerWrapper(
 		}
 
 		writer.WriteHeader(http.StatusOK)
-		writer.Write([]byte("Block signatures verified"))
+		writer.Write([]byte("Block signatures verified")) // TODO handle error??
 	})
 	mux.HandleFunc("/v1/status", func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusOK)
-		writer.Write([]byte("{\"status\": \"ok\"}"))
+		writer.Write([]byte("{\"status\": \"ok\"}")) // TODO handle error??
 	})
 
 	addr := fmt.Sprintf(":%d", configManager.GetConfig().Api.Port)
 
 	slog.Info("Starting the server", "address", addr)
-	loggedMux := LoggingMiddleware(mux)
+	loggedMux := loggingMiddleware(mux)
 	// Start the server
 	log.Fatal(http.ListenAndServe(addr, loggedMux))
 }
@@ -137,7 +130,7 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 	}
 }
 
-func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
+func LoadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
 		Response: make(chan broker.InferenceNode, 2),
@@ -146,11 +139,6 @@ func loadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
 		slog.Error("Failed to load node to broker", "error", err)
 		panic(err)
 	}
-}
-
-type ResponseWithBody struct {
-	Response  *http.Response
-	BodyBytes []byte
 }
 
 func wrapGetCompletion(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
@@ -166,18 +154,6 @@ func wrapGetCompletion(recorder cosmos_client.CosmosMessageClient) func(w http.R
 		http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 	}
 
-}
-
-type ChatRequest struct {
-	Body                 []byte
-	Request              *http.Request
-	OpenAiRequest        OpenAiRequest
-	AuthKey              string
-	PubKey               string
-	Seed                 string
-	InferenceId          string
-	RequesterAddress     string
-	FundedByTransferNode bool
 }
 
 func readRequest(request *http.Request) (*ChatRequest, error) {
@@ -203,11 +179,11 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		Body:                 body,
 		Request:              request,
 		OpenAiRequest:        openAiRequest,
-		AuthKey:              request.Header.Get("Authorization"),
-		PubKey:               request.Header.Get("X-Public-Key"),
-		Seed:                 request.Header.Get("X-Seed"),
-		InferenceId:          request.Header.Get("X-Inference-Id"),
-		RequesterAddress:     request.Header.Get("X-Requester-Address"),
+		AuthKey:              request.Header.Get(authorizationHeader),
+		PubKey:               request.Header.Get(xPublicKeyHeader),
+		Seed:                 request.Header.Get(xSeedHeader),
+		InferenceId:          request.Header.Get(xInferenceIdHeader),
+		RequesterAddress:     request.Header.Get(xRequesterAddressHeader),
 		FundedByTransferNode: fundedByTransferNode,
 	}, nil
 }
@@ -245,18 +221,6 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 		}
 
 	}
-}
-
-// Only extract info we need
-type OpenAiRequest struct {
-	Model     string `json:"model"`
-	Seed      int32  `json:"seed"`
-	MaxTokens int32  `json:"max_tokens"`
-}
-
-type ExecutorDestination struct {
-	Url     string `json:"url"`
-	Address string `json:"address"`
 }
 
 func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient) (*ExecutorDestination, error) {
@@ -324,10 +288,10 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-	req.Header.Set("X-Inference-Id", inferenceUUID)
-	req.Header.Set("X-Seed", strconv.Itoa(int(seed)))
-	req.Header.Set("X-Public-Key", pubkey)
-	req.Header.Set("Authorization", request.AuthKey)
+	req.Header.Set(xInferenceIdHeader, inferenceUUID)
+	req.Header.Set(xSeedHeader, strconv.Itoa(int(seed)))
+	req.Header.Set(xPublicKeyHeader, pubkey)
+	req.Header.Set(authorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 	req.Header.Set("X-Funded-By-Transfer-Node", strconv.FormatBool(request.FundedByTransferNode))
 
@@ -424,7 +388,7 @@ func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	w.Write(bodyBytes)
+	w.Write(bodyBytes) // TODO handle error??
 }
 
 func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
@@ -771,26 +735,18 @@ func getResponseHash(bodyBytes []byte) (string, *completionapi.Response, error) 
 	for _, choice := range response.Choices {
 		content += choice.Message.Content
 	}
-	hash := generateSHA256Hash(content)
+	hash := utils.GenerateSHA256Hash(content)
 	return hash, &response, nil
 }
 
 func getPromptHash(requestBytes []byte) (string, string, error) {
-	// Canonicalize the request body
-	canonicalJSON, err := CanonicalizeJSON(requestBytes)
+	canonicalJSON, err := utils.CanonicalizeJSON(requestBytes)
 	if err != nil {
 		return "", "", err
 	}
 
-	// Generate the hash of the canonical JSON
-	promptHash := generateSHA256Hash(canonicalJSON)
-
+	promptHash := utils.GenerateSHA256Hash(canonicalJSON)
 	return promptHash, canonicalJSON, nil
-}
-
-// Debug-only request
-type ValidationRequest struct {
-	Id string `json:"id"`
 }
 
 func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
@@ -802,7 +758,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 		}
 
 		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
-			return ValidateByInferenceId(validationRequest.Id, node, recorder)
+			return validateByInferenceId(validationRequest.Id, node, recorder)
 		})
 
 		if err != nil {
@@ -811,7 +767,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 			return
 		}
 
-		msgVal, err := ToMsgValidation(result)
+		msgVal, err := toMsgValidation(result)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -824,7 +780,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(msgVal.String()))
+		w.Write([]byte(msgVal.String())) // TODO: handle error??
 	}
 }
 
@@ -842,22 +798,6 @@ func wrapSubmitNewParticipant(recorder cosmos_client.CosmosMessageClient) func(w
 	}
 }
 
-type ParticipantsDto struct {
-	Participants []ParticipantDto `json:"participants"`
-	BlockHeight  int64            `json:"block_height"`
-}
-
-type ParticipantDto struct {
-	Id          string   `json:"id"`
-	Url         string   `json:"url"`
-	Models      []string `json:"models"`
-	CoinsOwed   int64    `json:"coins_owed"`
-	RefundsOwed int64    `json:"refunds_owed"`
-	Balance     int64    `json:"balance"`
-	VotingPower int64    `json:"voting_power"`
-	Reputation  float32  `json:"reputation"`
-}
-
 func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, body api.SubmitUnfundedNewParticipantDto) {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
@@ -865,6 +805,7 @@ func submitNewUnfundedParticipant(recorder cosmos_client.CosmosMessageClient, w 
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
 		PubKey:       body.PubKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Debug("Submitting NewUnfundedParticipant", "message", msg)
@@ -895,6 +836,7 @@ func submitNewParticipant(recorder cosmos_client.CosmosMessageClient, w http.Res
 		Url:          body.Url,
 		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
+		WorkerKey:    body.WorkerKey,
 	}
 
 	slog.Info("ValidatorKey in dapi", "key", body.ValidatorKey)

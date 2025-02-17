@@ -1,15 +1,16 @@
-package main
+package event_listener
 
 import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
-	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/server"
 	"decentralized-api/poc"
 	"decentralized-api/upgrade"
 	"encoding/json"
-	fmt "fmt"
+	 "fmt"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	finishInferenceAction = "/inference.inference.MsgFinishInference"
-	validationAction      = "/inference.inference.MsgValidation"
+	finishInferenceAction   = "/inference.inference.MsgFinishInference"
+	validationAction        = "/inference.inference.MsgValidation"
+	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
 )
 
 func StartEventListener(
@@ -45,6 +47,7 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -91,8 +94,10 @@ func StartEventListener(
 		var event chainevents.JSONRPCResponse
 		if err = json.Unmarshal(message, &event); err != nil {
 			slog.Error("Error unmarshalling message to JSONRPCResponse", "error", err, "message", message)
+			continue // no sense to check event, if it wasn't unmarshalled correctly
 		}
 
+		// TODO: goroutines are created out of control, it can use crazy amount of recourses
 		go func() {
 			switch event.Result.Data.Type {
 			case "tendermint/event/NewBlock":
@@ -108,28 +113,6 @@ func StartEventListener(
 	}
 }
 
-func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
-	var params *types.QueryParamsResponse
-	var err error
-	for i := 0; i < 10; i++ {
-		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
-		if err == nil {
-			return params, nil
-		}
-
-		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
-			slog.Info("Inference not ready, retrying...", "attempt", i+1, "error", err)
-			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
-			continue
-		}
-		// If not an RPC error, log and return early
-		slog.Error("Failed to get chain params", "error", err)
-		return nil, err
-	}
-	slog.Error("Exhausted all retries to get chain params", "error", err)
-	return nil, err
-}
-
 func handleMessage(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
@@ -140,7 +123,15 @@ func handleMessage(
 		return
 	}
 
-	var action = event.Result.Events["message.action"][0]
+	actions, ok := event.Result.Events["message.action"]
+	if !ok || len(actions) == 0 {
+		// Handle the missing key or empty slice.
+		// For example, log an error, return from the function, etc.
+		slog.Info("No message.action event found", "event", event)
+		return // or handle it accordingly
+	}
+
+	action := actions[0]
 	slog.Debug("New Tx event received", "type", event.Result.Data.Type, "action", action)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
@@ -150,9 +141,13 @@ func handleMessage(
 	//}
 	switch action {
 	case finishInferenceAction:
-		SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
 	case validationAction:
-		VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+	case submitGovProposalAction:
+		handleGovProposal(event.Result.Events, transactionRecorder)
+	default:
+		slog.Debug("Unhandled action received", "action", action)
 	}
 }
 
@@ -193,4 +188,30 @@ func getWebsocketUrl(config *apiconfig.Config) string {
 
 	// Construct the new URL
 	return u.String()
+}
+
+func GetParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
+	var params *types.QueryParamsResponse
+	var err error
+	for i := 0; i < 10; i++ {
+		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
+		if err == nil {
+			return params, nil
+		}
+
+		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
+			slog.Info("Inference not ready, retrying...", "attempt", i+1, "error", err)
+			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
+			continue
+		}
+		// If not an RPC error, log and return early
+		slog.Error("Failed to get chain params", "error", err)
+		return nil, err
+	}
+	slog.Error("Exhausted all retries to get chain params", "error", err)
+	return nil, err
+}
+
+func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+
 }

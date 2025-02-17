@@ -7,16 +7,9 @@ import com.github.kittinunf.fuel.core.Response
 import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.github.kittinunf.fuel.gson.gsonDeserializer
 import com.github.kittinunf.fuel.gson.jsonBody
+import com.github.kittinunf.fuel.gson.responseObject
 import com.github.kittinunf.result.Result
-import com.productscience.data.AppExport
-import com.productscience.data.InferenceNode
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.InferencePayload
-import com.productscience.data.NodeResponse
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.Participant
-import com.productscience.data.ParticipantsResponse
-import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -124,6 +117,53 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         val response = Fuel.delete("$url/v1/nodes/$nodeId")
             .responseString()
         logResponse(response)
+    }
+
+    fun submitPriceProposal(proposal: UnitOfComputePriceProposalDto): String = wrapLog("SubmitPriceProposal", true) {
+        val response = Fuel.post("$url/v1/admin/unit-of-compute-price-proposal")
+            .jsonBody(proposal, gsonSnakeCase)
+            .responseString()
+        logResponse(response)
+
+        response.third.get()
+    }
+
+    fun getPriceProposal(): GetUnitOfComputePriceProposalDto = wrapLog("SubmitPriceProposal", true) {
+        get<GetUnitOfComputePriceProposalDto>("v1/admin/unit-of-compute-price-proposal")
+    }
+
+    fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
+        get<GetPricingDto>("v1/pricing")
+    }
+
+    fun registerModel(model: RegisterModelDto): String = wrapLog("RegisterModel", true) {
+        postWithStringResponse("v1/admin/models", model)
+    }
+
+    inline fun <reified Out: Any> get(path: String): Out {
+        val response = Fuel.get("$url/$path")
+            .responseObject<Out>(gsonDeserializer(gsonSnakeCase))
+        logResponse(response)
+
+        return response.third.get()
+    }
+
+    inline fun <reified In: Any, reified Out: Any> post(path: String, body: In): Out {
+        val response = Fuel.post("$url/$path")
+            .jsonBody(body, gsonSnakeCase)
+            .responseObject<Out>()
+        logResponse(response)
+
+        return response.third.get()
+    }
+
+    inline fun <reified In: Any> postWithStringResponse(path: String, body: In): String {
+        val response = Fuel.post("$url/$path")
+            .jsonBody(body, gsonSnakeCase)
+            .responseString()
+        logResponse(response)
+
+        return response.third.get()
     }
 }
 

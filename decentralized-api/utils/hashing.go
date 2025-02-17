@@ -1,4 +1,4 @@
-package main
+package utils
 
 import (
 	"bytes"
@@ -69,7 +69,7 @@ func encodeCanonical(encoder *json.Encoder, jsonObj interface{}) error {
 	return nil
 }
 
-func generateSHA256Hash(text string) string {
+func GenerateSHA256Hash(text string) string {
 	hash := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(hash[:])
 }

@@ -2,25 +2,27 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.DockerObject
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
+import com.productscience.data.AppState
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
+import com.productscience.data.Spec
 import org.tinylog.kotlin.Logger
 import java.time.Instant
 
 val nameExtractor = "(.+)-node".toRegex()
+
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
     val containers = dockerClient.listContainersCmd().exec()
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
-    val mocks = containers.filter {it.image == config.wireMockImageName }
+    val mocks = containers.filter { it.image == config.wireMockImageName }
     return nodes.mapNotNull {
         val nameMatch = nameExtractor.find(it.names.first())
         if (nameMatch == null) {
@@ -43,11 +45,11 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     }
 }
 
-private fun Container.getMappedPort(internalPort:Int) =
+private fun Container.getMappedPort(internalPort: Int) =
     this.ports.find { it.privatePort == internalPort }?.publicPort
 
 private fun DockerClient.getNodeId(
-    config: ApplicationConfig
+    config: ApplicationConfig,
 ) = createContainerCmd(config.nodeImageName)
     .withVolumes(Volume(config.mountDir))
 
@@ -126,6 +128,24 @@ data class LocalInferencePair(
     fun getCurrentBlockHeight(): Long {
         return node.getStatus().syncInfo.latestBlockHeight
     }
+
+    fun getNextSettleBlock(): Long {
+        val epochParams = this.node.mostRecentExport?.appState?.inference?.params?.epochParams ?: return 0
+        val currentHeight = this.getCurrentBlockHeight()
+        val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
+        val nextSettle = currentHeight + blocksTillEpoch + epochParams.getSetNewValidatorsStage() + 1
+        return if (nextSettle - epochParams.epochLength > currentHeight)
+            nextSettle - epochParams.epochLength
+        else
+            nextSettle
+    }
+
+    fun waitForFirstPoC() {
+        val epochParams = this.node.mostRecentExport?.appState?.inference?.params?.epochParams ?: return
+        val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
+        Logger.info("First PoC should be finished at block height $epochFinished")
+        this.node.waitForMinimumBlock(epochFinished)
+    }
 }
 
 data class ApplicationConfig(
@@ -138,6 +158,8 @@ data class ApplicationConfig(
     val denom: String,
     val stateDirName: String,
     val pairName: String = "",
+    val genesisName: String = "genesis",
+    val genesisSpec: Spec<AppState>? = null,
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

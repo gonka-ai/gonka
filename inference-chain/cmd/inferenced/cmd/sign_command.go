@@ -153,7 +153,7 @@ func getAddress(cmd *cobra.Command, context client.Context) (sdk.AccAddress, err
 			if err != nil {
 				return nil, err
 			}
-			if key.GetLocal() != nil {
+			if key.GetLocal() != nil && !strings.HasPrefix(key.Name, "POOL_") {
 				addr = address
 			}
 		}

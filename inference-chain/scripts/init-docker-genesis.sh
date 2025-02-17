@@ -45,16 +45,19 @@ echo "Creating the key"
 $APP_NAME keys \
     --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
     add "$KEY_NAME"
-
-echo "Adding the key to the genesis account"
-$APP_NAME genesis add-genesis-account "$KEY_NAME" "1000000000000$COIN_DENOM" --keyring-backend $KEYRING_BACKEND
-$APP_NAME genesis gentx "$KEY_NAME" "1000000000$COIN_DENOM" --chain-id "$CHAIN_ID"
-$APP_NAME genesis collect-gentxs
+$APP_NAME keys \
+    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
+    add "POOL_product_science_inc"
 
 modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
   local override_file="$1"
 
+
+  if [ ! -f "$override_file" ]; then
+    echo "Override file $override_file does not exist. Exiting..."
+    return
+  fi
   echo "Checking if jq is installed"
   which jq
   jq ". * input" "$json_file" "$override_file" > "${json_file}.tmp"
@@ -65,7 +68,20 @@ modify_genesis_file() {
 
 # Usage
 modify_genesis_file 'denom.json'
+MILLION_BASE="000000$COIN_DENOM"
+NATIVE="000000000$COIN_DENOM"
+MILLION_NATIVE="000000$NATIVE"
+echo "Adding the key to the genesis account"
+$APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+$APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
+  echo "Failed to create gentx"
+  tail -f /dev/null
+}
+$APP_NAME genesis collect-gentxs
+
 modify_genesis_file 'genesis_overrides.json'
+modify_genesis_file "$HOME/.inference/genesis_overrides.json"
 
 echo "Genesis file created"
 echo "Init for cosmovisor"

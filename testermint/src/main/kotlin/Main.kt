@@ -1,10 +1,18 @@
 package com.productscience
 
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.productscience.data.AppState
+import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
+import com.productscience.data.EpochParams
+import com.productscience.data.FloatSerializer
 import com.productscience.data.InferenceNode
+import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
+import com.productscience.data.InferenceState
 import com.productscience.data.InstantDeserializer
+import com.productscience.data.LongSerializer
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.PubKey
@@ -12,6 +20,7 @@ import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.spec
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -82,8 +91,7 @@ data class InferenceResult(
 }
 
 private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
-    highestFunded.node.waitForMinimumBlock((EpochLength + setNewValidatorsStage + 1))
-
+    highestFunded.waitForFirstPoC()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
     val inferenceId = response.id
@@ -101,6 +109,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.node.waitForMinimumBlock(1)
+        it.node.exportState()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
@@ -174,11 +183,14 @@ private fun TxResponse.assertSuccess() {
 }
 
 val defaultFunding = 20_000_000L
-val gsonSnakeCase = GsonBuilder()
+val gsonSnakeCase: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+    .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
+    .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
+    .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
     .create()
 
 val gsonCamelCase = GsonBuilder()
@@ -196,6 +208,15 @@ val inferenceConfig = ApplicationConfig(
     apiImageName = "gcr.io/decentralized-ai/api",
     denom = "nicoin",
     stateDirName = ".inference",
+    genesisSpec = spec {
+        this[AppState::inference] = spec<InferenceState> {
+            this[InferenceState::params] = spec<InferenceParams> {
+                this[InferenceParams::epochParams] = spec<EpochParams> {
+                    this[EpochParams::epochLength] = 20L
+                }
+            }
+        }
+    }
 )
 
 val inferenceRequest = """

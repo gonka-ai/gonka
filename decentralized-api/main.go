@@ -4,7 +4,9 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/server"
 	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
@@ -52,25 +54,25 @@ func main() {
 	nodeBroker := broker.NewBroker()
 	nodes := config.GetConfig().Nodes
 	for _, node := range nodes {
-		loadNodeToBroker(nodeBroker, &node)
+		server.LoadNodeToBroker(nodeBroker, &node)
 	}
 
-	params, err := getParams(context.Background(), *recorder)
+	params, err := event_listener.GetParams(context.Background(), *recorder)
 	if err != nil {
 		slog.Error("Failed to get params", "error", err)
 		return
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config.GetConfig(), nodeBroker); err != nil {
+	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
 		slog.Error("Failed to register participant", "error", err)
 		return
 	}
 
 	go func() {
-		StartEventListener(nodeBroker, *recorder, config, &params.Params)
+		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
 
-	StartInferenceServerWrapper(nodeBroker, recorder, config)
+	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {

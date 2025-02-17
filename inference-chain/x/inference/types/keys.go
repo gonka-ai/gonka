@@ -9,6 +9,9 @@ const (
 
 	// MemStoreKey defines the in-memory store key
 	MemStoreKey = "mem_inference"
+
+	TopRewardPoolAccName     = "top_reward"
+	PreProgrammedSaleAccName = "pre_programmed_sale"
 )
 
 var (
@@ -18,3 +21,8 @@ var (
 func KeyPrefix(p string) []byte {
 	return []byte(p)
 }
+
+const (
+	TokenomicsDataKey  = "TokenomicsData/value/"
+	GenesisOnlyDataKey = "GenesisOnlyData/value/"
+)
