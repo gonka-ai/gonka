@@ -29,8 +29,6 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 		return nil, err
 	}
 
-	//k.updateTopMiners(ctx, msg.Creator, settleAmount)
-
 	return &types.MsgClaimRewardsResponse{
 		Amount: settleAmount.GetTotalCoins(),
 		Result: "Rewards claimed",
