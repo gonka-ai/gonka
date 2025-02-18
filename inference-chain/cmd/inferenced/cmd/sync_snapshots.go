@@ -96,14 +96,22 @@ func updateRpcServers(configPath, rpcServer1, rpcServer2 string) error {
 
 func SetTrustedBlock() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set-statesync-trusted-block [config-file-path] [trusted-node-rpc-server]",
-		Short: "Set state sync trusted block sets 2 rpc servers from which node can get a snapshot",
-		Args:  cobra.ExactArgs(2),
+		Use: "set-statesync-trusted-block [config-file-path] [trusted-node-rpc-server] [trusted-block-period]",
+		Short: "Set state sync trusted block sets 2 rpc servers from which node can get a snapshot. " +
+			"Trusted block period argument is added for test purposes and used to calculate trusted_block_height as " +
+			"latest_block_height - trusted_block_period = trusted_block_height",
+		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFilePath := args[0]
 			trustedNode := args[1]
+			trustedBlockPeriodStr := args[2]
 
-			trustedBlockHeight, trustedBlockHash, err := rpc.GetTrustedBlock(trustedNode)
+			trustedBlockPeriod, err := strconv.ParseUint(trustedBlockPeriodStr, 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid value for trusted-block-period %s:, %w", trustedBlockPeriodStr, err)
+			}
+
+			trustedBlockHeight, trustedBlockHash, err := rpc.GetTrustedBlock(trustedNode, trustedBlockPeriod)
 			if err != nil {
 				return fmt.Errorf("failed to fetch trusted block from node %v: %w", trustedNode, err)
 			}

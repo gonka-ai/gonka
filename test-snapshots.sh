@@ -1,4 +1,3 @@
-set -e
 docker stop join3-wiremock
 docker stop join3-node
 docker stop join3-api

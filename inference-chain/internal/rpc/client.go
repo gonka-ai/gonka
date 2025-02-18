@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	trustedBlocksPeriod = 100
+	defaultTrustedBlocksPeriod = 1000
 )
 
 func getStatus(rpcNode string) (*StatusResponse, error) {
@@ -31,7 +31,7 @@ func getStatus(rpcNode string) (*StatusResponse, error) {
 	return &status, nil
 }
 
-func GetTrustedBlock(trustedNode string) (uint64, string, error) {
+func GetTrustedBlock(trustedNode string, trustedBlockPeriod uint64) (uint64, string, error) {
 	status, err := getStatus(trustedNode)
 	if err != nil {
 		return 0, "", fmt.Errorf("failed get status: %w", err)
@@ -47,14 +47,18 @@ func GetTrustedBlock(trustedNode string) (uint64, string, error) {
 		return 0, "", fmt.Errorf("error parsing latest block height: %v", err)
 	}
 
-	if latestHeight <= trustedBlocksPeriod {
+	if trustedBlockPeriod == 0 {
+		trustedBlockPeriod = defaultTrustedBlocksPeriod
+	}
+
+	if latestHeight <= trustedBlockPeriod {
 		trustHeight, err = strconv.ParseUint(status.Result.SyncInfo.EarliestBlockHeight, 10, 64)
 		if err != nil {
 			return 0, "", fmt.Errorf("error parsing latest block height: %v", err)
 		}
 		trustHash = status.Result.SyncInfo.EarliestBlockHash
 	} else {
-		trustHeight = latestHeight - trustedBlocksPeriod
+		trustHeight = latestHeight - trustedBlockPeriod
 		trustHash, err = GetBlockHash(trustedNode, trustHeight)
 		if err != nil {
 			return 0, "", err

@@ -48,8 +48,13 @@ $APP_NAME init \
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
-$APP_NAME config set app state-sync.snapshot-interval 10
-$APP_NAME config set app state-sync.snapshot-keep-recent 2
+
+# create snapshots every N blocks and keep last M snapshots
+SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-10}
+SNAPSHOT_KEEP_RECENT=${SNAPSHOT_KEEP_RECENT:-5}
+
+$APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
+$APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
@@ -58,11 +63,14 @@ $APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_
 echo "Grepping seeds =:"
 grep "seeds =" $STATE_DIR/config/config.toml
 
+# sync with snapshots?
  if [ "$SYNC_WITH_SNAPSHOTS" = "true" ]; then
      echo "Node must sync using snapshots"
+TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
+
  $APP_NAME set-statesync "$STATE_DIR/config/config.toml" true
  $APP_NAME set-statesync-rpc-servers "$STATE_DIR/config/config.toml"  "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
- $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL"
+ $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
  else
      echo "Node will sync WITHOUT snapshots"
  fi
