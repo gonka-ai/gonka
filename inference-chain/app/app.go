@@ -353,9 +353,11 @@ func New(
 	// 	app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap())
 	// 	return app.App.InitChainer(ctx, req)
 	// })
+
 	if err := app.Load(loadLatest); err != nil {
 		return nil, err
 	}
+
 	return app, nil
 }
 
