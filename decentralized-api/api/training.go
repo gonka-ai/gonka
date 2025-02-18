@@ -14,7 +14,9 @@ import (
 /*
 	curl -X POST http://localhost:8080/v1/training-jobs \
 		  -H "Content-Type: application/json" \
-		  -d '{"hardware_resources": [{"type": "cpu", "count": 1}],"config": {"datasets": {"train": "train-dataset","test": "test-dataset"},"num_uoc_estimation_steps": 100}}'
+		  -d '{"hardware_resources": [{"type": "A100", "count": 1}, {"type": "T4", "count": 2}],"config": {"datasets": {"train": "train-dataset","test": "test-dataset"},"num_uoc_estimation_steps": 100}}'
+
+curl -X GET http://localhost:8080/v1/training-jobs/1
 */
 func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
