@@ -65,6 +65,14 @@ func TestGenesis(t *testing.T) {
 			TotalRefunded:  99,
 			TotalBurned:    5,
 		},
+		TopMinerList: []types.TopMiner{
+			{
+				Address: "0",
+			},
+			{
+				Address: "1",
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -101,5 +109,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
 	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
+	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

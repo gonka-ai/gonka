@@ -39,6 +39,8 @@ const (
 	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
 	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
 	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
+	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
+	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -80,6 +82,9 @@ type QueryClient interface {
 	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
+	// Queries a list of TopMiner items.
+	TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error)
+	TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error)
 }
 
 type queryClient struct {
@@ -270,6 +275,24 @@ func (c *queryClient) ModelsAll(ctx context.Context, in *QueryModelsAllRequest, 
 	return out, nil
 }
 
+func (c *queryClient) TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error) {
+	out := new(QueryGetTopMinerResponse)
+	err := c.cc.Invoke(ctx, Query_TopMiner_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error) {
+	out := new(QueryAllTopMinerResponse)
+	err := c.cc.Invoke(ctx, Query_TopMinerAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -309,6 +332,9 @@ type QueryServer interface {
 	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
+	// Queries a list of TopMiner items.
+	TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error)
+	TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -375,6 +401,12 @@ func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCur
 }
 func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
+}
+func (UnimplementedQueryServer) TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TopMiner not implemented")
+}
+func (UnimplementedQueryServer) TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TopMinerAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -749,6 +781,42 @@ func _Query_ModelsAll_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TopMiner_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTopMinerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TopMiner(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TopMiner_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TopMiner(ctx, req.(*QueryGetTopMinerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TopMinerAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllTopMinerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TopMinerAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TopMinerAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TopMinerAll(ctx, req.(*QueryAllTopMinerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -835,6 +903,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ModelsAll",
 			Handler:    _Query_ModelsAll_Handler,
+		},
+		{
+			MethodName: "TopMiner",
+			Handler:    _Query_TopMiner_Handler,
+		},
+		{
+			MethodName: "TopMinerAll",
+			Handler:    _Query_TopMinerAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
