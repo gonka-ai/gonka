@@ -20,12 +20,12 @@
       },
       "genesis_only_params": {
         "total_supply": "1000",
-        "originator_supply": "10",
-        "top_reward_amount": "10",
-        "standard_reward_amount": "200",
-        "pre_programmed_sale_amount": "20",
+        "originator_supply": "160",
+        "top_reward_amount": "120",
+        "standard_reward_amount": "600",
+        "pre_programmed_sale_amount": "120",
         "top_rewards": 3,
-        "supply_denom": "micoin"
+        "supply_denom": "mcicoin"
       },
       "model_list": [
         {"proposed_by": "genesis", "id": "AGI", "units_of_compute_per_token": 100},

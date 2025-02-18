@@ -8,6 +8,7 @@ import com.productscience.data.BalanceResponse
 import com.productscience.data.InferenceParams
 import com.productscience.data.NodeInfoResponse
 import com.productscience.data.TokenomicsData
+import com.productscience.data.TopMinersResponse
 import com.productscience.data.TxResponse
 import com.productscience.data.Validator
 import com.productscience.data.parseProto
@@ -162,6 +163,10 @@ data class ApplicationCLI(
 
     fun getTokenomics(): TokenomicsWrapper = wrapLog("getTokenomics", false) {
         execAndParse(listOf("query", "inference", "show-tokenomics-data"))
+    }
+
+    fun getTopMiners(): TopMinersResponse = wrapLog("getTopMiners", false) {
+        execAndParse(listOf("query", "inference", "list-top-miner"))
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
