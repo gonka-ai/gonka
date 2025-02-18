@@ -8,7 +8,6 @@ import (
 	_ "cosmossdk.io/api/cosmos/tx/config/v1" // import for side-effects
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
-	"cosmossdk.io/store/snapshots"
 	storetypes "cosmossdk.io/store/types"
 	_ "cosmossdk.io/x/circuit" // import for side-effects
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
@@ -358,20 +357,6 @@ func New(
 		return nil, err
 	}
 	return app, nil
-}
-
-func (app *App) LoadSnapshotStore(homePath string) (*snapshots.Store, error) {
-	snapshotDir := filepath.Join(homePath, "data", "snapshots")
-	if err := os.MkdirAll(snapshotDir, os.ModePerm); err != nil {
-		return nil, err
-	}
-	snapshotDB, err := dbm.NewGoLevelDB("snapshots", snapshotDir, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	store, err := snapshots.NewStore(snapshotDB, snapshotDir)
-	return store, err
 }
 
 // LegacyAmino returns App's amino codec.

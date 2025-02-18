@@ -68,6 +68,10 @@ func GetTrustedBlock(trustedNode string, trustedBlockPeriod uint64) (uint64, str
 }
 
 func GetBlockHash(rpcNode string, height uint64) (string, error) {
+	if height == 0 {
+		return "", errors.New("height must be greater than zero")
+	}
+
 	url := fmt.Sprintf("%s/block?height=%d", rpcNode, height)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -89,7 +93,7 @@ func GetBlockHash(rpcNode string, height uint64) (string, error) {
 func GetNodeId(nodeRpcUrl string) (string, error) {
 	status, err := getStatus(nodeRpcUrl)
 	if err != nil {
-		return "", fmt.Errorf("failed get status: %w", err)
+		return "", fmt.Errorf("failed get node id: %w", err)
 	}
 	return status.Result.NodeInfo.ID, nil
 }

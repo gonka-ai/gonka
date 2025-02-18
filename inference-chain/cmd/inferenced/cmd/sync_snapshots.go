@@ -69,7 +69,7 @@ func SetRpcServers() *cobra.Command {
 				return fmt.Errorf("failed to set statesync.rpc_servers: %w", err)
 			}
 
-			fmt.Printf("Successfully set the statesync.rpc_servers")
+			fmt.Printf("Successfully set the statesync.rpc_servers with values %v and %v", nodeRpcUrl1, nodeRpcUrl2)
 			return nil
 		},
 	}

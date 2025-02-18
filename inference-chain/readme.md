@@ -19,6 +19,8 @@ set up envs and basic config:
 ./srcipts/init-local.sh
 ```
 
+TODO: run at least genesis node
+
 start a full node:
 ```shell
 ./build/inferenced start
@@ -27,6 +29,7 @@ start a full node:
 ### Configure
 Your blockchain in development can be configured with `config.yml`. To learn more, see the [Ignite CLI docs](https://docs.ignite.com).
 
+TODO: add list of available cli commands
 ### Web Frontend
 
 Additionally, Ignite CLI offers both Vue and React options for frontend scaffolding:
