@@ -223,6 +223,5 @@ message MsgCreateTrainingTask {
 }
 
 message MsgCreateTrainingTaskResponse {
-  uint64 task_id = 1;
+  TrainingTask task = 1;
 }
-

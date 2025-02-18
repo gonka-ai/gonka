@@ -28,6 +28,6 @@ func (k msgServer) CreateTrainingTask(goCtx context.Context, msg *types.MsgCreat
 	}
 
 	return &types.MsgCreateTrainingTaskResponse{
-		TaskId: taskId,
+		Task: task,
 	}, nil
 }
