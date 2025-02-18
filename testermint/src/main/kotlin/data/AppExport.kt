@@ -2,6 +2,7 @@ package com.productscience.data
 
 import java.time.Duration
 import java.time.Instant
+import java.math.BigDecimal
 
 // We can add any internal state that we need to verify here,
 // but let's only add what we need
@@ -39,6 +40,10 @@ data class GenesisOnlyParams(
     val preProgrammedSaleAmount: Long,
     val topRewards: Int,
     val supplyDenom: String,
+    val topRewardPeriod: Long,
+    val topRewardPayouts: Long,
+    val topRewardPayoutsPerMiner: Long,
+    val topRewardMaxDuration: Long,
 )
 
 data class InferenceParams(
@@ -57,8 +62,6 @@ data class TokenomicsParams(
 data class EpochParams(
     val epochLength: Long,
     val epochMultiplier: Int,
-    val epochNewCoin: Long,
-    val coinHalvingInterval: Int,
 )
 
 data class ValidationParams(
@@ -99,7 +102,7 @@ data class GovParams(
 data class BankState(
     val balances: List<BankBalance>,
     val supply: List<Coin>,
-
+    val denomMetadata: List<DenomMetadata>,
 )
 
 data class BankBalance(
@@ -110,4 +113,35 @@ data class BankBalance(
 data class Coin(
     val denom: String,
     val amount: Long,
+)
+
+data class DenomMetadata(
+    val description: String,
+    val base: String,
+    val display: String,
+    val name: String,
+    val symbol: String,
+    val denomUnits: List<DenomUnit>
+) {
+    fun convertAmount(
+        amount: Long,
+        fromDenom: String,
+        toDenom: String? = null,
+    ): Long {
+        val finalToDenom = toDenom ?: this.base
+        val fromUnit = this.denomUnits.find { it.denom == fromDenom }
+            ?: throw IllegalArgumentException("Invalid 'from' denomination: $fromDenom")
+        val toUnit = this.denomUnits.find { it.denom == finalToDenom }
+            ?: throw IllegalArgumentException("Invalid 'to' denomination: $finalToDenom")
+
+        val exponentDiff = fromUnit.exponent - toUnit.exponent
+        val conversionFactor = BigDecimal.TEN.pow(exponentDiff)
+        return amount * (conversionFactor.toLong())
+    }
+
+}
+
+data class DenomUnit(
+    val denom: String,
+    val exponent: Int
 )

@@ -40,7 +40,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             ApplicationCLI(it.id, configWithName),
             ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
             matchingMock?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
-            name
+            name,
+            config
         )
     }
 }
@@ -106,6 +107,7 @@ data class LocalInferencePair(
     val api: ApplicationAPI,
     val mock: InferenceMock?,
     val name: String,
+    val config: ApplicationConfig
 ) {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()

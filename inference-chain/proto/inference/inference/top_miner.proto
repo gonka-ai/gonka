@@ -1,0 +1,22 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+import "gogoproto/gogo.proto"; 
+import "cosmos/base/v1beta1/coin.proto";
+
+message TopMiner {
+  string address = 1;
+  int64 last_qualified_started = 2;
+  int32 rewards_paid_count = 3;
+  repeated int64 rewards_paid = 4 [(gogoproto.nullable) = false];
+  int32 qualified_periods = 5;
+  int32 missed_periods = 6;
+  int64 qualified_time = 7;
+  int64 missed_time = 8;
+  int64 last_updated_time = 9;
+  int64 first_qualified_started = 10;
+  int64 initial_power = 11;
+  int32 initial_order = 12;
+}
+

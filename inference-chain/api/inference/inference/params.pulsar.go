@@ -690,14 +690,18 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_GenesisOnlyParams                            protoreflect.MessageDescriptor
-	fd_GenesisOnlyParams_total_supply               protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_originator_supply          protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_amount          protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_standard_reward_amount     protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_pre_programmed_sale_amount protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_rewards                protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_supply_denom               protoreflect.FieldDescriptor
+	md_GenesisOnlyParams                              protoreflect.MessageDescriptor
+	fd_GenesisOnlyParams_total_supply                 protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_originator_supply            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_amount            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_standard_reward_amount       protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_pre_programmed_sale_amount   protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_rewards                  protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_supply_denom                 protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_period            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts           protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts_per_miner protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_max_duration      protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -710,6 +714,10 @@ func init() {
 	fd_GenesisOnlyParams_pre_programmed_sale_amount = md_GenesisOnlyParams.Fields().ByName("pre_programmed_sale_amount")
 	fd_GenesisOnlyParams_top_rewards = md_GenesisOnlyParams.Fields().ByName("top_rewards")
 	fd_GenesisOnlyParams_supply_denom = md_GenesisOnlyParams.Fields().ByName("supply_denom")
+	fd_GenesisOnlyParams_top_reward_period = md_GenesisOnlyParams.Fields().ByName("top_reward_period")
+	fd_GenesisOnlyParams_top_reward_payouts = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts")
+	fd_GenesisOnlyParams_top_reward_payouts_per_miner = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts_per_miner")
+	fd_GenesisOnlyParams_top_reward_max_duration = md_GenesisOnlyParams.Fields().ByName("top_reward_max_duration")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisOnlyParams)(nil)
@@ -819,6 +827,30 @@ func (x *fastReflection_GenesisOnlyParams) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
+	if x.TopRewardPeriod != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPeriod)
+		if !f(fd_GenesisOnlyParams_top_reward_period, value) {
+			return
+		}
+	}
+	if x.TopRewardPayouts != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPayouts)
+		if !f(fd_GenesisOnlyParams_top_reward_payouts, value) {
+			return
+		}
+	}
+	if x.TopRewardPayoutsPerMiner != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPayoutsPerMiner)
+		if !f(fd_GenesisOnlyParams_top_reward_payouts_per_miner, value) {
+			return
+		}
+	}
+	if x.TopRewardMaxDuration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardMaxDuration)
+		if !f(fd_GenesisOnlyParams_top_reward_max_duration, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -848,6 +880,14 @@ func (x *fastReflection_GenesisOnlyParams) Has(fd protoreflect.FieldDescriptor) 
 		return x.TopRewards != int32(0)
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		return x.SupplyDenom != ""
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		return x.TopRewardPeriod != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		return x.TopRewardPayouts != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		return x.TopRewardPayoutsPerMiner != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		return x.TopRewardMaxDuration != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -878,6 +918,14 @@ func (x *fastReflection_GenesisOnlyParams) Clear(fd protoreflect.FieldDescriptor
 		x.TopRewards = int32(0)
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		x.SupplyDenom = ""
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		x.TopRewardPeriod = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		x.TopRewardPayouts = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		x.TopRewardPayoutsPerMiner = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		x.TopRewardMaxDuration = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -915,6 +963,18 @@ func (x *fastReflection_GenesisOnlyParams) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		value := x.SupplyDenom
 		return protoreflect.ValueOfString(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		value := x.TopRewardPeriod
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		value := x.TopRewardPayouts
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		value := x.TopRewardPayoutsPerMiner
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		value := x.TopRewardMaxDuration
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -949,6 +1009,14 @@ func (x *fastReflection_GenesisOnlyParams) Set(fd protoreflect.FieldDescriptor, 
 		x.TopRewards = int32(value.Int())
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		x.SupplyDenom = value.Interface().(string)
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		x.TopRewardPeriod = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		x.TopRewardPayouts = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		x.TopRewardPayoutsPerMiner = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		x.TopRewardMaxDuration = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -983,6 +1051,14 @@ func (x *fastReflection_GenesisOnlyParams) Mutable(fd protoreflect.FieldDescript
 		panic(fmt.Errorf("field top_rewards of message inference.inference.GenesisOnlyParams is not mutable"))
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		panic(fmt.Errorf("field supply_denom of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		panic(fmt.Errorf("field top_reward_period of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		panic(fmt.Errorf("field top_reward_payouts of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		panic(fmt.Errorf("field top_reward_payouts_per_miner of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		panic(fmt.Errorf("field top_reward_max_duration of message inference.inference.GenesisOnlyParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1010,6 +1086,14 @@ func (x *fastReflection_GenesisOnlyParams) NewField(fd protoreflect.FieldDescrip
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		return protoreflect.ValueOfString("")
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1101,6 +1185,18 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.TopRewardPeriod != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPeriod))
+		}
+		if x.TopRewardPayouts != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPayouts))
+		}
+		if x.TopRewardPayoutsPerMiner != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPayoutsPerMiner))
+		}
+		if x.TopRewardMaxDuration != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardMaxDuration))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1129,6 +1225,26 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.TopRewardMaxDuration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardMaxDuration))
+			i--
+			dAtA[i] = 0x58
+		}
+		if x.TopRewardPayoutsPerMiner != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPayoutsPerMiner))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.TopRewardPayouts != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPayouts))
+			i--
+			dAtA[i] = 0x48
+		}
+		if x.TopRewardPeriod != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPeriod))
+			i--
+			dAtA[i] = 0x40
 		}
 		if len(x.SupplyDenom) > 0 {
 			i -= len(x.SupplyDenom)
@@ -1362,6 +1478,82 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 				}
 				x.SupplyDenom = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPeriod", wireType)
+				}
+				x.TopRewardPeriod = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPeriod |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPayouts", wireType)
+				}
+				x.TopRewardPayouts = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPayouts |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPayoutsPerMiner", wireType)
+				}
+				x.TopRewardPayoutsPerMiner = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPayoutsPerMiner |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardMaxDuration", wireType)
+				}
+				x.TopRewardMaxDuration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardMaxDuration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1398,10 +1590,12 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_TokenomicsParams                            protoreflect.MessageDescriptor
-	fd_TokenomicsParams_subsidy_reduction_interval protoreflect.FieldDescriptor
-	fd_TokenomicsParams_subsidy_reduction_amount   protoreflect.FieldDescriptor
-	fd_TokenomicsParams_current_subsidy_percentage protoreflect.FieldDescriptor
+	md_TokenomicsParams                             protoreflect.MessageDescriptor
+	fd_TokenomicsParams_subsidy_reduction_interval  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_subsidy_reduction_amount    protoreflect.FieldDescriptor
+	fd_TokenomicsParams_current_subsidy_percentage  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_top_reward_allowed_failure  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_top_miner_poc_qualification protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1410,6 +1604,8 @@ func init() {
 	fd_TokenomicsParams_subsidy_reduction_interval = md_TokenomicsParams.Fields().ByName("subsidy_reduction_interval")
 	fd_TokenomicsParams_subsidy_reduction_amount = md_TokenomicsParams.Fields().ByName("subsidy_reduction_amount")
 	fd_TokenomicsParams_current_subsidy_percentage = md_TokenomicsParams.Fields().ByName("current_subsidy_percentage")
+	fd_TokenomicsParams_top_reward_allowed_failure = md_TokenomicsParams.Fields().ByName("top_reward_allowed_failure")
+	fd_TokenomicsParams_top_miner_poc_qualification = md_TokenomicsParams.Fields().ByName("top_miner_poc_qualification")
 }
 
 var _ protoreflect.Message = (*fastReflection_TokenomicsParams)(nil)
@@ -1495,6 +1691,18 @@ func (x *fastReflection_TokenomicsParams) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
+	if x.TopRewardAllowedFailure != float32(0) || math.Signbit(float64(x.TopRewardAllowedFailure)) {
+		value := protoreflect.ValueOfFloat32(x.TopRewardAllowedFailure)
+		if !f(fd_TokenomicsParams_top_reward_allowed_failure, value) {
+			return
+		}
+	}
+	if x.TopMinerPocQualification != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopMinerPocQualification)
+		if !f(fd_TokenomicsParams_top_miner_poc_qualification, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -1516,6 +1724,10 @@ func (x *fastReflection_TokenomicsParams) Has(fd protoreflect.FieldDescriptor) b
 		return x.SubsidyReductionAmount != float32(0) || math.Signbit(float64(x.SubsidyReductionAmount))
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		return x.CurrentSubsidyPercentage != float32(0) || math.Signbit(float64(x.CurrentSubsidyPercentage))
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		return x.TopRewardAllowedFailure != float32(0) || math.Signbit(float64(x.TopRewardAllowedFailure))
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		return x.TopMinerPocQualification != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1538,6 +1750,10 @@ func (x *fastReflection_TokenomicsParams) Clear(fd protoreflect.FieldDescriptor)
 		x.SubsidyReductionAmount = float32(0)
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		x.CurrentSubsidyPercentage = float32(0)
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		x.TopRewardAllowedFailure = float32(0)
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		x.TopMinerPocQualification = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1563,6 +1779,12 @@ func (x *fastReflection_TokenomicsParams) Get(descriptor protoreflect.FieldDescr
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		value := x.CurrentSubsidyPercentage
 		return protoreflect.ValueOfFloat32(value)
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		value := x.TopRewardAllowedFailure
+		return protoreflect.ValueOfFloat32(value)
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		value := x.TopMinerPocQualification
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1589,6 +1811,10 @@ func (x *fastReflection_TokenomicsParams) Set(fd protoreflect.FieldDescriptor, v
 		x.SubsidyReductionAmount = float32(value.Float())
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		x.CurrentSubsidyPercentage = float32(value.Float())
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		x.TopRewardAllowedFailure = float32(value.Float())
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		x.TopMinerPocQualification = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1615,6 +1841,10 @@ func (x *fastReflection_TokenomicsParams) Mutable(fd protoreflect.FieldDescripto
 		panic(fmt.Errorf("field subsidy_reduction_amount of message inference.inference.TokenomicsParams is not mutable"))
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		panic(fmt.Errorf("field current_subsidy_percentage of message inference.inference.TokenomicsParams is not mutable"))
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		panic(fmt.Errorf("field top_reward_allowed_failure of message inference.inference.TokenomicsParams is not mutable"))
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		panic(fmt.Errorf("field top_miner_poc_qualification of message inference.inference.TokenomicsParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1634,6 +1864,10 @@ func (x *fastReflection_TokenomicsParams) NewField(fd protoreflect.FieldDescript
 		return protoreflect.ValueOfFloat32(float32(0))
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		return protoreflect.ValueOfFloat32(float32(0))
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		return protoreflect.ValueOfFloat32(float32(0))
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1712,6 +1946,12 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 		if x.CurrentSubsidyPercentage != 0 || math.Signbit(float64(x.CurrentSubsidyPercentage)) {
 			n += 5
 		}
+		if x.TopRewardAllowedFailure != 0 || math.Signbit(float64(x.TopRewardAllowedFailure)) {
+			n += 5
+		}
+		if x.TopMinerPocQualification != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopMinerPocQualification))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1740,6 +1980,17 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.TopMinerPocQualification != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopMinerPocQualification))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.TopRewardAllowedFailure != 0 || math.Signbit(float64(x.TopRewardAllowedFailure)) {
+			i -= 4
+			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.TopRewardAllowedFailure))))
+			i--
+			dAtA[i] = 0x25
 		}
 		if x.CurrentSubsidyPercentage != 0 || math.Signbit(float64(x.CurrentSubsidyPercentage)) {
 			i -= 4
@@ -1841,6 +2092,36 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
 				iNdEx += 4
 				x.CurrentSubsidyPercentage = float32(math.Float32frombits(v))
+			case 4:
+				if wireType != 5 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardAllowedFailure", wireType)
+				}
+				var v uint32
+				if (iNdEx + 4) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+				iNdEx += 4
+				x.TopRewardAllowedFailure = float32(math.Float32frombits(v))
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopMinerPocQualification", wireType)
+				}
+				x.TopMinerPocQualification = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopMinerPocQualification |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1880,8 +2161,6 @@ var (
 	md_EpochParams                               protoreflect.MessageDescriptor
 	fd_EpochParams_epoch_length                  protoreflect.FieldDescriptor
 	fd_EpochParams_epoch_multiplier              protoreflect.FieldDescriptor
-	fd_EpochParams_epoch_new_coin                protoreflect.FieldDescriptor
-	fd_EpochParams_coin_halving_interval         protoreflect.FieldDescriptor
 	fd_EpochParams_default_unit_of_compute_price protoreflect.FieldDescriptor
 )
 
@@ -1890,8 +2169,6 @@ func init() {
 	md_EpochParams = File_inference_inference_params_proto.Messages().ByName("EpochParams")
 	fd_EpochParams_epoch_length = md_EpochParams.Fields().ByName("epoch_length")
 	fd_EpochParams_epoch_multiplier = md_EpochParams.Fields().ByName("epoch_multiplier")
-	fd_EpochParams_epoch_new_coin = md_EpochParams.Fields().ByName("epoch_new_coin")
-	fd_EpochParams_coin_halving_interval = md_EpochParams.Fields().ByName("coin_halving_interval")
 	fd_EpochParams_default_unit_of_compute_price = md_EpochParams.Fields().ByName("default_unit_of_compute_price")
 }
 
@@ -1972,18 +2249,6 @@ func (x *fastReflection_EpochParams) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.EpochNewCoin != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochNewCoin)
-		if !f(fd_EpochParams_epoch_new_coin, value) {
-			return
-		}
-	}
-	if x.CoinHalvingInterval != int64(0) {
-		value := protoreflect.ValueOfInt64(x.CoinHalvingInterval)
-		if !f(fd_EpochParams_coin_halving_interval, value) {
-			return
-		}
-	}
 	if x.DefaultUnitOfComputePrice != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.DefaultUnitOfComputePrice)
 		if !f(fd_EpochParams_default_unit_of_compute_price, value) {
@@ -2009,10 +2274,6 @@ func (x *fastReflection_EpochParams) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.EpochLength != int64(0)
 	case "inference.inference.EpochParams.epoch_multiplier":
 		return x.EpochMultiplier != int64(0)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		return x.EpochNewCoin != uint64(0)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		return x.CoinHalvingInterval != int64(0)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		return x.DefaultUnitOfComputePrice != uint64(0)
 	default:
@@ -2035,10 +2296,6 @@ func (x *fastReflection_EpochParams) Clear(fd protoreflect.FieldDescriptor) {
 		x.EpochLength = int64(0)
 	case "inference.inference.EpochParams.epoch_multiplier":
 		x.EpochMultiplier = int64(0)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		x.EpochNewCoin = uint64(0)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		x.CoinHalvingInterval = int64(0)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		x.DefaultUnitOfComputePrice = uint64(0)
 	default:
@@ -2062,12 +2319,6 @@ func (x *fastReflection_EpochParams) Get(descriptor protoreflect.FieldDescriptor
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochParams.epoch_multiplier":
 		value := x.EpochMultiplier
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		value := x.EpochNewCoin
-		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		value := x.CoinHalvingInterval
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		value := x.DefaultUnitOfComputePrice
@@ -2096,10 +2347,6 @@ func (x *fastReflection_EpochParams) Set(fd protoreflect.FieldDescriptor, value 
 		x.EpochLength = value.Int()
 	case "inference.inference.EpochParams.epoch_multiplier":
 		x.EpochMultiplier = value.Int()
-	case "inference.inference.EpochParams.epoch_new_coin":
-		x.EpochNewCoin = value.Uint()
-	case "inference.inference.EpochParams.coin_halving_interval":
-		x.CoinHalvingInterval = value.Int()
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		x.DefaultUnitOfComputePrice = value.Uint()
 	default:
@@ -2126,10 +2373,6 @@ func (x *fastReflection_EpochParams) Mutable(fd protoreflect.FieldDescriptor) pr
 		panic(fmt.Errorf("field epoch_length of message inference.inference.EpochParams is not mutable"))
 	case "inference.inference.EpochParams.epoch_multiplier":
 		panic(fmt.Errorf("field epoch_multiplier of message inference.inference.EpochParams is not mutable"))
-	case "inference.inference.EpochParams.epoch_new_coin":
-		panic(fmt.Errorf("field epoch_new_coin of message inference.inference.EpochParams is not mutable"))
-	case "inference.inference.EpochParams.coin_halving_interval":
-		panic(fmt.Errorf("field coin_halving_interval of message inference.inference.EpochParams is not mutable"))
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		panic(fmt.Errorf("field default_unit_of_compute_price of message inference.inference.EpochParams is not mutable"))
 	default:
@@ -2148,10 +2391,6 @@ func (x *fastReflection_EpochParams) NewField(fd protoreflect.FieldDescriptor) p
 	case "inference.inference.EpochParams.epoch_length":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochParams.epoch_multiplier":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.EpochParams.epoch_new_coin":
-		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochParams.coin_halving_interval":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		return protoreflect.ValueOfUint64(uint64(0))
@@ -2230,12 +2469,6 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 		if x.EpochMultiplier != 0 {
 			n += 1 + runtime.Sov(uint64(x.EpochMultiplier))
 		}
-		if x.EpochNewCoin != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochNewCoin))
-		}
-		if x.CoinHalvingInterval != 0 {
-			n += 1 + runtime.Sov(uint64(x.CoinHalvingInterval))
-		}
 		if x.DefaultUnitOfComputePrice != 0 {
 			n += 1 + runtime.Sov(uint64(x.DefaultUnitOfComputePrice))
 		}
@@ -2270,16 +2503,6 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 		}
 		if x.DefaultUnitOfComputePrice != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultUnitOfComputePrice))
-			i--
-			dAtA[i] = 0x28
-		}
-		if x.CoinHalvingInterval != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinHalvingInterval))
-			i--
-			dAtA[i] = 0x20
-		}
-		if x.EpochNewCoin != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochNewCoin))
 			i--
 			dAtA[i] = 0x18
 		}
@@ -2381,44 +2604,6 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 					}
 				}
 			case 3:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochNewCoin", wireType)
-				}
-				x.EpochNewCoin = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.EpochNewCoin |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 4:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CoinHalvingInterval", wireType)
-				}
-				x.CoinHalvingInterval = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.CoinHalvingInterval |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DefaultUnitOfComputePrice", wireType)
 				}
@@ -3522,13 +3707,17 @@ type GenesisOnlyParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	TotalSupply             int64  `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
-	OriginatorSupply        int64  `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
-	TopRewardAmount         int64  `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
-	StandardRewardAmount    int64  `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
-	PreProgrammedSaleAmount int64  `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
-	TopRewards              int32  `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
-	SupplyDenom             string `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
+	TotalSupply              int64  `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
+	OriginatorSupply         int64  `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
+	TopRewardAmount          int64  `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
+	StandardRewardAmount     int64  `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
+	PreProgrammedSaleAmount  int64  `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
+	TopRewards               int32  `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
+	SupplyDenom              string `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
+	TopRewardPeriod          int64  `protobuf:"varint,8,opt,name=top_reward_period,json=topRewardPeriod,proto3" json:"top_reward_period,omitempty"`
+	TopRewardPayouts         int64  `protobuf:"varint,9,opt,name=top_reward_payouts,json=topRewardPayouts,proto3" json:"top_reward_payouts,omitempty"`
+	TopRewardPayoutsPerMiner int64  `protobuf:"varint,10,opt,name=top_reward_payouts_per_miner,json=topRewardPayoutsPerMiner,proto3" json:"top_reward_payouts_per_miner,omitempty"`
+	TopRewardMaxDuration     int64  `protobuf:"varint,11,opt,name=top_reward_max_duration,json=topRewardMaxDuration,proto3" json:"top_reward_max_duration,omitempty"`
 }
 
 func (x *GenesisOnlyParams) Reset() {
@@ -3600,6 +3789,34 @@ func (x *GenesisOnlyParams) GetSupplyDenom() string {
 	return ""
 }
 
+func (x *GenesisOnlyParams) GetTopRewardPeriod() int64 {
+	if x != nil {
+		return x.TopRewardPeriod
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardPayouts() int64 {
+	if x != nil {
+		return x.TopRewardPayouts
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardPayoutsPerMiner() int64 {
+	if x != nil {
+		return x.TopRewardPayoutsPerMiner
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardMaxDuration() int64 {
+	if x != nil {
+		return x.TopRewardMaxDuration
+	}
+	return 0
+}
+
 type TokenomicsParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -3608,6 +3825,8 @@ type TokenomicsParams struct {
 	SubsidyReductionInterval float64 `protobuf:"fixed64,1,opt,name=subsidy_reduction_interval,json=subsidyReductionInterval,proto3" json:"subsidy_reduction_interval,omitempty"`
 	SubsidyReductionAmount   float32 `protobuf:"fixed32,2,opt,name=subsidy_reduction_amount,json=subsidyReductionAmount,proto3" json:"subsidy_reduction_amount,omitempty"`
 	CurrentSubsidyPercentage float32 `protobuf:"fixed32,3,opt,name=current_subsidy_percentage,json=currentSubsidyPercentage,proto3" json:"current_subsidy_percentage,omitempty"`
+	TopRewardAllowedFailure  float32 `protobuf:"fixed32,4,opt,name=top_reward_allowed_failure,json=topRewardAllowedFailure,proto3" json:"top_reward_allowed_failure,omitempty"`
+	TopMinerPocQualification int64   `protobuf:"varint,5,opt,name=top_miner_poc_qualification,json=topMinerPocQualification,proto3" json:"top_miner_poc_qualification,omitempty"`
 }
 
 func (x *TokenomicsParams) Reset() {
@@ -3651,6 +3870,20 @@ func (x *TokenomicsParams) GetCurrentSubsidyPercentage() float32 {
 	return 0
 }
 
+func (x *TokenomicsParams) GetTopRewardAllowedFailure() float32 {
+	if x != nil {
+		return x.TopRewardAllowedFailure
+	}
+	return 0
+}
+
+func (x *TokenomicsParams) GetTopMinerPocQualification() int64 {
+	if x != nil {
+		return x.TopMinerPocQualification
+	}
+	return 0
+}
+
 type EpochParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -3658,9 +3891,7 @@ type EpochParams struct {
 
 	EpochLength               int64  `protobuf:"varint,1,opt,name=epoch_length,json=epochLength,proto3" json:"epoch_length,omitempty"`
 	EpochMultiplier           int64  `protobuf:"varint,2,opt,name=epoch_multiplier,json=epochMultiplier,proto3" json:"epoch_multiplier,omitempty"`
-	EpochNewCoin              uint64 `protobuf:"varint,3,opt,name=epoch_new_coin,json=epochNewCoin,proto3" json:"epoch_new_coin,omitempty"`
-	CoinHalvingInterval       int64  `protobuf:"varint,4,opt,name=coin_halving_interval,json=coinHalvingInterval,proto3" json:"coin_halving_interval,omitempty"`
-	DefaultUnitOfComputePrice uint64 `protobuf:"varint,5,opt,name=default_unit_of_compute_price,json=defaultUnitOfComputePrice,proto3" json:"default_unit_of_compute_price,omitempty"`
+	DefaultUnitOfComputePrice uint64 `protobuf:"varint,3,opt,name=default_unit_of_compute_price,json=defaultUnitOfComputePrice,proto3" json:"default_unit_of_compute_price,omitempty"`
 }
 
 func (x *EpochParams) Reset() {
@@ -3693,20 +3924,6 @@ func (x *EpochParams) GetEpochLength() int64 {
 func (x *EpochParams) GetEpochMultiplier() int64 {
 	if x != nil {
 		return x.EpochMultiplier
-	}
-	return 0
-}
-
-func (x *EpochParams) GetEpochNewCoin() uint64 {
-	if x != nil {
-		return x.EpochNewCoin
-	}
-	return 0
-}
-
-func (x *EpochParams) GetCoinHalvingInterval() int64 {
-	if x != nil {
-		return x.CoinHalvingInterval
 	}
 	return 0
 }
@@ -3852,7 +4069,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x52, 0x10, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x50, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x3a, 0x25, 0xe8, 0xa0, 0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a, 0x1c, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0xc6, 0x02, 0x0a, 0x11, 0x47, 0x65,
+	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x97, 0x04, 0x0a, 0x11, 0x47, 0x65,
 	0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
 	0x21, 0x0a, 0x0c, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x75, 0x70, 0x70,
@@ -3873,69 +4090,84 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x01, 0x28, 0x05, 0x52, 0x0a, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x12,
 	0x21, 0x0a, 0x0c, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x64, 0x65, 0x6e, 0x6f, 0x6d, 0x18,
 	0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x44, 0x65, 0x6e,
-	0x6f, 0x6d, 0x22, 0xce, 0x01, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63,
-	0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x3c, 0x0a, 0x1a, 0x73, 0x75, 0x62, 0x73, 0x69,
-	0x64, 0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e, 0x74,
-	0x65, 0x72, 0x76, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x18, 0x73, 0x75, 0x62,
-	0x73, 0x69, 0x64, 0x79, 0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x6e, 0x74,
-	0x65, 0x72, 0x76, 0x61, 0x6c, 0x12, 0x38, 0x0a, 0x18, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79,
-	0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e,
-	0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x02, 0x52, 0x16, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79,
-	0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12,
-	0x3c, 0x0a, 0x1a, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x75, 0x62, 0x73, 0x69,
-	0x64, 0x79, 0x5f, 0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x18, 0x03, 0x20,
-	0x01, 0x28, 0x02, 0x52, 0x18, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x53, 0x75, 0x62, 0x73,
-	0x69, 0x64, 0x79, 0x50, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0xfd, 0x01, 0x0a, 0x0b, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x61, 0x72,
-	0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6c, 0x65, 0x6e,
-	0x67, 0x74, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x4c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x12, 0x29, 0x0a, 0x10, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
-	0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x0f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65,
-	0x72, 0x12, 0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6e, 0x65, 0x77, 0x5f, 0x63,
-	0x6f, 0x69, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x4e, 0x65, 0x77, 0x43, 0x6f, 0x69, 0x6e, 0x12, 0x32, 0x0a, 0x15, 0x63, 0x6f, 0x69, 0x6e, 0x5f,
-	0x68, 0x61, 0x6c, 0x76, 0x69, 0x6e, 0x67, 0x5f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x63, 0x6f, 0x69, 0x6e, 0x48, 0x61, 0x6c, 0x76,
-	0x69, 0x6e, 0x67, 0x49, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x12, 0x40, 0x0a, 0x1d, 0x64,
-	0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x5f, 0x6f, 0x66, 0x5f, 0x63,
-	0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x04, 0x52, 0x19, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f,
-	0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0x8c, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x66, 0x61, 0x6c, 0x73,
-	0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x50, 0x6f, 0x73, 0x69,
-	0x74, 0x69, 0x76, 0x65, 0x52, 0x61, 0x74, 0x65, 0x12, 0x37, 0x0a, 0x18, 0x6d, 0x69, 0x6e, 0x5f,
-	0x72, 0x61, 0x6d, 0x70, 0x5f, 0x75, 0x70, 0x5f, 0x6d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d,
-	0x65, 0x6e, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x15, 0x6d, 0x69, 0x6e, 0x52,
-	0x61, 0x6d, 0x70, 0x55, 0x70, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74,
-	0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x01, 0x52, 0x09, 0x70, 0x61, 0x73, 0x73, 0x56, 0x61, 0x6c, 0x75, 0x65,
-	0x12, 0x34, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x01,
-	0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41,
-	0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x12, 0x34, 0x0a, 0x16, 0x6d, 0x61, 0x78, 0x5f, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65,
-	0x18, 0x05, 0x20, 0x01, 0x28, 0x01, 0x52, 0x14, 0x6d, 0x61, 0x78, 0x56, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x3a, 0x04, 0xe8, 0xa0,
-	0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
-	0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69, 0x66, 0x66, 0x69,
-	0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11, 0x64, 0x65, 0x66,
-	0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x3a, 0x04,
-	0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
-	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
-	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
-	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6f, 0x6d, 0x12, 0x2a, 0x0a, 0x11, 0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64,
+	0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x74,
+	0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x12, 0x2c,
+	0x0a, 0x12, 0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x70, 0x61, 0x79,
+	0x6f, 0x75, 0x74, 0x73, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x74, 0x6f, 0x70, 0x52,
+	0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x61, 0x79, 0x6f, 0x75, 0x74, 0x73, 0x12, 0x3e, 0x0a, 0x1c,
+	0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x70, 0x61, 0x79, 0x6f, 0x75,
+	0x74, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6d, 0x69, 0x6e, 0x65, 0x72, 0x18, 0x0a, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x18, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x61, 0x79,
+	0x6f, 0x75, 0x74, 0x73, 0x50, 0x65, 0x72, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x12, 0x35, 0x0a, 0x17,
+	0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x6d, 0x61, 0x78, 0x5f, 0x64,
+	0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x74,
+	0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x4d, 0x61, 0x78, 0x44, 0x75, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x22, 0xca, 0x02, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69,
+	0x63, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x3c, 0x0a, 0x1a, 0x73, 0x75, 0x62, 0x73,
+	0x69, 0x64, 0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e,
+	0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x18, 0x73, 0x75,
+	0x62, 0x73, 0x69, 0x64, 0x79, 0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x6e,
+	0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x12, 0x38, 0x0a, 0x18, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64,
+	0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75,
+	0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x02, 0x52, 0x16, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64,
+	0x79, 0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x12, 0x3c, 0x0a, 0x1a, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x75, 0x62, 0x73,
+	0x69, 0x64, 0x79, 0x5f, 0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x02, 0x52, 0x18, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x53, 0x75, 0x62,
+	0x73, 0x69, 0x64, 0x79, 0x50, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x12, 0x3b,
+	0x0a, 0x1a, 0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x61, 0x6c, 0x6c,
+	0x6f, 0x77, 0x65, 0x64, 0x5f, 0x66, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x18, 0x04, 0x20, 0x01,
+	0x28, 0x02, 0x52, 0x17, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x41, 0x6c, 0x6c,
+	0x6f, 0x77, 0x65, 0x64, 0x46, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x12, 0x3d, 0x0a, 0x1b, 0x74,
+	0x6f, 0x70, 0x5f, 0x6d, 0x69, 0x6e, 0x65, 0x72, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x71, 0x75, 0x61,
+	0x6c, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x18, 0x74, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x50, 0x6f, 0x63, 0x51, 0x75, 0x61,
+	0x6c, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01,
+	0x22, 0xa3, 0x01, 0x0a, 0x0b, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
+	0x12, 0x21, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x4c, 0x65, 0x6e,
+	0x67, 0x74, 0x68, 0x12, 0x29, 0x0a, 0x10, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6d, 0x75, 0x6c,
+	0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x12, 0x40,
+	0x0a, 0x1d, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x5f, 0x6f,
+	0x66, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x19, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x55, 0x6e,
+	0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65,
+	0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x8c, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x66,
+	0x61, 0x6c, 0x73, 0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x72, 0x61,
+	0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x50,
+	0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x52, 0x61, 0x74, 0x65, 0x12, 0x37, 0x0a, 0x18, 0x6d,
+	0x69, 0x6e, 0x5f, 0x72, 0x61, 0x6d, 0x70, 0x5f, 0x75, 0x70, 0x5f, 0x6d, 0x65, 0x61, 0x73, 0x75,
+	0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x15, 0x6d,
+	0x69, 0x6e, 0x52, 0x61, 0x6d, 0x70, 0x55, 0x70, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d,
+	0x65, 0x6e, 0x74, 0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x76, 0x61, 0x6c,
+	0x75, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x01, 0x52, 0x09, 0x70, 0x61, 0x73, 0x73, 0x56, 0x61,
+	0x6c, 0x75, 0x65, 0x12, 0x34, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x01, 0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x12, 0x34, 0x0a, 0x16, 0x6d, 0x61, 0x78,
+	0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72,
+	0x61, 0x67, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x01, 0x52, 0x14, 0x6d, 0x61, 0x78, 0x56, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x3a,
+	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69,
+	0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11,
+	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74,
+	0x79, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

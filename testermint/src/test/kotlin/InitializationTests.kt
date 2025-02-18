@@ -1,3 +1,4 @@
+
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
@@ -6,6 +7,7 @@ import com.productscience.initializeCluster
 import com.productscience.setupLocalCluster
 import org.junit.jupiter.api.Test
 import kotlin.test.assertNotNull
+import org.assertj.core.api.Assertions.assertThat
 
 class InitializationTests {
 
@@ -18,6 +20,13 @@ class InitializationTests {
     fun initOrReuse() {
         val localCluster = setupLocalCluster(2, inferenceConfig)
         assertNotNull(localCluster)
+    }
+
+    @Test
+    fun addNewJoin() {
+        val localCluster = setupLocalCluster(2, inferenceConfig)
+        val newCluster = localCluster.withAdditionalJoin()
+        assertThat(localCluster.allPairs.size + 1).isEqualTo(newCluster.allPairs.size)
     }
 
     @Test

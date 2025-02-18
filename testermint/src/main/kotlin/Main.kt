@@ -106,9 +106,9 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
+        it.node.waitForMinimumBlock(10)
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
-        it.node.waitForMinimumBlock(1)
         it.node.exportState()
     }
 

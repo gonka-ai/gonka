@@ -25,6 +25,10 @@ message GenesisOnlyParams {
   int64 pre_programmed_sale_amount = 5;
   int32 top_rewards = 6;
   string supply_denom = 7;
+  int64 top_reward_period = 8;
+  int64 top_reward_payouts = 9;
+  int64 top_reward_payouts_per_miner = 10;
+  int64 top_reward_max_duration = 11;
 }
 
 message TokenomicsParams {
@@ -32,15 +36,15 @@ message TokenomicsParams {
   double subsidy_reduction_interval = 1;
   float subsidy_reduction_amount = 2;
   float current_subsidy_percentage = 3;
+  float top_reward_allowed_failure = 4;
+  int64 top_miner_poc_qualification = 5;
 }
 
 message EpochParams {
   option (gogoproto.equal) = true;
   int64 epoch_length = 1;
   int64 epoch_multiplier = 2;
-  uint64 epoch_new_coin = 3;
-  int64 coin_halving_interval = 4;
-  uint64 default_unit_of_compute_price = 5;
+  uint64 default_unit_of_compute_price = 3;
 }
 
 message ValidationParams {
