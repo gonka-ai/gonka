@@ -39,11 +39,9 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 func DefaultParams() Params {
 	return Params{
 		EpochParams: &EpochParams{
-			EpochLength:         40,
-			EpochMultiplier:     1,
-			EpochShift:          0,
-			EpochNewCoin:        1_048_576,
-			CoinHalvingInterval: 100,
+			EpochLength:     40,
+			EpochMultiplier: 1,
+			EpochShift:      0,
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:     0.05,
