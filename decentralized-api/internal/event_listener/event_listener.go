@@ -26,17 +26,15 @@ import (
 
 var (
 	syncStatusMu sync.RWMutex
-	nodeCaughtUp bool = false // false means the node is still catching up
+	nodeCaughtUp = false
 )
 
-// isNodeSynced returns whether the node is caught up.
 func isNodeSynced() bool {
 	syncStatusMu.RLock()
 	defer syncStatusMu.RUnlock()
 	return nodeCaughtUp
 }
 
-// updateNodeSyncStatus sets the nodeCaughtUp flag.
 func updateNodeSyncStatus(status bool) {
 	syncStatusMu.Lock()
 	defer syncStatusMu.Unlock()
@@ -62,6 +60,9 @@ const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
 	validationAction        = "/inference.inference.MsgValidation"
 	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
+
+	newBlockEventType = "tendermint/event/NewBlock"
+	txEventType       = "tendermint/event/Tx"
 )
 
 func StartEventListener(
@@ -112,12 +113,17 @@ func StartEventListener(
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
-	eventChan := make(chan chainevents.JSONRPCResponse, 100)
+	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
 	numWorkers := 10
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			for event := range eventChan {
-				processEvent(&event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+				if event == nil {
+					slog.Error("Go worker received nil chain event")
+					continue
+				}
+
+				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
 			}
 		}()
 	}
@@ -145,7 +151,7 @@ func StartEventListener(
 		}
 
 		// Push the event into the channel for processing.
-		eventChan <- event
+		eventChan <- &event
 	}
 }
 
@@ -158,13 +164,13 @@ func processEvent(
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
 ) {
 	switch event.Result.Data.Type {
-	case "tendermint/event/NewBlock":
+	case newBlockEventType:
 		slog.Debug("New block event received", "type", event.Result.Data.Type)
 		if isNodeSynced() {
 			poc.ProcessNewBlockEvent(nodePocOrchestrator, event, transactionRecorder, configManager)
 		}
 		upgrade.ProcessNewBlockEvent(event, transactionRecorder, configManager)
-	case "tendermint/event/Tx":
+	case txEventType:
 		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
 	default:
 		slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
