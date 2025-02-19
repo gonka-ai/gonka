@@ -70,6 +70,14 @@ func TestGenesisState_Validate(t *testing.T) {
 					TotalRefunded:  73,
 					TotalBurned:    23,
 				},
+				TopMinerList: []types.TopMiner{
+					{
+						Address: "0",
+					},
+					{
+						Address: "1",
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -141,6 +149,20 @@ func TestGenesisState_Validate(t *testing.T) {
 					{
 						Participant:         "0",
 						PocStartBlockHeight: 0,
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated topMiner",
+			genState: &types.GenesisState{
+				TopMinerList: []types.TopMiner{
+					{
+						Address: "0",
+					},
+					{
+						Address: "0",
 					},
 				},
 			},
