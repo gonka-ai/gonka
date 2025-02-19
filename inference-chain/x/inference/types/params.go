@@ -41,6 +41,7 @@ func DefaultParams() Params {
 		EpochParams: &EpochParams{
 			EpochLength:     40,
 			EpochMultiplier: 1,
+			EpochShift:      0,
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:     0.05,
