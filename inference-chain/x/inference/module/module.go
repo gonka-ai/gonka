@@ -158,10 +158,11 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
+	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
 
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
-		am.onSetNewValidatorsStage(ctx, blockHeight)
+		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
 	}
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
@@ -204,7 +205,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	return nil
 }
 
-func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64) {
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	am.LogInfo("onSetNewValidatorsStage start", "blockHeight", blockHeight)
 	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
 	err := am.keeper.SettleAccounts(ctx, pocHeight)
@@ -221,6 +222,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
 	if activeParticipants == nil {
 		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
+		return
+	}
+
+	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to register top miners", "error", err.Error())
 		return
 	}
 

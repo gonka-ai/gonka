@@ -51,6 +51,11 @@ modify_genesis_file() {
   local json_file="$HOME/.inference/config/genesis.json"
   local override_file="$1"
 
+
+  if [ ! -f "$override_file" ]; then
+    echo "Override file $override_file does not exist. Exiting..."
+    return
+  fi
   echo "Checking if jq is installed"
   which jq
   jq ". * input" "$json_file" "$override_file" > "${json_file}.tmp"
@@ -74,6 +79,7 @@ $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
 $APP_NAME genesis collect-gentxs
 
 modify_genesis_file 'genesis_overrides.json'
+modify_genesis_file "$HOME/.inference/genesis_overrides.json"
 
 echo "Genesis file created"
 echo "Init for cosmovisor"

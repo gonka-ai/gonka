@@ -10,7 +10,8 @@ import (
 	"decentralized-api/poc"
 	"decentralized-api/upgrade"
 	"encoding/json"
-	 "fmt"
+	"fmt"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -19,13 +20,49 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	syncStatusMu sync.RWMutex
+	nodeCaughtUp = false
+)
+
+func isNodeSynced() bool {
+	syncStatusMu.RLock()
+	defer syncStatusMu.RUnlock()
+	return nodeCaughtUp
+}
+
+func updateNodeSyncStatus(status bool) {
+	syncStatusMu.Lock()
+	defer syncStatusMu.Unlock()
+	nodeCaughtUp = status
+}
+
+func startSyncStatusChecker(chainNodeUrl string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		status, err := getStatus(chainNodeUrl)
+		if err != nil {
+			slog.Error("Error getting node status", "error", err)
+			continue
+		}
+		// The node is "synced" if it's NOT catching up.
+		updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
+		slog.Debug("Updated sync status", "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
+	}
+}
 
 const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
 	validationAction        = "/inference.inference.MsgValidation"
 	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
+
+	newBlockEventType = "tendermint/event/NewBlock"
+	txEventType       = "tendermint/event/Tx"
 )
 
 func StartEventListener(
@@ -48,6 +85,8 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+
+	go startSyncStatusChecker(configManager.GetConfig().ChainNode.Url)
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -74,7 +113,21 @@ func StartEventListener(
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
-	// Listen for events
+	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	numWorkers := 10
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for event := range eventChan {
+				if event == nil {
+					slog.Error("Go worker received nil chain event")
+					continue
+				}
+
+				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+			}
+		}()
+	}
+
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
@@ -97,26 +150,37 @@ func StartEventListener(
 			continue // no sense to check event, if it wasn't unmarshalled correctly
 		}
 
-		// TODO: goroutines are created out of control, it can use crazy amount of recourses
-		go func() {
-			switch event.Result.Data.Type {
-			case "tendermint/event/NewBlock":
-				slog.Debug("New block event received", "type", event.Result.Data.Type)
-				poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
-				upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
-			case "tendermint/event/Tx":
-				handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
-			default:
-				slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
-			}
-		}()
+		// Push the event into the channel for processing.
+		eventChan <- &event
+	}
+}
+
+// processEvent is the worker function that processes a JSONRPCResponse event.
+func processEvent(
+	event *chainevents.JSONRPCResponse,
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	configManager *apiconfig.ConfigManager,
+	nodePocOrchestrator *poc.NodePoCOrchestrator,
+) {
+	switch event.Result.Data.Type {
+	case newBlockEventType:
+		slog.Debug("New block event received", "type", event.Result.Data.Type)
+		if isNodeSynced() {
+			poc.ProcessNewBlockEvent(nodePocOrchestrator, event, transactionRecorder, configManager)
+		}
+		upgrade.ProcessNewBlockEvent(event, transactionRecorder, configManager)
+	case txEventType:
+		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
+	default:
+		slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
 	}
 }
 
 func handleMessage(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
-	event chainevents.JSONRPCResponse,
+	event *chainevents.JSONRPCResponse,
 	currentConfig *apiconfig.Config,
 ) {
 	if waitForEventHeight(event, currentConfig) {
@@ -141,18 +205,23 @@ func handleMessage(
 	//}
 	switch action {
 	case finishInferenceAction:
-		server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		if isNodeSynced() {
+			server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		}
 	case validationAction:
-		server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		if isNodeSynced() {
+			server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		}
 	case submitGovProposalAction:
-		handleGovProposal(event.Result.Events, transactionRecorder)
+		proposalIdOrNil := event.Result.Events["proposal_id"]
+		slog.Debug("New proposal submitted", "proposalId", proposalIdOrNil)
 	default:
 		slog.Debug("Unhandled action received", "action", action)
 	}
 }
 
 // currentConfig must be a pointer, or it won't update
-func waitForEventHeight(event chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
+func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
@@ -212,6 +281,16 @@ func GetParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 	return nil, err
 }
 
-func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
+	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
+	if err != nil {
+		return nil, err
+	}
 
+	status, err := client.Status(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
 }

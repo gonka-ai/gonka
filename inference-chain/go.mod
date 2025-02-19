@@ -1,6 +1,6 @@
 module github.com/productscience/inference
 
-go 1.22.2
+go 1.22.8
 
 replace (
 	github.com/cosmos/cosmos-sdk => github.com/product-science/cosmos-sdk v0.50.9-ps1

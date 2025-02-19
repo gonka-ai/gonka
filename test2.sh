@@ -18,7 +18,13 @@ export POC_CALLBACK_URL="$PUBLIC_URL"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
+mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
 cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
+
+# If there's anything in the public-html/ dir, copy it!
+if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
+    cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
+fi
 
 echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d
