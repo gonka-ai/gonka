@@ -10,7 +10,8 @@ import (
 	"decentralized-api/poc"
 	"decentralized-api/upgrade"
 	"encoding/json"
-	 "fmt"
+	"fmt"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -19,8 +20,43 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	syncStatusMu sync.RWMutex
+	nodeCaughtUp bool = false // false means the node is still catching up
+)
+
+// isNodeSynced returns whether the node is caught up.
+func isNodeSynced() bool {
+	syncStatusMu.RLock()
+	defer syncStatusMu.RUnlock()
+	return nodeCaughtUp
+}
+
+// updateNodeSyncStatus sets the nodeCaughtUp flag.
+func updateNodeSyncStatus(status bool) {
+	syncStatusMu.Lock()
+	defer syncStatusMu.Unlock()
+	nodeCaughtUp = status
+}
+
+func startSyncStatusChecker(chainNodeUrl string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		status, err := getStatus(chainNodeUrl)
+		if err != nil {
+			slog.Error("Error getting node status", "error", err)
+			continue
+		}
+		// The node is "synced" if it's NOT catching up.
+		updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
+		slog.Debug("Updated sync status", "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
+	}
+}
 
 const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
@@ -48,6 +84,8 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+
+	go startSyncStatusChecker(configManager.GetConfig().ChainNode.Url)
 
 	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
@@ -102,7 +140,9 @@ func StartEventListener(
 			switch event.Result.Data.Type {
 			case "tendermint/event/NewBlock":
 				slog.Debug("New block event received", "type", event.Result.Data.Type)
-				poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
+				if isNodeSynced() {
+					poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
+				}
 				upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
 			case "tendermint/event/Tx":
 				handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
@@ -141,11 +181,16 @@ func handleMessage(
 	//}
 	switch action {
 	case finishInferenceAction:
-		server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		if isNodeSynced() {
+			server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		}
 	case validationAction:
-		server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		if isNodeSynced() {
+			server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		}
 	case submitGovProposalAction:
-		handleGovProposal(event.Result.Events, transactionRecorder)
+		proposalIdOrNil := event.Result.Events["proposal_id"]
+		slog.Debug("New proposal submitted", "proposalId", proposalIdOrNil)
 	default:
 		slog.Debug("Unhandled action received", "action", action)
 	}
@@ -212,6 +257,16 @@ func GetParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 	return nil, err
 }
 
-func handleGovProposal(events map[string][]string, transactionRecorder cosmosclient.InferenceCosmosClient) {
+func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
+	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
+	if err != nil {
+		return nil, err
+	}
 
+	status, err := client.Status(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
 }
