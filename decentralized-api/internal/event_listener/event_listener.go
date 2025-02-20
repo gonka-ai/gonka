@@ -26,17 +26,15 @@ import (
 
 var (
 	syncStatusMu sync.RWMutex
-	nodeCaughtUp bool = false // false means the node is still catching up
+	nodeCaughtUp = false
 )
 
-// isNodeSynced returns whether the node is caught up.
 func isNodeSynced() bool {
 	syncStatusMu.RLock()
 	defer syncStatusMu.RUnlock()
 	return nodeCaughtUp
 }
 
-// updateNodeSyncStatus sets the nodeCaughtUp flag.
 func updateNodeSyncStatus(status bool) {
 	syncStatusMu.Lock()
 	defer syncStatusMu.Unlock()
@@ -62,6 +60,9 @@ const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
 	validationAction        = "/inference.inference.MsgValidation"
 	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
+
+	newBlockEventType = "tendermint/event/NewBlock"
+	txEventType       = "tendermint/event/Tx"
 )
 
 func StartEventListener(
@@ -112,7 +113,21 @@ func StartEventListener(
 	slog.Info("PoC orchestrator initialized", "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
-	// Listen for events
+	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	numWorkers := 10
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for event := range eventChan {
+				if event == nil {
+					slog.Error("Go worker received nil chain event")
+					continue
+				}
+
+				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+			}
+		}()
+	}
+
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
@@ -135,28 +150,37 @@ func StartEventListener(
 			continue // no sense to check event, if it wasn't unmarshalled correctly
 		}
 
-		// TODO: goroutines are created out of control, it can use crazy amount of recourses
-		go func() {
-			switch event.Result.Data.Type {
-			case "tendermint/event/NewBlock":
-				slog.Debug("New block event received", "type", event.Result.Data.Type)
-				if isNodeSynced() {
-					poc.ProcessNewBlockEvent(nodePocOrchestrator, &event, transactionRecorder, configManager)
-				}
-				upgrade.ProcessNewBlockEvent(&event, transactionRecorder, configManager)
-			case "tendermint/event/Tx":
-				handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
-			default:
-				slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
-			}
-		}()
+		// Push the event into the channel for processing.
+		eventChan <- &event
+	}
+}
+
+// processEvent is the worker function that processes a JSONRPCResponse event.
+func processEvent(
+	event *chainevents.JSONRPCResponse,
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	configManager *apiconfig.ConfigManager,
+	nodePocOrchestrator *poc.NodePoCOrchestrator,
+) {
+	switch event.Result.Data.Type {
+	case newBlockEventType:
+		slog.Debug("New block event received", "type", event.Result.Data.Type)
+		if isNodeSynced() {
+			poc.ProcessNewBlockEvent(nodePocOrchestrator, event, transactionRecorder, configManager)
+		}
+		upgrade.ProcessNewBlockEvent(event, transactionRecorder, configManager)
+	case txEventType:
+		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
+	default:
+		slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
 	}
 }
 
 func handleMessage(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
-	event chainevents.JSONRPCResponse,
+	event *chainevents.JSONRPCResponse,
 	currentConfig *apiconfig.Config,
 ) {
 	if waitForEventHeight(event, currentConfig) {
@@ -197,7 +221,7 @@ func handleMessage(
 }
 
 // currentConfig must be a pointer, or it won't update
-func waitForEventHeight(event chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
+func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
