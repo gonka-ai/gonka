@@ -23,7 +23,6 @@ service Msg {
   rpc FinishInference                  (MsgFinishInference                 ) returns (MsgFinishInferenceResponse                 );
   rpc SubmitNewParticipant             (MsgSubmitNewParticipant            ) returns (MsgSubmitNewParticipantResponse            );
   rpc Validation                       (MsgValidation                      ) returns (MsgValidationResponse                      );
-  rpc SubmitPoC                        (MsgSubmitPoC                       ) returns (MsgSubmitPoCResponse                       );
   rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant    ) returns (MsgSubmitNewUnfundedParticipantResponse    );
   rpc InvalidateInference              (MsgInvalidateInference             ) returns (MsgInvalidateInferenceResponse             );
   rpc RevalidateInference              (MsgRevalidateInference             ) returns (MsgRevalidateInferenceResponse             );
@@ -108,16 +107,6 @@ message MsgValidation {
 }
 
 message MsgValidationResponse {}
-
-message MsgSubmitPoC {
-  option (cosmos.msg.v1.signer) = "creator";
-           string creator        = 1;
-           int64  block_height   = 2;
-  repeated string nonce          = 3;
-           string seed_signature = 4;
-}
-
-message MsgSubmitPoCResponse {}
 
 message MsgSubmitNewUnfundedParticipant {
   option (cosmos.msg.v1.signer) = "creator";

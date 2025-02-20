@@ -186,12 +186,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inference_id"}, {ProtoField: "response_payload"}, {ProtoField: "response_hash"}, {ProtoField: "value"}},
 				},
 				{
-					RpcMethod:      "SubmitPoC",
-					Use:            "submit-poc [block-height] [nonce]",
-					Short:          "Send a submit-poc tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "nonce"}},
-				},
-				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
 					Use:            "submit-new-unfunded-participant [address] [url] [models] [pub-key] [validator-key]",
 					Short:          "Send a submitNewUnfundedParticipant tx",

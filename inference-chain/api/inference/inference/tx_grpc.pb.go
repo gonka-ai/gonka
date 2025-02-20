@@ -24,7 +24,6 @@ const (
 	Msg_FinishInference_FullMethodName                  = "/inference.inference.Msg/FinishInference"
 	Msg_SubmitNewParticipant_FullMethodName             = "/inference.inference.Msg/SubmitNewParticipant"
 	Msg_Validation_FullMethodName                       = "/inference.inference.Msg/Validation"
-	Msg_SubmitPoC_FullMethodName                        = "/inference.inference.Msg/SubmitPoC"
 	Msg_SubmitNewUnfundedParticipant_FullMethodName     = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
 	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
 	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
@@ -48,7 +47,6 @@ type MsgClient interface {
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
-	SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
@@ -108,15 +106,6 @@ func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewPa
 func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error) {
 	out := new(MsgValidationResponse)
 	err := c.cc.Invoke(ctx, Msg_Validation_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *msgClient) SubmitPoC(ctx context.Context, in *MsgSubmitPoC, opts ...grpc.CallOption) (*MsgSubmitPoCResponse, error) {
-	out := new(MsgSubmitPoCResponse)
-	err := c.cc.Invoke(ctx, Msg_SubmitPoC_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +213,6 @@ type MsgServer interface {
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
-	SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
@@ -256,9 +244,6 @@ func (UnimplementedMsgServer) SubmitNewParticipant(context.Context, *MsgSubmitNe
 }
 func (UnimplementedMsgServer) Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Validation not implemented")
-}
-func (UnimplementedMsgServer) SubmitPoC(context.Context, *MsgSubmitPoC) (*MsgSubmitPoCResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoC not implemented")
 }
 func (UnimplementedMsgServer) SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewUnfundedParticipant not implemented")
@@ -389,24 +374,6 @@ func _Msg_Validation_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).Validation(ctx, req.(*MsgValidation))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_SubmitPoC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgSubmitPoC)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).SubmitPoC(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_SubmitPoC_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).SubmitPoC(ctx, req.(*MsgSubmitPoC))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -617,10 +584,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Validation",
 			Handler:    _Msg_Validation_Handler,
-		},
-		{
-			MethodName: "SubmitPoC",
-			Handler:    _Msg_SubmitPoC_Handler,
 		},
 		{
 			MethodName: "SubmitNewUnfundedParticipant",

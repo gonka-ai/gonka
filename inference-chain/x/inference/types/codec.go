@@ -21,9 +21,6 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgValidation{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgSubmitPoC{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitNewUnfundedParticipant{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
