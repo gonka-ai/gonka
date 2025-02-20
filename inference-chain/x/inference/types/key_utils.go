@@ -2,7 +2,7 @@ package types
 
 import "strconv"
 
-func stringKey(id string) []byte {
+func StringKey(id string) []byte {
 	var key []byte
 
 	idBytes := []byte(id)
@@ -23,10 +23,10 @@ func stringsKey(ids ...string) []byte {
 
 func intKey(id int64) []byte {
 	idStr := strconv.FormatInt(id, 10)
-	return stringKey(idStr)
+	return StringKey(idStr)
 }
 
 func uintKey(id uint64) []byte {
 	idStr := strconv.FormatUint(id, 10)
-	return stringKey(idStr)
+	return StringKey(idStr)
 }

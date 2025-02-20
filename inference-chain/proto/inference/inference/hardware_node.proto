@@ -3,22 +3,25 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+message HardwareNodes {
+  repeated HardwareNode hardware_nodes = 1;
+}
+
 message HardwareNode {
   string participant = 1;
   string local_id = 2;
-  repeated Hardware hardware = 3;
+  HardwareNodeStatus status = 3;
+  repeated Hardware hardware = 4;
+}
+
+enum HardwareNodeStatus {
+  UNKNOWN = 0;
+  INFERENCE = 1;
+  POC = 2;
+  TRAINING = 3;
 }
 
 message Hardware {
   string id = 1;
   string type = 2;
-  HardwareStatus status = 3;
-}
-
-enum HardwareStatus {
-  UNKNOWN = 0;
-  ONLINE = 1;
-  OFFLINE = 2;
-  MAINTENANCE = 3;
-  FAILED = 4;
 }
