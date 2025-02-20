@@ -1,0 +1,11 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message InferenceTimeout {
+  uint64 expiration_height = 1;
+  string inference_id = 2;
+  
+}
+

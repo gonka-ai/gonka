@@ -50,13 +50,12 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 		// Consumer only!
 		k.LogInfo("Funding new consumer", "consumer", newParticipant)
 		starterAmount := int64(DefaultMaxTokens * TokenCost * FaucetRequests)
-		starterCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, starterAmount))
 		err := k.MintRewardCoins(ctx, starterAmount)
 		if err != nil {
 			k.LogError("Error minting coins", "error", err)
 			return nil, err
 		}
-		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.MustAccAddressFromBech32(msg.GetAddress()), starterCoins)
+		err = k.PayParticipantFromModule(ctx, msg.GetAddress(), uint64(starterAmount), types.ModuleName)
 		if err != nil {
 			k.LogError("Error sending coins", "error", err)
 			return nil, err

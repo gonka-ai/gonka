@@ -7,6 +7,7 @@ import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.AppState
+import com.productscience.data.InferenceParams
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
@@ -107,7 +108,8 @@ data class LocalInferencePair(
     val api: ApplicationAPI,
     val mock: InferenceMock?,
     val name: String,
-    val config: ApplicationConfig
+    val config: ApplicationConfig,
+    var mostRecentParams: InferenceParams? = null
 ) {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
@@ -121,6 +123,11 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
+    fun getParams(): InferenceParams {
+        this.mostRecentParams = this.node.getInferenceParams()
+        return this.mostRecentParams!!
+    }
+
     fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
         val signature = node.signPayload(request, account)
         val address = node.getAddress()
@@ -132,7 +139,7 @@ data class LocalInferencePair(
     }
 
     fun getNextSettleBlock(): Long {
-        val epochParams = this.node.mostRecentExport?.appState?.inference?.params?.epochParams ?: return 0
+        val epochParams = this.mostRecentParams?.epochParams ?: return 0
         val currentHeight = this.getCurrentBlockHeight()
         val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
         val nextSettle = currentHeight + blocksTillEpoch + epochParams.getSetNewValidatorsStage() + 1
@@ -143,7 +150,7 @@ data class LocalInferencePair(
     }
 
     fun waitForFirstPoC() {
-        val epochParams = this.node.mostRecentExport?.appState?.inference?.params?.epochParams ?: return
+        val epochParams = this.mostRecentParams?.epochParams ?: return
         val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished)

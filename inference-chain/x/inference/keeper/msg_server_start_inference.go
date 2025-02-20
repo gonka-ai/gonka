@@ -38,7 +38,8 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-		MaxTokens: DefaultMaxTokens,
+		MaxTokens:  DefaultMaxTokens,
+		AssignedTo: msg.AssignedTo,
 	}
 	escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
 	if err != nil {
@@ -46,6 +47,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 	inference.EscrowAmount = escrowAmount
 	k.SetInference(ctx, inference)
+	k.SetInferenceTimeout(ctx, types.InferenceTimeout{
+		ExpirationHeight: uint64(inference.StartBlockHeight + 10),
+		InferenceId:      inference.InferenceId,
+	})
+	k.LogInfo("Inference Timeout Set:", "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,

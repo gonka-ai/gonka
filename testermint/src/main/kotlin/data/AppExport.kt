@@ -137,7 +137,7 @@ data class DenomMetadata(
 
         val exponentDiff = fromUnit.exponent - toUnit.exponent
         val conversionFactor = BigDecimal.TEN.pow(exponentDiff)
-        return amount * (conversionFactor.toLong())
+        return conversionFactor.multiply(BigDecimal(amount)).toLong()
     }
 
 }

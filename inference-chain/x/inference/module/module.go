@@ -153,6 +153,37 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 	return nil
 }
 
+func (am AppModule) expireInferences(ctx context.Context, timeouts []types.InferenceTimeout) error {
+	for _, i := range timeouts {
+		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
+		if !found {
+			continue
+		}
+		if inference.Status == types.InferenceStatus_STARTED {
+			am.handleExpiredInference(ctx, inference)
+		}
+	}
+	return nil
+}
+
+func (am AppModule) handleExpiredInference(ctx context.Context, inference types.Inference) {
+	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
+	if !found {
+		am.LogWarn("Unable to find participant for expired inference", "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
+		return
+	}
+	am.LogInfo("Inference expired, not finished. Issuing refund", "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
+	executor.Reputation -= 0.01
+	inference.Status = types.InferenceStatus_EXPIRED
+	inference.ActualCost = 0
+	err := am.keeper.IssueRefund(ctx, uint64(inference.EscrowAmount), inference.RequestedBy)
+	if err != nil {
+		am.LogError("Error issuing refund", "error", err)
+	}
+	am.keeper.SetInference(ctx, inference)
+	am.keeper.SetParticipant(ctx, executor)
+}
+
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
 func (am AppModule) EndBlock(ctx context.Context) error {
@@ -160,6 +191,15 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
+
+	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
+	err := am.expireInferences(ctx, timeouts)
+	if err != nil {
+		am.LogError("Error expiring inferences")
+	}
+	for _, t := range timeouts {
+		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
+	}
 
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)

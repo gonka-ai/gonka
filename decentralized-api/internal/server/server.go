@@ -382,6 +382,7 @@ func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	if responseProcessor != nil {
 		bodyBytes, err = responseProcessor.ProcessJsonResponse(bodyBytes)
 		if err != nil {
+			slog.Error("Failed to process inference node response", "error", err)
 			http.Error(w, "Failed to add ID to response", http.StatusInternalServerError)
 			return
 		}
@@ -406,6 +407,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		PromptPayload: promptPayload,
 		RequestedBy:   request.RequesterAddress,
 		Model:         testModel,
+		AssignedTo:    executor.Address,
 	}
 	return transaction, nil
 }
@@ -893,7 +895,6 @@ func getParticipants(recorder cosmos_client.CosmosMessageClient, w http.Response
 			Url:         p.InferenceUrl,
 			Models:      p.Models,
 			CoinsOwed:   p.CoinBalance,
-			RefundsOwed: p.RefundBalance,
 			Balance:     pBalance,
 			VotingPower: int64(p.Weight),
 			Reputation:  p.Reputation,

@@ -9,6 +9,7 @@ enum InferenceStatus {
   VALIDATED = 2;
   INVALIDATED = 3;
   VOTING = 4;
+  EXPIRED = 5;
 }
 
 message ProposalDetails {
@@ -39,5 +40,6 @@ message Inference {
   int64 escrow_amount = 19;
   ProposalDetails proposal_details = 20;
   uint64 epoch_group_id = 21;
+  string assigned_to = 22;
 }
 

@@ -54,13 +54,9 @@ func (k msgServer) markInferenceAsInvalid(executor *types.Participant, inference
 		k.Logger().Error("Validation: Payer not found", "address", inference.RequestedBy)
 		return types.ErrParticipantNotFound
 	}
-	if payer.Address == executor.Address {
-		// It is possible that a participant returns an invalid
-		// inference for it's own self-inference
-		executor.RefundBalance += inference.ActualCost
-	} else {
-		payer.RefundBalance += inference.ActualCost
-		k.SetParticipant(ctx, payer)
+	err := k.IssueRefund(ctx, uint64(inference.ActualCost), payer.Address)
+	if err != nil {
+		k.Logger().Error("Validation: Refund failed", "error", err)
 	}
 	k.Logger().Info("Validation: Inference invalidated", "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
 	return nil

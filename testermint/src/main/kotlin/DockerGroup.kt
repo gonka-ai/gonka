@@ -2,6 +2,8 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
+import com.productscience.Consumer.Companion.create
+import com.productscience.data.UnfundedInferenceParticipant
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -99,7 +101,7 @@ data class DockerGroup(
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
         publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
-        val jsonOverrides = config.genesisSpec?.toJson(gsonSnakeCase)?.let { "{ \"app_state\": $it }" } ?: "{}"
+        val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
     }
 
@@ -217,5 +219,39 @@ data class LocalCluster(
         newJoinGroups.forEach { it.init() }
         return getLocalCluster(this.genesis.config)!!
     }
+    fun withConsumer(name: String, action: (Consumer) -> Unit) {
+        val consumer = create(this, name)
+        try {
+            action(consumer)
+        } finally {
+            consumer.pair.node.close()
+        }
+    }
 
+}
+
+class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
+    companion object {
+        fun create(localCluster: LocalCluster, name: String): Consumer {
+            val cli = ApplicationCLI(name, localCluster.genesis.config)
+            cli.createContainer(doNotStartChain = true)
+            val newKey = cli.createKey(name)
+            localCluster.genesis.api.addUnfundedInferenceParticipant(
+                UnfundedInferenceParticipant(
+                    "",
+                    listOf(),
+                    "",
+                    newKey.pubkey.key,
+                    newKey.address
+                )
+            )
+            // Need time to make sure consumer is added
+            localCluster.genesis.node.waitForNextBlock(2)
+            return Consumer(
+                name = name,
+                pair = LocalInferencePair(cli, localCluster.genesis.api, null, name, localCluster.genesis.config),
+                address = newKey.address,
+            )
+        }
+    }
 }

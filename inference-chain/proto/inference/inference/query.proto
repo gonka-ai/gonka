@@ -18,6 +18,7 @@ import "inference/inference/unit_of_compute.proto";
 import "inference/inference/model.proto";
 import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
+import "inference/inference/inference_timeout.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -141,6 +142,16 @@ service Query {
   }
   rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner";
+  
+  }
+  
+  // Queries a list of InferenceTimeout items.
+  rpc InferenceTimeout    (QueryGetInferenceTimeoutRequest) returns (QueryGetInferenceTimeoutResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_timeout/{expirationHeight}/{inferenceId}";
+  
+  }
+  rpc InferenceTimeoutAll (QueryAllInferenceTimeoutRequest) returns (QueryAllInferenceTimeoutResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_timeout";
   
   }
 }
@@ -336,7 +347,25 @@ message QueryAllTopMinerRequest {
 }
 
 message QueryAllTopMinerResponse {
-  repeated TopMiner                               top_miner   = 1 [(gogoproto.nullable) = false];
+  repeated TopMiner                               top_miner  = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryGetInferenceTimeoutRequest {
+  uint64 expirationHeight = 1;
+  string inferenceId      = 2;
+}
+
+message QueryGetInferenceTimeoutResponse {
+  InferenceTimeout inference_timeout = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllInferenceTimeoutRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllInferenceTimeoutResponse {
+  repeated InferenceTimeout                       inference_timeout = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination       = 2;
 }
 

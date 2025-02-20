@@ -17,6 +17,7 @@ func DefaultGenesis() *GenesisState {
 		EpochGroupValidationsList: []EpochGroupValidations{},
 		TokenomicsData:            &TokenomicsData{},
 		TopMinerList:              []TopMiner{},
+		InferenceTimeoutList:      []InferenceTimeout{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
@@ -85,6 +86,16 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for topMiner")
 		}
 		topMinerIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in inferenceTimeout
+	inferenceTimeoutIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.InferenceTimeoutList {
+		index := string(InferenceTimeoutKey(elem.ExpirationHeight, elem.InferenceId))
+		if _, ok := inferenceTimeoutIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for inferenceTimeout")
+		}
+		inferenceTimeoutIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 
