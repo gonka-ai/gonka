@@ -1,0 +1,24 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message HardwareNode {
+  string participant = 1;
+  string local_id = 2;
+  repeated Hardware hardware = 3;
+}
+
+message Hardware {
+  string id = 1;
+  string type = 2;
+  HardwareStatus status = 3;
+}
+
+enum HardwareStatus {
+  UNKNOWN = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  MAINTENANCE = 3;
+  FAILED = 4;
+}
