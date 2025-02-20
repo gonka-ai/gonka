@@ -172,6 +172,16 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     return allGroups
 }
 
+fun initCluster(
+    joinCount: Int = 2,
+    config: ApplicationConfig = inferenceConfig,
+    reboot: Boolean = false,
+): LocalCluster {
+    val cluster = setupLocalCluster(joinCount, config, reboot)
+    initialize(cluster.allPairs)
+    return cluster
+}
+
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = getLocalCluster(config)
     if (clusterMatchesConfig(currentCluster, joinCount, config) && !reboot) {
@@ -219,6 +229,7 @@ data class LocalCluster(
         newJoinGroups.forEach { it.init() }
         return getLocalCluster(this.genesis.config)!!
     }
+
     fun withConsumer(name: String, action: (Consumer) -> Unit) {
         val consumer = create(this, name)
         try {

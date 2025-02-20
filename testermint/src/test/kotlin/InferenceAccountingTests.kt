@@ -14,6 +14,7 @@ import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
+import com.productscience.initCluster
 import com.productscience.initialize
 import com.productscience.setupLocalCluster
 import org.assertj.core.api.Assertions.assertThat
@@ -48,10 +49,9 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test escrow and pre settle amounts`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
+        val cluster = initCluster()
         val inferenceResult = generateSequence {
-            getInferenceResult(highestFunded)
+            getInferenceResult(cluster.genesis)
         }.first { it.inference.executedBy != it.inference.requestedBy }
 
         val inferenceCost = inferenceResult.inference.actualCost
@@ -68,18 +68,18 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test post settle amounts`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        val tokenomicsAtStart = highestFunded.node.getTokenomics().tokenomicsData
-        val participants = highestFunded.api.getParticipants()
+        val cluster = initCluster()
+        val genesis = cluster.genesis
+        val tokenomicsAtStart = genesis.node.getTokenomics().tokenomicsData
+        val participants = genesis.api.getParticipants()
         participants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
         val inferences: Sequence<InferenceResult> = generateSequence {
-            getInferenceResult(highestFunded)
+            getInferenceResult(genesis)
         }.take(4)
-        val newTokens = verifySettledInferences(highestFunded, inferences)
-        val tokenomicsAtEnd = highestFunded.node.getTokenomics().tokenomicsData
+        val newTokens = verifySettledInferences(genesis, inferences)
+        val tokenomicsAtEnd = genesis.node.getTokenomics().tokenomicsData
         val expectedTokens = tokenomicsAtStart.copy(
             totalSubsidies = tokenomicsAtStart.totalSubsidies + newTokens.totalSubsidies,
             totalFees = tokenomicsAtStart.totalFees + newTokens.totalFees,
@@ -87,7 +87,7 @@ class InferenceAccountingTests : TestermintTest() {
             totalBurned = tokenomicsAtStart.totalBurned + newTokens.totalBurned
         )
         assertThat(tokenomicsAtEnd).isEqualTo(expectedTokens)
-        val postParticipants = highestFunded.api.getParticipants()
+        val postParticipants = genesis.api.getParticipants()
         postParticipants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
@@ -138,7 +138,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test consumer only participant`() {
-        val cluster = setupLocalCluster(2, inferenceConfig)
+        val cluster = initCluster()
         val genesis = cluster.genesis
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
@@ -165,8 +165,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun createTopMiner() {
-        val localCluster = setupLocalCluster(2, inferenceConfig, reboot = true)
-        initialize(localCluster.allPairs)
+        val localCluster = initCluster(reboot = true)
         localCluster.genesis.mock?.setPocResponse(100)
         val nextSettle = localCluster.genesis.getNextSettleBlock()
         localCluster.genesis.node.waitForMinimumBlock(nextSettle + 20)
@@ -202,8 +201,7 @@ class InferenceAccountingTests : TestermintTest() {
         val fastRewards = inferenceConfig.copy(
             genesisSpec = inferenceConfig.genesisSpec?.merge(fastRewardSpec) ?: fastRewardSpec
         )
-        val localCluster = setupLocalCluster(2, fastRewards, reboot = true)
-        initialize(localCluster.allPairs)
+        val localCluster = initCluster(config = fastRewards, reboot = true)
         localCluster.genesis.mock?.setPocResponse(100)
         val initialBalance = localCluster.genesis.node.getSelfBalance("nicoin")
         val nextSettle = localCluster.genesis.getNextSettleBlock()
@@ -224,13 +222,6 @@ class InferenceAccountingTests : TestermintTest() {
         val standardizedExpectedReward =
             genesisState.appState.bank.denomMetadata.first().convertAmount(expectedReward, genesisParams.supplyDenom)
         return standardizedExpectedReward
-    }
-
-    @Test
-    fun testCoinConversion() {
-        val localCluster = setupLocalCluster(2, inferenceConfig)
-        initialize(localCluster.allPairs)
-        println(getTopMinerReward(localCluster))
     }
 
     private fun getFailingInference(
@@ -270,8 +261,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `verify failed inference is refunded`() {
-        val localCluster = setupLocalCluster(2, inferenceConfig)
-        initialize(localCluster.allPairs)
+        val localCluster = initCluster()
         localCluster.genesis.node.waitForMinimumBlock(38)
         val nextSettle = localCluster.genesis.getNextSettleBlock()
         localCluster.genesis.node.waitForMinimumBlock(nextSettle + 5)
@@ -307,8 +297,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `verify failed inference is refunded to consumer`() {
-        val localCluster = setupLocalCluster(2, inferenceConfig)
-        initialize(localCluster.allPairs)
+        val localCluster = initCluster()
         val genesis = localCluster.genesis
         localCluster.genesis.node.waitForMinimumBlock(38)
         localCluster.withConsumer("consumer1") { consumer ->
