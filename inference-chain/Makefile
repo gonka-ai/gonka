@@ -16,6 +16,8 @@ ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
   -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
+GENESIS_OVERRIDES_FILE ?= inference-chain/prod_genesis_overrides.json
+
 install:
 	@echo "Installing locally with ldflags..."
 	@go install -ldflags "$(ldflags)" -mod=readonly ./cmd/inferenced/main.go

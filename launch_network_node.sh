@@ -60,10 +60,16 @@ fi
 echo "project_name=$project_name"
 
 # Set up wiremock
-mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
-mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
-cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
-# cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
+if [ "$mode" == "local" ]; then
+  mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
+  mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
+  cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
+
+  # If there's anything in the public-html/ dir, copy it!
+  if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
+    cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
+  fi
+fi
 
 #!!!
 docker compose -p "$project_name" -f "$compose_file" up -d

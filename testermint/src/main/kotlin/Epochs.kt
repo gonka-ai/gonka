@@ -2,10 +2,8 @@ package com.productscience
 
 import com.productscience.data.EpochParams
 
-private const val SHIFT_VAL = 0L
-
-private fun shift(blockHeight: Long): Long = blockHeight + SHIFT_VAL
-private fun unshift(blockHeight: Long): Long = blockHeight - SHIFT_VAL
+fun EpochParams.shift(blockHeight: Long): Long = blockHeight + this.epochShift
+fun EpochParams.unshift(blockHeight: Long): Long = blockHeight - this.epochShift
 
 fun EpochParams.isStartOfPoCStage(blockHeight: Long): Boolean {
     val shiftedBlockHeight = shift(blockHeight)
@@ -65,15 +63,15 @@ fun EpochParams.getStartBlockHeightFromStartOfPocValidationStage(blockHeight: Lo
 
 fun EpochParams.getStartOfPoCStage(): Long = 0L
 
-fun EpochParams.getEndOfPoCStage(): Long = 10L * epochMultiplier
+fun EpochParams.getEndOfPoCStage(): Long = getStartOfPoCStage() + 10L * epochMultiplier
 
-fun EpochParams.getPoCExchangeDeadline(): Long = (this.getEndOfPoCStage() + 2) * epochMultiplier
+fun EpochParams.getPoCExchangeDeadline(): Long = this.getEndOfPoCStage() + 2 * epochMultiplier
 
-fun EpochParams.getStartOfPoCValidationStage(): Long = (this.getEndOfPoCStage() + 2) * epochMultiplier
+fun EpochParams.getStartOfPoCValidationStage(): Long = this.getEndOfPoCStage() + 2 * epochMultiplier
 
-fun EpochParams.getEndOfPoCValidationStage(): Long = (this.getStartOfPoCValidationStage() + 4) * epochMultiplier
+fun EpochParams.getEndOfPoCValidationStage(): Long = this.getStartOfPoCValidationStage() + 6 * epochMultiplier
 
-fun EpochParams.getSetNewValidatorsStage(): Long = (this.getEndOfPoCValidationStage() + 1) * epochMultiplier
+fun EpochParams.getSetNewValidatorsStage(): Long = this.getEndOfPoCValidationStage() + 1 * epochMultiplier
 
 fun EpochParams.isNotZeroEpoch(blockHeight: Long): Boolean = !this.isZeroEpoch(blockHeight)
 
