@@ -55,6 +55,7 @@ message ValidationParams {
   double pass_value = 3;
   double min_validation_average = 4;
   double max_validation_average = 5;
+  int64  expiration_blocks = 6;
 }
 
 message PocParams {

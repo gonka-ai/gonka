@@ -285,7 +285,8 @@ class InferenceAccountingTests : TestermintTest() {
         assertNotNull(failedInference, "Inference never finished")
         val timeouts = localCluster.genesis.node.getInferenceTimeouts()
         assertThat(timeouts.inferenceTimeout).hasSizeGreaterThan(0)
-        val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + 11
+        val expirationBlocks = localCluster.genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
+        val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + expirationBlocks
         val nextSettleBlock = localCluster.genesis.getNextSettleBlock()
         localCluster.genesis.node.waitForMinimumBlock(expirationBlock)
         localCluster.genesis.node.waitForMinimumBlock(nextSettleBlock + 2)
@@ -315,7 +316,8 @@ class InferenceAccountingTests : TestermintTest() {
             localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
             val failingAddress = localCluster.joinPairs.first().node.getAddress()
             val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
-            val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + 11
+            val expirationBlocks = genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
+            val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + expirationBlocks
             genesis.node.waitForMinimumBlock(expirationBlock)
             val finishedInferences = inferences.map {
                 genesis.api.getInference(it.index)

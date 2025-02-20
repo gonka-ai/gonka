@@ -71,6 +71,7 @@ data class ValidationParams(
     val passValue: Double,
     val minValidationAverage: Double,
     val maxValidationAverage: Double,
+    val expirationBlocks: Long,
 )
 
 data class PocParams(

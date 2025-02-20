@@ -47,8 +47,9 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 	inference.EscrowAmount = escrowAmount
 	k.SetInference(ctx, inference)
+	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
 	k.SetInferenceTimeout(ctx, types.InferenceTimeout{
-		ExpirationHeight: uint64(inference.StartBlockHeight + 10),
+		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),
 		InferenceId:      inference.InferenceId,
 	})
 	k.LogInfo("Inference Timeout Set:", "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)

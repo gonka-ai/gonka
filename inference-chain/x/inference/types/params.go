@@ -49,6 +49,7 @@ func DefaultParams() Params {
 			PassValue:             0.99,
 			MinValidationAverage:  0.1,
 			MaxValidationAverage:  1.0,
+			ExpirationBlocks:      20,
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,
