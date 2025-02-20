@@ -97,3 +97,23 @@ func GetNodeId(nodeRpcUrl string) (string, error) {
 	}
 	return status.Result.NodeInfo.ID, nil
 }
+
+func DownloadGenesis(nodeAddress string) (json.RawMessage, error) {
+	url := fmt.Sprintf("%s/genesis", nodeAddress)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("received non-OK HTTP status: %s", resp.Status)
+	}
+
+	var genResp GenesisResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("failed to decode genesis JSON: %w", err)
+	}
+	return genResp.Result.Genesis, nil
+}

@@ -1,6 +1,9 @@
 package rpc
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type BlockResponse struct {
 	Result struct {
@@ -62,4 +65,12 @@ type NodeInfo struct {
 		TxIndex    string `json:"tx_index"`
 		RpcAddress string `json:"rpc_address"`
 	} `json:"other"`
+}
+
+type GenesisResponse struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      int    `json:"id"`
+	Result  struct {
+		Genesis json.RawMessage `json:"genesis"`
+	} `json:"result"`
 }

@@ -13,6 +13,24 @@ import (
 	"time"
 )
 
+func getProjectRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("repository root not found")
+}
+
 func checkContainerLogs(containerName string, requiredLogs []string) (bool, error) {
 	cmd := exec.Command("docker", "logs", containerName)
 	var errBuf bytes.Buffer
@@ -81,21 +99,31 @@ func TestCreatingAndFetchingSnapshots(t *testing.T) {
 		"Snapshot restored",
 	}
 
-	curDir, err := os.Getwd()
+	/*	curDir, err := os.Getwd()
+		assert.NoError(t, err)
+
+		index := strings.Index(curDir, "inference-ignite")
+		if index != -1 {
+			curDir = curDir[:index+len("inference-ignite")]
+		}
+		assert.NoError(t, os.Chdir(curDir))
+
+		curDir, err = os.Getwd()
+		assert.NoError(t, err)*/
+
+	projectRoot, err := getProjectRoot()
 	assert.NoError(t, err)
 
-	index := strings.Index(curDir, "inference-ignite")
-	if index != -1 {
-		curDir = curDir[:index+len("inference-ignite")]
-	}
-	assert.NoError(t, os.Chdir(curDir))
+	assert.NoError(t, os.Chdir(projectRoot))
 
-	curDir, err = os.Getwd()
-	assert.NoError(t, err)
-	fmt.Printf("Current working dir is %s", curDir)
+	curDir, _ := os.Getwd()
+	fmt.Printf("Test working dir: %s \n", curDir)
 
 	fmt.Println("Starting local test chain...")
-	scriptPath := filepath.Join(curDir, "launch-local-test-chain.sh")
+
+	scriptPath := filepath.Join(projectRoot, "launch-local-test-chain.sh")
+	fmt.Printf("Script path: %s\n", scriptPath)
+
 	assert.NoError(t, runCommand("bash", "-c", scriptPath))
 	defer func() {
 		assert.NoError(t, stopContainers())
@@ -105,7 +133,9 @@ func TestCreatingAndFetchingSnapshots(t *testing.T) {
 	time.Sleep(30 * time.Second)
 
 	fmt.Println("Running test snapshots...")
-	scriptPath = filepath.Join(curDir, "test-snapshots.sh")
+	scriptPath = filepath.Join(projectRoot, "test-snapshots.sh")
+	fmt.Printf("Script path: %s\n", scriptPath)
+
 	assert.NoError(t, runCommand("bash", "-c", scriptPath))
 
 	fmt.Println("Waiting for snapshots fetching and applying...")
