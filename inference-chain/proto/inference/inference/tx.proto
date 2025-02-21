@@ -33,6 +33,7 @@ service Msg {
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
+  rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -206,11 +207,19 @@ message MsgRegisterModelResponse {}
 
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
+           string                    creator            = 1;
   repeated TrainingHardwareResources hardware_resources = 2;
-  TrainingConfig config = 3;
+           TrainingConfig            config             = 3;
 }
 
 message MsgCreateTrainingTaskResponse {
   TrainingTask task = 1;
 }
+
+message MsgSubmitHardwareDiff {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+}
+
+message MsgSubmitHardwareDiffResponse {}
+
