@@ -4,7 +4,6 @@
 package types
 
 import (
-	encoding_binary "encoding/binary"
 	fmt "fmt"
 	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
@@ -58,27 +57,23 @@ func (ParticipantStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type Participant struct {
-	Index             string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Address           string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Reputation        float32           `protobuf:"fixed32,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
-	Weight            int32             `protobuf:"varint,4,opt,name=weight,proto3" json:"weight,omitempty"`
-	JoinTime          int64             `protobuf:"varint,5,opt,name=join_time,json=joinTime,proto3" json:"join_time,omitempty"`
-	JoinHeight        int64             `protobuf:"varint,6,opt,name=join_height,json=joinHeight,proto3" json:"join_height,omitempty"`
-	LastInferenceTime int64             `protobuf:"varint,7,opt,name=last_inference_time,json=lastInferenceTime,proto3" json:"last_inference_time,omitempty"`
-	InferenceUrl      string            `protobuf:"bytes,8,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
-	Models            []string          `protobuf:"bytes,9,rep,name=models,proto3" json:"models,omitempty"`
-	Status            ParticipantStatus `protobuf:"varint,10,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
-	// TODO: must be removed! maps are not deterministic
-	PromptTokenCount      map[string]uint64 `protobuf:"bytes,11,rep,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
-	CompletionTokenCount  map[string]uint64 `protobuf:"bytes,12,rep,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
-	InferenceCount        uint64            `protobuf:"varint,13,opt,name=inference_count,json=inferenceCount,proto3" json:"inference_count,omitempty"`
-	ValidatedInferences   uint64            `protobuf:"varint,14,opt,name=validated_inferences,json=validatedInferences,proto3" json:"validated_inferences,omitempty"`
-	InvalidatedInferences uint64            `protobuf:"varint,15,opt,name=invalidated_inferences,json=invalidatedInferences,proto3" json:"invalidated_inferences,omitempty"`
-	// I don't see how a negative balance makes sense
-	CoinBalance                  int64  `protobuf:"varint,16,opt,name=coin_balance,json=coinBalance,proto3" json:"coin_balance,omitempty"`
-	ValidatorKey                 string `protobuf:"bytes,17,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
-	ConsecutiveInvalidInferences int64  `protobuf:"varint,18,opt,name=consecutive_invalid_inferences,json=consecutiveInvalidInferences,proto3" json:"consecutive_invalid_inferences,omitempty"`
-	WorkerPublicKey              string `protobuf:"bytes,19,opt,name=worker_public_key,json=workerPublicKey,proto3" json:"worker_public_key,omitempty"`
+	Index                        string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Address                      string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Weight                       int32             `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	JoinTime                     int64             `protobuf:"varint,4,opt,name=join_time,json=joinTime,proto3" json:"join_time,omitempty"`
+	JoinHeight                   int64             `protobuf:"varint,5,opt,name=join_height,json=joinHeight,proto3" json:"join_height,omitempty"`
+	LastInferenceTime            int64             `protobuf:"varint,6,opt,name=last_inference_time,json=lastInferenceTime,proto3" json:"last_inference_time,omitempty"`
+	InferenceUrl                 string            `protobuf:"bytes,7,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
+	Models                       []string          `protobuf:"bytes,8,rep,name=models,proto3" json:"models,omitempty"`
+	Status                       ParticipantStatus `protobuf:"varint,9,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
+	InferenceCount               uint64            `protobuf:"varint,10,opt,name=inference_count,json=inferenceCount,proto3" json:"inference_count,omitempty"`
+	ValidatedInferences          uint64            `protobuf:"varint,11,opt,name=validated_inferences,json=validatedInferences,proto3" json:"validated_inferences,omitempty"`
+	InvalidatedInferences        uint64            `protobuf:"varint,12,opt,name=invalidated_inferences,json=invalidatedInferences,proto3" json:"invalidated_inferences,omitempty"`
+	CoinBalance                  int64             `protobuf:"varint,13,opt,name=coin_balance,json=coinBalance,proto3" json:"coin_balance,omitempty"`
+	ValidatorKey                 string            `protobuf:"bytes,14,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	ConsecutiveInvalidInferences int64             `protobuf:"varint,15,opt,name=consecutive_invalid_inferences,json=consecutiveInvalidInferences,proto3" json:"consecutive_invalid_inferences,omitempty"`
+	WorkerPublicKey              string            `protobuf:"bytes,16,opt,name=worker_public_key,json=workerPublicKey,proto3" json:"worker_public_key,omitempty"`
+	EpochsCompleted              uint32            `protobuf:"varint,17,opt,name=epochs_completed,json=epochsCompleted,proto3" json:"epochs_completed,omitempty"`
 }
 
 func (m *Participant) Reset()         { *m = Participant{} }
@@ -126,13 +121,6 @@ func (m *Participant) GetAddress() string {
 		return m.Address
 	}
 	return ""
-}
-
-func (m *Participant) GetReputation() float32 {
-	if m != nil {
-		return m.Reputation
-	}
-	return 0
 }
 
 func (m *Participant) GetWeight() int32 {
@@ -184,20 +172,6 @@ func (m *Participant) GetStatus() ParticipantStatus {
 	return ParticipantStatus_UNSPECIFIED
 }
 
-func (m *Participant) GetPromptTokenCount() map[string]uint64 {
-	if m != nil {
-		return m.PromptTokenCount
-	}
-	return nil
-}
-
-func (m *Participant) GetCompletionTokenCount() map[string]uint64 {
-	if m != nil {
-		return m.CompletionTokenCount
-	}
-	return nil
-}
-
 func (m *Participant) GetInferenceCount() uint64 {
 	if m != nil {
 		return m.InferenceCount
@@ -247,11 +221,16 @@ func (m *Participant) GetWorkerPublicKey() string {
 	return ""
 }
 
+func (m *Participant) GetEpochsCompleted() uint32 {
+	if m != nil {
+		return m.EpochsCompleted
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterEnum("inference.inference.ParticipantStatus", ParticipantStatus_name, ParticipantStatus_value)
 	proto.RegisterType((*Participant)(nil), "inference.inference.Participant")
-	proto.RegisterMapType((map[string]uint64)(nil), "inference.inference.Participant.CompletionTokenCountEntry")
-	proto.RegisterMapType((map[string]uint64)(nil), "inference.inference.Participant.PromptTokenCountEntry")
 }
 
 func init() {
@@ -259,49 +238,42 @@ func init() {
 }
 
 var fileDescriptor_d2bc555767052d80 = []byte{
-	// 657 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x54, 0xcd, 0x4e, 0xdb, 0x4a,
-	0x14, 0x8e, 0x93, 0x10, 0x92, 0xe3, 0x40, 0x9c, 0x09, 0x20, 0x5f, 0xee, 0x95, 0xaf, 0xdb, 0xaa,
-	0xad, 0xc5, 0xc2, 0xa8, 0x54, 0x54, 0x15, 0x8b, 0x4a, 0x10, 0x52, 0x6a, 0xd1, 0xa6, 0x91, 0xf9,
-	0x51, 0xd5, 0x8d, 0xe5, 0xd8, 0x53, 0x98, 0xe2, 0x78, 0x2c, 0x7b, 0x0c, 0xe4, 0x2d, 0x2a, 0xf5,
-	0xa5, 0xba, 0x64, 0xd9, 0x65, 0x05, 0x2f, 0x52, 0xcd, 0x38, 0x38, 0x2e, 0x4d, 0x85, 0xba, 0x9b,
-	0xf3, 0xfd, 0x9c, 0x6f, 0x3c, 0x73, 0xc6, 0xf0, 0x98, 0x84, 0x9f, 0x70, 0x8c, 0x43, 0x0f, 0xaf,
-	0x4f, 0x57, 0x91, 0x1b, 0x33, 0xe2, 0x91, 0xc8, 0x0d, 0x99, 0x19, 0xc5, 0x94, 0x51, 0xd4, 0xc9,
-	0x49, 0x33, 0x5f, 0x3d, 0xfc, 0x5a, 0x07, 0x79, 0x30, 0x95, 0xa2, 0x25, 0x98, 0x23, 0xa1, 0x8f,
-	0x2f, 0x55, 0x49, 0x97, 0x8c, 0x86, 0x9d, 0x15, 0x48, 0x85, 0x79, 0xd7, 0xf7, 0x63, 0x9c, 0x24,
-	0x6a, 0x59, 0xe0, 0xb7, 0x25, 0xd2, 0x00, 0x62, 0x1c, 0xa5, 0xcc, 0x65, 0x84, 0x86, 0x6a, 0x45,
-	0x97, 0x8c, 0xb2, 0x5d, 0x40, 0xd0, 0x0a, 0xd4, 0x2e, 0x30, 0x39, 0x39, 0x65, 0x6a, 0x55, 0x97,
-	0x8c, 0x39, 0x7b, 0x52, 0xa1, 0x7f, 0xa1, 0xf1, 0x99, 0x92, 0xd0, 0x61, 0x64, 0x84, 0xd5, 0x39,
-	0x5d, 0x32, 0x2a, 0x76, 0x9d, 0x03, 0x87, 0x64, 0x84, 0xd1, 0xff, 0x20, 0x0b, 0xf2, 0x34, 0x73,
-	0xd6, 0x04, 0x0d, 0x1c, 0x7a, 0x93, 0xb9, 0x4d, 0xe8, 0x04, 0x6e, 0xc2, 0x9c, 0xfc, 0x3b, 0xb2,
-	0x3e, 0xf3, 0x42, 0xd8, 0xe6, 0x94, 0x75, 0xcb, 0x88, 0x86, 0x8f, 0x60, 0x61, 0x2a, 0x4d, 0xe3,
-	0x40, 0xad, 0x8b, 0xaf, 0x68, 0xe6, 0xe0, 0x51, 0x1c, 0xf0, 0xad, 0x8e, 0xa8, 0x8f, 0x83, 0x44,
-	0x6d, 0xe8, 0x15, 0xa3, 0x61, 0x4f, 0x2a, 0xf4, 0x0a, 0x6a, 0x09, 0x73, 0x59, 0x9a, 0xa8, 0xa0,
-	0x4b, 0xc6, 0xe2, 0xc6, 0x13, 0x73, 0xc6, 0x41, 0x9a, 0x85, 0x43, 0x3c, 0x10, 0x6a, 0x7b, 0xe2,
-	0x42, 0x3e, 0xa0, 0x28, 0xa6, 0xa3, 0x88, 0x39, 0x8c, 0x9e, 0xe1, 0xd0, 0xf1, 0x68, 0x1a, 0x32,
-	0x55, 0xd6, 0x2b, 0x86, 0xbc, 0xf1, 0xe2, 0xbe, 0x5e, 0xe6, 0x40, 0x58, 0x0f, 0xb9, 0xb3, 0xcb,
-	0x8d, 0xbd, 0x90, 0xc5, 0x63, 0x5b, 0x89, 0xee, 0xc0, 0x28, 0x82, 0x15, 0x8f, 0x8e, 0xa2, 0x00,
-	0xf3, 0x63, 0xff, 0x25, 0xa9, 0x29, 0x92, 0xb6, 0xee, 0x4d, 0xea, 0xe6, 0xf6, 0xbb, 0x69, 0x4b,
-	0xde, 0x0c, 0x0a, 0x3d, 0x85, 0xd6, 0xf4, 0x50, 0xb3, 0xa8, 0x05, 0x5d, 0x32, 0xaa, 0xf6, 0x62,
-	0x0e, 0x67, 0xc2, 0x67, 0xb0, 0x74, 0xee, 0x06, 0xc4, 0x77, 0x19, 0xf6, 0xa7, 0x57, 0x96, 0xa8,
-	0x8b, 0x42, 0xdd, 0xc9, 0xb9, 0xfc, 0xce, 0x12, 0xb4, 0x09, 0x2b, 0x24, 0x9c, 0x69, 0x6a, 0x09,
-	0xd3, 0x72, 0x81, 0x2d, 0xd8, 0x1e, 0x40, 0xd3, 0xe3, 0x83, 0x33, 0x74, 0x03, 0x37, 0xf4, 0xb0,
-	0xaa, 0x88, 0x81, 0x90, 0x39, 0xb6, 0x93, 0x41, 0x7c, 0x14, 0x26, 0x4e, 0x1a, 0x3b, 0x67, 0x78,
-	0xac, 0xb6, 0xb3, 0x51, 0xc8, 0xc1, 0x7d, 0x3c, 0x46, 0xbb, 0xa0, 0x79, 0x34, 0x4c, 0xb0, 0x97,
-	0x32, 0x72, 0x8e, 0x9d, 0x49, 0x58, 0x71, 0x1b, 0x48, 0x74, 0xfe, 0xaf, 0xa0, 0xb2, 0x32, 0x51,
-	0x61, 0x37, 0x6b, 0xd0, 0xbe, 0xa0, 0xf1, 0x19, 0x8e, 0x9d, 0x28, 0x1d, 0x06, 0xc4, 0x13, 0x71,
-	0x1d, 0x11, 0xd7, 0xca, 0x88, 0x81, 0xc0, 0xf7, 0xf1, 0x78, 0xb5, 0x0b, 0xcb, 0x33, 0x6f, 0x1a,
-	0x29, 0x50, 0xe1, 0xb6, 0xec, 0x39, 0xf2, 0x25, 0x7f, 0xa2, 0xe7, 0x6e, 0x90, 0x62, 0xf1, 0x14,
-	0xab, 0x76, 0x56, 0x6c, 0x95, 0x5f, 0x4a, 0xab, 0x7b, 0xf0, 0xcf, 0x1f, 0x2f, 0xf1, 0x6f, 0x1a,
-	0xad, 0x7d, 0x80, 0xf6, 0x6f, 0xf3, 0x8c, 0x5a, 0x20, 0x1f, 0xf5, 0x0f, 0x06, 0xbd, 0xae, 0xf5,
-	0xda, 0xea, 0xed, 0x2a, 0x25, 0x04, 0x50, 0xdb, 0xee, 0x1e, 0x5a, 0xc7, 0x3d, 0x45, 0x42, 0x4d,
-	0xa8, 0x5b, 0xfd, 0x49, 0x55, 0x46, 0x32, 0xcc, 0x5b, 0xfd, 0xe3, 0xed, 0xb7, 0xd6, 0xae, 0x52,
-	0xe1, 0x85, 0xbd, 0xfd, 0x6e, 0x60, 0xf5, 0xf7, 0x94, 0xea, 0xce, 0xfb, 0x6f, 0xd7, 0x9a, 0x74,
-	0x75, 0xad, 0x49, 0x3f, 0xae, 0x35, 0xe9, 0xcb, 0x8d, 0x56, 0xba, 0xba, 0xd1, 0x4a, 0xdf, 0x6f,
-	0xb4, 0xd2, 0xc7, 0xcd, 0x13, 0xc2, 0x4e, 0xd3, 0xa1, 0xe9, 0xd1, 0xd1, 0x7a, 0x14, 0x53, 0x3f,
-	0xf5, 0x58, 0xe2, 0x91, 0x3b, 0x7f, 0xb5, 0xcb, 0xc2, 0x9a, 0x8d, 0x23, 0x9c, 0x0c, 0x6b, 0xe2,
-	0xe7, 0xf6, 0xfc, 0x67, 0x00, 0x00, 0x00, 0xff, 0xff, 0xe5, 0x5c, 0x8c, 0xbb, 0x05, 0x05, 0x00,
-	0x00,
+	// 553 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x6c, 0x93, 0xcd, 0x6e, 0xd3, 0x40,
+	0x14, 0x85, 0xe3, 0xa6, 0x49, 0x9b, 0xeb, 0xb4, 0x71, 0xa6, 0xa5, 0x1a, 0x09, 0x64, 0x0c, 0x08,
+	0x30, 0x5d, 0xb8, 0x02, 0xd4, 0x2d, 0x52, 0x9b, 0x16, 0xb0, 0x80, 0x10, 0xb9, 0x3f, 0x42, 0x6c,
+	0x2c, 0x67, 0x3c, 0x34, 0x43, 0x1d, 0x8f, 0xe5, 0x19, 0xf7, 0xe7, 0x2d, 0x78, 0x1c, 0x1e, 0x81,
+	0x65, 0x97, 0x2c, 0x51, 0xf3, 0x22, 0xc8, 0x63, 0xc7, 0xb1, 0xa0, 0xbb, 0xb9, 0xdf, 0x39, 0x67,
+	0xee, 0xf5, 0xb5, 0x06, 0x9e, 0xb2, 0xf8, 0x1b, 0x4d, 0x69, 0x4c, 0xe8, 0xce, 0xe2, 0x94, 0x04,
+	0xa9, 0x64, 0x84, 0x25, 0x41, 0x2c, 0x9d, 0x24, 0xe5, 0x92, 0xa3, 0x8d, 0x4a, 0x74, 0xaa, 0xd3,
+	0xe3, 0x9f, 0x2d, 0xd0, 0x47, 0x0b, 0x2b, 0xda, 0x84, 0x16, 0x8b, 0x43, 0x7a, 0x85, 0x35, 0x4b,
+	0xb3, 0x3b, 0x5e, 0x51, 0x20, 0x0c, 0x2b, 0x41, 0x18, 0xa6, 0x54, 0x08, 0xbc, 0xa4, 0xf8, 0xbc,
+	0x44, 0x5b, 0xd0, 0xbe, 0xa4, 0xec, 0x6c, 0x22, 0x71, 0xd3, 0xd2, 0xec, 0x96, 0x57, 0x56, 0xe8,
+	0x3e, 0x74, 0xbe, 0x73, 0x16, 0xfb, 0x92, 0x4d, 0x29, 0x5e, 0xb6, 0x34, 0xbb, 0xe9, 0xad, 0xe6,
+	0xe0, 0x98, 0x4d, 0x29, 0x7a, 0x08, 0xba, 0x12, 0x27, 0x45, 0xb2, 0xa5, 0x64, 0xc8, 0xd1, 0xfb,
+	0x22, 0xed, 0xc0, 0x46, 0x14, 0x08, 0xe9, 0x57, 0x73, 0x16, 0xf7, 0xb4, 0x95, 0xb1, 0x9f, 0x4b,
+	0xee, 0x5c, 0x51, 0x17, 0x3e, 0x81, 0xb5, 0x85, 0x35, 0x4b, 0x23, 0xbc, 0xa2, 0xa6, 0xec, 0x56,
+	0xf0, 0x24, 0x8d, 0xf2, 0x51, 0xa7, 0x3c, 0xa4, 0x91, 0xc0, 0xab, 0x56, 0xd3, 0xee, 0x78, 0x65,
+	0x85, 0xde, 0x40, 0x5b, 0xc8, 0x40, 0x66, 0x02, 0x77, 0x2c, 0xcd, 0x5e, 0x7f, 0xf5, 0xcc, 0xb9,
+	0x63, 0x51, 0x4e, 0x6d, 0x49, 0x47, 0xca, 0xed, 0x95, 0x29, 0xf4, 0x1c, 0x7a, 0x8b, 0xe6, 0x84,
+	0x67, 0xb1, 0xc4, 0x60, 0x69, 0xf6, 0xb2, 0xb7, 0x5e, 0xe1, 0x41, 0x4e, 0xd1, 0x4b, 0xd8, 0xbc,
+	0x08, 0x22, 0x16, 0x06, 0x92, 0x86, 0x8b, 0x4f, 0x13, 0x58, 0x57, 0xee, 0x8d, 0x4a, 0xab, 0xbe,
+	0x4d, 0xa0, 0x5d, 0xd8, 0x62, 0xf1, 0x9d, 0xa1, 0xae, 0x0a, 0xdd, 0xab, 0xa9, 0xb5, 0xd8, 0x23,
+	0xe8, 0x92, 0x7c, 0xc1, 0xe3, 0x20, 0x0a, 0x62, 0x42, 0xf1, 0x9a, 0x5a, 0x9c, 0x9e, 0xb3, 0xfd,
+	0x02, 0xe5, 0x2b, 0x2b, 0x93, 0x3c, 0xf5, 0xcf, 0xe9, 0x35, 0x5e, 0x2f, 0x56, 0x56, 0xc1, 0x0f,
+	0xf4, 0x1a, 0x1d, 0x80, 0x49, 0x78, 0x2c, 0x28, 0xc9, 0x24, 0xbb, 0xa0, 0x7e, 0xd9, 0xac, 0x3e,
+	0x46, 0x4f, 0xdd, 0xfc, 0xa0, 0xe6, 0x72, 0x0b, 0x53, 0x6d, 0x9a, 0x6d, 0xe8, 0x5f, 0xf2, 0xf4,
+	0x9c, 0xa6, 0x7e, 0x92, 0x8d, 0x23, 0x46, 0x54, 0x3b, 0x43, 0xb5, 0xeb, 0x15, 0xc2, 0x48, 0xf1,
+	0xbc, 0xe3, 0x0b, 0x30, 0x68, 0xc2, 0xc9, 0x44, 0xf8, 0x84, 0x4f, 0x93, 0x88, 0x4a, 0x1a, 0xe2,
+	0xbe, 0xa5, 0xd9, 0x6b, 0x5e, 0xaf, 0xe0, 0x83, 0x39, 0xde, 0xfe, 0x02, 0xfd, 0xff, 0x7e, 0x0a,
+	0xea, 0x81, 0x7e, 0x32, 0x3c, 0x1a, 0x1d, 0x0e, 0xdc, 0xb7, 0xee, 0xe1, 0x81, 0xd1, 0x40, 0x00,
+	0xed, 0xbd, 0xc1, 0xb1, 0x7b, 0x7a, 0x68, 0x68, 0xa8, 0x0b, 0xab, 0xee, 0xb0, 0xac, 0x96, 0x90,
+	0x0e, 0x2b, 0xee, 0xf0, 0x74, 0xef, 0xa3, 0x7b, 0x60, 0x34, 0xf3, 0xc2, 0xdb, 0xfb, 0x34, 0x72,
+	0x87, 0xef, 0x8c, 0xe5, 0xfd, 0xcf, 0xbf, 0x6e, 0x4d, 0xed, 0xe6, 0xd6, 0xd4, 0xfe, 0xdc, 0x9a,
+	0xda, 0x8f, 0x99, 0xd9, 0xb8, 0x99, 0x99, 0x8d, 0xdf, 0x33, 0xb3, 0xf1, 0x75, 0xf7, 0x8c, 0xc9,
+	0x49, 0x36, 0x76, 0x08, 0x9f, 0xee, 0x24, 0x29, 0x0f, 0x33, 0x22, 0x05, 0x61, 0xff, 0x3c, 0xbd,
+	0xab, 0xda, 0x59, 0x5e, 0x27, 0x54, 0x8c, 0xdb, 0xea, 0x05, 0xbe, 0xfe, 0x1b, 0x00, 0x00, 0xff,
+	0xff, 0xe8, 0x1a, 0x99, 0x43, 0xaa, 0x03, 0x00, 0x00,
 }
 
 func (m *Participant) Marshal() (dAtA []byte, err error) {
@@ -324,6 +296,13 @@ func (m *Participant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.EpochsCompleted != 0 {
+		i = encodeVarintParticipant(dAtA, i, uint64(m.EpochsCompleted))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x88
+	}
 	if len(m.WorkerPublicKey) > 0 {
 		i -= len(m.WorkerPublicKey)
 		copy(dAtA[i:], m.WorkerPublicKey)
@@ -331,84 +310,44 @@ func (m *Participant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x1
 		i--
-		dAtA[i] = 0x9a
+		dAtA[i] = 0x82
 	}
 	if m.ConsecutiveInvalidInferences != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.ConsecutiveInvalidInferences))
 		i--
-		dAtA[i] = 0x1
-		i--
-		dAtA[i] = 0x90
+		dAtA[i] = 0x78
 	}
 	if len(m.ValidatorKey) > 0 {
 		i -= len(m.ValidatorKey)
 		copy(dAtA[i:], m.ValidatorKey)
 		i = encodeVarintParticipant(dAtA, i, uint64(len(m.ValidatorKey)))
 		i--
-		dAtA[i] = 0x1
-		i--
-		dAtA[i] = 0x8a
+		dAtA[i] = 0x72
 	}
 	if m.CoinBalance != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.CoinBalance))
 		i--
-		dAtA[i] = 0x1
-		i--
-		dAtA[i] = 0x80
+		dAtA[i] = 0x68
 	}
 	if m.InvalidatedInferences != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.InvalidatedInferences))
 		i--
-		dAtA[i] = 0x78
+		dAtA[i] = 0x60
 	}
 	if m.ValidatedInferences != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.ValidatedInferences))
 		i--
-		dAtA[i] = 0x70
+		dAtA[i] = 0x58
 	}
 	if m.InferenceCount != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.InferenceCount))
 		i--
-		dAtA[i] = 0x68
-	}
-	if len(m.CompletionTokenCount) > 0 {
-		for k := range m.CompletionTokenCount {
-			v := m.CompletionTokenCount[k]
-			baseI := i
-			i = encodeVarintParticipant(dAtA, i, uint64(v))
-			i--
-			dAtA[i] = 0x10
-			i -= len(k)
-			copy(dAtA[i:], k)
-			i = encodeVarintParticipant(dAtA, i, uint64(len(k)))
-			i--
-			dAtA[i] = 0xa
-			i = encodeVarintParticipant(dAtA, i, uint64(baseI-i))
-			i--
-			dAtA[i] = 0x62
-		}
-	}
-	if len(m.PromptTokenCount) > 0 {
-		for k := range m.PromptTokenCount {
-			v := m.PromptTokenCount[k]
-			baseI := i
-			i = encodeVarintParticipant(dAtA, i, uint64(v))
-			i--
-			dAtA[i] = 0x10
-			i -= len(k)
-			copy(dAtA[i:], k)
-			i = encodeVarintParticipant(dAtA, i, uint64(len(k)))
-			i--
-			dAtA[i] = 0xa
-			i = encodeVarintParticipant(dAtA, i, uint64(baseI-i))
-			i--
-			dAtA[i] = 0x5a
-		}
+		dAtA[i] = 0x50
 	}
 	if m.Status != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.Status))
 		i--
-		dAtA[i] = 0x50
+		dAtA[i] = 0x48
 	}
 	if len(m.Models) > 0 {
 		for iNdEx := len(m.Models) - 1; iNdEx >= 0; iNdEx-- {
@@ -416,7 +355,7 @@ func (m *Participant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			copy(dAtA[i:], m.Models[iNdEx])
 			i = encodeVarintParticipant(dAtA, i, uint64(len(m.Models[iNdEx])))
 			i--
-			dAtA[i] = 0x4a
+			dAtA[i] = 0x42
 		}
 	}
 	if len(m.InferenceUrl) > 0 {
@@ -424,33 +363,27 @@ func (m *Participant) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		copy(dAtA[i:], m.InferenceUrl)
 		i = encodeVarintParticipant(dAtA, i, uint64(len(m.InferenceUrl)))
 		i--
-		dAtA[i] = 0x42
+		dAtA[i] = 0x3a
 	}
 	if m.LastInferenceTime != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.LastInferenceTime))
 		i--
-		dAtA[i] = 0x38
+		dAtA[i] = 0x30
 	}
 	if m.JoinHeight != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.JoinHeight))
 		i--
-		dAtA[i] = 0x30
+		dAtA[i] = 0x28
 	}
 	if m.JoinTime != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.JoinTime))
 		i--
-		dAtA[i] = 0x28
+		dAtA[i] = 0x20
 	}
 	if m.Weight != 0 {
 		i = encodeVarintParticipant(dAtA, i, uint64(m.Weight))
 		i--
-		dAtA[i] = 0x20
-	}
-	if m.Reputation != 0 {
-		i -= 4
-		encoding_binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(m.Reputation))))
-		i--
-		dAtA[i] = 0x1d
+		dAtA[i] = 0x18
 	}
 	if len(m.Address) > 0 {
 		i -= len(m.Address)
@@ -494,9 +427,6 @@ func (m *Participant) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovParticipant(uint64(l))
 	}
-	if m.Reputation != 0 {
-		n += 5
-	}
 	if m.Weight != 0 {
 		n += 1 + sovParticipant(uint64(m.Weight))
 	}
@@ -522,22 +452,6 @@ func (m *Participant) Size() (n int) {
 	if m.Status != 0 {
 		n += 1 + sovParticipant(uint64(m.Status))
 	}
-	if len(m.PromptTokenCount) > 0 {
-		for k, v := range m.PromptTokenCount {
-			_ = k
-			_ = v
-			mapEntrySize := 1 + len(k) + sovParticipant(uint64(len(k))) + 1 + sovParticipant(uint64(v))
-			n += mapEntrySize + 1 + sovParticipant(uint64(mapEntrySize))
-		}
-	}
-	if len(m.CompletionTokenCount) > 0 {
-		for k, v := range m.CompletionTokenCount {
-			_ = k
-			_ = v
-			mapEntrySize := 1 + len(k) + sovParticipant(uint64(len(k))) + 1 + sovParticipant(uint64(v))
-			n += mapEntrySize + 1 + sovParticipant(uint64(mapEntrySize))
-		}
-	}
 	if m.InferenceCount != 0 {
 		n += 1 + sovParticipant(uint64(m.InferenceCount))
 	}
@@ -548,18 +462,21 @@ func (m *Participant) Size() (n int) {
 		n += 1 + sovParticipant(uint64(m.InvalidatedInferences))
 	}
 	if m.CoinBalance != 0 {
-		n += 2 + sovParticipant(uint64(m.CoinBalance))
+		n += 1 + sovParticipant(uint64(m.CoinBalance))
 	}
 	l = len(m.ValidatorKey)
 	if l > 0 {
-		n += 2 + l + sovParticipant(uint64(l))
+		n += 1 + l + sovParticipant(uint64(l))
 	}
 	if m.ConsecutiveInvalidInferences != 0 {
-		n += 2 + sovParticipant(uint64(m.ConsecutiveInvalidInferences))
+		n += 1 + sovParticipant(uint64(m.ConsecutiveInvalidInferences))
 	}
 	l = len(m.WorkerPublicKey)
 	if l > 0 {
 		n += 2 + l + sovParticipant(uint64(l))
+	}
+	if m.EpochsCompleted != 0 {
+		n += 2 + sovParticipant(uint64(m.EpochsCompleted))
 	}
 	return n
 }
@@ -664,17 +581,6 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 			m.Address = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
-			if wireType != 5 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Reputation", wireType)
-			}
-			var v uint32
-			if (iNdEx + 4) > l {
-				return io.ErrUnexpectedEOF
-			}
-			v = uint32(encoding_binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-			iNdEx += 4
-			m.Reputation = float32(math.Float32frombits(v))
-		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Weight", wireType)
 			}
@@ -693,7 +599,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 5:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field JoinTime", wireType)
 			}
@@ -712,7 +618,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 6:
+		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field JoinHeight", wireType)
 			}
@@ -731,7 +637,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 7:
+		case 6:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field LastInferenceTime", wireType)
 			}
@@ -750,7 +656,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 8:
+		case 7:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field InferenceUrl", wireType)
 			}
@@ -782,7 +688,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 			}
 			m.InferenceUrl = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 9:
+		case 8:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
 			}
@@ -814,7 +720,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 			}
 			m.Models = append(m.Models, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
-		case 10:
+		case 9:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
 			}
@@ -833,233 +739,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 11:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PromptTokenCount", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowParticipant
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthParticipant
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthParticipant
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if m.PromptTokenCount == nil {
-				m.PromptTokenCount = make(map[string]uint64)
-			}
-			var mapkey string
-			var mapvalue uint64
-			for iNdEx < postIndex {
-				entryPreIndex := iNdEx
-				var wire uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return ErrIntOverflowParticipant
-					}
-					if iNdEx >= l {
-						return io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					wire |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				fieldNum := int32(wire >> 3)
-				if fieldNum == 1 {
-					var stringLenmapkey uint64
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return ErrIntOverflowParticipant
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						stringLenmapkey |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-					intStringLenmapkey := int(stringLenmapkey)
-					if intStringLenmapkey < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					postStringIndexmapkey := iNdEx + intStringLenmapkey
-					if postStringIndexmapkey < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					if postStringIndexmapkey > l {
-						return io.ErrUnexpectedEOF
-					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
-					iNdEx = postStringIndexmapkey
-				} else if fieldNum == 2 {
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return ErrIntOverflowParticipant
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						mapvalue |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-				} else {
-					iNdEx = entryPreIndex
-					skippy, err := skipParticipant(dAtA[iNdEx:])
-					if err != nil {
-						return err
-					}
-					if (skippy < 0) || (iNdEx+skippy) < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					if (iNdEx + skippy) > postIndex {
-						return io.ErrUnexpectedEOF
-					}
-					iNdEx += skippy
-				}
-			}
-			m.PromptTokenCount[mapkey] = mapvalue
-			iNdEx = postIndex
-		case 12:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CompletionTokenCount", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowParticipant
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthParticipant
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthParticipant
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if m.CompletionTokenCount == nil {
-				m.CompletionTokenCount = make(map[string]uint64)
-			}
-			var mapkey string
-			var mapvalue uint64
-			for iNdEx < postIndex {
-				entryPreIndex := iNdEx
-				var wire uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return ErrIntOverflowParticipant
-					}
-					if iNdEx >= l {
-						return io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					wire |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				fieldNum := int32(wire >> 3)
-				if fieldNum == 1 {
-					var stringLenmapkey uint64
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return ErrIntOverflowParticipant
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						stringLenmapkey |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-					intStringLenmapkey := int(stringLenmapkey)
-					if intStringLenmapkey < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					postStringIndexmapkey := iNdEx + intStringLenmapkey
-					if postStringIndexmapkey < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					if postStringIndexmapkey > l {
-						return io.ErrUnexpectedEOF
-					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
-					iNdEx = postStringIndexmapkey
-				} else if fieldNum == 2 {
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return ErrIntOverflowParticipant
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						mapvalue |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-				} else {
-					iNdEx = entryPreIndex
-					skippy, err := skipParticipant(dAtA[iNdEx:])
-					if err != nil {
-						return err
-					}
-					if (skippy < 0) || (iNdEx+skippy) < 0 {
-						return ErrInvalidLengthParticipant
-					}
-					if (iNdEx + skippy) > postIndex {
-						return io.ErrUnexpectedEOF
-					}
-					iNdEx += skippy
-				}
-			}
-			m.CompletionTokenCount[mapkey] = mapvalue
-			iNdEx = postIndex
-		case 13:
+		case 10:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field InferenceCount", wireType)
 			}
@@ -1078,7 +758,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 14:
+		case 11:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ValidatedInferences", wireType)
 			}
@@ -1097,7 +777,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 15:
+		case 12:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field InvalidatedInferences", wireType)
 			}
@@ -1116,7 +796,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 16:
+		case 13:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field CoinBalance", wireType)
 			}
@@ -1135,7 +815,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 17:
+		case 14:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ValidatorKey", wireType)
 			}
@@ -1167,7 +847,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 			}
 			m.ValidatorKey = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 18:
+		case 15:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ConsecutiveInvalidInferences", wireType)
 			}
@@ -1186,7 +866,7 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 19:
+		case 16:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field WorkerPublicKey", wireType)
 			}
@@ -1218,6 +898,25 @@ func (m *Participant) Unmarshal(dAtA []byte) error {
 			}
 			m.WorkerPublicKey = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 17:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochsCompleted", wireType)
+			}
+			m.EpochsCompleted = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParticipant
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochsCompleted |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipParticipant(dAtA[iNdEx:])

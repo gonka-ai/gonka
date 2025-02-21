@@ -1,4 +1,6 @@
 syntax = "proto3";
+import "inference/inference/participant.proto";
+import "inference/inference/params.proto";
 package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -13,12 +15,16 @@ message EpochGroupData {
   repeated InferenceDetail finished_inferences = 7;
   repeated ValidationWeight validation_weights = 8;
   uint64 unit_of_compute_price = 9;
+  uint64 number_of_requests = 10;
+  uint64 previous_epoch_requests = 11;
+  ValidationParams validation_params = 12;
 }
 
 message InferenceDetail {
   string inference_id = 1;
   string executor = 2;
-  float executor_reputation = 3;
+  double executor_reputation = 3;
+  uint64 traffic_basis = 4;
 }
 
 message ValidationWeight {

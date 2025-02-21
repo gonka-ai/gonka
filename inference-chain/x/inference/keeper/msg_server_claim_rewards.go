@@ -2,11 +2,10 @@ package keeper
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -179,7 +178,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 			k.LogWarn("Executor not found in weight map", "executor", inference.Executor)
 			continue
 		}
-		shouldValidate, s := ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
 			k.Keeper.GetParams(ctx).ValidationParams)
 		k.LogDebug("ValidationDecision", "text", s, "inference", inference.InferenceId, "seed", msg.Seed)
 		if shouldValidate {
@@ -187,47 +186,4 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 	}
 	return mustBeValidated, nil
-}
-
-func ShouldValidate(
-	seed int64,
-	inferenceDetails *types.InferenceDetail,
-	totalPower uint32,
-	validatorPower uint32,
-	executorPower uint32,
-	validationParams *types.ValidationParams,
-) (bool, string) {
-	rangeSize := validationParams.MaxValidationAverage - validationParams.MinValidationAverage
-	executorAdjustment := rangeSize * (1 - float64(inferenceDetails.ExecutorReputation))
-	// 100% rep will be 0, 0% rep will be rangeSize
-	targetValidations := validationParams.MinValidationAverage + executorAdjustment
-	ourProbability := float32(targetValidations) * (float32(validatorPower)) / float32(totalPower-executorPower)
-	if ourProbability > 1 {
-		ourProbability = 1
-	}
-	randFloat := deterministicFloat(seed, inferenceDetails.InferenceId)
-	shouldValidate := randFloat < float64(ourProbability)
-	return shouldValidate, fmt.Sprintf(
-		"Should Validate: %v randFloat: %v ourProbability: %v, rangeSize: %v, executorAdjustment: %v, targetValidations: %v",
-		shouldValidate, randFloat, ourProbability, rangeSize, executorAdjustment, targetValidations,
-	)
-}
-
-// In lieu of a real random number generator, we use a deterministic function that takes a seed and an inferenceId
-// This is more or less as random as using a seed in a deterministic random determined by this same hash, and has
-// the advantage of being 100% deterministic regardless of platform and also faster to compute.
-func deterministicFloat(seed int64, inferenceId string) float64 {
-	// Concatenate the seed and inferenceId into a single string
-	input := fmt.Sprintf("%d:%s", seed, inferenceId)
-
-	// Use a cryptographic hash (e.g., SHA-256)
-	h := sha256.New()
-	h.Write([]byte(input))
-	hash := h.Sum(nil)
-
-	// Convert the first 8 bytes of the hash into a uint64
-	hashInt := binary.BigEndian.Uint64(hash[:8])
-
-	// Normalize the uint64 value to a float64 in the range [0, 1)
-	return float64(hashInt) / float64(^uint64(0)) // ^uint64(0) gives max uint64
 }

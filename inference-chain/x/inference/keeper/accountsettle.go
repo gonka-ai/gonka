@@ -143,9 +143,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			k.LogError("Participant not found", "address", amount.Settle.Participant)
 			continue
 		}
-		if amount.Settle.RewardCoins > 0 && participant.Reputation < 1.0 {
-			participant.Reputation += 0.01
-		}
+		participant.EpochsCompleted += 1
 		participant.CoinBalance = 0
 		k.SetParticipant(ctx, participant)
 		amount.Settle.PocStartHeight = pocBlockHeight

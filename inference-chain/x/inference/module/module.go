@@ -173,7 +173,6 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 		return
 	}
 	am.LogInfo("Inference expired, not finished. Issuing refund", "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
-	executor.Reputation -= 0.01
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
 	err := am.keeper.IssueRefund(ctx, uint64(inference.EscrowAmount), inference.RequestedBy)
@@ -343,9 +342,14 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		am.LogWarn("PreviousEpochGroupDataNotFound", "blockHeight", blockHeight, "previousGroupId", previousGroupId)
 		return
 	}
+	params := am.keeper.GetParams(ctx)
 	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
 	newGroupData.UnitOfComputePrice = unitOfComputePrice
+	newGroupData.PreviousEpochRequests = previousGroupData.NumberOfRequests
+	newGroupData.ValidationParams = params.ValidationParams
+
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
+
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
 }

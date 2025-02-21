@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
+	"cosmossdk.io/math"
+	"github.com/productscience/inference/x/inference/calculations"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -44,8 +46,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	k.SetInference(ctx, existingInference)
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
-	executor.PromptTokenCount[existingInference.Model] += existingInference.PromptTokenCount
-	executor.CompletionTokenCount[existingInference.Model] += existingInference.CompletionTokenCount
 	executor.CoinBalance += existingInference.ActualCost
 	executor.InferenceCount++
 
@@ -65,12 +65,16 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			sdk.NewAttribute("inference_id", msg.InferenceId),
 		),
 	)
-
+	currentEpochGroup.GroupData.NumberOfRequests++
 	currentEpochGroup.GroupData.FinishedInferences = append(currentEpochGroup.GroupData.FinishedInferences,
 		&types.InferenceDetail{
-			InferenceId:        existingInference.InferenceId,
-			Executor:           existingInference.ExecutedBy,
-			ExecutorReputation: executor.Reputation,
+			InferenceId: existingInference.InferenceId,
+			Executor:    existingInference.ExecutedBy,
+			ExecutorReputation: calculations.CalculateReputation(calculations.ReputationContext{
+				EpochCount:       int64(executor.EpochsCompleted),
+				ValidationParams: currentEpochGroup.GroupData.ValidationParams,
+			}).InexactFloat64(),
+			TrafficBasis: math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
 		})
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 

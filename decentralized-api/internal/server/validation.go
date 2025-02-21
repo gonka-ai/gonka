@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
@@ -89,7 +89,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		if inferenceWithExecutor.Executor.Address == transactionRecorder.Address {
 			continue
 		}
-		shouldValidate, message := keeper.ShouldValidate(
+		shouldValidate, message := calculations.ShouldValidate(
 			config.CurrentSeed.Seed,
 			inferenceWithExecutor.GetInferenceDetails(),
 			r.TotalPower,

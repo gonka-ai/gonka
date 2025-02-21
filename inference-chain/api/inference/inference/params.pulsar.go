@@ -2706,13 +2706,17 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_ValidationParams                          protoreflect.MessageDescriptor
-	fd_ValidationParams_false_positive_rate      protoreflect.FieldDescriptor
-	fd_ValidationParams_min_ramp_up_measurements protoreflect.FieldDescriptor
-	fd_ValidationParams_pass_value               protoreflect.FieldDescriptor
-	fd_ValidationParams_min_validation_average   protoreflect.FieldDescriptor
-	fd_ValidationParams_max_validation_average   protoreflect.FieldDescriptor
-	fd_ValidationParams_expiration_blocks        protoreflect.FieldDescriptor
+	md_ValidationParams                                protoreflect.MessageDescriptor
+	fd_ValidationParams_false_positive_rate            protoreflect.FieldDescriptor
+	fd_ValidationParams_min_ramp_up_measurements       protoreflect.FieldDescriptor
+	fd_ValidationParams_pass_value                     protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_average         protoreflect.FieldDescriptor
+	fd_ValidationParams_max_validation_average         protoreflect.FieldDescriptor
+	fd_ValidationParams_expiration_blocks              protoreflect.FieldDescriptor
+	fd_ValidationParams_epochs_to_max                  protoreflect.FieldDescriptor
+	fd_ValidationParams_full_validation_traffic_cutoff protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_halfway         protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_traffic_cutoff  protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -2724,6 +2728,10 @@ func init() {
 	fd_ValidationParams_min_validation_average = md_ValidationParams.Fields().ByName("min_validation_average")
 	fd_ValidationParams_max_validation_average = md_ValidationParams.Fields().ByName("max_validation_average")
 	fd_ValidationParams_expiration_blocks = md_ValidationParams.Fields().ByName("expiration_blocks")
+	fd_ValidationParams_epochs_to_max = md_ValidationParams.Fields().ByName("epochs_to_max")
+	fd_ValidationParams_full_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("full_validation_traffic_cutoff")
+	fd_ValidationParams_min_validation_halfway = md_ValidationParams.Fields().ByName("min_validation_halfway")
+	fd_ValidationParams_min_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("min_validation_traffic_cutoff")
 }
 
 var _ protoreflect.Message = (*fastReflection_ValidationParams)(nil)
@@ -2827,6 +2835,30 @@ func (x *fastReflection_ValidationParams) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
+	if x.EpochsToMax != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EpochsToMax)
+		if !f(fd_ValidationParams_epochs_to_max, value) {
+			return
+		}
+	}
+	if x.FullValidationTrafficCutoff != int64(0) {
+		value := protoreflect.ValueOfInt64(x.FullValidationTrafficCutoff)
+		if !f(fd_ValidationParams_full_validation_traffic_cutoff, value) {
+			return
+		}
+	}
+	if x.MinValidationHalfway != float64(0) || math.Signbit(x.MinValidationHalfway) {
+		value := protoreflect.ValueOfFloat64(x.MinValidationHalfway)
+		if !f(fd_ValidationParams_min_validation_halfway, value) {
+			return
+		}
+	}
+	if x.MinValidationTrafficCutoff != int64(0) {
+		value := protoreflect.ValueOfInt64(x.MinValidationTrafficCutoff)
+		if !f(fd_ValidationParams_min_validation_traffic_cutoff, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -2854,6 +2886,14 @@ func (x *fastReflection_ValidationParams) Has(fd protoreflect.FieldDescriptor) b
 		return x.MaxValidationAverage != float64(0) || math.Signbit(x.MaxValidationAverage)
 	case "inference.inference.ValidationParams.expiration_blocks":
 		return x.ExpirationBlocks != int64(0)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		return x.EpochsToMax != int64(0)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		return x.FullValidationTrafficCutoff != int64(0)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		return x.MinValidationHalfway != float64(0) || math.Signbit(x.MinValidationHalfway)
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		return x.MinValidationTrafficCutoff != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2882,6 +2922,14 @@ func (x *fastReflection_ValidationParams) Clear(fd protoreflect.FieldDescriptor)
 		x.MaxValidationAverage = float64(0)
 	case "inference.inference.ValidationParams.expiration_blocks":
 		x.ExpirationBlocks = int64(0)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		x.EpochsToMax = int64(0)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		x.FullValidationTrafficCutoff = int64(0)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		x.MinValidationHalfway = float64(0)
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		x.MinValidationTrafficCutoff = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2916,6 +2964,18 @@ func (x *fastReflection_ValidationParams) Get(descriptor protoreflect.FieldDescr
 	case "inference.inference.ValidationParams.expiration_blocks":
 		value := x.ExpirationBlocks
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		value := x.EpochsToMax
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		value := x.FullValidationTrafficCutoff
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		value := x.MinValidationHalfway
+		return protoreflect.ValueOfFloat64(value)
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		value := x.MinValidationTrafficCutoff
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2948,6 +3008,14 @@ func (x *fastReflection_ValidationParams) Set(fd protoreflect.FieldDescriptor, v
 		x.MaxValidationAverage = value.Float()
 	case "inference.inference.ValidationParams.expiration_blocks":
 		x.ExpirationBlocks = value.Int()
+	case "inference.inference.ValidationParams.epochs_to_max":
+		x.EpochsToMax = value.Int()
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		x.FullValidationTrafficCutoff = value.Int()
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		x.MinValidationHalfway = value.Float()
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		x.MinValidationTrafficCutoff = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2980,6 +3048,14 @@ func (x *fastReflection_ValidationParams) Mutable(fd protoreflect.FieldDescripto
 		panic(fmt.Errorf("field max_validation_average of message inference.inference.ValidationParams is not mutable"))
 	case "inference.inference.ValidationParams.expiration_blocks":
 		panic(fmt.Errorf("field expiration_blocks of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.epochs_to_max":
+		panic(fmt.Errorf("field epochs_to_max of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		panic(fmt.Errorf("field full_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		panic(fmt.Errorf("field min_validation_halfway of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		panic(fmt.Errorf("field min_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3004,6 +3080,14 @@ func (x *fastReflection_ValidationParams) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.ValidationParams.max_validation_average":
 		return protoreflect.ValueOfFloat64(float64(0))
 	case "inference.inference.ValidationParams.expiration_blocks":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.epochs_to_max":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		return protoreflect.ValueOfFloat64(float64(0))
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
 		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
@@ -3092,6 +3176,18 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 		if x.ExpirationBlocks != 0 {
 			n += 1 + runtime.Sov(uint64(x.ExpirationBlocks))
 		}
+		if x.EpochsToMax != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochsToMax))
+		}
+		if x.FullValidationTrafficCutoff != 0 {
+			n += 1 + runtime.Sov(uint64(x.FullValidationTrafficCutoff))
+		}
+		if x.MinValidationHalfway != 0 || math.Signbit(x.MinValidationHalfway) {
+			n += 9
+		}
+		if x.MinValidationTrafficCutoff != 0 {
+			n += 1 + runtime.Sov(uint64(x.MinValidationTrafficCutoff))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3120,6 +3216,27 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.MinValidationTrafficCutoff != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.MinValidationTrafficCutoff))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.MinValidationHalfway != 0 || math.Signbit(x.MinValidationHalfway) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.MinValidationHalfway))))
+			i--
+			dAtA[i] = 0x49
+		}
+		if x.FullValidationTrafficCutoff != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FullValidationTrafficCutoff))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.EpochsToMax != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochsToMax))
+			i--
+			dAtA[i] = 0x38
 		}
 		if x.ExpirationBlocks != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExpirationBlocks))
@@ -3282,6 +3399,74 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.ExpirationBlocks |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochsToMax", wireType)
+				}
+				x.EpochsToMax = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochsToMax |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FullValidationTrafficCutoff", wireType)
+				}
+				x.FullValidationTrafficCutoff = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.FullValidationTrafficCutoff |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 1 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinValidationHalfway", wireType)
+				}
+				var v uint64
+				if (iNdEx + 8) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.MinValidationHalfway = float64(math.Float64frombits(v))
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinValidationTrafficCutoff", wireType)
+				}
+				x.MinValidationTrafficCutoff = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.MinValidationTrafficCutoff |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -4044,12 +4229,16 @@ type ValidationParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	FalsePositiveRate     float64 `protobuf:"fixed64,1,opt,name=false_positive_rate,json=falsePositiveRate,proto3" json:"false_positive_rate,omitempty"`
-	MinRampUpMeasurements uint32  `protobuf:"varint,2,opt,name=min_ramp_up_measurements,json=minRampUpMeasurements,proto3" json:"min_ramp_up_measurements,omitempty"`
-	PassValue             float64 `protobuf:"fixed64,3,opt,name=pass_value,json=passValue,proto3" json:"pass_value,omitempty"`
-	MinValidationAverage  float64 `protobuf:"fixed64,4,opt,name=min_validation_average,json=minValidationAverage,proto3" json:"min_validation_average,omitempty"`
-	MaxValidationAverage  float64 `protobuf:"fixed64,5,opt,name=max_validation_average,json=maxValidationAverage,proto3" json:"max_validation_average,omitempty"`
-	ExpirationBlocks      int64   `protobuf:"varint,6,opt,name=expiration_blocks,json=expirationBlocks,proto3" json:"expiration_blocks,omitempty"`
+	FalsePositiveRate           float64 `protobuf:"fixed64,1,opt,name=false_positive_rate,json=falsePositiveRate,proto3" json:"false_positive_rate,omitempty"`
+	MinRampUpMeasurements       uint32  `protobuf:"varint,2,opt,name=min_ramp_up_measurements,json=minRampUpMeasurements,proto3" json:"min_ramp_up_measurements,omitempty"`
+	PassValue                   float64 `protobuf:"fixed64,3,opt,name=pass_value,json=passValue,proto3" json:"pass_value,omitempty"`
+	MinValidationAverage        float64 `protobuf:"fixed64,4,opt,name=min_validation_average,json=minValidationAverage,proto3" json:"min_validation_average,omitempty"`
+	MaxValidationAverage        float64 `protobuf:"fixed64,5,opt,name=max_validation_average,json=maxValidationAverage,proto3" json:"max_validation_average,omitempty"`
+	ExpirationBlocks            int64   `protobuf:"varint,6,opt,name=expiration_blocks,json=expirationBlocks,proto3" json:"expiration_blocks,omitempty"`
+	EpochsToMax                 int64   `protobuf:"varint,7,opt,name=epochs_to_max,json=epochsToMax,proto3" json:"epochs_to_max,omitempty"`
+	FullValidationTrafficCutoff int64   `protobuf:"varint,8,opt,name=full_validation_traffic_cutoff,json=fullValidationTrafficCutoff,proto3" json:"full_validation_traffic_cutoff,omitempty"`
+	MinValidationHalfway        float64 `protobuf:"fixed64,9,opt,name=min_validation_halfway,json=minValidationHalfway,proto3" json:"min_validation_halfway,omitempty"`
+	MinValidationTrafficCutoff  int64   `protobuf:"varint,10,opt,name=min_validation_traffic_cutoff,json=minValidationTrafficCutoff,proto3" json:"min_validation_traffic_cutoff,omitempty"`
 }
 
 func (x *ValidationParams) Reset() {
@@ -4110,6 +4299,34 @@ func (x *ValidationParams) GetMaxValidationAverage() float64 {
 func (x *ValidationParams) GetExpirationBlocks() int64 {
 	if x != nil {
 		return x.ExpirationBlocks
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetEpochsToMax() int64 {
+	if x != nil {
+		return x.EpochsToMax
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetFullValidationTrafficCutoff() int64 {
+	if x != nil {
+		return x.FullValidationTrafficCutoff
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetMinValidationHalfway() float64 {
+	if x != nil {
+		return x.MinValidationHalfway
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetMinValidationTrafficCutoff() int64 {
+	if x != nil {
+		return x.MinValidationTrafficCutoff
 	}
 	return 0
 }
@@ -4248,7 +4465,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x6f, 0x66, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65,
 	0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x19, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x55,
 	0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63,
-	0x65, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xb9, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69,
+	0x65, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x9b, 0x04, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69,
 	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2e, 0x0a, 0x13,
 	0x66, 0x61, 0x6c, 0x73, 0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x72,
 	0x61, 0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x66, 0x61, 0x6c, 0x73, 0x65,
@@ -4267,24 +4484,38 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65,
 	0x12, 0x2b, 0x0a, 0x11, 0x65, 0x78, 0x70, 0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x62,
 	0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x70,
-	0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69, 0x66, 0x66,
-	0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11, 0x64, 0x65,
-	0x66, 0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x3a,
-	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
-	0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
-	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47,
-	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x12, 0x22, 0x0a,
+	0x0d, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x5f, 0x74, 0x6f, 0x5f, 0x6d, 0x61, 0x78, 0x18, 0x07,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x54, 0x6f, 0x4d, 0x61,
+	0x78, 0x12, 0x43, 0x0a, 0x1e, 0x66, 0x75, 0x6c, 0x6c, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x5f, 0x63, 0x75, 0x74,
+	0x6f, 0x66, 0x66, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1b, 0x66, 0x75, 0x6c, 0x6c, 0x56,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63,
+	0x43, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x12, 0x34, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x68, 0x61, 0x6c, 0x66, 0x77, 0x61, 0x79,
+	0x18, 0x09, 0x20, 0x01, 0x28, 0x01, 0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x48, 0x61, 0x6c, 0x66, 0x77, 0x61, 0x79, 0x12, 0x41, 0x0a, 0x1d,
+	0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74,
+	0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x5f, 0x63, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x18, 0x0a, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x1a, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x54, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x43, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x3a,
+	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69,
+	0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11,
+	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74,
+	0x79, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

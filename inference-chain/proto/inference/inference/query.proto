@@ -217,6 +217,7 @@ message InferenceWithExecutor {
   Inference   inference     = 1 [(gogoproto.nullable) = false];
   Participant executor      = 2 [(gogoproto.nullable) = false];
   uint32      current_power = 3;
+  uint64      traffic_basis = 4;
 }
 
 message QueryInferenceParticipantRequest {

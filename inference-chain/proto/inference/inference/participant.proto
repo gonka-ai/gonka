@@ -14,23 +14,20 @@ enum ParticipantStatus {
 message Participant {
   string index = 1;
   string address = 2;
-  float reputation = 3;
-  int32 weight = 4;
-  int64 join_time = 5;
-  int64 join_height = 6;
-  int64 last_inference_time = 7;
-  string inference_url = 8;
-  repeated string models = 9;
-  ParticipantStatus status = 10;
-  // TODO: must be removed! maps are not deterministic
-  map<string, uint64> prompt_token_count = 11;
-  map<string, uint64> completion_token_count = 12;
-  uint64 inference_count = 13;
-  uint64 validated_inferences = 14;
-  uint64 invalidated_inferences = 15;
-  // I don't see how a negative balance makes sense
-  int64 coin_balance = 16;
-  string validator_key = 17;
-  int64 consecutive_invalid_inferences = 18;
-  string worker_public_key = 19;
+  int32 weight = 3;
+  int64 join_time = 4;
+  int64 join_height = 5;
+  int64 last_inference_time = 6;
+  string inference_url = 7;
+  repeated string models = 8;
+  ParticipantStatus status = 9;
+  uint64 inference_count = 10;
+  uint64 validated_inferences = 11;
+  uint64 invalidated_inferences = 12;
+  int64 coin_balance = 13;
+  string validator_key = 14;
+  int64 consecutive_invalid_inferences = 15;
+  string worker_public_key = 16;
+  uint32 epochs_completed = 17;
 }
+
