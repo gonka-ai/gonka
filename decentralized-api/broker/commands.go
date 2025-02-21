@@ -78,3 +78,11 @@ func (i InferenceError) IsSuccess() bool {
 func (i InferenceError) GetMessage() string {
 	return i.Message
 }
+
+type SyncNodesCommand struct {
+	Response chan bool
+}
+
+func (s SyncNodesCommand) GetResponseChannelCapacity() int {
+	return cap(s.Response)
+}

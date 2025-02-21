@@ -48,6 +48,8 @@ func (b *Broker) processCommands() {
 			b.removeNode(command)
 		case GetNodesCommand:
 			b.getNodes(command)
+		case SyncNodesCommand:
+			b.syncNodes(command)
 		default:
 			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
 		}
@@ -201,4 +203,8 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 	}
 	slog.Debug("Got nodes", "size", len(nodes))
 	return nodes, nil
+}
+
+func (b *Broker) syncNodes(command SyncNodesCommand) {
+
 }
