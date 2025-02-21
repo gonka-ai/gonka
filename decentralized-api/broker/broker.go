@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"time"
 )
 
 type Broker struct {
@@ -31,7 +32,21 @@ func NewBroker() *Broker {
 	}
 
 	go broker.processCommands()
+
+	go nodeSyncWorker(broker)
+
 	return broker
+}
+
+func nodeSyncWorker(broker *Broker) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		slog.Debug("Syncing nodes")
+		if err := broker.QueueMessage(SyncNodesCommand{}); err != nil {
+			slog.Error("Error syncing nodes", "error", err)
+		}
+	}
 }
 
 func (b *Broker) processCommands() {
