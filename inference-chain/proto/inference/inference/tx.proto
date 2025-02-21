@@ -9,6 +9,7 @@ import "gogoproto/gogo.proto";
 import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
+import "inference/inference/hardware_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -219,6 +220,8 @@ message MsgCreateTrainingTaskResponse {
 message MsgSubmitHardwareDiff {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
+  repeated HardwareNode newOrModified = 2;
+  repeated HardwareNode removed = 3;
 }
 
 message MsgSubmitHardwareDiffResponse {}
