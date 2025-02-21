@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/server"
 	"decentralized-api/logging"
+	"decentralized-api/participant_registration"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -63,7 +64,7 @@ func main() {
 		return
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
+	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
 		slog.Error("Failed to register participant", "error", err)
 		return
 	}

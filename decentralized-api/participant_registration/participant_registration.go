@@ -1,10 +1,11 @@
-package cosmosclient
+package participant_registration
 
 import (
 	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/cosmosclient"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,9 +20,9 @@ import (
 	"time"
 )
 
-func participantExistsWithWait(recorder CosmosMessageClient, config *apiconfig.Config) (bool, error) {
+func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, config *apiconfig.Config) (bool, error) {
 	// Create RPC client
-	client, err := NewRpcClient(config.ChainNode.Url)
+	client, err := cosmosclient.NewRpcClient(config.ChainNode.Url)
 	if err != nil {
 		return false, fmt.Errorf("failed to create tendermint RPC client: %w", err)
 	}
@@ -34,7 +35,7 @@ func participantExistsWithWait(recorder CosmosMessageClient, config *apiconfig.C
 	return participantExists(recorder)
 }
 
-func participantExists(recorder CosmosMessageClient) (bool, error) {
+func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) {
 	queryClient := recorder.NewInferenceQueryClient()
 	request := &types.QueryGetParticipantRequest{Index: recorder.GetAddress()}
 
@@ -83,7 +84,7 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 	}
 }
 
-func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	if config.GetConfig().ChainNode.IsGenesis {
 		return registerGenesisParticipant(recorder, config, nodeBroker)
 	} else {
@@ -91,7 +92,7 @@ func RegisterParticipantIfNeeded(recorder CosmosMessageClient, config *apiconfig
 	}
 }
 
-func registerGenesisParticipant(recorder CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Genesis participant already exists")
@@ -138,7 +139,7 @@ type submitUnfundedNewParticipantDto struct {
 	WorkerKey    string   `json:"worker_key"`
 }
 
-func registerJoiningParticipant(recorder CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
 		slog.Info("Participant already exists, skipping registration")
@@ -245,7 +246,7 @@ func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
 
 func getValidatorKey(config *apiconfig.Config) (crypto.PubKey, error) {
 	// Get validator key through RPC
-	client, err := NewRpcClient(config.ChainNode.Url)
+	client, err := cosmosclient.NewRpcClient(config.ChainNode.Url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tendermint RPC client: %w", err)
 	}
