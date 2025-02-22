@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"decentralized-api/cosmosclient"
 	"errors"
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"reflect"
 	"time"
@@ -11,6 +13,7 @@ type Broker struct {
 	commands   chan Command
 	nodes      map[string]InferenceNode
 	nodeStates map[string]*NodeState
+	client     cosmosclient.CosmosMessageClient
 }
 
 type NodeState struct {
@@ -24,11 +27,12 @@ type NodeResponse struct {
 	State *NodeState     `json:"state"`
 }
 
-func NewBroker() *Broker {
+func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
 		commands:   make(chan Command, 100),
 		nodes:      make(map[string]InferenceNode),
 		nodeStates: make(map[string]*NodeState),
+		client:     client,
 	}
 
 	go broker.processCommands()
@@ -221,5 +225,16 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 }
 
 func (b *Broker) syncNodes(command SyncNodesCommand) {
+	queryClient := b.client.NewInferenceQueryClient()
 
+	req := &types.QueryHardwareNodesRequest{
+		Participant: b.client.GetAddress(),
+	}
+	resp, err := queryClient.HardwareNodes(*b.client.GetContext(), req)
+	if err != nil {
+		slog.Error("[sync nodes]. Error getting nodes", "error", err)
+		return
+	}
+
+	_ = resp
 }

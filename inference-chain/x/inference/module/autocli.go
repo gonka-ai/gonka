@@ -150,6 +150,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
+				{
+					RpcMethod:      "HardwareNodes",
+					Use:            "hardware-nodes [participant]",
+					Short:          "Query hardwareNodes",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
