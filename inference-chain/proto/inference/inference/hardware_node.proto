@@ -3,6 +3,7 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+// IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE InferenceNode struct in decentralized-api!!!
 message HardwareNodes {
   repeated HardwareNode hardware_nodes = 1;
 }

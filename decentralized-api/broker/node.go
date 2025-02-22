@@ -2,6 +2,7 @@ package broker
 
 import "fmt"
 
+// IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE HardwareNode proto in inference-chain!!!
 type InferenceNode struct {
 	Host          string      `koanf:"host" json:"host"`
 	InferencePort int         `koanf:"inference_port" json:"inference_port"`
