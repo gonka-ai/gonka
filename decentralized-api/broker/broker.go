@@ -6,6 +6,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"reflect"
+	"sort"
 	"time"
 )
 
@@ -236,5 +237,95 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 		return
 	}
 
-	_ = resp
+	chainNodesMap := make(map[string]*types.HardwareNode)
+	for _, node := range resp.Nodes.HardwareNodes {
+		chainNodesMap[node.LocalId] = node
+	}
+
+	var diff types.MsgSubmitHardwareDiff
+	diff.Creator = b.client.GetAddress()
+
+	for id, localNode := range b.nodes {
+		localHWNode := convertInferenceNodeToHardwareNode(localNode)
+
+		chainNode, exists := chainNodesMap[id]
+		if !exists {
+			diff.NewOrModified = append(diff.NewOrModified, localHWNode)
+		} else if !areHardwareNodesEqual(localHWNode, chainNode) {
+			diff.NewOrModified = append(diff.NewOrModified, localHWNode)
+		}
+	}
+
+	for id, chainNode := range chainNodesMap {
+		if _, exists := b.nodes[id]; !exists {
+			diff.Removed = append(diff.Removed, chainNode)
+		}
+	}
+
+	// TODO: submit diff to the chain or process it further.
+	slog.Info("[sync nodes] Hardware diff computed", "diff", diff)
+}
+
+// convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
+func convertInferenceNodeToHardwareNode(in InferenceNode) *types.HardwareNode {
+	hardware := make([]*types.Hardware, 0, len(in.Hardware))
+	for _, hw := range in.Hardware {
+		hardware = append(hardware, &types.Hardware{
+			Type:  hw.Type,
+			Count: hw.Count,
+		})
+	}
+	return &types.HardwareNode{
+		LocalId:  in.Id,
+		Status:   1, // TODO: FIX THIS!!!!!!
+		Hardware: hardware,
+	}
+}
+
+// areHardwareNodesEqual performs a field-by-field comparison between two HardwareNodes.
+func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
+	// Compare each field that determines whether the node has changed.
+	if a.LocalId != b.LocalId {
+		return false
+	}
+	if a.Status != b.Status {
+		return false
+	}
+	if len(a.Hardware) != len(b.Hardware) {
+		return false
+	}
+
+	if !hardwareEquals(a, b) {
+		return false
+	}
+
+	return true
+}
+
+func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
+	aHardware := make([]*types.Hardware, len(a.Hardware))
+	bHardware := make([]*types.Hardware, len(b.Hardware))
+	copy(aHardware, a.Hardware)
+	copy(bHardware, b.Hardware)
+
+	sort.Slice(aHardware, func(i, j int) bool {
+		if aHardware[i].Type == aHardware[j].Type {
+			return aHardware[i].Count < aHardware[j].Count
+		}
+		return aHardware[i].Type < aHardware[j].Type
+	})
+	sort.Slice(bHardware, func(i, j int) bool {
+		if bHardware[i].Type == bHardware[j].Type {
+			return bHardware[i].Count < bHardware[j].Count
+		}
+		return bHardware[i].Type < bHardware[j].Type
+	})
+
+	for i := range aHardware {
+		if aHardware[i].Type != bHardware[i].Type || aHardware[i].Count != bHardware[i].Count {
+			return false
+		}
+	}
+
+	return true
 }
