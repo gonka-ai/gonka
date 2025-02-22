@@ -19,6 +19,7 @@ import "inference/inference/model.proto";
 import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
+import "inference/inference/inference_validation_details.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -152,6 +153,16 @@ service Query {
   }
   rpc InferenceTimeoutAll (QueryAllInferenceTimeoutRequest) returns (QueryAllInferenceTimeoutResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_timeout";
+  
+  }
+  
+  // Queries a list of InferenceValidationDetails items.
+  rpc InferenceValidationDetails    (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
+  
+  }
+  rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
   
   }
 }
@@ -367,6 +378,24 @@ message QueryAllInferenceTimeoutRequest {
 
 message QueryAllInferenceTimeoutResponse {
   repeated InferenceTimeout                       inference_timeout = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination       = 2;
+           cosmos.base.query.v1beta1.PageResponse pagination        = 2;
+}
+
+message QueryGetInferenceValidationDetailsRequest {
+  uint64 epochId     = 1;
+  string inferenceId = 2;
+}
+
+message QueryGetInferenceValidationDetailsResponse {
+  InferenceValidationDetails inferenceValidationDetails = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllInferenceValidationDetailsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllInferenceValidationDetailsResponse {
+  repeated InferenceValidationDetails             inferenceValidationDetails = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination                 = 2;
 }
 

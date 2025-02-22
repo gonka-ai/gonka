@@ -88,6 +88,16 @@ func TestGenesisState_Validate(t *testing.T) {
 						InferenceId:      "1",
 					},
 				},
+				InferenceValidationDetailsList: []types.InferenceValidationDetails{
+					{
+						EpochId:     0,
+						InferenceId: "0",
+					},
+					{
+						EpochId:     1,
+						InferenceId: "1",
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -189,6 +199,22 @@ func TestGenesisState_Validate(t *testing.T) {
 					{
 						ExpirationHeight: 0,
 						InferenceId:      "0",
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated inferenceValidationDetails",
+			genState: &types.GenesisState{
+				InferenceValidationDetailsList: []types.InferenceValidationDetails{
+					{
+						EpochId:     0,
+						InferenceId: "0",
+					},
+					{
+						EpochId:     0,
+						InferenceId: "0",
 					},
 				},
 			},

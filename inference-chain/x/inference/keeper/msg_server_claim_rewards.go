@@ -169,16 +169,17 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		return nil, types.ErrParticipantNotFound
 	}
 	mustBeValidated := make([]string, 0)
-	for _, inference := range epochData.FinishedInferences {
-		if inference.Executor == msg.Creator {
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, epochData.EpochGroupId)
+	for _, inference := range finishedInferences {
+		if inference.ExecutorId == msg.Creator {
 			continue
 		}
-		executorPower, found := weightMap[inference.Executor]
+		executorPower, found := weightMap[inference.ExecutorId]
 		if !found {
-			k.LogWarn("Executor not found in weight map", "executor", inference.Executor)
+			k.LogWarn("Executor not found in weight map", "executor", inference.ExecutorId)
 			continue
 		}
-		shouldValidate, s := calculations.ShouldValidate(msg.Seed, inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
 			k.Keeper.GetParams(ctx).ValidationParams)
 		k.LogDebug("ValidationDecision", "text", s, "inference", inference.InferenceId, "seed", msg.Seed)
 		if shouldValidate {

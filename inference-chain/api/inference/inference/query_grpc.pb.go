@@ -43,6 +43,8 @@ const (
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
 	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
 	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
+	Query_InferenceValidationDetails_FullMethodName    = "/inference.inference.Query/InferenceValidationDetails"
+	Query_InferenceValidationDetailsAll_FullMethodName = "/inference.inference.Query/InferenceValidationDetailsAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -90,6 +92,9 @@ type QueryClient interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of InferenceValidationDetails items.
+	InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error)
+	InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error)
 }
 
 type queryClient struct {
@@ -316,6 +321,24 @@ func (c *queryClient) InferenceTimeoutAll(ctx context.Context, in *QueryAllInfer
 	return out, nil
 }
 
+func (c *queryClient) InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error) {
+	out := new(QueryGetInferenceValidationDetailsResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceValidationDetails_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error) {
+	out := new(QueryAllInferenceValidationDetailsResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceValidationDetailsAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -361,6 +384,9 @@ type QueryServer interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of InferenceValidationDetails items.
+	InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error)
+	InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -439,6 +465,12 @@ func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInfer
 }
 func (UnimplementedQueryServer) InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeoutAll not implemented")
+}
+func (UnimplementedQueryServer) InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceValidationDetails not implemented")
+}
+func (UnimplementedQueryServer) InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceValidationDetailsAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -885,6 +917,42 @@ func _Query_InferenceTimeoutAll_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferenceValidationDetails_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceValidationDetailsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceValidationDetails(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceValidationDetails_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceValidationDetails(ctx, req.(*QueryGetInferenceValidationDetailsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_InferenceValidationDetailsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllInferenceValidationDetailsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceValidationDetailsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceValidationDetailsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceValidationDetailsAll(ctx, req.(*QueryAllInferenceValidationDetailsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -987,6 +1055,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InferenceTimeoutAll",
 			Handler:    _Query_InferenceTimeoutAll_Handler,
+		},
+		{
+			MethodName: "InferenceValidationDetails",
+			Handler:    _Query_InferenceValidationDetails_Handler,
+		},
+		{
+			MethodName: "InferenceValidationDetailsAll",
+			Handler:    _Query_InferenceValidationDetailsAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

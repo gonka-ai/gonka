@@ -83,6 +83,16 @@ func TestGenesis(t *testing.T) {
 				InferenceId:      "1",
 			},
 		},
+		InferenceValidationDetailsList: []types.InferenceValidationDetails{
+			{
+				EpochId:     0,
+				InferenceId: "0",
+			},
+			{
+				EpochId:     1,
+				InferenceId: "1",
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -121,5 +131,6 @@ func TestGenesis(t *testing.T) {
 	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
 	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
+	require.ElementsMatch(t, genesisState.InferenceValidationDetailsList, got.InferenceValidationDetailsList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

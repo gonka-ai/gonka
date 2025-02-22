@@ -50,13 +50,13 @@ func CalculateMinimumValidationAverage(recentRequestCount int64, validationParam
 
 func ShouldValidate(
 	seed int64,
-	inferenceDetails *types.InferenceDetail,
+	inferenceDetails *types.InferenceValidationDetails,
 	totalPower uint32,
 	validatorPower uint32,
 	executorPower uint32,
 	validationParams *types.ValidationParams,
 ) (bool, string) {
-	executorReputation := decimal.NewFromFloat(inferenceDetails.ExecutorReputation)
+	executorReputation := decimal.NewFromFloat32(inferenceDetails.ExecutorReputation)
 	one := decimal.NewFromInt(1)
 	maxValidationAverage := decimal.NewFromFloat(validationParams.MaxValidationAverage)
 	minValidationAverage := CalculateMinimumValidationAverage(int64(inferenceDetails.TrafficBasis), validationParams)

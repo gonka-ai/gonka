@@ -66,16 +66,16 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		),
 	)
 	currentEpochGroup.GroupData.NumberOfRequests++
-	currentEpochGroup.GroupData.FinishedInferences = append(currentEpochGroup.GroupData.FinishedInferences,
-		&types.InferenceDetail{
-			InferenceId: existingInference.InferenceId,
-			Executor:    existingInference.ExecutedBy,
-			ExecutorReputation: calculations.CalculateReputation(calculations.ReputationContext{
-				EpochCount:       int64(executor.EpochsCompleted),
-				ValidationParams: currentEpochGroup.GroupData.ValidationParams,
-			}).InexactFloat64(),
-			TrafficBasis: math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
-		})
+	inferenceDetails := types.InferenceValidationDetails{
+		InferenceId: existingInference.InferenceId,
+		ExecutorId:  existingInference.ExecutedBy,
+		ExecutorReputation: float32(calculations.CalculateReputation(calculations.ReputationContext{
+			EpochCount:       int64(executor.EpochsCompleted),
+			ValidationParams: currentEpochGroup.GroupData.ValidationParams,
+		}).InexactFloat64()),
+		TrafficBasis: math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
+	}
+	k.SetInferenceValidationDetails(ctx, inferenceDetails)
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 
 	return &types.MsgFinishInferenceResponse{}, nil

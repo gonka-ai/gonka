@@ -154,6 +154,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a inference_timeout",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "expirationHeight"}, {ProtoField: "inferenceId"}},
 				},
+				{
+					RpcMethod: "InferenceValidationDetailsAll",
+					Use:       "list-inference-validation-details",
+					Short:     "List all inference_validation_details",
+				},
+				{
+					RpcMethod:      "InferenceValidationDetails",
+					Use:            "show-inference-validation-details [id]",
+					Short:          "Shows a inference_validation_details",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochId"}, {ProtoField: "inferenceId"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

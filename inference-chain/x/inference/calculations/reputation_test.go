@@ -188,7 +188,7 @@ func TestShouldValidate(t *testing.T) {
 	tests := []struct {
 		name                 string
 		seed                 int64
-		inferenceDetails     *types.InferenceDetail
+		inferenceDetails     *types.InferenceValidationDetails
 		totalPower           uint32
 		validatorPower       uint32
 		executorPower        uint32
@@ -200,7 +200,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation 0, full validator power",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0.0,
@@ -216,7 +216,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation 1, low validator power",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 1.0,
@@ -232,7 +232,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor higher power, mid reputation",
 			seed: tenPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0.5,
@@ -248,7 +248,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation at max, equal powers",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 1.0,
@@ -264,7 +264,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "max reputation, equal powers, small range",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 1.0,
@@ -280,7 +280,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "min reputation, equal powers, small range",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0.0,
@@ -296,7 +296,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "only one non-executor, bad reputation",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0.0,
@@ -312,7 +312,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "only one non-executor, perfect reputation",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 1.0,
@@ -328,7 +328,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "never more than 1.0",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0.0,
@@ -344,7 +344,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "minimum traffic, perfect reputation",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       100,
 				ExecutorReputation: 1.0,
@@ -360,7 +360,7 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "middle traffic, perfect reputation",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff / 2,
 				ExecutorReputation: 1.0,
