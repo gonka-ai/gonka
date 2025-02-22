@@ -11,16 +11,31 @@ import (
 )
 
 type Broker struct {
-	commands   chan Command
-	nodes      map[string]InferenceNode
-	nodeStates map[string]*NodeState
-	client     cosmosclient.CosmosMessageClient
+	commands chan Command
+	nodes    map[string]NodeWithState
+	client   cosmosclient.CosmosMessageClient
+}
+
+/*
+enum HardwareNodeStatus {
+UNKNOWN = 0;
+INFERENCE = 1;
+POC = 2;
+TRAINING = 3;
+}
+*/
+
+type NodeWithState struct {
+	Node  InferenceNode
+	State NodeState
 }
 
 type NodeState struct {
-	LockCount     int    `json:"lock_count"`
-	Operational   bool   `json:"operational"`
-	FailureReason string `json:"failure_reason"`
+	LockCount      int                      `json:"lock_count"`
+	Operational    bool                     `json:"operational"`
+	FailureReason  string                   `json:"failure_reason"`
+	TrainingTaskId uint64                   `json:"training_task_id"`
+	Status         types.HardwareNodeStatus `json:"status"`
 }
 
 type NodeResponse struct {
@@ -30,10 +45,9 @@ type NodeResponse struct {
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
-		commands:   make(chan Command, 100),
-		nodes:      make(map[string]InferenceNode),
-		nodeStates: make(map[string]*NodeState),
-		client:     client,
+		commands: make(chan Command, 100),
+		nodes:    make(map[string]NodeWithState),
+		client:   client,
 	}
 
 	go broker.processCommands()
@@ -95,8 +109,8 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 	var nodeResponses []NodeResponse
 	for _, node := range b.nodes {
 		nodeResponses = append(nodeResponses, NodeResponse{
-			Node:  &node,
-			State: b.nodeStates[node.Id],
+			Node:  &node.Node,
+			State: &node.State,
 		})
 	}
 	slog.Debug("Got nodes", "size", len(nodeResponses))
@@ -104,11 +118,13 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 }
 
 func (b *Broker) registerNode(command RegisterNode) {
-	b.nodes[command.Node.Id] = command.Node
-	b.nodeStates[command.Node.Id] = &NodeState{
-		LockCount:     0,
-		Operational:   true,
-		FailureReason: "",
+	b.nodes[command.Node.Id] = NodeWithState{
+		Node: command.Node,
+		State: NodeState{
+			LockCount:     0,
+			Operational:   true,
+			FailureReason: "",
+		},
 	}
 	slog.Debug("Registered node", "node", command.Node)
 	command.Response <- command.Node
@@ -120,35 +136,33 @@ func (b *Broker) removeNode(command RemoveNode) {
 		return
 	}
 	delete(b.nodes, command.NodeId)
-	delete(b.nodeStates, command.NodeId)
 	slog.Debug("Removed node", "node_id", command.NodeId)
 	command.Response <- true
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
-	var leastBusyNode *InferenceNode = nil
+	var leastBusyNode *NodeWithState = nil
 
 	for _, node := range b.nodes {
-		if nodeAvailable(b, node, command.Model) {
-			if leastBusyNode == nil || b.nodeStates[node.Id].LockCount < b.nodeStates[leastBusyNode.Id].LockCount {
+		if nodeAvailable(node, command.Model) {
+			if leastBusyNode == nil || node.State.LockCount < node.State.LockCount {
 				leastBusyNode = &node
 			}
 		}
 	}
 	if leastBusyNode != nil {
-		state := b.nodeStates[leastBusyNode.Id]
-		state.LockCount++
+		leastBusyNode.State.LockCount++
 	}
 	slog.Debug("Locked node", "node", leastBusyNode)
-	command.Response <- leastBusyNode
+	command.Response <- &leastBusyNode.Node
 }
 
-func nodeAvailable(b *Broker, node InferenceNode, neededModel string) bool {
-	available := b.nodeStates[node.Id].Operational && b.nodeStates[node.Id].LockCount < node.MaxConcurrent
+func nodeAvailable(node NodeWithState, neededModel string) bool {
+	available := node.State.Operational && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
 	}
-	for _, model := range node.Models {
+	for _, model := range node.Node.Models {
 		if model == neededModel {
 			return true
 		}
@@ -157,15 +171,15 @@ func nodeAvailable(b *Broker, node InferenceNode, neededModel string) bool {
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
-	if nodeState, ok := b.nodeStates[command.NodeId]; !ok {
+	if node, ok := b.nodes[command.NodeId]; !ok {
 		command.Response <- false
 		return
 	} else {
-		nodeState.LockCount--
+		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
 			slog.Error("Node failed", "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			nodeState.Operational = false
-			nodeState.FailureReason = "Inference failed"
+			node.State.Operational = false
+			node.State.FailureReason = "Inference failed"
 		}
 	}
 	slog.Debug("Released node", "node_id", command.NodeId)
@@ -267,17 +281,18 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
-func convertInferenceNodeToHardwareNode(in InferenceNode) *types.HardwareNode {
-	hardware := make([]*types.Hardware, 0, len(in.Hardware))
-	for _, hw := range in.Hardware {
+func convertInferenceNodeToHardwareNode(in NodeWithState) *types.HardwareNode {
+	node := in.Node
+	hardware := make([]*types.Hardware, 0, len(node.Hardware))
+	for _, hw := range node.Hardware {
 		hardware = append(hardware, &types.Hardware{
 			Type:  hw.Type,
 			Count: hw.Count,
 		})
 	}
 	return &types.HardwareNode{
-		LocalId:  in.Id,
-		Status:   1, // TODO: FIX THIS!!!!!!
+		LocalId:  node.Id,
+		Status:   in.State.Status,
 		Hardware: hardware,
 	}
 }
