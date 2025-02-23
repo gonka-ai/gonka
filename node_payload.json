@@ -7,6 +7,10 @@
     "max_concurrent": 500,
     "models": [
       "unsloth/llama-3-8b-Instruct"
+    ],
+    "hardware": [
+      {"type": "A100", "count": 1},
+      {"type": "T4", "count": 2}
     ]
   }
 ]
