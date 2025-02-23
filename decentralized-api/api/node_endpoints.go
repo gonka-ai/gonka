@@ -57,7 +57,7 @@ func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.
 
 func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
 	nodes, err := nodeBroker.GetNodes()
-	iNodes := make([]broker.InferenceNode, len(nodes))
+	iNodes := make([]apiconfig.InferenceNode, len(nodes))
 	for i, n := range nodes {
 		iNodes[i] = *n.Node
 	}
@@ -68,13 +68,13 @@ func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 }
 
 func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
-	var newNodes []broker.InferenceNode
+	var newNodes []apiconfig.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNodes); err != nil {
 		slog.Error("Error decoding request", "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
 		return
 	}
-	var outputNodes []broker.InferenceNode
+	var outputNodes []apiconfig.InferenceNode
 	for _, node := range newNodes {
 		newNode, done := addNode(nodeBroker, w, node, config)
 		if done {
@@ -86,7 +86,7 @@ func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *h
 }
 
 func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
-	var newNode broker.InferenceNode
+	var newNode apiconfig.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNode); err != nil {
 		slog.Error("Error decoding request", "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
@@ -102,10 +102,10 @@ func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *ht
 func addNode(
 	nodeBroker *broker.Broker,
 	w http.ResponseWriter,
-	newNode broker.InferenceNode,
+	newNode apiconfig.InferenceNode,
 	configManager *apiconfig.ConfigManager,
-) (broker.InferenceNode, bool) {
-	response := make(chan broker.InferenceNode, 2)
+) (apiconfig.InferenceNode, bool) {
+	response := make(chan apiconfig.InferenceNode, 2)
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     newNode,
 		Response: response,
@@ -113,7 +113,7 @@ func addNode(
 	if err != nil {
 		slog.Error("Error creating new node", "error", err)
 		http.Error(w, "Error creating new node", http.StatusInternalServerError)
-		return broker.InferenceNode{}, true
+		return apiconfig.InferenceNode{}, true
 	}
 	node := <-response
 	config := configManager.GetConfig()

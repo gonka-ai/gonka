@@ -1,7 +1,6 @@
 package apiconfig
 
 import (
-	"decentralized-api/broker"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -114,7 +113,7 @@ func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
 	return cm.currentConfig.UpcomingSeed
 }
 
-func (cm *ConfigManager) SetNodes(nodes []broker.InferenceNode) error {
+func (cm *ConfigManager) SetNodes(nodes []InferenceNode) error {
 	cm.currentConfig.Nodes = nodes
 	slog.Info("Setting nodes", "nodes", nodes)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
@@ -270,7 +269,7 @@ func loadNodeConfig(config *Config) error {
 	return nil
 }
 
-func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]broker.InferenceNode, error) {
+func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]InferenceNode, error) {
 	file, err := os.Open(nodeConfigPath)
 	if err != nil {
 		slog.Error("Failed to open node config file", "error", err)
@@ -284,7 +283,7 @@ func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]broker.Infe
 		return nil, err
 	}
 
-	var newNodes []broker.InferenceNode
+	var newNodes []InferenceNode
 	if err := json.Unmarshal(bytes, &newNodes); err != nil {
 		slog.Error("Failed to parse node config JSON", "error", err)
 		return nil, err

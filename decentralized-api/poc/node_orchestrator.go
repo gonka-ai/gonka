@@ -3,6 +3,7 @@ package poc
 import (
 	"bytes"
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/json"
@@ -130,7 +131,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	}
 }
 
-func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *apiconfig.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocBatchesCallbackUrl())
 
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitGeneratePath)
@@ -185,7 +186,7 @@ func (o *NodePoCOrchestrator) Stop() {
 	}
 }
 
-func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendStopRequest(node *apiconfig.InferenceNode) (*http.Response, error) {
 	stopUrl, err := url.JoinPath(node.PoCUrl(), StopPath)
 	if err != nil {
 		return nil, err
@@ -196,7 +197,7 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
-func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *apiconfig.InferenceNode) (*http.Response, error) {
 	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
 	if err != nil {
 		return nil, err
@@ -214,7 +215,7 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode)
 	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
 
-func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendInitValidateRequest(node *apiconfig.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocValidateCallbackUrl())
 
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
@@ -349,7 +350,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 }
 
 // FIXME: copying ;( doesn't look good for large PoCBatch structures
-func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.InferenceNode, batch ProofBatch) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *apiconfig.InferenceNode, batch ProofBatch) (*http.Response, error) {
 	validateBatchUrl, err := url.JoinPath(node.PoCUrl(), ValidateBatchPath)
 	if err != nil {
 		return nil, err

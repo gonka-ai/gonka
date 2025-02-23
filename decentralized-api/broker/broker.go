@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
@@ -26,7 +27,7 @@ TRAINING = 3;
 */
 
 type NodeWithState struct {
-	Node  InferenceNode
+	Node  apiconfig.InferenceNode
 	State NodeState
 }
 
@@ -39,8 +40,8 @@ type NodeState struct {
 }
 
 type NodeResponse struct {
-	Node  *InferenceNode `json:"node"`
-	State *NodeState     `json:"state"`
+	Node  *apiconfig.InferenceNode `json:"node"`
+	State *NodeState               `json:"state"`
 }
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
@@ -189,10 +190,10 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 func LockNode[T any](
 	b *Broker,
 	model string,
-	action func(node *InferenceNode) (T, error),
+	action func(node *apiconfig.InferenceNode) (T, error),
 ) (T, error) {
 	var zero T
-	nodeChan := make(chan *InferenceNode, 2)
+	nodeChan := make(chan *apiconfig.InferenceNode, 2)
 	err := b.QueueMessage(LockAvailableNode{
 		Model:    model,
 		Response: nodeChan,
