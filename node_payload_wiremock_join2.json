@@ -9,8 +9,14 @@
       "unsloth/llama-3-8b-Instruct"
     ],
     "hardware": [
-      {"type": "A600", "count": 50},
-      {"type": "A5500", "count": 2}
+      {
+        "type": "A600",
+        "count": 50
+      },
+      {
+        "type": "A5500",
+        "count": 2
+      }
     ]
   }
 ]
