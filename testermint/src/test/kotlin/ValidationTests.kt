@@ -13,10 +13,12 @@ import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
+import com.productscience.setupLocalCluster
 
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         highestFunded.waitForFirstPoC()
@@ -51,6 +53,7 @@ class ValidationTests : TestermintTest() {
     fun `test invalid gets marked invalid`() {
         var tries = 3
 
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
@@ -86,6 +89,7 @@ class ValidationTests : TestermintTest() {
 
     @Test
     fun `test invalid gets removed`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
@@ -108,6 +112,7 @@ class ValidationTests : TestermintTest() {
 
     @Test
     fun `test valid with invalid validator gets validated`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val oddPair = pairs.last()
@@ -121,6 +126,5 @@ class ValidationTests : TestermintTest() {
         highestFunded.node.waitForNextBlock(10)
         val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
         assertThat(newState.status).isEqualTo(InferenceStatus.VALIDATED.value)
-
     }
 }

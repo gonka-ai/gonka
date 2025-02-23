@@ -31,6 +31,7 @@ class InitializationTests {
 
     @Test
     fun getGenesisState() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val genesis = highestFunded.node.getGenesisState()

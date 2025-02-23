@@ -1,19 +1,15 @@
-import com.github.kittinunf.fuel.Fuel
-import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequestStream
-import com.productscience.stream
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
-import java.io.*
-import java.net.HttpURLConnection
-import java.net.URL
+import com.productscience.setupLocalCluster
 
 @Disabled
 class StreamedInferenceTests : TestermintTest() {
     @Test
     fun test() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[0]
 
@@ -27,6 +23,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun listInference() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[0]
 
@@ -36,6 +33,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun getInference() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[0]
 
@@ -46,6 +44,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun runValidation() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[0]
 

@@ -23,9 +23,9 @@ import org.tinylog.kotlin.Logger
 import kotlin.test.assertNotNull
 
 class InferenceAccountingTests : TestermintTest() {
-
     @Test
     fun `test get participants`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         highestFunded.node.waitForNextBlock()
@@ -37,15 +37,16 @@ class InferenceAccountingTests : TestermintTest() {
         val participantsAfterEach = highestFunded.api.getParticipants()
         Logger.debug(participantsAfterEach)
     }
-
     @Test
     fun `test get inference params`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val params = highestFunded.node.getInferenceParams()
         Logger.info(params)
     }
 
+    // TODO actualize and make independent run
     @Test
     fun `test escrow and pre settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
@@ -66,6 +67,7 @@ class InferenceAccountingTests : TestermintTest() {
         assertThat(inferenceResult.executorOwedChange).`as`("executor owed for inference").isEqualTo(inferenceCost)
     }
 
+    // TODO actualize and make independent run
     @Test
     fun `test post settle amounts`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
@@ -91,8 +93,6 @@ class InferenceAccountingTests : TestermintTest() {
         postParticipants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
-
-
     }
 
     private fun verifySettledInferences(
@@ -133,9 +133,9 @@ class InferenceAccountingTests : TestermintTest() {
             )
         }
         return tokenomics
-
     }
 
+    // TODO actualize
     @Test
     fun `test consumer only participant`() {
         val cluster = setupLocalCluster(2, inferenceConfig)
@@ -163,6 +163,7 @@ class InferenceAccountingTests : TestermintTest() {
         }
     }
 
+    // TODO actualize
     @Test
     fun createTopMiner() {
         val localCluster = setupLocalCluster(2, inferenceConfig, reboot = true)
@@ -189,6 +190,7 @@ class InferenceAccountingTests : TestermintTest() {
         assertThat(topMiner2.lastUpdatedTime).isEqualTo(startTime + topMiner2.qualifiedTime!!)
     }
 
+    // TODO actualize
     @Test
     fun payTopMiner() {
         val fastRewardSpec = spec {
