@@ -1,0 +1,86 @@
+x-common-config: &common-config
+  env_file:
+    - .env
+  network_mode: host
+  shm_size: "120g"
+  ports:
+    - "8880:8880"
+  volumes:
+    - /mnt/shared/cache:/root/.cache
+    - ${PROJECT_ROOT}/packages/api/src:/app/mlnode/packages/api/src
+    - ${PROJECT_ROOT}/packages/api/tests:/app/mlnode/packages/api/tests
+    - ${PROJECT_ROOT}/packages/proof-of-work/src:/app/mlnode/packages/proof-of-work/src
+    - ${PROJECT_ROOT}/packages/proof-of-work/tests:/app/mlnode/packages/proof-of-work/tests
+    - ${PROJECT_ROOT}/packages/proof-of-work/resources:/app/mlnode/packages/proof-of-work/resources
+    - ${PROJECT_ROOT}/packages/proof-of-work/scripts:/app/mlnode/packages/proof-of-work/scripts
+    - ${PROJECT_ROOT}/packages/train/src:/app/mlnode/packages/train/src
+    - ${PROJECT_ROOT}/packages/train/scripts:/app/mlnode/packages/train/scripts
+    - ${PROJECT_ROOT}/packages/train/configs:/app/mlnode/packages/train/configs
+    - ${PROJECT_ROOT}/packages/train/tests:/app/mlnode/packages/train/tests
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - capabilities: [gpu]
+            device_ids: ["0"]
+services:
+
+  server:
+    <<: *common-config
+    image: comb-test
+    command: python -m uvicorn api.app:app --host 0.0.0.0 --port 8000
+  
+  tests:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/api/tests
+    command: bash -c "pip install --upgrade pytest && pytest test_conflicts.py -v"
+
+  pow-api-test:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/proof-of-work/tests
+    command: bash -c "python -m uvicorn batch_reciever:app --host 0.0.0.0 --port 8000 & python test_pow.py"
+  
+  inference-api-test:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/api/tests
+    command: bash -c "pip install --upgrade pytest && pytest test_inference.py -v"
+  
+  train-api-test:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/train/tests/
+    command: python api_test.py
+
+  api-conflict-test:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/api/tests
+    command: python test_conflicts.py
+  
+  api-test:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/api/tests
+    command: python test_api.py
+  
+  shell:
+    <<: *common-config
+    image: comb-test
+    command: bash
+  
+  batch-reciever:
+    <<: *common-config
+    image: comb-test
+    working_dir: /app/mlnode/packages/proof-of-work/tests
+    command: python -m uvicorn tests.batch_reciever:app --host 0.0.0.0 --port 8081
+
+  jupyter:
+    <<: *common-config
+    image: comb-test
+    command: bash -c "pip install --upgrade jupyter && jupyter lab --ip=0.0.0.0 --port=8880 --no-browser --allow-root"
+
+
+

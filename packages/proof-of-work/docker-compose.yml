@@ -1,0 +1,36 @@
+x-common-config: &common-config
+  network_mode: host
+  shm_size: "120g"
+  volumes:
+    - ${CACHE_DIR}:/root/.cache
+    - ${PROJECT_ROOT}/packages/proof-of-work/src:/app/mlnode/packages/proof-of-work/src
+    - ${PROJECT_ROOT}/packages/proof-of-work/tests:/app/mlnode/packages/proof-of-work/tests
+    - ${PROJECT_ROOT}/packages/proof-of-work/resources:/app/mlnode/packages/proof-of-work/resources
+    - ${PROJECT_ROOT}/packages/proof-of-work/scripts:/app/mlnode/packages/proof-of-work/scripts
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - capabilities: [gpu]
+            device_ids: ["7"]
+services:
+  batch-reciever:
+    <<: *common-config
+    image: pow-test
+    command: uvicorn tests.batch_reciever:app --host 0.0.0.0 --port 8081
+
+  server:
+    <<: *common-config
+    image: pow-test
+    command: uvicorn pow.service.app:app --host 0.0.0.0 --port 8080
+
+  pow-api-test:
+    <<: *common-config
+    image: pow-test
+    working_dir: /app/mlnode/packages/proof-of-work/tests
+    command: bash -c "python -m uvicorn batch_reciever:app --host 0.0.0.0 --port 8081 & python test_pow.py"
+
+  shell:
+    <<: *common-config
+    image: pow-test
+    command: bash
