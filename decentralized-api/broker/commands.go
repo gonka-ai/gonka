@@ -85,6 +85,12 @@ type SyncNodesCommand struct {
 	Response chan bool
 }
 
+func NewSyncNodesCommand() SyncNodesCommand {
+	return SyncNodesCommand{
+		Response: make(chan bool, 2),
+	}
+}
+
 func (s SyncNodesCommand) GetResponseChannelCapacity() int {
 	return cap(s.Response)
 }

@@ -63,7 +63,7 @@ func nodeSyncWorker(broker *Broker) {
 	defer ticker.Stop()
 	for range ticker.C {
 		slog.Debug("Syncing nodes")
-		if err := broker.QueueMessage(SyncNodesCommand{}); err != nil {
+		if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
 			slog.Error("Error syncing nodes", "error", err)
 		}
 	}
