@@ -251,6 +251,8 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 		slog.Error("[sync nodes]. Error getting nodes", "error", err)
 		return
 	}
+	slog.Info("[sync nodes] Fetched chain nodes", "size", len(resp.Nodes.HardwareNodes))
+	slog.Info("[sync nodes] Local nodes", "size", len(b.nodes))
 
 	chainNodesMap := make(map[string]*types.HardwareNode)
 	for _, node := range resp.Nodes.HardwareNodes {
