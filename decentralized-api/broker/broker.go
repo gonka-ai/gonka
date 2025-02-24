@@ -279,8 +279,16 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 		}
 	}
 
-	// TODO: submit diff to the chain or process it further.
 	slog.Info("[sync nodes] Hardware diff computed", "diff", diff)
+
+	if (diff.Removed == nil || len(diff.Removed) == 0) && (diff.NewOrModified == nil || len(diff.NewOrModified) == 0) {
+		slog.Info("[sync nodes] No diff to submit")
+	} else {
+		slog.Info("[sync nodes] Submitting diff")
+		if _, err = b.client.SendTransaction(&diff); err != nil {
+			slog.Error("[sync nodes] Error submitting diff", "error", err)
+		}
+	}
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
