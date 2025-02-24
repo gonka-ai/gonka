@@ -16,8 +16,16 @@ func (k Keeper) HardwareNodes(goCtx context.Context, req *types.QueryHardwareNod
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	nodes, found := k.GetHardwareNodes(ctx, req.Participant)
+	if !found {
+		return &types.QueryHardwareNodesResponse{
+			Nodes: &types.HardwareNodes{
+				HardwareNodes: []*types.HardwareNode{},
+			},
+		}, nil
+	}
 
-	return &types.QueryHardwareNodesResponse{}, nil
+	return &types.QueryHardwareNodesResponse{
+		Nodes: nodes,
+	}, nil
 }
