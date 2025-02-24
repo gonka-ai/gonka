@@ -10,8 +10,9 @@ import (
 )
 
 type ReputationContext struct {
-	EpochCount       int64
-	ValidationParams *types.ValidationParams
+	EpochCount           int64
+	EpochMissPercentages []decimal.Decimal
+	ValidationParams     *types.ValidationParams
 }
 
 func CalculateReputation(ctx ReputationContext) decimal.Decimal {
@@ -77,7 +78,7 @@ func ShouldValidate(
 }
 
 // In lieu of a real random number generator, we use a deterministic function that takes a seed and an inferenceId
-// This is more or less as random as using a seed in a deterministic random determined by this same hash, and has
+// This is more or less as random as using a seed in a deterministic random seed determined by this same hash, and has
 // the advantage of being 100% deterministic regardless of platform and also faster to compute.
 func deterministicFloat(seed int64, inferenceId string) decimal.Decimal {
 	// Concatenate the seed and inferenceId into a single string

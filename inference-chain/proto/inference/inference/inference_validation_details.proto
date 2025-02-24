@@ -9,6 +9,6 @@ message InferenceValidationDetails {
   string executor_id = 3;
   float executor_reputation = 4;
   uint64 traffic_basis = 5;
-
+  uint64 executor_power = 6;
 }
 

@@ -165,6 +165,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
   
   }
+  
+  // Queries a list of GetInferenceValidationParameters items.
+  rpc GetInferenceValidationParameters (QueryGetInferenceValidationParametersRequest) returns (QueryGetInferenceValidationParametersResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_inference_validation_parameters/{ids}/{requester}";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -397,5 +403,18 @@ message QueryAllInferenceValidationDetailsRequest {
 message QueryAllInferenceValidationDetailsResponse {
   repeated InferenceValidationDetails             inferenceValidationDetails = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination                 = 2;
+}
+
+message QueryGetInferenceValidationParametersRequest {
+  repeated string ids       = 1;
+           string requester = 2;
+}
+
+message QueryGetInferenceValidationParametersResponse {
+  uint64 total_power     = 1;
+  uint64 validator_power = 2;
+  uint64 current_height  = 3;
+  repeated InferenceValidationDetails details = 4;
+  ValidationParams parameters = 5;
 }
 

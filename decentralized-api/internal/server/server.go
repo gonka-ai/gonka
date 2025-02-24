@@ -897,7 +897,6 @@ func getParticipants(recorder cosmos_client.CosmosMessageClient, w http.Response
 			CoinsOwed:   p.CoinBalance,
 			Balance:     pBalance,
 			VotingPower: int64(p.Weight),
-			Reputation:  p.Reputation,
 		}
 	}
 

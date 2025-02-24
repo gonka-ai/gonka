@@ -17,6 +17,7 @@ message EpochGroupData {
   uint64 number_of_requests = 10;
   uint64 previous_epoch_requests = 11;
   ValidationParams validation_params = 12;
+  uint64 total_weight = 13;
 }
 
 message ValidationWeight {

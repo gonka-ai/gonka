@@ -89,6 +89,7 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint
 		MemberAddress: address,
 		Weight:        int64(weight),
 	})
+	eg.GroupData.TotalWeight += weight
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
 }

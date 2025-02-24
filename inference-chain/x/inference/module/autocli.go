@@ -165,6 +165,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a inference_validation_details",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochId"}, {ProtoField: "inferenceId"}},
 				},
+				{
+					RpcMethod:      "GetInferenceValidationParameters",
+					Use:            "get-inference-validation-parameters [ids] [requester]",
+					Short:          "Query GetInferenceValidationParameters",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}, {ProtoField: "requester"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

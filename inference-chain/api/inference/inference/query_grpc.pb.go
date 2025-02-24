@@ -19,32 +19,33 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName                        = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName                     = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName                  = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName                   = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName                = "/inference.inference.Query/ParticipantAll"
-	Query_GetInferencesWithExecutors_FullMethodName    = "/inference.inference.Query/GetInferencesWithExecutors"
-	Query_InferenceParticipant_FullMethodName          = "/inference.inference.Query/InferenceParticipant"
-	Query_GetRandomExecutor_FullMethodName             = "/inference.inference.Query/GetRandomExecutor"
-	Query_EpochGroupData_FullMethodName                = "/inference.inference.Query/EpochGroupData"
-	Query_EpochGroupDataAll_FullMethodName             = "/inference.inference.Query/EpochGroupDataAll"
-	Query_SettleAmount_FullMethodName                  = "/inference.inference.Query/SettleAmount"
-	Query_SettleAmountAll_FullMethodName               = "/inference.inference.Query/SettleAmountAll"
-	Query_EpochGroupValidations_FullMethodName         = "/inference.inference.Query/EpochGroupValidations"
-	Query_EpochGroupValidationsAll_FullMethodName      = "/inference.inference.Query/EpochGroupValidationsAll"
-	Query_PocBatchesForStage_FullMethodName            = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
-	Query_TokenomicsData_FullMethodName                = "/inference.inference.Query/TokenomicsData"
-	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
-	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
-	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
-	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
-	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
-	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
-	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
-	Query_InferenceValidationDetails_FullMethodName    = "/inference.inference.Query/InferenceValidationDetails"
-	Query_InferenceValidationDetailsAll_FullMethodName = "/inference.inference.Query/InferenceValidationDetailsAll"
+	Query_Params_FullMethodName                           = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                        = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName                     = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                      = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName                   = "/inference.inference.Query/ParticipantAll"
+	Query_GetInferencesWithExecutors_FullMethodName       = "/inference.inference.Query/GetInferencesWithExecutors"
+	Query_InferenceParticipant_FullMethodName             = "/inference.inference.Query/InferenceParticipant"
+	Query_GetRandomExecutor_FullMethodName                = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName                   = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName                = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName                     = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName                  = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName            = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName         = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName               = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName                  = "/inference.inference.Query/GetCurrentEpoch"
+	Query_TokenomicsData_FullMethodName                   = "/inference.inference.Query/TokenomicsData"
+	Query_GetUnitOfComputePriceProposal_FullMethodName    = "/inference.inference.Query/GetUnitOfComputePriceProposal"
+	Query_CurrentEpochGroupData_FullMethodName            = "/inference.inference.Query/CurrentEpochGroupData"
+	Query_ModelsAll_FullMethodName                        = "/inference.inference.Query/ModelsAll"
+	Query_TopMiner_FullMethodName                         = "/inference.inference.Query/TopMiner"
+	Query_TopMinerAll_FullMethodName                      = "/inference.inference.Query/TopMinerAll"
+	Query_InferenceTimeout_FullMethodName                 = "/inference.inference.Query/InferenceTimeout"
+	Query_InferenceTimeoutAll_FullMethodName              = "/inference.inference.Query/InferenceTimeoutAll"
+	Query_InferenceValidationDetails_FullMethodName       = "/inference.inference.Query/InferenceValidationDetails"
+	Query_InferenceValidationDetailsAll_FullMethodName    = "/inference.inference.Query/InferenceValidationDetailsAll"
+	Query_GetInferenceValidationParameters_FullMethodName = "/inference.inference.Query/GetInferenceValidationParameters"
 )
 
 // QueryClient is the client API for Query service.
@@ -95,6 +96,8 @@ type QueryClient interface {
 	// Queries a list of InferenceValidationDetails items.
 	InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error)
 	InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error)
+	// Queries a list of GetInferenceValidationParameters items.
+	GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error)
 }
 
 type queryClient struct {
@@ -339,6 +342,15 @@ func (c *queryClient) InferenceValidationDetailsAll(ctx context.Context, in *Que
 	return out, nil
 }
 
+func (c *queryClient) GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error) {
+	out := new(QueryGetInferenceValidationParametersResponse)
+	err := c.cc.Invoke(ctx, Query_GetInferenceValidationParameters_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -387,6 +399,8 @@ type QueryServer interface {
 	// Queries a list of InferenceValidationDetails items.
 	InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error)
 	InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error)
+	// Queries a list of GetInferenceValidationParameters items.
+	GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -471,6 +485,9 @@ func (UnimplementedQueryServer) InferenceValidationDetails(context.Context, *Que
 }
 func (UnimplementedQueryServer) InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceValidationDetailsAll not implemented")
+}
+func (UnimplementedQueryServer) GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInferenceValidationParameters not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -953,6 +970,24 @@ func _Query_InferenceValidationDetailsAll_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetInferenceValidationParameters_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceValidationParametersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetInferenceValidationParameters(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetInferenceValidationParameters_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetInferenceValidationParameters(ctx, req.(*QueryGetInferenceValidationParametersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1063,6 +1098,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InferenceValidationDetailsAll",
 			Handler:    _Query_InferenceValidationDetailsAll_Handler,
+		},
+		{
+			MethodName: "GetInferenceValidationParameters",
+			Handler:    _Query_GetInferenceValidationParameters_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
