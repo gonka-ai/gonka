@@ -15,6 +15,7 @@ type TrainingTaskWatcher struct {
 
 // Number of blocks a person
 const assignerDeadline = 300
+const logTag = "[training-task-watcher] "
 
 func NewTrainingTaskWatcher(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *TrainingTaskWatcher {
 	watcher := &TrainingTaskWatcher{
@@ -33,11 +34,11 @@ func (w TrainingTaskWatcher) watchTasks() {
 	for range ticker.C {
 		chainStatus, err := w.tendermintClient.Status()
 		if err != nil {
-			slog.Error("Failed to query chain status", "err", err)
+			slog.Error(logTag+"Failed to query chain status", "err", err)
 		}
 
 		if chainStatus.SyncInfo.CatchingUp {
-			slog.Info("Node is catching up, skipping task query")
+			slog.Info(logTag + "Node is catching up, skipping task query")
 			continue
 		}
 
@@ -47,20 +48,26 @@ func (w TrainingTaskWatcher) watchTasks() {
 		req := &types.QueryQueuedTrainingTasksRequest{}
 		resp, err := queryClient.QueuedTrainingTasks(*w.cosmosClient.GetContext(), req)
 		if err != nil {
-			slog.Error("Error querying for training tasks", "err", err)
+			slog.Error(logTag+"Error querying for training tasks", "err", err)
 			continue
 		}
 
 		task := chooseTrainingTask(resp.Tasks, blockHeight)
 		_ = task
 
+		msg := types.MsgClaimTrainingTaskForAssignment{
+			Creator: w.cosmosClient.GetAddress(),
+		}
+		if _, err = w.cosmosClient.SendTransaction(&msg); err != nil {
+			slog.Error(logTag+"Error claiming task for assignment", "err", err)
+		}
 	}
 }
 
 func chooseTrainingTask(tasks []*types.TrainingTask, currentBlockHeight int64) *types.TrainingTask {
 	filteredTasks := make([]*types.TrainingTask, 0)
 	for _, task := range tasks {
-		if task.Assigner == "" || (uint64(currentBlockHeight)-task.AssignerLockedAtBlockHeight) > assignerDeadline {
+		if task.Assigner == "" || (uint64(currentBlockHeight)-task.ClaimedByAssignerAtBlockHeight) > assignerDeadline {
 			filteredTasks = append(filteredTasks, task)
 		}
 	}

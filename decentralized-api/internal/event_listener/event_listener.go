@@ -42,10 +42,13 @@ func updateNodeSyncStatus(status bool) {
 }
 
 func startSyncStatusChecker(chainNodeUrl string) {
+	tendermintClint := cosmosclient.TendermintClient{
+		ChainNodeUrl: chainNodeUrl,
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		status, err := cosmosclient.TendermintStatus(chainNodeUrl)
+		status, err := tendermintClint.Status()
 		if err != nil {
 			slog.Error("Error getting node status", "error", err)
 			continue

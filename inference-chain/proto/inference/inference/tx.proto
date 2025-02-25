@@ -230,6 +230,7 @@ message MsgSubmitHardwareDiffResponse {}
 message MsgClaimTrainingTaskForAssignment {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
+  uint64 task_id = 2;
 }
 
 message MsgClaimTrainingTaskForAssignmentResponse {}
