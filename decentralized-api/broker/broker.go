@@ -263,7 +263,7 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 	diff.Creator = b.client.GetAddress()
 
 	for id, localNode := range b.nodes {
-		localHWNode := convertInferenceNodeToHardwareNode(localNode)
+		localHWNode := b.convertInferenceNodeToHardwareNode(localNode)
 
 		chainNode, exists := chainNodesMap[id]
 		if !exists {
@@ -292,7 +292,7 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
-func convertInferenceNodeToHardwareNode(in NodeWithState) *types.HardwareNode {
+func (b Broker) convertInferenceNodeToHardwareNode(in NodeWithState) *types.HardwareNode {
 	node := in.Node
 	hardware := make([]*types.Hardware, 0, len(node.Hardware))
 	for _, hw := range node.Hardware {
@@ -302,9 +302,10 @@ func convertInferenceNodeToHardwareNode(in NodeWithState) *types.HardwareNode {
 		})
 	}
 	return &types.HardwareNode{
-		LocalId:  node.Id,
-		Status:   in.State.Status,
-		Hardware: hardware,
+		Participant: b.client.GetAddress(), // Do we really need participant here?
+		LocalId:     node.Id,
+		Status:      in.State.Status,
+		Hardware:    hardware,
 	}
 }
 
