@@ -9,6 +9,7 @@ import (
 	"decentralized-api/internal/server"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
+	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -69,9 +70,14 @@ func main() {
 		return
 	}
 
+	tendermintClient := cosmosclient.TendermintClient{
+		ChainNodeUrl: config.GetConfig().ChainNode.Url,
+	}
 	go func() {
 		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
+
+	training.NewTrainingTaskWatcher(recorder, &tendermintClient)
 
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }

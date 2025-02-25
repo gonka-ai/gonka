@@ -163,6 +163,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
   
   }
+  
+  // Queries a list of QueuedTrainingTasks items.
+  rpc QueuedTrainingTasks (QueryQueuedTrainingTasksRequest) returns (QueryQueuedTrainingTasksResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -380,4 +386,10 @@ message QueryHardwareNodesAllRequest {}
 
 message QueryHardwareNodesAllResponse {
   repeated HardwareNodes nodes = 1;
+}
+
+message QueryQueuedTrainingTasksRequest {}
+
+message QueryQueuedTrainingTasksResponse {
+  repeated TrainingTask tasks = 1;
 }
