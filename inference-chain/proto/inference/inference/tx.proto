@@ -35,6 +35,7 @@ service Msg {
   rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
+  rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -219,10 +220,17 @@ message MsgCreateTrainingTaskResponse {
 
 message MsgSubmitHardwareDiff {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
+           string       creator       = 1;
   repeated HardwareNode newOrModified = 2;
-  repeated HardwareNode removed = 3;
+  repeated HardwareNode removed       = 3;
 }
 
 message MsgSubmitHardwareDiffResponse {}
+
+message MsgClaimTrainingTaskForAssignment {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+}
+
+message MsgClaimTrainingTaskForAssignmentResponse {}
 

@@ -266,6 +266,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a SubmitHardwareDiff tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod:      "ClaimTrainingTaskForAssignment",
+					Use:            "claim-training-task-for-assignment",
+					Short:          "Send a claim-training-task-for-assignment tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

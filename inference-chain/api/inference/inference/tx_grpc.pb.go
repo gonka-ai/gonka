@@ -35,6 +35,7 @@ const (
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
 	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
 	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
+	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
 )
 
 // MsgClient is the client API for Msg service.
@@ -59,6 +60,7 @@ type MsgClient interface {
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
 	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwareDiff, opts ...grpc.CallOption) (*MsgSubmitHardwareDiffResponse, error)
+	ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 }
 
 type msgClient struct {
@@ -213,6 +215,15 @@ func (c *msgClient) SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwar
 	return out, nil
 }
 
+func (c *msgClient) ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
+	out := new(MsgClaimTrainingTaskForAssignmentResponse)
+	err := c.cc.Invoke(ctx, Msg_ClaimTrainingTaskForAssignment_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -235,6 +246,7 @@ type MsgServer interface {
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
 	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error)
+	ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -289,6 +301,9 @@ func (UnimplementedMsgServer) CreateTrainingTask(context.Context, *MsgCreateTrai
 }
 func (UnimplementedMsgServer) SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitHardwareDiff not implemented")
+}
+func (UnimplementedMsgServer) ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClaimTrainingTaskForAssignment not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -591,6 +606,24 @@ func _Msg_SubmitHardwareDiff_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_ClaimTrainingTaskForAssignment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgClaimTrainingTaskForAssignment)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ClaimTrainingTaskForAssignment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, req.(*MsgClaimTrainingTaskForAssignment))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -661,6 +694,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitHardwareDiff",
 			Handler:    _Msg_SubmitHardwareDiff_Handler,
+		},
+		{
+			MethodName: "ClaimTrainingTaskForAssignment",
+			Handler:    _Msg_ClaimTrainingTaskForAssignment_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
