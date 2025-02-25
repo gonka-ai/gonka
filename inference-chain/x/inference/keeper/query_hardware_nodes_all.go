@@ -16,9 +16,13 @@ func (k Keeper) HardwareNodesAll(goCtx context.Context, req *types.QueryHardware
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	k.GetHardwareNodes()
-	// TODO: Process the query
-	_ = ctx
+	nodes, err := k.GetAllHardwareNodes(ctx)
+	if err != nil {
+		k.LogError("HardwareNodesAll query: error getting all hardware nodes", "err", err)
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
-	return &types.QueryHardwareNodesAllResponse{}, nil
+	return &types.QueryHardwareNodesAllResponse{
+		Nodes: nodes,
+	}, nil
 }

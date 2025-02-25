@@ -378,5 +378,6 @@ message QueryHardwareNodesResponse {
 
 message QueryHardwareNodesAllRequest {}
 
-message QueryHardwareNodesAllResponse {}
-
+message QueryHardwareNodesAllResponse {
+  repeated HardwareNodes nodes = 1;
+}
