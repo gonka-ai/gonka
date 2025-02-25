@@ -13,7 +13,7 @@ import (
 
 type Broker struct {
 	commands chan Command
-	nodes    map[string]NodeWithState
+	nodes    map[string]*NodeWithState
 	client   cosmosclient.CosmosMessageClient
 }
 
@@ -47,7 +47,7 @@ type NodeResponse struct {
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
 		commands: make(chan Command, 100),
-		nodes:    make(map[string]NodeWithState),
+		nodes:    make(map[string]*NodeWithState),
 		client:   client,
 	}
 
@@ -119,7 +119,7 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 }
 
 func (b *Broker) registerNode(command RegisterNode) {
-	b.nodes[command.Node.Id] = NodeWithState{
+	b.nodes[command.Node.Id] = &NodeWithState{
 		Node: command.Node,
 		State: NodeState{
 			LockCount:     0,
@@ -147,7 +147,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	for _, node := range b.nodes {
 		if nodeAvailable(node, command.Model) {
 			if leastBusyNode == nil || node.State.LockCount < node.State.LockCount {
-				leastBusyNode = &node
+				leastBusyNode = node
 			}
 		}
 	}
@@ -155,10 +155,14 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 		leastBusyNode.State.LockCount++
 	}
 	slog.Debug("Locked node", "node", leastBusyNode)
-	command.Response <- &leastBusyNode.Node
+	if leastBusyNode == nil {
+		command.Response <- nil
+	} else {
+		command.Response <- &leastBusyNode.Node
+	}
 }
 
-func nodeAvailable(node NodeWithState, neededModel string) bool {
+func nodeAvailable(node *NodeWithState, neededModel string) bool {
 	available := node.State.Operational && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
@@ -292,7 +296,7 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
-func convertInferenceNodeToHardwareNode(in NodeWithState) *types.HardwareNode {
+func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 	node := in.Node
 	hardware := make([]*types.Hardware, 0, len(node.Hardware))
 	for _, hw := range node.Hardware {
