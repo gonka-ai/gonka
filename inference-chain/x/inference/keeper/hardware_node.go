@@ -16,12 +16,7 @@ func HardwareNodesKey(participantId string) []byte {
 	return types.StringKey(participantId)
 }
 
-func (k Keeper) SetHardwareNodes(ctx sdk.Context, hardwareNodes *types.HardwareNodes) error {
-	if len(hardwareNodes.HardwareNodes) == 0 {
-		return fmt.Errorf("hardware nodes list is empty")
-	}
-
-	participantId := hardwareNodes.HardwareNodes[0].Participant
+func (k Keeper) SetHardwareNodes(ctx sdk.Context, participantId string, hardwareNodes *types.HardwareNodes) error {
 	for i, hardwareNode := range hardwareNodes.HardwareNodes {
 		if hardwareNode.Participant != participantId {
 			return fmt.Errorf("hardware node participant id does not match hardware nodes participant id. participantId = %s. participantIdAt%d = %s", participantId, i, hardwareNode.Participant)

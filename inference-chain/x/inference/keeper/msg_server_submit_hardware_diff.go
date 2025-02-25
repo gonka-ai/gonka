@@ -37,7 +37,8 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		updatedNodes.HardwareNodes = append(updatedNodes.HardwareNodes, node)
 	}
 
-	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
+	if err := k.SetHardwareNodes(ctx, msg.Creator, updatedNodes); err != nil {
+		k.LogError("Error setting hardware nodes", "err", err)
 		return nil, err
 	}
 
