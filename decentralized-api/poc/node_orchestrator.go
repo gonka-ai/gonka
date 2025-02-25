@@ -7,20 +7,23 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
+	StopAllPath       = "/api/v1/stop"
 	InitGeneratePath  = "/api/v1/pow/init/generate"
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
-	StopPath          = "/api/v1/pow/stop"
+	PoCStopPath       = "/api/v1/pow/stop"
 	InferenceUpPath   = "/api/v1/inference/up"
+	InferenceDownPath = "/api/v1/inference/down"
 
 	DefaultRTarget        = 1.390051443
 	DefaultBatchSize      = 8000
@@ -105,7 +108,7 @@ var DevTestParams = Params{
 	SeqLen:           4,
 }
 
-func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
+func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 	if o.noOp {
 		slog.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.")
 		return
@@ -119,6 +122,13 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	}
 
 	for _, n := range nodes {
+		respStop, err := o.sendStopAllRequest(n.Node)
+		if err != nil {
+			slog.Error("Failed to send stop request to node", "node", n.Node.Host, "error", err)
+			continue
+		}
+		_ = respStop
+
 		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
 		if err != nil {
 			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
@@ -156,9 +166,9 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, 
 	}
 }
 
-func (o *NodePoCOrchestrator) Stop() {
+func (o *NodePoCOrchestrator) StopPoC() {
 	if o.noOp {
-		slog.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.")
+		slog.Info("NodePoCOrchestrator.StopPoC. NoOp is set. Skipping stop.")
 		return
 	}
 
@@ -186,12 +196,23 @@ func (o *NodePoCOrchestrator) Stop() {
 }
 
 func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), StopPath)
+	stopUrl, err := url.JoinPath(node.PoCUrl(), PoCStopPath)
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
+
+	return sendPostRequest(o.HTTPClient, stopUrl, nil)
+}
+
+func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.InferenceNode) (*http.Response, error) {
+	stopUrl, err := url.JoinPath(node.PoCUrl(), StopAllPath)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("Sending stop all request to node", "stopUrl", stopUrl)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
