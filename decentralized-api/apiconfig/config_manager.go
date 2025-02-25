@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"decentralized-api/broker"
+	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
-	"golang.org/x/exp/slog"
+	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"os"
@@ -66,7 +67,7 @@ func (cm *ConfigManager) GetConfig() *Config {
 
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
 	cm.currentConfig.UpgradePlan = plan
-	slog.Info("Setting upgrade plan", "plan", plan)
+	logging.Info("Setting upgrade plan", types.Config, "plan", plan)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -76,7 +77,7 @@ func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
 
 func (cm *ConfigManager) SetHeight(height int64) error {
 	cm.currentConfig.CurrentHeight = height
-	slog.Info("Setting height", "height", height)
+	logging.Info("Setting height", types.Config, "height", height)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -86,7 +87,7 @@ func (cm *ConfigManager) GetHeight() int64 {
 
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {
 	cm.currentConfig.PreviousSeed = seed
-	slog.Info("Setting previous seed", "seed", seed)
+	logging.Info("Setting previous seed", types.Config, "seed", seed)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -96,7 +97,7 @@ func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
 
 func (cm *ConfigManager) SetCurrentSeed(seed SeedInfo) error {
 	cm.currentConfig.CurrentSeed = seed
-	slog.Info("Setting current seed", "seed", seed)
+	logging.Info("Setting current seed", types.Config, "seed", seed)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -106,7 +107,7 @@ func (cm *ConfigManager) GetCurrentSeed() SeedInfo {
 
 func (cm *ConfigManager) SetUpcomingSeed(seed SeedInfo) error {
 	cm.currentConfig.UpcomingSeed = seed
-	slog.Info("Setting upcoming seed", "seed", seed)
+	logging.Info("Setting upcoming seed", types.Config, "seed", seed)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -116,7 +117,7 @@ func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
 
 func (cm *ConfigManager) SetNodes(nodes []broker.InferenceNode) error {
 	cm.currentConfig.Nodes = nodes
-	slog.Info("Setting nodes", "nodes", nodes)
+	logging.Info("Setting nodes", types.Config, "nodes", nodes)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
@@ -200,17 +201,17 @@ func writeConfig(config Config, writer WriteCloser) error {
 	parser := yaml.Parser()
 	err := k.Load(structs.Provider(config, "koanf"), nil)
 	if err != nil {
-		slog.Error("error loading config", "error", err)
+		logging.Error("error loading config", types.Config, "error", err)
 		return err
 	}
 	output, err := k.Marshal(parser)
 	if err != nil {
-		slog.Error("error marshalling config", "error", err)
+		logging.Error("error marshalling config", types.Config, "error", err)
 		return err
 	}
 	_, err = writer.Write(output)
 	if err != nil {
-		slog.Error("error writing config", "error", err)
+		logging.Error("error writing config", types.Config, "error", err)
 		return err
 	}
 	return nil
@@ -224,17 +225,17 @@ type WriteCloser interface {
 // Called once at startup to load additional nodes from a separate config file
 func loadNodeConfig(config *Config) error {
 	if config.NodeConfigIsMerged {
-		slog.Info("Node config already merged. Skipping")
+		logging.Info("Node config already merged. Skipping", types.Config)
 		return nil
 	}
 
 	nodeConfigPath, found := os.LookupEnv("NODE_CONFIG_PATH")
 	if !found || strings.TrimSpace(nodeConfigPath) == "" {
-		slog.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config")
+		logging.Info("NODE_CONFIG_PATH not set. No additional nodes will be added to config", types.Config)
 		return nil
 	}
 
-	slog.Info("Loading and merging node configuration", "path", nodeConfigPath)
+	logging.Info("Loading and merging node configuration", types.Config, "path", nodeConfigPath)
 
 	newNodes, err := parseInferenceNodesFromNodeConfigJson(nodeConfigPath)
 	if err != nil {
@@ -264,8 +265,8 @@ func loadNodeConfig(config *Config) error {
 	config.Nodes = append(config.Nodes, newNodes...)
 	config.NodeConfigIsMerged = true
 
-	slog.Info("Successfully loaded and merged node configuration",
-		"new_nodes", len(newNodes),
+	logging.Info("Successfully loaded and merged node configuration",
+		types.Config, "new_nodes", len(newNodes),
 		"total_nodes", len(config.Nodes))
 	return nil
 }
@@ -273,20 +274,20 @@ func loadNodeConfig(config *Config) error {
 func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]broker.InferenceNode, error) {
 	file, err := os.Open(nodeConfigPath)
 	if err != nil {
-		slog.Error("Failed to open node config file", "error", err)
+		logging.Error("Failed to open node config file", types.Config, "error", err)
 		return nil, err
 	}
 	defer file.Close()
 
 	bytes, err := io.ReadAll(file)
 	if err != nil {
-		slog.Error("Failed to read node config file", "error", err)
+		logging.Error("Failed to read node config file", types.Config, "error", err)
 		return nil, err
 	}
 
 	var newNodes []broker.InferenceNode
 	if err := json.Unmarshal(bytes, &newNodes); err != nil {
-		slog.Error("Failed to parse node config JSON", "error", err)
+		logging.Error("Failed to parse node config JSON", types.Config, "error", err)
 		return nil, err
 	}
 

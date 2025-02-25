@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,11 +84,11 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
-		slog.Error("Failed to get current epoch", "error", err)
+		logging.Error("Failed to get current epoch", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	slog.Info("Current epoch resolved.", "epoch", currEpoch.Epoch)
+	logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
 
 	var epoch uint64
 	if epochOrNil == nil {
@@ -122,27 +122,27 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 
 	rpcClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
 	if err != nil {
-		slog.Error("Failed to create rpc client", "error", err)
+		logging.Error("Failed to create rpc client", types.System, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
 	result, err := queryActiveParticipants(rpcClient, cdc, epoch)
 	if err != nil {
-		slog.Error("Failed to query active participants. Outer", "error", err)
+		logging.Error("Failed to query active participants. Outer", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	var activeParticipants types.ActiveParticipants
 	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-		slog.Error("Failed to unmarshal active participant", "error", err)
+		logging.Error("Failed to unmarshal active participant", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
 	if err != nil {
-		slog.Error("Failed to get block", "error", err)
+		logging.Error("Failed to get block", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -150,7 +150,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
 	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
 	if err != nil {
-		slog.Error("Failed to get block", "error", err)
+		logging.Error("Failed to get block", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -158,13 +158,13 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
 	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
 	if err != nil {
-		slog.Error("Failed to get block", "error", err)
+		logging.Error("Failed to get block", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
 	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
 	if err != nil {
-		slog.Error("Failed to get validators", "error", err)
+		logging.Error("Failed to get validators", types.Participants, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -174,22 +174,22 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 	dataKey := string(types.ActiveParticipantsFullKey(epoch))
 	verKey := "/inference/" + url.PathEscape(dataKey)
 	// verKey2 := string(result.Response.Key)
-	slog.Info("Attempting verification", "verKey", verKey)
+	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
 	err = merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
 	if err != nil {
-		slog.Info("VerifyUsingProofRt failed", "error", err)
+		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
 	}
 
 	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", dataKey, result.Response.Value)
 	if err != nil {
-		slog.Info("VerifyUsingMerkleProof failed", "error", err)
+		logging.Info("VerifyUsingMerkleProof failed", types.Participants, "error", err)
 	}
 
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
 		addresses[i], err = pubKeyToAddress3(participant.ValidatorKey)
 		if err != nil {
-			slog.Error("Failed to convert public key to address", "error", err)
+			logging.Error("Failed to convert public key to address", types.Participants, "error", err)
 		}
 	}
 
@@ -209,20 +209,20 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 	dataKey := string(types.ActiveParticipantsFullKey(epoch))
 	result, err := cosmos_client.QueryByKey(rpcClient, "inference", dataKey)
 	if err != nil {
-		slog.Error("Failed to query active participants. Req 1", "error", err)
+		logging.Error("Failed to query active participants. Req 1", types.Participants, "error", err)
 		return nil, err
 	}
 
 	var activeParticipants types.ActiveParticipants
 	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
-		slog.Error("Failed to unmarshal active participant. Req 1", "error", err)
+		logging.Error("Failed to unmarshal active participant. Req 1", types.Participants, "error", err)
 		return nil, err
 	}
 
 	blockHeight := activeParticipants.CreatedAtBlockHeight
 	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
 	if err != nil {
-		slog.Error("Failed to query active participant. Req 2", "error", err)
+		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
 		return nil, err
 	}
 
@@ -250,7 +250,7 @@ func pubKeyToAddress2(pubKeyString string) (string, error) {
 		return "", err
 	}
 
-	slog.Info("PubKey size", "len", len(pubKeyBytes))
+	logging.Info("PubKey size", types.Participants, "len", len(pubKeyBytes))
 
 	pubKey := cmcryptoed.PubKey(pubKeyBytes)
 

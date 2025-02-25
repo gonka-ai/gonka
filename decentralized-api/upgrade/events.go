@@ -4,8 +4,9 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/json"
-	"github.com/sagikazarmark/slog-shim"
+	"github.com/productscience/inference/x/inference/types"
 	"os"
 	"path/filepath"
 )
@@ -16,29 +17,29 @@ func ProcessNewBlockEvent(
 	configManager *apiconfig.ConfigManager,
 ) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
-		slog.Error("Expected tendermint/event/NewBlock event", "event", event.Result.Data.Type)
+		logging.Error("Expected tendermint/event/NewBlock event", types.EventProcessing, "event", event.Result.Data.Type)
 		return
 	}
 
 	// Check for any upcoming upgrade plan
 	upgradePlan, err := transactionRecorder.GetUpgradePlan()
 	if err != nil {
-		slog.Error("Error getting upgrade plan", "error", err)
+		logging.Error("Error getting upgrade plan", types.Upgrades, "error", err)
 		return
 	}
 
 	if upgradePlan != nil && upgradePlan.Plan != nil {
 		if upgradePlan.Plan.Name == configManager.GetUpgradePlan().Name {
-			slog.Info("Upgrade already ready", "name", upgradePlan.Plan.Name)
+			logging.Info("Upgrade already ready", types.Upgrades, "name", upgradePlan.Plan.Name)
 			return
 		}
 		if upgradePlan.Plan.Info == "" {
-			slog.Error("Upgrade exists, no info for api binaries")
+			logging.Error("Upgrade exists, no info for api binaries", types.Upgrades)
 			return
 		}
 		var planInfo UpgradeInfoInput
 		if err := json.Unmarshal([]byte(upgradePlan.Plan.Info), &planInfo); err != nil {
-			slog.Error("Error unmarshalling upgrade plan info", "error", err)
+			logging.Error("Error unmarshalling upgrade plan info", types.Upgrades, "error", err)
 			return
 		}
 		err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
@@ -47,7 +48,7 @@ func ProcessNewBlockEvent(
 			Binaries: planInfo.Binaries,
 		})
 		if err != nil {
-			slog.Error("Error setting upgrade plan", "error", err)
+			logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
 			return
 		}
 	}
@@ -57,12 +58,12 @@ func ProcessNewBlockEvent(
 func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 	upgradePlan := configManager.GetUpgradePlan()
 	if upgradePlan.Name == "" {
-		slog.Warn("Websocket closed with no upgrade")
+		logging.Warn("Websocket closed with no upgrade", types.Upgrades)
 		return false
 	}
 
 	if configManager.GetHeight() >= upgradePlan.Height-1 {
-		slog.Info("Upgrade height reached", "height", upgradePlan.Height)
+		logging.Info("Upgrade height reached", types.Upgrades, "height", upgradePlan.Height)
 		// Upgrade
 		// Write out upgrade-info.json
 		path := getUpgradeInfoPath()
@@ -72,7 +73,7 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 
 		jsonData, err := json.Marshal(upgradeInfo)
 		if err != nil {
-			slog.Error("Error marshaling upgrade info to JSON", "error", err)
+			logging.Error("Error marshaling upgrade info to JSON", types.Upgrades, "error", err)
 			return false
 		}
 		output := UpgradeOutput{
@@ -83,26 +84,26 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 		}
 		jsonData, err = json.Marshal(output)
 		if err != nil {
-			slog.Error("Error marshaling output to JSON", "error", err)
+			logging.Error("Error marshaling output to JSON", types.Upgrades, "error", err)
 			return false
 		}
 
 		err = os.MkdirAll(filepath.Dir(path), os.ModePerm)
 		if err != nil {
-			slog.Error("Error creating output directory", "path", path, "error", err)
+			logging.Error("Error creating output directory", types.Upgrades, "path", path, "error", err)
 			return false
 		}
 
 		err = os.WriteFile(path, jsonData, 0644)
 		if err != nil {
-			slog.Error("Error writing output to file", "path", path, "error", err)
+			logging.Error("Error writing output to file", types.Upgrades, "path", path, "error", err)
 			return false
 		}
-		slog.Info("Upgrade output written to file", "path", path)
+		logging.Info("Upgrade output written to file", types.Upgrades, "path", path)
 		return true
 	}
 
-	slog.Warn("Websocket closed with no upgrade", "height", configManager.GetHeight(), "upgradeHeight", upgradePlan.Height)
+	logging.Warn("Websocket closed with no upgrade", types.Upgrades, "height", configManager.GetHeight(), "upgradeHeight", upgradePlan.Height)
 	return false
 }
 

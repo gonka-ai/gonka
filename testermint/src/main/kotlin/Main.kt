@@ -7,6 +7,7 @@ import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
 import com.productscience.data.EpochParams
 import com.productscience.data.FloatSerializer
+import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
@@ -214,12 +215,16 @@ val inferenceConfig = ApplicationConfig(
     apiImageName = "gcr.io/decentralized-ai/api",
     denom = "nicoin",
     stateDirName = ".inference",
+    // TODO: probably need to add more to the spec here, so if tests change them we change back
     genesisSpec = spec {
         this[AppState::inference] = spec<InferenceState> {
             this[InferenceState::params] = spec<InferenceParams> {
                 this[InferenceParams::epochParams] = spec<EpochParams> {
                     this[EpochParams::epochLength] = 20L
                 }
+            }
+            this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+                this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
             }
         }
     }

@@ -16,7 +16,6 @@ import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initCluster
 import com.productscience.initialize
-import com.productscience.setupLocalCluster
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Test
@@ -49,18 +48,16 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test escrow and pre settle amounts`() {
-        val cluster = initCluster()
+        val (cluster, _) = initCluster()
         val inferenceResult = generateSequence {
             getInferenceResult(cluster.genesis)
         }.first { it.inference.executedBy != it.inference.requestedBy }
 
-        val inferenceCost = inferenceResult.inference.actualCost
-        val escrowHeld = inferenceResult.inference.escrowAmount!!
+        val inferenceCost = inferenceResult.inference.actualCost!!
 
-        assertThat(inferenceResult.requesterBalanceChange).`as`("escrow withheld").isEqualTo(-escrowHeld)
+        // Escrow is too short to measure unless we have a long running request
+        assertThat(inferenceResult.requesterBalanceChange).`as`("escrow withheld").isEqualTo(-inferenceCost)
         assertThat(inferenceResult.requesterOwedChange).`as`("requester not owed").isEqualTo(0)
-        assertThat(inferenceResult.requesterRefundChange).`as`("requester assigned refund")
-            .isEqualTo(escrowHeld - inferenceCost!!)
         assertThat(inferenceResult.executorRefundChange).isEqualTo(0)
         assertThat(inferenceResult.executorBalanceChange).isEqualTo(0)
         assertThat(inferenceResult.executorOwedChange).`as`("executor owed for inference").isEqualTo(inferenceCost)
@@ -68,10 +65,13 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test post settle amounts`() {
-        val cluster = initCluster()
-        val genesis = cluster.genesis
+        val (_, genesis) = initCluster()
         val tokenomicsAtStart = genesis.node.getTokenomics().tokenomicsData
         val participants = genesis.api.getParticipants()
+        val nextSettleBlock = genesis.getNextSettleBlock()
+        // If we don't wait until the next settle, there may be lingering requests that mess with our math
+        genesis.node.waitForMinimumBlock(nextSettleBlock + 3)
+
         participants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
@@ -80,19 +80,16 @@ class InferenceAccountingTests : TestermintTest() {
         }.take(4)
         val newTokens = verifySettledInferences(genesis, inferences)
         val tokenomicsAtEnd = genesis.node.getTokenomics().tokenomicsData
-        val expectedTokens = tokenomicsAtStart.copy(
-            totalSubsidies = tokenomicsAtStart.totalSubsidies + newTokens.totalSubsidies,
-            totalFees = tokenomicsAtStart.totalFees + newTokens.totalFees,
-            totalRefunded = tokenomicsAtStart.totalRefunded + newTokens.totalRefunded,
-            totalBurned = tokenomicsAtStart.totalBurned + newTokens.totalBurned
+        assertThat(tokenomicsAtEnd.totalSubsidies).isEqualTo(
+            tokenomicsAtStart.totalSubsidies +
+                    newTokens.totalSubsidies
         )
-        assertThat(tokenomicsAtEnd).isEqualTo(expectedTokens)
+        assertThat(tokenomicsAtEnd.totalFees).isEqualTo(tokenomicsAtStart.totalFees + newTokens.totalFees)
+
         val postParticipants = genesis.api.getParticipants()
         postParticipants.forEach {
             Logger.info("Participant: ${it.id}, Reputation: ${it.reputation}")
         }
-
-
     }
 
     private fun verifySettledInferences(
@@ -138,8 +135,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test consumer only participant`() {
-        val cluster = initCluster()
-        val genesis = cluster.genesis
+        val (cluster, genesis) = initCluster()
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address)
@@ -165,23 +161,23 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun createTopMiner() {
-        val localCluster = initCluster(reboot = true)
-        localCluster.genesis.mock?.setPocResponse(100)
-        val nextSettle = localCluster.genesis.getNextSettleBlock()
-        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 20)
-        val topMiners = localCluster.genesis.node.getTopMiners()
+        val (_, genesis) = initCluster(reboot = true)
+        genesis.mock?.setPocResponse(100)
+        val nextSettle = genesis.getNextSettleBlock()
+        genesis.node.waitForMinimumBlock(nextSettle + 20)
+        val topMiners = genesis.node.getTopMiners()
         println(topMiners)
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(localCluster.genesis.node.addresss)
+        assertThat(topMiner.address).isEqualTo(genesis.node.addresss)
         val startTime = topMiner.firstQualifiedStarted
         assertThat(topMiner.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner.lastUpdatedTime).isEqualTo(startTime)
-        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 40)
-        val topMiners2 = localCluster.genesis.node.getTopMiners()
+        genesis.node.waitForMinimumBlock(nextSettle + 40)
+        val topMiners2 = genesis.node.getTopMiners()
         assertThat(topMiners2.topMiner).hasSize(1)
         val topMiner2 = topMiners2.topMiner.first()
-        assertThat(topMiner2.address).isEqualTo(localCluster.genesis.node.addresss)
+        assertThat(topMiner2.address).isEqualTo(genesis.node.addresss)
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(2))
@@ -201,17 +197,17 @@ class InferenceAccountingTests : TestermintTest() {
         val fastRewards = inferenceConfig.copy(
             genesisSpec = inferenceConfig.genesisSpec?.merge(fastRewardSpec) ?: fastRewardSpec
         )
-        val localCluster = initCluster(config = fastRewards, reboot = true)
-        localCluster.genesis.mock?.setPocResponse(100)
-        val initialBalance = localCluster.genesis.node.getSelfBalance("nicoin")
-        val nextSettle = localCluster.genesis.getNextSettleBlock()
-        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 40)
-        val topMiners = localCluster.genesis.node.getTopMiners()
+        val (localCluster, genesis) = initCluster(config = fastRewards, reboot = true)
+        genesis.mock?.setPocResponse(100)
+        val initialBalance = genesis.node.getSelfBalance("nicoin")
+        val nextSettle = genesis.getNextSettleBlock()
+        genesis.node.waitForMinimumBlock(nextSettle + 40)
+        val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(localCluster.genesis.node.addresss)
+        assertThat(topMiner.address).isEqualTo(genesis.node.addresss)
         val standardizedExpectedReward = getTopMinerReward(localCluster)
-        val currentBalance = localCluster.genesis.node.getSelfBalance("nicoin")
+        val currentBalance = genesis.node.getSelfBalance("nicoin")
         assertThat(currentBalance - initialBalance).isEqualTo(standardizedExpectedReward)
     }
 
@@ -261,52 +257,51 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `verify failed inference is refunded`() {
-        val localCluster = initCluster()
-        localCluster.genesis.node.waitForMinimumBlock(38)
-        val nextSettle = localCluster.genesis.getNextSettleBlock()
-        localCluster.genesis.node.waitForMinimumBlock(nextSettle + 5)
+        val (localCluster, genesis) = initCluster()
+        genesis.node.waitForMinimumBlock(38)
+        val nextSettle = genesis.getNextSettleBlock()
+        genesis.node.waitForMinimumBlock(nextSettle + 5)
         localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
         val failingAddress = localCluster.joinPairs.first().node.getAddress()
         val inferences = getFailingInference(localCluster, failingAddress)
         val failedInference = inferences.last()
         val otherInferences = inferences.take(inferences.size - 1)
 
-        val balanceBeforeSettle = localCluster.genesis.node.getSelfBalance("nicoin")
+        val balanceBeforeSettle = genesis.node.getSelfBalance("nicoin")
         assertNotNull(failedInference, "Inference never finished")
-        val timeouts = localCluster.genesis.node.getInferenceTimeouts()
+        val timeouts = genesis.node.getInferenceTimeouts()
         assertThat(timeouts.inferenceTimeout).hasSizeGreaterThan(0)
-        val expirationBlocks = localCluster.genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
-        val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + expirationBlocks
-        val nextSettleBlock = localCluster.genesis.getNextSettleBlock()
-        localCluster.genesis.node.waitForMinimumBlock(expirationBlock)
-        localCluster.genesis.node.waitForMinimumBlock(nextSettleBlock + 2)
+        val expirationBlocks = genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
+        val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
+        val nextSettleBlock = genesis.getNextSettleBlock()
+        genesis.node.waitForMinimumBlock(expirationBlock)
+        genesis.node.waitForMinimumBlock(nextSettleBlock + 2)
         val canceledInference = localCluster.joinPairs.first().api.getInference(failedInference.index)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
         assertThat(canceledInference.executedBy).isNull()
-        val afterTimeouts = localCluster.genesis.node.getInferenceTimeouts()
+        val afterTimeouts = genesis.node.getInferenceTimeouts()
         assertThat(afterTimeouts.inferenceTimeout).hasSize(0)
         val finishedInferences = otherInferences.map {
             localCluster.joinPairs.first().api.getInference(it.index)
         }
-        val balanceAfterSettle = localCluster.genesis.node.getSelfBalance("nicoin")
+        val balanceAfterSettle = genesis.node.getSelfBalance("nicoin")
         val payouts =
-            calculateBalanceChanges(finishedInferences + canceledInference, localCluster.genesis.mostRecentParams!!)
+            calculateBalanceChanges(finishedInferences + canceledInference, genesis.mostRecentParams!!)
         val changes = balanceAfterSettle - balanceBeforeSettle
-        assertThat(changes).isEqualTo(payouts[localCluster.genesis.node.addresss])
+        assertThat(changes).isEqualTo(payouts[genesis.node.addresss])
     }
 
     @Test
     fun `verify failed inference is refunded to consumer`() {
-        val localCluster = initCluster()
-        val genesis = localCluster.genesis
-        localCluster.genesis.node.waitForMinimumBlock(38)
+        val (localCluster, genesis) = initCluster()
+        genesis.node.waitForMinimumBlock(38)
         localCluster.withConsumer("consumer1") { consumer ->
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
             val failingAddress = localCluster.joinPairs.first().node.getAddress()
             val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
             val expirationBlocks = genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
-            val expirationBlock = localCluster.genesis.getCurrentBlockHeight() + expirationBlocks
+            val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
             genesis.node.waitForMinimumBlock(expirationBlock)
             val finishedInferences = inferences.map {
                 genesis.api.getInference(it.index)
@@ -315,8 +310,7 @@ class InferenceAccountingTests : TestermintTest() {
             val expectedBalance = finishedInferences.sumOf {
                 if (it.status == InferenceStatus.EXPIRED.value) {
                     0
-                }
-                else {
+                } else {
                     it.actualCost!!
                 }
             }

@@ -19,6 +19,7 @@ func DefaultGenesis() *GenesisState {
 		TopMinerList:                   []TopMiner{},
 		InferenceTimeoutList:           []InferenceTimeout{},
 		InferenceValidationDetailsList: []InferenceValidationDetails{},
+		EpochPerformanceSummaryList:    []EpochPerformanceSummary{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
@@ -107,6 +108,16 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for inferenceValidationDetails")
 		}
 		inferenceValidationDetailsIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in epochPerformanceSummary
+	epochPerformanceSummaryIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.EpochPerformanceSummaryList {
+		index := string(EpochPerformanceSummaryKey(elem.EpochStartHeight, elem.ParticipantId))
+		if _, ok := epochPerformanceSummaryIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for epochPerformanceSummary")
+		}
+		epochPerformanceSummaryIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 

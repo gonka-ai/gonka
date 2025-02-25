@@ -40,13 +40,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
 				{
-					RpcMethod:      "GetInferencesWithExecutors",
-					Use:            "get-inferences-with-executors [ids]",
-					Short:          "Query get-inferences-with-executors",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}},
-				},
-
-				{
 					RpcMethod:      "GetRandomExecutor",
 					Use:            "get-random-executor",
 					Short:          "Query get-random-executor",
@@ -172,6 +165,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}, {ProtoField: "requester"}},
 				},
 
+				{
+					RpcMethod: "EpochPerformanceSummaryAll",
+					Use:       "list-epoch-performance-summary",
+					Short:     "List all epoch_performance_summary",
+				},
+				{
+					RpcMethod:      "EpochPerformanceSummary",
+					Use:            "show-epoch-performance-summary [id]",
+					Short:          "Shows a epoch_performance_summary",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochStartHeight"}, {ProtoField: "participantId"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

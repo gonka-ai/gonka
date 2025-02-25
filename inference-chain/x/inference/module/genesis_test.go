@@ -93,6 +93,16 @@ func TestGenesis(t *testing.T) {
 				InferenceId: "1",
 			},
 		},
+		EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
+			{
+				EpochStartHeight: 0,
+				ParticipantId:    "0",
+			},
+			{
+				EpochStartHeight: 1,
+				ParticipantId:    "1",
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -132,5 +142,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
 	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
 	require.ElementsMatch(t, genesisState.InferenceValidationDetailsList, got.InferenceValidationDetailsList)
+	require.ElementsMatch(t, genesisState.EpochPerformanceSummaryList, got.EpochPerformanceSummaryList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

@@ -11,7 +11,7 @@ const DefaultMaxTokens = 2048
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	k.LogInfo("StartInference", "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 	_, found := k.GetInference(ctx, msg.InferenceId)
 	if found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
@@ -52,7 +52,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),
 		InferenceId:      inference.InferenceId,
 	})
-	k.LogInfo("Inference Timeout Set:", "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
+	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,

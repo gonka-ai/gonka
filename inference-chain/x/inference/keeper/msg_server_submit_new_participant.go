@@ -27,6 +27,7 @@ func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) t
 		Status:            types.ParticipantStatus_ACTIVE,
 		ValidatorKey:      msg.GetValidatorKey(),
 		WorkerPublicKey:   msg.GetWorkerKey(),
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 
 	return newParticipant

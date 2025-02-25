@@ -19,19 +19,19 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 	if err != nil {
 		return 0, err
 	}
-	k.LogDebug("Sending coins to escrow", "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
+	k.LogDebug("Sending coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	err = k.BankKeeper.SendCoinsFromAccountToModule(ctx, payeeAddress, types.ModuleName, types.GetCoins(cost))
 	if err != nil {
-		k.LogError("Error sending coins to escrow", "error", err)
+		k.LogError("Error sending coins to escrow", types.Payments, "error", err)
 		return 0,
 			sdkerrors.Wrapf(err, types.ErrRequesterCannotPay.Error())
 	}
-	k.LogInfo("Payments:Sent coins to escrow", "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
+	k.LogInfo("Sent coins to escrow", types.Payments, "inference", inference.InferenceId, "coins", cost, "payee", payeeAddress)
 	return cost, nil
 }
 
 func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
-	k.LogInfo("Payments:Minting coins", "coins", newCoins, "moduleAccount", types.ModuleName)
+	k.LogInfo("Minting coins", types.Payments, "coins", newCoins, "moduleAccount", types.ModuleName)
 	return k.BankKeeper.MintCoins(ctx, types.ModuleName, types.GetCoins(newCoins))
 }
 
@@ -45,17 +45,17 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 		return err
 	}
 
-	k.LogInfo("Payments:Paying participant", "participant", participantAddress, "amount", amount, "address", address, "module", moduleName)
+	k.LogInfo("Paying participant", types.Payments, "participant", participantAddress, "amount", amount, "address", address, "module", moduleName)
 	err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, types.GetCoins(int64(amount)))
 	return err
 }
 
 func (k *Keeper) BurnCoins(ctx context.Context, burnCoins int64) error {
 	if burnCoins <= 0 {
-		k.LogInfo("No coins to burn", "coins", burnCoins)
+		k.LogInfo("No coins to burn", types.Payments, "coins", burnCoins)
 		return nil
 	}
-	k.LogInfo("Payments:Burning coins", "coins", burnCoins)
+	k.LogInfo("Burning coins", types.Payments, "coins", burnCoins)
 	err := k.BankKeeper.BurnCoins(ctx, types.ModuleName, types.GetCoins(burnCoins))
 	if err == nil {
 		k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: uint64(burnCoins)})
@@ -64,10 +64,10 @@ func (k *Keeper) BurnCoins(ctx context.Context, burnCoins int64) error {
 }
 
 func (k *Keeper) IssueRefund(ctx context.Context, refundAmount uint64, address string) error {
-	k.LogInfo("Payments:Issuing refund", "address", address, "amount", refundAmount)
+	k.LogInfo("Issuing refund", types.Payments, "address", address, "amount", refundAmount)
 	err := k.PayParticipantFromEscrow(ctx, address, refundAmount)
 	if err != nil {
-		k.LogError("Error issuing refund", "error", err)
+		k.LogError("Error issuing refund", types.Payments, "error", err)
 		return err
 	}
 	k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: refundAmount})

@@ -176,10 +176,10 @@ fun initCluster(
     joinCount: Int = 2,
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
-): LocalCluster {
+): Pair<LocalCluster, LocalInferencePair> {
     val cluster = setupLocalCluster(joinCount, config, reboot)
     initialize(cluster.allPairs)
-    return cluster
+    return cluster to cluster.genesis
 }
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {

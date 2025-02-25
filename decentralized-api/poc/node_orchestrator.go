@@ -5,10 +5,10 @@ import (
 	"context"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -107,21 +107,21 @@ var DevTestParams = Params{
 
 func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 	if o.noOp {
-		slog.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.")
+		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
 		return
 	}
 
-	slog.Info("Starting PoC on nodes", "blockHeight", blockHeight, "blockHash", blockHash)
+	logging.Info("Starting PoC on nodes", types.PoC, "blockHeight", blockHeight, "blockHash", blockHash)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		slog.Error("NodePoCOrchestrator.Start. Failed to get nodes", "error", err)
+		logging.Error("NodePoCOrchestrator.Start. Failed to get nodes", types.PoC, "error", err)
 		return
 	}
 
 	for _, n := range nodes {
 		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
 		if err != nil {
-			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
+			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
 
@@ -138,7 +138,7 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.InferenceNode
 		return nil, err
 	}
 
-	slog.Info("Sending init-generate request to node.", "url", initUrl, "initDto", initDto)
+	logging.Info("Sending init-generate request to node.", types.PoC, "url", initUrl, "initDto", initDto)
 
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
@@ -158,7 +158,7 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, 
 
 func (o *NodePoCOrchestrator) Stop() {
 	if o.noOp {
-		slog.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.")
+		logging.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.", types.PoC)
 		return
 	}
 
@@ -171,14 +171,14 @@ func (o *NodePoCOrchestrator) Stop() {
 	for _, n := range nodes {
 		respStop, err := o.sendStopRequest(n.Node)
 		if err != nil {
-			slog.Error("Failed to send stop request to node", "node", n.Node.Host, "error", err)
+			logging.Error("Failed to send stop request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
 		_ = respStop
 
 		respUp, err := o.sendInferenceUpRequest(n.Node)
 		if err != nil {
-			slog.Error("Failed to send inference/up request to node", "node", n.Node.Host, "error", err)
+			logging.Error("Failed to send inference/up request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
 		_ = respUp
@@ -191,7 +191,7 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.InferenceNode) (*http
 		return nil, err
 	}
 
-	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
+	logging.Info("Sending stop request to node", types.PoC, "stopUrl", stopUrl)
 
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
@@ -209,7 +209,7 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.InferenceNode)
 		Args:  []string{"--enforce-eager"},
 	}
 
-	slog.Info("Sending inference/up request to node", "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
+	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
 
 	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
@@ -250,7 +250,7 @@ func sendPostRequest(client *http.Client, url string, payload any) (*http.Respon
 
 func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	if o.noOp {
-		slog.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.")
+		logging.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.", types.PoC)
 		return
 	}
 	epochParams := o.GetParams().EpochParams
@@ -258,13 +258,13 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {
-		slog.Error("MoveToValidationStage. Failed to get block hash", "error", err)
+		logging.Error("MoveToValidationStage. Failed to get block hash", types.PoC, "error", err)
 		return
 	}
 
-	slog.Info("Moving to PoC Validation Stage", "startOfPoCBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
+	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
 
-	slog.Info("Starting PoC Validation on nodes")
+	logging.Info("Starting PoC Validation on nodes", types.PoC)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
 		// PRTODO: log error
@@ -274,7 +274,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	for _, n := range nodes {
 		resp, err := o.sendInitValidateRequest(n.Node, startOfPoCBlockHeight, blockHash)
 		if err != nil {
-			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
+			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
 
@@ -285,7 +285,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 
 func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
 	if o.noOp {
-		slog.Info("NodePoCOrchestrator.ValidateReceivedBatches. NoOp is set. Skipping validation.")
+		logging.Info("NodePoCOrchestrator.ValidateReceivedBatches. NoOp is set. Skipping validation.", types.PoC)
 		return
 	}
 
@@ -293,7 +293,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {
-		slog.Error("ValidateReceivedBatches. Failed to get block hash", "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "error", err)
 		return
 	}
 
@@ -303,18 +303,18 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 	queryClient := o.cosmosClient.NewInferenceQueryClient()
 	batches, err := queryClient.PocBatchesForStage(o.cosmosClient.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: startOfPoCBlockHeight})
 	if err != nil {
-		slog.Error("Failed to get PoC batches", "error", err)
+		logging.Error("Failed to get PoC batches", types.PoC, "error", err)
 		return
 	}
 
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		slog.Error("Failed to get nodes", "error", err)
+		logging.Error("Failed to get nodes", types.PoC, "error", err)
 		return
 	}
 
 	if len(nodes) == 0 {
-		slog.Error("No nodes available to validate PoC batches")
+		logging.Error("No nodes available to validate PoC batches", types.PoC)
 		return
 	}
 
@@ -336,11 +336,11 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 
 		node := nodes[i%len(nodes)]
 
-		slog.Debug("ValidateReceivedBatches. pubKey", "pubKey", batch.HexPubKey)
-		slog.Debug("ValidateReceivedBatches. sending batch", "node", node.Node.Host, "batch", joinedBatch)
+		logging.Debug("ValidateReceivedBatches. pubKey", types.PoC, "pubKey", batch.HexPubKey)
+		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
 		resp, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
 		if err != nil {
-			slog.Error("Failed to send validate batch request to node", "node", node.Node.Host, "error", err)
+			logging.Error("Failed to send validate batch request to node", types.PoC, "node", node.Node.Host, "error", err)
 			continue
 		}
 

@@ -69,14 +69,12 @@ var (
 	fd_Participant_inference_url                  protoreflect.FieldDescriptor
 	fd_Participant_models                         protoreflect.FieldDescriptor
 	fd_Participant_status                         protoreflect.FieldDescriptor
-	fd_Participant_inference_count                protoreflect.FieldDescriptor
-	fd_Participant_validated_inferences           protoreflect.FieldDescriptor
-	fd_Participant_invalidated_inferences         protoreflect.FieldDescriptor
 	fd_Participant_coin_balance                   protoreflect.FieldDescriptor
 	fd_Participant_validator_key                  protoreflect.FieldDescriptor
 	fd_Participant_consecutive_invalid_inferences protoreflect.FieldDescriptor
 	fd_Participant_worker_public_key              protoreflect.FieldDescriptor
 	fd_Participant_epochs_completed               protoreflect.FieldDescriptor
+	fd_Participant_current_epoch_stats            protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -91,14 +89,12 @@ func init() {
 	fd_Participant_inference_url = md_Participant.Fields().ByName("inference_url")
 	fd_Participant_models = md_Participant.Fields().ByName("models")
 	fd_Participant_status = md_Participant.Fields().ByName("status")
-	fd_Participant_inference_count = md_Participant.Fields().ByName("inference_count")
-	fd_Participant_validated_inferences = md_Participant.Fields().ByName("validated_inferences")
-	fd_Participant_invalidated_inferences = md_Participant.Fields().ByName("invalidated_inferences")
 	fd_Participant_coin_balance = md_Participant.Fields().ByName("coin_balance")
 	fd_Participant_validator_key = md_Participant.Fields().ByName("validator_key")
 	fd_Participant_consecutive_invalid_inferences = md_Participant.Fields().ByName("consecutive_invalid_inferences")
 	fd_Participant_worker_public_key = md_Participant.Fields().ByName("worker_public_key")
 	fd_Participant_epochs_completed = md_Participant.Fields().ByName("epochs_completed")
+	fd_Participant_current_epoch_stats = md_Participant.Fields().ByName("current_epoch_stats")
 }
 
 var _ protoreflect.Message = (*fastReflection_Participant)(nil)
@@ -220,24 +216,6 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.InferenceCount != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.InferenceCount)
-		if !f(fd_Participant_inference_count, value) {
-			return
-		}
-	}
-	if x.ValidatedInferences != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.ValidatedInferences)
-		if !f(fd_Participant_validated_inferences, value) {
-			return
-		}
-	}
-	if x.InvalidatedInferences != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.InvalidatedInferences)
-		if !f(fd_Participant_invalidated_inferences, value) {
-			return
-		}
-	}
 	if x.CoinBalance != int64(0) {
 		value := protoreflect.ValueOfInt64(x.CoinBalance)
 		if !f(fd_Participant_coin_balance, value) {
@@ -265,6 +243,12 @@ func (x *fastReflection_Participant) Range(f func(protoreflect.FieldDescriptor, 
 	if x.EpochsCompleted != uint32(0) {
 		value := protoreflect.ValueOfUint32(x.EpochsCompleted)
 		if !f(fd_Participant_epochs_completed, value) {
+			return
+		}
+	}
+	if x.CurrentEpochStats != nil {
+		value := protoreflect.ValueOfMessage(x.CurrentEpochStats.ProtoReflect())
+		if !f(fd_Participant_current_epoch_stats, value) {
 			return
 		}
 	}
@@ -301,12 +285,6 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 		return len(x.Models) != 0
 	case "inference.inference.Participant.status":
 		return x.Status != 0
-	case "inference.inference.Participant.inference_count":
-		return x.InferenceCount != uint64(0)
-	case "inference.inference.Participant.validated_inferences":
-		return x.ValidatedInferences != uint64(0)
-	case "inference.inference.Participant.invalidated_inferences":
-		return x.InvalidatedInferences != uint64(0)
 	case "inference.inference.Participant.coin_balance":
 		return x.CoinBalance != int64(0)
 	case "inference.inference.Participant.validator_key":
@@ -317,6 +295,8 @@ func (x *fastReflection_Participant) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.WorkerPublicKey != ""
 	case "inference.inference.Participant.epochs_completed":
 		return x.EpochsCompleted != uint32(0)
+	case "inference.inference.Participant.current_epoch_stats":
+		return x.CurrentEpochStats != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -351,12 +331,6 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 		x.Models = nil
 	case "inference.inference.Participant.status":
 		x.Status = 0
-	case "inference.inference.Participant.inference_count":
-		x.InferenceCount = uint64(0)
-	case "inference.inference.Participant.validated_inferences":
-		x.ValidatedInferences = uint64(0)
-	case "inference.inference.Participant.invalidated_inferences":
-		x.InvalidatedInferences = uint64(0)
 	case "inference.inference.Participant.coin_balance":
 		x.CoinBalance = int64(0)
 	case "inference.inference.Participant.validator_key":
@@ -367,6 +341,8 @@ func (x *fastReflection_Participant) Clear(fd protoreflect.FieldDescriptor) {
 		x.WorkerPublicKey = ""
 	case "inference.inference.Participant.epochs_completed":
 		x.EpochsCompleted = uint32(0)
+	case "inference.inference.Participant.current_epoch_stats":
+		x.CurrentEpochStats = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -413,15 +389,6 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 	case "inference.inference.Participant.status":
 		value := x.Status
 		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
-	case "inference.inference.Participant.inference_count":
-		value := x.InferenceCount
-		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Participant.validated_inferences":
-		value := x.ValidatedInferences
-		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Participant.invalidated_inferences":
-		value := x.InvalidatedInferences
-		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.Participant.coin_balance":
 		value := x.CoinBalance
 		return protoreflect.ValueOfInt64(value)
@@ -437,6 +404,9 @@ func (x *fastReflection_Participant) Get(descriptor protoreflect.FieldDescriptor
 	case "inference.inference.Participant.epochs_completed":
 		value := x.EpochsCompleted
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.Participant.current_epoch_stats":
+		value := x.CurrentEpochStats
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -477,12 +447,6 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 		x.Models = *clv.list
 	case "inference.inference.Participant.status":
 		x.Status = (ParticipantStatus)(value.Enum())
-	case "inference.inference.Participant.inference_count":
-		x.InferenceCount = value.Uint()
-	case "inference.inference.Participant.validated_inferences":
-		x.ValidatedInferences = value.Uint()
-	case "inference.inference.Participant.invalidated_inferences":
-		x.InvalidatedInferences = value.Uint()
 	case "inference.inference.Participant.coin_balance":
 		x.CoinBalance = value.Int()
 	case "inference.inference.Participant.validator_key":
@@ -493,6 +457,8 @@ func (x *fastReflection_Participant) Set(fd protoreflect.FieldDescriptor, value 
 		x.WorkerPublicKey = value.Interface().(string)
 	case "inference.inference.Participant.epochs_completed":
 		x.EpochsCompleted = uint32(value.Uint())
+	case "inference.inference.Participant.current_epoch_stats":
+		x.CurrentEpochStats = value.Message().Interface().(*CurrentEpochStats)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -519,6 +485,11 @@ func (x *fastReflection_Participant) Mutable(fd protoreflect.FieldDescriptor) pr
 		}
 		value := &_Participant_8_list{list: &x.Models}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.Participant.current_epoch_stats":
+		if x.CurrentEpochStats == nil {
+			x.CurrentEpochStats = new(CurrentEpochStats)
+		}
+		return protoreflect.ValueOfMessage(x.CurrentEpochStats.ProtoReflect())
 	case "inference.inference.Participant.index":
 		panic(fmt.Errorf("field index of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.address":
@@ -535,12 +506,6 @@ func (x *fastReflection_Participant) Mutable(fd protoreflect.FieldDescriptor) pr
 		panic(fmt.Errorf("field inference_url of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.status":
 		panic(fmt.Errorf("field status of message inference.inference.Participant is not mutable"))
-	case "inference.inference.Participant.inference_count":
-		panic(fmt.Errorf("field inference_count of message inference.inference.Participant is not mutable"))
-	case "inference.inference.Participant.validated_inferences":
-		panic(fmt.Errorf("field validated_inferences of message inference.inference.Participant is not mutable"))
-	case "inference.inference.Participant.invalidated_inferences":
-		panic(fmt.Errorf("field invalidated_inferences of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.coin_balance":
 		panic(fmt.Errorf("field coin_balance of message inference.inference.Participant is not mutable"))
 	case "inference.inference.Participant.validator_key":
@@ -583,12 +548,6 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfList(&_Participant_8_list{list: &list})
 	case "inference.inference.Participant.status":
 		return protoreflect.ValueOfEnum(0)
-	case "inference.inference.Participant.inference_count":
-		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Participant.validated_inferences":
-		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Participant.invalidated_inferences":
-		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.Participant.coin_balance":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.Participant.validator_key":
@@ -599,6 +558,9 @@ func (x *fastReflection_Participant) NewField(fd protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Participant.epochs_completed":
 		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.Participant.current_epoch_stats":
+		m := new(CurrentEpochStats)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Participant"))
@@ -701,15 +663,6 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 		if x.Status != 0 {
 			n += 1 + runtime.Sov(uint64(x.Status))
 		}
-		if x.InferenceCount != 0 {
-			n += 1 + runtime.Sov(uint64(x.InferenceCount))
-		}
-		if x.ValidatedInferences != 0 {
-			n += 1 + runtime.Sov(uint64(x.ValidatedInferences))
-		}
-		if x.InvalidatedInferences != 0 {
-			n += 1 + runtime.Sov(uint64(x.InvalidatedInferences))
-		}
 		if x.CoinBalance != 0 {
 			n += 1 + runtime.Sov(uint64(x.CoinBalance))
 		}
@@ -722,10 +675,14 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 		}
 		l = len(x.WorkerPublicKey)
 		if l > 0 {
-			n += 2 + l + runtime.Sov(uint64(l))
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.EpochsCompleted != 0 {
-			n += 2 + runtime.Sov(uint64(x.EpochsCompleted))
+			n += 1 + runtime.Sov(uint64(x.EpochsCompleted))
+		}
+		if x.CurrentEpochStats != nil {
+			l = options.Size(x.CurrentEpochStats)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -756,51 +713,46 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
+		if x.CurrentEpochStats != nil {
+			encoded, err := options.Marshal(x.CurrentEpochStats)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x7a
+		}
 		if x.EpochsCompleted != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochsCompleted))
 			i--
-			dAtA[i] = 0x1
-			i--
-			dAtA[i] = 0x88
+			dAtA[i] = 0x70
 		}
 		if len(x.WorkerPublicKey) > 0 {
 			i -= len(x.WorkerPublicKey)
 			copy(dAtA[i:], x.WorkerPublicKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.WorkerPublicKey)))
 			i--
-			dAtA[i] = 0x1
-			i--
-			dAtA[i] = 0x82
+			dAtA[i] = 0x6a
 		}
 		if x.ConsecutiveInvalidInferences != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.ConsecutiveInvalidInferences))
 			i--
-			dAtA[i] = 0x78
+			dAtA[i] = 0x60
 		}
 		if len(x.ValidatorKey) > 0 {
 			i -= len(x.ValidatorKey)
 			copy(dAtA[i:], x.ValidatorKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ValidatorKey)))
 			i--
-			dAtA[i] = 0x72
+			dAtA[i] = 0x5a
 		}
 		if x.CoinBalance != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinBalance))
-			i--
-			dAtA[i] = 0x68
-		}
-		if x.InvalidatedInferences != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.InvalidatedInferences))
-			i--
-			dAtA[i] = 0x60
-		}
-		if x.ValidatedInferences != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidatedInferences))
-			i--
-			dAtA[i] = 0x58
-		}
-		if x.InferenceCount != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.InferenceCount))
 			i--
 			dAtA[i] = 0x50
 		}
@@ -1133,63 +1085,6 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 			case 10:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceCount", wireType)
-				}
-				x.InferenceCount = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.InferenceCount |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 11:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatedInferences", wireType)
-				}
-				x.ValidatedInferences = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.ValidatedInferences |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 12:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InvalidatedInferences", wireType)
-				}
-				x.InvalidatedInferences = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.InvalidatedInferences |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 13:
-				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CoinBalance", wireType)
 				}
 				x.CoinBalance = 0
@@ -1207,7 +1102,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 14:
+			case 11:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatorKey", wireType)
 				}
@@ -1239,7 +1134,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 				x.ValidatorKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 15:
+			case 12:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ConsecutiveInvalidInferences", wireType)
 				}
@@ -1258,7 +1153,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 16:
+			case 13:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorkerPublicKey", wireType)
 				}
@@ -1290,7 +1185,7 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 				}
 				x.WorkerPublicKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 17:
+			case 14:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochsCompleted", wireType)
 				}
@@ -1305,6 +1200,734 @@ func (x *fastReflection_Participant) ProtoMethods() *protoiface.Methods {
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.EpochsCompleted |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 15:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentEpochStats", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.CurrentEpochStats == nil {
+					x.CurrentEpochStats = &CurrentEpochStats{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.CurrentEpochStats); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_CurrentEpochStats                        protoreflect.MessageDescriptor
+	fd_CurrentEpochStats_inference_count        protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_missed_requests        protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_earned_coins           protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_rewarded_coins         protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_burned_coins           protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_validated_inferences   protoreflect.FieldDescriptor
+	fd_CurrentEpochStats_invalidated_inferences protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_participant_proto_init()
+	md_CurrentEpochStats = File_inference_inference_participant_proto.Messages().ByName("CurrentEpochStats")
+	fd_CurrentEpochStats_inference_count = md_CurrentEpochStats.Fields().ByName("inference_count")
+	fd_CurrentEpochStats_missed_requests = md_CurrentEpochStats.Fields().ByName("missed_requests")
+	fd_CurrentEpochStats_earned_coins = md_CurrentEpochStats.Fields().ByName("earned_coins")
+	fd_CurrentEpochStats_rewarded_coins = md_CurrentEpochStats.Fields().ByName("rewarded_coins")
+	fd_CurrentEpochStats_burned_coins = md_CurrentEpochStats.Fields().ByName("burned_coins")
+	fd_CurrentEpochStats_validated_inferences = md_CurrentEpochStats.Fields().ByName("validated_inferences")
+	fd_CurrentEpochStats_invalidated_inferences = md_CurrentEpochStats.Fields().ByName("invalidated_inferences")
+}
+
+var _ protoreflect.Message = (*fastReflection_CurrentEpochStats)(nil)
+
+type fastReflection_CurrentEpochStats CurrentEpochStats
+
+func (x *CurrentEpochStats) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_CurrentEpochStats)(x)
+}
+
+func (x *CurrentEpochStats) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_participant_proto_msgTypes[1]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_CurrentEpochStats_messageType fastReflection_CurrentEpochStats_messageType
+var _ protoreflect.MessageType = fastReflection_CurrentEpochStats_messageType{}
+
+type fastReflection_CurrentEpochStats_messageType struct{}
+
+func (x fastReflection_CurrentEpochStats_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_CurrentEpochStats)(nil)
+}
+func (x fastReflection_CurrentEpochStats_messageType) New() protoreflect.Message {
+	return new(fastReflection_CurrentEpochStats)
+}
+func (x fastReflection_CurrentEpochStats_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_CurrentEpochStats
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_CurrentEpochStats) Descriptor() protoreflect.MessageDescriptor {
+	return md_CurrentEpochStats
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_CurrentEpochStats) Type() protoreflect.MessageType {
+	return _fastReflection_CurrentEpochStats_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_CurrentEpochStats) New() protoreflect.Message {
+	return new(fastReflection_CurrentEpochStats)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_CurrentEpochStats) Interface() protoreflect.ProtoMessage {
+	return (*CurrentEpochStats)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_CurrentEpochStats) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.InferenceCount != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.InferenceCount)
+		if !f(fd_CurrentEpochStats_inference_count, value) {
+			return
+		}
+	}
+	if x.MissedRequests != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.MissedRequests)
+		if !f(fd_CurrentEpochStats_missed_requests, value) {
+			return
+		}
+	}
+	if x.EarnedCoins != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EarnedCoins)
+		if !f(fd_CurrentEpochStats_earned_coins, value) {
+			return
+		}
+	}
+	if x.RewardedCoins != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RewardedCoins)
+		if !f(fd_CurrentEpochStats_rewarded_coins, value) {
+			return
+		}
+	}
+	if x.BurnedCoins != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.BurnedCoins)
+		if !f(fd_CurrentEpochStats_burned_coins, value) {
+			return
+		}
+	}
+	if x.ValidatedInferences != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.ValidatedInferences)
+		if !f(fd_CurrentEpochStats_validated_inferences, value) {
+			return
+		}
+	}
+	if x.InvalidatedInferences != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.InvalidatedInferences)
+		if !f(fd_CurrentEpochStats_invalidated_inferences, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_CurrentEpochStats) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		return x.InferenceCount != uint64(0)
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		return x.MissedRequests != uint64(0)
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		return x.EarnedCoins != uint64(0)
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		return x.RewardedCoins != uint64(0)
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		return x.BurnedCoins != uint64(0)
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		return x.ValidatedInferences != uint64(0)
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		return x.InvalidatedInferences != uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_CurrentEpochStats) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		x.InferenceCount = uint64(0)
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		x.MissedRequests = uint64(0)
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		x.EarnedCoins = uint64(0)
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		x.RewardedCoins = uint64(0)
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		x.BurnedCoins = uint64(0)
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		x.ValidatedInferences = uint64(0)
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		x.InvalidatedInferences = uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_CurrentEpochStats) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		value := x.InferenceCount
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		value := x.MissedRequests
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		value := x.EarnedCoins
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		value := x.RewardedCoins
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		value := x.BurnedCoins
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		value := x.ValidatedInferences
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		value := x.InvalidatedInferences
+		return protoreflect.ValueOfUint64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_CurrentEpochStats) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		x.InferenceCount = value.Uint()
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		x.MissedRequests = value.Uint()
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		x.EarnedCoins = value.Uint()
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		x.RewardedCoins = value.Uint()
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		x.BurnedCoins = value.Uint()
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		x.ValidatedInferences = value.Uint()
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		x.InvalidatedInferences = value.Uint()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_CurrentEpochStats) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		panic(fmt.Errorf("field inference_count of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		panic(fmt.Errorf("field missed_requests of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		panic(fmt.Errorf("field earned_coins of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		panic(fmt.Errorf("field rewarded_coins of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		panic(fmt.Errorf("field burned_coins of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		panic(fmt.Errorf("field validated_inferences of message inference.inference.CurrentEpochStats is not mutable"))
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		panic(fmt.Errorf("field invalidated_inferences of message inference.inference.CurrentEpochStats is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_CurrentEpochStats) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.CurrentEpochStats.inference_count":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.missed_requests":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.earned_coins":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.rewarded_coins":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.burned_coins":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.validated_inferences":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.CurrentEpochStats.invalidated_inferences":
+		return protoreflect.ValueOfUint64(uint64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CurrentEpochStats"))
+		}
+		panic(fmt.Errorf("message inference.inference.CurrentEpochStats does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_CurrentEpochStats) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.CurrentEpochStats", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_CurrentEpochStats) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_CurrentEpochStats) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_CurrentEpochStats) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_CurrentEpochStats) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*CurrentEpochStats)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.InferenceCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.InferenceCount))
+		}
+		if x.MissedRequests != 0 {
+			n += 1 + runtime.Sov(uint64(x.MissedRequests))
+		}
+		if x.EarnedCoins != 0 {
+			n += 1 + runtime.Sov(uint64(x.EarnedCoins))
+		}
+		if x.RewardedCoins != 0 {
+			n += 1 + runtime.Sov(uint64(x.RewardedCoins))
+		}
+		if x.BurnedCoins != 0 {
+			n += 1 + runtime.Sov(uint64(x.BurnedCoins))
+		}
+		if x.ValidatedInferences != 0 {
+			n += 1 + runtime.Sov(uint64(x.ValidatedInferences))
+		}
+		if x.InvalidatedInferences != 0 {
+			n += 1 + runtime.Sov(uint64(x.InvalidatedInferences))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*CurrentEpochStats)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.InvalidatedInferences != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.InvalidatedInferences))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.ValidatedInferences != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidatedInferences))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.BurnedCoins != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.BurnedCoins))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.RewardedCoins != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RewardedCoins))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.EarnedCoins != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EarnedCoins))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.MissedRequests != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.MissedRequests))
+			i--
+			dAtA[i] = 0x10
+		}
+		if x.InferenceCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.InferenceCount))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*CurrentEpochStats)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: CurrentEpochStats: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: CurrentEpochStats: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceCount", wireType)
+				}
+				x.InferenceCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.InferenceCount |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MissedRequests", wireType)
+				}
+				x.MissedRequests = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.MissedRequests |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EarnedCoins", wireType)
+				}
+				x.EarnedCoins = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EarnedCoins |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RewardedCoins", wireType)
+				}
+				x.RewardedCoins = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.RewardedCoins |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BurnedCoins", wireType)
+				}
+				x.BurnedCoins = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.BurnedCoins |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatedInferences", wireType)
+				}
+				x.ValidatedInferences = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ValidatedInferences |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InvalidatedInferences", wireType)
+				}
+				x.InvalidatedInferences = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.InvalidatedInferences |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1417,23 +2040,21 @@ type Participant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index                        string            `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	Address                      string            `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Weight                       int32             `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
-	JoinTime                     int64             `protobuf:"varint,4,opt,name=join_time,json=joinTime,proto3" json:"join_time,omitempty"`
-	JoinHeight                   int64             `protobuf:"varint,5,opt,name=join_height,json=joinHeight,proto3" json:"join_height,omitempty"`
-	LastInferenceTime            int64             `protobuf:"varint,6,opt,name=last_inference_time,json=lastInferenceTime,proto3" json:"last_inference_time,omitempty"`
-	InferenceUrl                 string            `protobuf:"bytes,7,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
-	Models                       []string          `protobuf:"bytes,8,rep,name=models,proto3" json:"models,omitempty"`
-	Status                       ParticipantStatus `protobuf:"varint,9,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
-	InferenceCount               uint64            `protobuf:"varint,10,opt,name=inference_count,json=inferenceCount,proto3" json:"inference_count,omitempty"`
-	ValidatedInferences          uint64            `protobuf:"varint,11,opt,name=validated_inferences,json=validatedInferences,proto3" json:"validated_inferences,omitempty"`
-	InvalidatedInferences        uint64            `protobuf:"varint,12,opt,name=invalidated_inferences,json=invalidatedInferences,proto3" json:"invalidated_inferences,omitempty"`
-	CoinBalance                  int64             `protobuf:"varint,13,opt,name=coin_balance,json=coinBalance,proto3" json:"coin_balance,omitempty"`
-	ValidatorKey                 string            `protobuf:"bytes,14,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
-	ConsecutiveInvalidInferences int64             `protobuf:"varint,15,opt,name=consecutive_invalid_inferences,json=consecutiveInvalidInferences,proto3" json:"consecutive_invalid_inferences,omitempty"`
-	WorkerPublicKey              string            `protobuf:"bytes,16,opt,name=worker_public_key,json=workerPublicKey,proto3" json:"worker_public_key,omitempty"`
-	EpochsCompleted              uint32            `protobuf:"varint,17,opt,name=epochs_completed,json=epochsCompleted,proto3" json:"epochs_completed,omitempty"`
+	Index                        string             `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	Address                      string             `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Weight                       int32              `protobuf:"varint,3,opt,name=weight,proto3" json:"weight,omitempty"`
+	JoinTime                     int64              `protobuf:"varint,4,opt,name=join_time,json=joinTime,proto3" json:"join_time,omitempty"`
+	JoinHeight                   int64              `protobuf:"varint,5,opt,name=join_height,json=joinHeight,proto3" json:"join_height,omitempty"`
+	LastInferenceTime            int64              `protobuf:"varint,6,opt,name=last_inference_time,json=lastInferenceTime,proto3" json:"last_inference_time,omitempty"`
+	InferenceUrl                 string             `protobuf:"bytes,7,opt,name=inference_url,json=inferenceUrl,proto3" json:"inference_url,omitempty"`
+	Models                       []string           `protobuf:"bytes,8,rep,name=models,proto3" json:"models,omitempty"`
+	Status                       ParticipantStatus  `protobuf:"varint,9,opt,name=status,proto3,enum=inference.inference.ParticipantStatus" json:"status,omitempty"`
+	CoinBalance                  int64              `protobuf:"varint,10,opt,name=coin_balance,json=coinBalance,proto3" json:"coin_balance,omitempty"`
+	ValidatorKey                 string             `protobuf:"bytes,11,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	ConsecutiveInvalidInferences int64              `protobuf:"varint,12,opt,name=consecutive_invalid_inferences,json=consecutiveInvalidInferences,proto3" json:"consecutive_invalid_inferences,omitempty"`
+	WorkerPublicKey              string             `protobuf:"bytes,13,opt,name=worker_public_key,json=workerPublicKey,proto3" json:"worker_public_key,omitempty"`
+	EpochsCompleted              uint32             `protobuf:"varint,14,opt,name=epochs_completed,json=epochsCompleted,proto3" json:"epochs_completed,omitempty"`
+	CurrentEpochStats            *CurrentEpochStats `protobuf:"bytes,15,opt,name=current_epoch_stats,json=currentEpochStats,proto3" json:"current_epoch_stats,omitempty"`
 }
 
 func (x *Participant) Reset() {
@@ -1519,27 +2140,6 @@ func (x *Participant) GetStatus() ParticipantStatus {
 	return ParticipantStatus_UNSPECIFIED
 }
 
-func (x *Participant) GetInferenceCount() uint64 {
-	if x != nil {
-		return x.InferenceCount
-	}
-	return 0
-}
-
-func (x *Participant) GetValidatedInferences() uint64 {
-	if x != nil {
-		return x.ValidatedInferences
-	}
-	return 0
-}
-
-func (x *Participant) GetInvalidatedInferences() uint64 {
-	if x != nil {
-		return x.InvalidatedInferences
-	}
-	return 0
-}
-
 func (x *Participant) GetCoinBalance() int64 {
 	if x != nil {
 		return x.CoinBalance
@@ -1575,13 +2175,103 @@ func (x *Participant) GetEpochsCompleted() uint32 {
 	return 0
 }
 
+func (x *Participant) GetCurrentEpochStats() *CurrentEpochStats {
+	if x != nil {
+		return x.CurrentEpochStats
+	}
+	return nil
+}
+
+type CurrentEpochStats struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	InferenceCount        uint64 `protobuf:"varint,1,opt,name=inference_count,json=inferenceCount,proto3" json:"inference_count,omitempty"`
+	MissedRequests        uint64 `protobuf:"varint,2,opt,name=missed_requests,json=missedRequests,proto3" json:"missed_requests,omitempty"`
+	EarnedCoins           uint64 `protobuf:"varint,3,opt,name=earned_coins,json=earnedCoins,proto3" json:"earned_coins,omitempty"`
+	RewardedCoins         uint64 `protobuf:"varint,4,opt,name=rewarded_coins,json=rewardedCoins,proto3" json:"rewarded_coins,omitempty"`
+	BurnedCoins           uint64 `protobuf:"varint,5,opt,name=burned_coins,json=burnedCoins,proto3" json:"burned_coins,omitempty"`
+	ValidatedInferences   uint64 `protobuf:"varint,6,opt,name=validated_inferences,json=validatedInferences,proto3" json:"validated_inferences,omitempty"`
+	InvalidatedInferences uint64 `protobuf:"varint,7,opt,name=invalidated_inferences,json=invalidatedInferences,proto3" json:"invalidated_inferences,omitempty"`
+}
+
+func (x *CurrentEpochStats) Reset() {
+	*x = CurrentEpochStats{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_participant_proto_msgTypes[1]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *CurrentEpochStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CurrentEpochStats) ProtoMessage() {}
+
+// Deprecated: Use CurrentEpochStats.ProtoReflect.Descriptor instead.
+func (*CurrentEpochStats) Descriptor() ([]byte, []int) {
+	return file_inference_inference_participant_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CurrentEpochStats) GetInferenceCount() uint64 {
+	if x != nil {
+		return x.InferenceCount
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetMissedRequests() uint64 {
+	if x != nil {
+		return x.MissedRequests
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetEarnedCoins() uint64 {
+	if x != nil {
+		return x.EarnedCoins
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetRewardedCoins() uint64 {
+	if x != nil {
+		return x.RewardedCoins
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetBurnedCoins() uint64 {
+	if x != nil {
+		return x.BurnedCoins
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetValidatedInferences() uint64 {
+	if x != nil {
+		return x.ValidatedInferences
+	}
+	return 0
+}
+
+func (x *CurrentEpochStats) GetInvalidatedInferences() uint64 {
+	if x != nil {
+		return x.InvalidatedInferences
+	}
+	return 0
+}
+
 var File_inference_inference_participant_proto protoreflect.FileDescriptor
 
 var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x0a, 0x25, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
 	0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xb8, 0x05, 0x0a,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xfd, 0x04, 0x0a,
 	0x0b, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x14, 0x0a, 0x05,
 	0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64,
 	0x65, 0x78, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
@@ -1602,48 +2292,64 @@ var file_inference_inference_participant_proto_rawDesc = []byte{
 	0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
 	0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
-	0x27, 0x0a, 0x0f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x63, 0x6f, 0x75,
-	0x6e, 0x74, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x31, 0x0a, 0x14, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73,
-	0x18, 0x0b, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65,
-	0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x35, 0x0a, 0x16, 0x69,
-	0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x69, 0x6e, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x6f, 0x69, 0x6e, 0x5f, 0x62, 0x61, 0x6c, 0x61, 0x6e,
-	0x63, 0x65, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x63, 0x6f, 0x69, 0x6e, 0x42, 0x61,
-	0x6c, 0x61, 0x6e, 0x63, 0x65, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x6f, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x44, 0x0a, 0x1e, 0x63, 0x6f,
-	0x6e, 0x73, 0x65, 0x63, 0x75, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0f, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x1c, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x63, 0x75, 0x74, 0x69, 0x76, 0x65, 0x49,
-	0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73,
-	0x12, 0x2a, 0x0a, 0x11, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x5f, 0x70, 0x75, 0x62, 0x6c, 0x69,
-	0x63, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x10, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x77, 0x6f, 0x72,
-	0x6b, 0x65, 0x72, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79, 0x12, 0x29, 0x0a, 0x10,
-	0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64,
-	0x18, 0x11, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x43, 0x6f,
-	0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x2a, 0x58, 0x0a, 0x11, 0x50, 0x61, 0x72, 0x74, 0x69,
-	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x0f, 0x0a, 0x0b,
-	0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0a, 0x0a,
-	0x06, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x01, 0x12, 0x0c, 0x0a, 0x08, 0x49, 0x4e, 0x41,
-	0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x02, 0x12, 0x0b, 0x0a, 0x07, 0x49, 0x4e, 0x56, 0x41, 0x4c,
-	0x49, 0x44, 0x10, 0x03, 0x12, 0x0b, 0x0a, 0x07, 0x52, 0x41, 0x4d, 0x50, 0x49, 0x4e, 0x47, 0x10,
-	0x04, 0x42, 0xbe, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x10, 0x50,
-	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
-	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
-	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
-	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x21, 0x0a, 0x0c, 0x63, 0x6f, 0x69, 0x6e, 0x5f, 0x62, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x18,
+	0x0a, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x63, 0x6f, 0x69, 0x6e, 0x42, 0x61, 0x6c, 0x61, 0x6e,
+	0x63, 0x65, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f,
+	0x6b, 0x65, 0x79, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x44, 0x0a, 0x1e, 0x63, 0x6f, 0x6e, 0x73, 0x65,
+	0x63, 0x75, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x5f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x1c, 0x63, 0x6f, 0x6e, 0x73, 0x65, 0x63, 0x75, 0x74, 0x69, 0x76, 0x65, 0x49, 0x6e, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x2a, 0x0a,
+	0x11, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x5f, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x5f, 0x6b,
+	0x65, 0x79, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72,
+	0x50, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x4b, 0x65, 0x79, 0x12, 0x29, 0x0a, 0x10, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x73, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x18, 0x0e, 0x20,
+	0x01, 0x28, 0x0d, 0x52, 0x0f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x43, 0x6f, 0x6d, 0x70, 0x6c,
+	0x65, 0x74, 0x65, 0x64, 0x12, 0x56, 0x0a, 0x13, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x73, 0x18, 0x0f, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45,
+	0x70, 0x6f, 0x63, 0x68, 0x53, 0x74, 0x61, 0x74, 0x73, 0x52, 0x11, 0x63, 0x75, 0x72, 0x72, 0x65,
+	0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x74, 0x61, 0x74, 0x73, 0x22, 0xbc, 0x02, 0x0a,
+	0x11, 0x43, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x74, 0x61,
+	0x74, 0x73, 0x12, 0x27, 0x0a, 0x0f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f,
+	0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x27, 0x0a, 0x0f, 0x6d,
+	0x69, 0x73, 0x73, 0x65, 0x64, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x61, 0x72, 0x6e, 0x65, 0x64, 0x5f, 0x63,
+	0x6f, 0x69, 0x6e, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x65, 0x61, 0x72, 0x6e,
+	0x65, 0x64, 0x43, 0x6f, 0x69, 0x6e, 0x73, 0x12, 0x25, 0x0a, 0x0e, 0x72, 0x65, 0x77, 0x61, 0x72,
+	0x64, 0x65, 0x64, 0x5f, 0x63, 0x6f, 0x69, 0x6e, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0d, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x65, 0x64, 0x43, 0x6f, 0x69, 0x6e, 0x73, 0x12, 0x21,
+	0x0a, 0x0c, 0x62, 0x75, 0x72, 0x6e, 0x65, 0x64, 0x5f, 0x63, 0x6f, 0x69, 0x6e, 0x73, 0x18, 0x05,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x62, 0x75, 0x72, 0x6e, 0x65, 0x64, 0x43, 0x6f, 0x69, 0x6e,
+	0x73, 0x12, 0x31, 0x0a, 0x14, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x13, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x73, 0x12, 0x35, 0x0a, 0x16, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x65, 0x64, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x07,
+	0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65,
+	0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x2a, 0x58, 0x0a, 0x11, 0x50,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
+	0x12, 0x0f, 0x0a, 0x0b, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44, 0x10,
+	0x00, 0x12, 0x0a, 0x0a, 0x06, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x01, 0x12, 0x0c, 0x0a,
+	0x08, 0x49, 0x4e, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x02, 0x12, 0x0b, 0x0a, 0x07, 0x49,
+	0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x10, 0x03, 0x12, 0x0b, 0x0a, 0x07, 0x52, 0x41, 0x4d, 0x50,
+	0x49, 0x4e, 0x47, 0x10, 0x04, 0x42, 0xbe, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x42, 0x10, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
+	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
+	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
+	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1659,18 +2365,20 @@ func file_inference_inference_participant_proto_rawDescGZIP() []byte {
 }
 
 var file_inference_inference_participant_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_inference_inference_participant_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_inference_inference_participant_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_inference_inference_participant_proto_goTypes = []interface{}{
-	(ParticipantStatus)(0), // 0: inference.inference.ParticipantStatus
-	(*Participant)(nil),    // 1: inference.inference.Participant
+	(ParticipantStatus)(0),    // 0: inference.inference.ParticipantStatus
+	(*Participant)(nil),       // 1: inference.inference.Participant
+	(*CurrentEpochStats)(nil), // 2: inference.inference.CurrentEpochStats
 }
 var file_inference_inference_participant_proto_depIdxs = []int32{
 	0, // 0: inference.inference.Participant.status:type_name -> inference.inference.ParticipantStatus
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 1: inference.inference.Participant.current_epoch_stats:type_name -> inference.inference.CurrentEpochStats
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_participant_proto_init() }
@@ -1691,6 +2399,18 @@ func file_inference_inference_participant_proto_init() {
 				return nil
 			}
 		}
+		file_inference_inference_participant_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*CurrentEpochStats); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1698,7 +2418,7 @@ func file_inference_inference_participant_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_participant_proto_rawDesc,
 			NumEnums:      1,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

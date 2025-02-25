@@ -20,6 +20,7 @@ import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
+import "inference/inference/epoch_performance_summary.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -51,13 +52,7 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/participant";
   
   }
-  
-  // Queries a list of GetInferencesWithExecutors items.
-  rpc GetInferencesWithExecutors (QueryGetInferencesWithExecutorsRequest) returns (QueryGetInferencesWithExecutorsResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/get_inferences_with_executors/{ids}";
-  
-  }
-  
+
   // Queries a list of InferenceParticipant items.
   rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
@@ -171,6 +166,16 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/get_inference_validation_parameters/{ids}/{requester}";
   
   }
+  
+  // Queries a list of EpochPerformanceSummary items.
+  rpc EpochPerformanceSummary    (QueryGetEpochPerformanceSummaryRequest) returns (QueryGetEpochPerformanceSummaryResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
+  
+  }
+  rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -215,26 +220,6 @@ message QueryAllParticipantResponse {
   repeated Participant                            participant  = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination   = 2;
            int64                                  block_height = 3;
-}
-
-message QueryGetInferencesWithExecutorsRequest {
-  repeated string ids       = 1;
-           string requester = 2;
-}
-
-message QueryGetInferencesWithExecutorsResponse {
-  repeated InferenceWithExecutor inference_with_executor = 1 [(gogoproto.nullable) = false];
-           uint32                num_validators          = 2;
-           uint32                total_power             = 3;
-           uint32                validator_power         = 4;
-           uint32                current_height          = 5;
-}
-
-message InferenceWithExecutor {
-  Inference   inference     = 1 [(gogoproto.nullable) = false];
-  Participant executor      = 2 [(gogoproto.nullable) = false];
-  uint32      current_power = 3;
-  uint64      traffic_basis = 4;
 }
 
 message QueryInferenceParticipantRequest {
@@ -411,10 +396,28 @@ message QueryGetInferenceValidationParametersRequest {
 }
 
 message QueryGetInferenceValidationParametersResponse {
-  uint64 total_power     = 1;
-  uint64 validator_power = 2;
-  uint64 current_height  = 3;
-  repeated InferenceValidationDetails details = 4;
-  ValidationParams parameters = 5;
+           uint64                     total_power     = 1;
+           uint64                     validator_power = 2;
+           uint64                     current_height  = 3;
+  repeated InferenceValidationDetails details         = 4;
+           ValidationParams           parameters      = 5;
+}
+
+message QueryGetEpochPerformanceSummaryRequest {
+  uint64 epochStartHeight = 1;
+  string participantId    = 2;
+}
+
+message QueryGetEpochPerformanceSummaryResponse {
+  EpochPerformanceSummary epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllEpochPerformanceSummaryRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllEpochPerformanceSummaryResponse {
+  repeated EpochPerformanceSummary                epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 

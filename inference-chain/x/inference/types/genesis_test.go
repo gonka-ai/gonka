@@ -98,6 +98,16 @@ func TestGenesisState_Validate(t *testing.T) {
 						InferenceId: "1",
 					},
 				},
+				EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
+					{
+						EpochStartHeight: 0,
+						ParticipantId:    "0",
+					},
+					{
+						EpochStartHeight: 1,
+						ParticipantId:    "1",
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -215,6 +225,22 @@ func TestGenesisState_Validate(t *testing.T) {
 					{
 						EpochId:     0,
 						InferenceId: "0",
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated epochPerformanceSummary",
+			genState: &types.GenesisState{
+				EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
+					{
+						EpochStartHeight: 0,
+						ParticipantId:    "0",
+					},
+					{
+						EpochStartHeight: 0,
+						ParticipantId:    "0",
 					},
 				},
 			},

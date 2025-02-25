@@ -87,7 +87,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
 		CoinBalance:       30 * keeper.PerTokenCost,
-		InferenceCount:    uint64(1),
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, participantState)
 }
 

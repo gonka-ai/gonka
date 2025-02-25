@@ -31,10 +31,10 @@ func (k Keeper) GetTokenomicsData(ctx context.Context) (val types.TokenomicsData
 }
 
 func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.TokenomicsData) {
-	k.LogInfo("Adding tokenomics data", "tokenomicsData", tokenomicsData)
+	k.LogInfo("Adding tokenomics data", types.Tokenomics, "tokenomicsData", tokenomicsData)
 	current, found := k.GetTokenomicsData(ctx)
 	if !found {
-		k.LogError("Tokenomics data not found")
+		k.LogError("Tokenomics data not found", types.Tokenomics)
 	}
 	current.TotalBurned = current.TotalBurned + tokenomicsData.TotalBurned
 	current.TotalFees = current.TotalFees + tokenomicsData.TotalFees
@@ -42,5 +42,5 @@ func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.Tok
 	current.TotalRefunded = current.TotalRefunded + tokenomicsData.TotalRefunded
 	k.SetTokenomicsData(ctx, current)
 	newData, _ := k.GetTokenomicsData(ctx)
-	k.LogInfo("Tokenomics data added", "tokenomicsData", newData)
+	k.LogInfo("Tokenomics data added", types.Tokenomics, "tokenomicsData", newData)
 }

@@ -26,7 +26,7 @@ func (k Keeper) ModelsAll(goCtx context.Context, req *types.QueryModelsAllReques
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	k.LogInfo("Retrieved models", "len(models)", len(modelsValues), "models", modelsValues)
+	k.LogInfo("Retrieved models", types.Inferences, "len(models)", len(modelsValues), "models", modelsValues)
 
 	return &types.QueryModelsAllResponse{
 		Model: modelsValues,

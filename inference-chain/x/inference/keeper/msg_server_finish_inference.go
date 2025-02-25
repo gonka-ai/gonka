@@ -13,7 +13,7 @@ import (
 func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishInference) (*types.MsgFinishInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	k.LogInfo("FinishInference", "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
+	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
@@ -29,7 +29,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		k.LogError("GetCurrentEpochGroup", err)
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
 		return nil, err
 	}
 
@@ -47,13 +47,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.CoinBalance += existingInference.ActualCost
-	executor.InferenceCount++
+	executor.CurrentEpochStats.InferenceCount++
 
 	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
 	if refundAmount > 0 {
 		err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address)
 		if err != nil {
-			k.LogError("Unable to Issue Refund for finished inference", err)
+			k.LogError("Unable to Issue Refund for finished inference", types.Payments, err)
 		}
 	}
 
@@ -82,7 +82,18 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		}).InexactFloat64()),
 		TrafficBasis:  math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
 		ExecutorPower: executorPower,
+		EpochId:       currentEpochGroup.GroupData.EpochGroupId,
 	}
+	k.LogDebug(
+		"Adding Inference Validation Details",
+		types.Validation,
+		"inference_id", inferenceDetails.InferenceId,
+		"epoch_id", inferenceDetails.EpochId,
+		"executor_id", inferenceDetails.ExecutorId,
+		"executor_power", inferenceDetails.ExecutorPower,
+		"executor_reputation", inferenceDetails.ExecutorReputation,
+		"traffic_basis", inferenceDetails.TrafficBasis,
+	)
 	k.SetInferenceValidationDetails(ctx, inferenceDetails)
 	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 

@@ -6,6 +6,7 @@ import com.productscience.getInferenceResult
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
+import com.productscience.initCluster
 import com.productscience.initialize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -17,27 +18,27 @@ import org.tinylog.kotlin.Logger
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        highestFunded.waitForFirstPoC()
+        val (_, genesis) = initCluster()
+        genesis.waitForFirstPoC()
         runBlocking {
             // Launch coroutines with async and collect the deferred results
-            val requests = List(10) { i ->
+            val requests = List(100) { i ->
                 async(Dispatchers.Default) { // specify a dispatcher for parallelism
                     Logger.warn("Starting request $i")
-                    highestFunded.makeInferenceRequest(inferenceRequest)
+                    genesis.makeInferenceRequest(inferenceRequest)
                 }
             }
 
             // Wait for all requests to complete and collect their results
             val results = requests.map { it.await() }
 
-            highestFunded.node.waitForNextBlock(20)
+            genesis.node.waitForNextBlock(20)
             // Do something with the results outside runBlocking, if needed
             val statuses = results.map { result ->
-                val inference = highestFunded.api.getInference(result.id)
+                val inference = genesis.api.getInference(result.id)
                 inference.status
             }
+            Logger.info("Statuses: $statuses")
             // Some will be validated, some will not.
             assertThat(statuses).allMatch {
                 it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value
@@ -50,15 +51,13 @@ class ValidationTests : TestermintTest() {
     @Test
     fun `test invalid gets marked invalid`() {
         var tries = 3
-
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        val oddPair = pairs.last()
+        val (cluster, genesis) = initCluster()
+        val oddPair = cluster.joinPairs.last()
         val badResponse = defaultInferenceResponseObject.withMissingLogit()
         oddPair.mock?.setInferenceResponse(badResponse)
         var newState: InferencePayload
         do {
-            newState = getInferenceValidationState(highestFunded, oddPair)
+            newState = getInferenceValidationState(genesis, oddPair)
         } while (newState.status != InferenceStatus.INVALIDATED.value && tries-- > 0)
         assertThat(newState.status).isEqualTo(InferenceStatus.INVALIDATED.value)
     }
