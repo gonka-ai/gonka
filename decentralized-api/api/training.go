@@ -33,6 +33,8 @@ func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.Res
 			// pathParts[0] = "", pathParts[1] = "v1", pathParts[2] = "training-jobs", pathParts[3] = "{id}"
 			if len(pathParts) == 4 && pathParts[1] == "v1" && pathParts[2] == "training-jobs" {
 				handleGetTrainingJob(cosmosClient, pathParts[3], w, request)
+			} else if len(pathParts) == 3 && pathParts[1] == "v1" && pathParts[2] == "training-jobs" {
+				handleGetTrainingJobs(cosmosClient, w, request)
 			} else {
 				http.NotFound(w, request)
 			}
@@ -40,6 +42,17 @@ func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.Res
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
 	}
+}
+
+func handleGetTrainingJobs(client cosmosclient.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
+	queryClient := client.NewInferenceQueryClient()
+	tasks, err := queryClient.TrainingTaskAll(*client.GetContext(), &types.QueryTrainingTaskAllRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	RespondWithJson(w, tasks)
 }
 
 func handleCreateTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, w http.ResponseWriter, r *http.Request) {

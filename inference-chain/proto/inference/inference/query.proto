@@ -169,6 +169,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
   
   }
+  
+  // Queries a list of TrainingTaskAll items.
+  rpc TrainingTaskAll (QueryTrainingTaskAllRequest) returns (QueryTrainingTaskAllResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_task_all";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -393,3 +399,10 @@ message QueryQueuedTrainingTasksRequest {}
 message QueryQueuedTrainingTasksResponse {
   repeated TrainingTask tasks = 1;
 }
+
+message QueryTrainingTaskAllRequest {}
+
+message QueryTrainingTaskAllResponse {
+  repeated TrainingTask tasks = 1;
+}
+

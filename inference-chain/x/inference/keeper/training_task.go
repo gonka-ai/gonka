@@ -189,3 +189,9 @@ func (k Keeper) GetTasks(ctx sdk.Context, ids []uint64) ([]*types.TrainingTask, 
 	}
 	return tasks, nil
 }
+
+func (k Keeper) GetAllTrainingTasks(ctx sdk.Context) ([]*types.TrainingTask, error) {
+	return GetAllValues(ctx, k, []byte(types.TrainingTaskKeyPrefix), func() *types.TrainingTask {
+		return &types.TrainingTask{}
+	})
+}
