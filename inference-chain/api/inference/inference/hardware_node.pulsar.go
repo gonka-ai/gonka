@@ -12,65 +12,67 @@ import (
 	sync "sync"
 )
 
-var _ protoreflect.List = (*_HardwareNodes_1_list)(nil)
+var _ protoreflect.List = (*_HardwareNodes_2_list)(nil)
 
-type _HardwareNodes_1_list struct {
+type _HardwareNodes_2_list struct {
 	list *[]*HardwareNode
 }
 
-func (x *_HardwareNodes_1_list) Len() int {
+func (x *_HardwareNodes_2_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_HardwareNodes_1_list) Get(i int) protoreflect.Value {
+func (x *_HardwareNodes_2_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_HardwareNodes_1_list) Set(i int, value protoreflect.Value) {
+func (x *_HardwareNodes_2_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*HardwareNode)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_HardwareNodes_1_list) Append(value protoreflect.Value) {
+func (x *_HardwareNodes_2_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*HardwareNode)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_HardwareNodes_1_list) AppendMutable() protoreflect.Value {
+func (x *_HardwareNodes_2_list) AppendMutable() protoreflect.Value {
 	v := new(HardwareNode)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_HardwareNodes_1_list) Truncate(n int) {
+func (x *_HardwareNodes_2_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_HardwareNodes_1_list) NewElement() protoreflect.Value {
+func (x *_HardwareNodes_2_list) NewElement() protoreflect.Value {
 	v := new(HardwareNode)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_HardwareNodes_1_list) IsValid() bool {
+func (x *_HardwareNodes_2_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
 	md_HardwareNodes                protoreflect.MessageDescriptor
+	fd_HardwareNodes_participant    protoreflect.FieldDescriptor
 	fd_HardwareNodes_hardware_nodes protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_hardware_node_proto_init()
 	md_HardwareNodes = File_inference_inference_hardware_node_proto.Messages().ByName("HardwareNodes")
+	fd_HardwareNodes_participant = md_HardwareNodes.Fields().ByName("participant")
 	fd_HardwareNodes_hardware_nodes = md_HardwareNodes.Fields().ByName("hardware_nodes")
 }
 
@@ -139,8 +141,14 @@ func (x *fastReflection_HardwareNodes) Interface() protoreflect.ProtoMessage {
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_HardwareNodes) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Participant != "" {
+		value := protoreflect.ValueOfString(x.Participant)
+		if !f(fd_HardwareNodes_participant, value) {
+			return
+		}
+	}
 	if len(x.HardwareNodes) != 0 {
-		value := protoreflect.ValueOfList(&_HardwareNodes_1_list{list: &x.HardwareNodes})
+		value := protoreflect.ValueOfList(&_HardwareNodes_2_list{list: &x.HardwareNodes})
 		if !f(fd_HardwareNodes_hardware_nodes, value) {
 			return
 		}
@@ -160,6 +168,8 @@ func (x *fastReflection_HardwareNodes) Range(f func(protoreflect.FieldDescriptor
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_HardwareNodes) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
+	case "inference.inference.HardwareNodes.participant":
+		return x.Participant != ""
 	case "inference.inference.HardwareNodes.hardware_nodes":
 		return len(x.HardwareNodes) != 0
 	default:
@@ -178,6 +188,8 @@ func (x *fastReflection_HardwareNodes) Has(fd protoreflect.FieldDescriptor) bool
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_HardwareNodes) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
+	case "inference.inference.HardwareNodes.participant":
+		x.Participant = ""
 	case "inference.inference.HardwareNodes.hardware_nodes":
 		x.HardwareNodes = nil
 	default:
@@ -196,11 +208,14 @@ func (x *fastReflection_HardwareNodes) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_HardwareNodes) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
+	case "inference.inference.HardwareNodes.participant":
+		value := x.Participant
+		return protoreflect.ValueOfString(value)
 	case "inference.inference.HardwareNodes.hardware_nodes":
 		if len(x.HardwareNodes) == 0 {
-			return protoreflect.ValueOfList(&_HardwareNodes_1_list{})
+			return protoreflect.ValueOfList(&_HardwareNodes_2_list{})
 		}
-		listValue := &_HardwareNodes_1_list{list: &x.HardwareNodes}
+		listValue := &_HardwareNodes_2_list{list: &x.HardwareNodes}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -222,9 +237,11 @@ func (x *fastReflection_HardwareNodes) Get(descriptor protoreflect.FieldDescript
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_HardwareNodes) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
+	case "inference.inference.HardwareNodes.participant":
+		x.Participant = value.Interface().(string)
 	case "inference.inference.HardwareNodes.hardware_nodes":
 		lv := value.List()
-		clv := lv.(*_HardwareNodes_1_list)
+		clv := lv.(*_HardwareNodes_2_list)
 		x.HardwareNodes = *clv.list
 	default:
 		if fd.IsExtension() {
@@ -250,8 +267,10 @@ func (x *fastReflection_HardwareNodes) Mutable(fd protoreflect.FieldDescriptor) 
 		if x.HardwareNodes == nil {
 			x.HardwareNodes = []*HardwareNode{}
 		}
-		value := &_HardwareNodes_1_list{list: &x.HardwareNodes}
+		value := &_HardwareNodes_2_list{list: &x.HardwareNodes}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.HardwareNodes.participant":
+		panic(fmt.Errorf("field participant of message inference.inference.HardwareNodes is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.HardwareNodes"))
@@ -265,9 +284,11 @@ func (x *fastReflection_HardwareNodes) Mutable(fd protoreflect.FieldDescriptor) 
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_HardwareNodes) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.HardwareNodes.participant":
+		return protoreflect.ValueOfString("")
 	case "inference.inference.HardwareNodes.hardware_nodes":
 		list := []*HardwareNode{}
-		return protoreflect.ValueOfList(&_HardwareNodes_1_list{list: &list})
+		return protoreflect.ValueOfList(&_HardwareNodes_2_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.HardwareNodes"))
@@ -337,6 +358,10 @@ func (x *fastReflection_HardwareNodes) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
+		l = len(x.Participant)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if len(x.HardwareNodes) > 0 {
 			for _, e := range x.HardwareNodes {
 				l = options.Size(e)
@@ -385,8 +410,15 @@ func (x *fastReflection_HardwareNodes) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0xa
+				dAtA[i] = 0x12
 			}
+		}
+		if len(x.Participant) > 0 {
+			i -= len(x.Participant)
+			copy(dAtA[i:], x.Participant)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Participant)))
+			i--
+			dAtA[i] = 0xa
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -438,6 +470,38 @@ func (x *fastReflection_HardwareNodes) ProtoMethods() *protoiface.Methods {
 			}
 			switch fieldNum {
 			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Participant = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field HardwareNodes", wireType)
 				}
@@ -506,69 +570,67 @@ func (x *fastReflection_HardwareNodes) ProtoMethods() *protoiface.Methods {
 	}
 }
 
-var _ protoreflect.List = (*_HardwareNode_4_list)(nil)
+var _ protoreflect.List = (*_HardwareNode_3_list)(nil)
 
-type _HardwareNode_4_list struct {
+type _HardwareNode_3_list struct {
 	list *[]*Hardware
 }
 
-func (x *_HardwareNode_4_list) Len() int {
+func (x *_HardwareNode_3_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_HardwareNode_4_list) Get(i int) protoreflect.Value {
+func (x *_HardwareNode_3_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_HardwareNode_4_list) Set(i int, value protoreflect.Value) {
+func (x *_HardwareNode_3_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*Hardware)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_HardwareNode_4_list) Append(value protoreflect.Value) {
+func (x *_HardwareNode_3_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*Hardware)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_HardwareNode_4_list) AppendMutable() protoreflect.Value {
+func (x *_HardwareNode_3_list) AppendMutable() protoreflect.Value {
 	v := new(Hardware)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_HardwareNode_4_list) Truncate(n int) {
+func (x *_HardwareNode_3_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_HardwareNode_4_list) NewElement() protoreflect.Value {
+func (x *_HardwareNode_3_list) NewElement() protoreflect.Value {
 	v := new(Hardware)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_HardwareNode_4_list) IsValid() bool {
+func (x *_HardwareNode_3_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_HardwareNode             protoreflect.MessageDescriptor
-	fd_HardwareNode_participant protoreflect.FieldDescriptor
-	fd_HardwareNode_local_id    protoreflect.FieldDescriptor
-	fd_HardwareNode_status      protoreflect.FieldDescriptor
-	fd_HardwareNode_hardware    protoreflect.FieldDescriptor
+	md_HardwareNode          protoreflect.MessageDescriptor
+	fd_HardwareNode_local_id protoreflect.FieldDescriptor
+	fd_HardwareNode_status   protoreflect.FieldDescriptor
+	fd_HardwareNode_hardware protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_hardware_node_proto_init()
 	md_HardwareNode = File_inference_inference_hardware_node_proto.Messages().ByName("HardwareNode")
-	fd_HardwareNode_participant = md_HardwareNode.Fields().ByName("participant")
 	fd_HardwareNode_local_id = md_HardwareNode.Fields().ByName("local_id")
 	fd_HardwareNode_status = md_HardwareNode.Fields().ByName("status")
 	fd_HardwareNode_hardware = md_HardwareNode.Fields().ByName("hardware")
@@ -639,12 +701,6 @@ func (x *fastReflection_HardwareNode) Interface() protoreflect.ProtoMessage {
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_HardwareNode) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Participant != "" {
-		value := protoreflect.ValueOfString(x.Participant)
-		if !f(fd_HardwareNode_participant, value) {
-			return
-		}
-	}
 	if x.LocalId != "" {
 		value := protoreflect.ValueOfString(x.LocalId)
 		if !f(fd_HardwareNode_local_id, value) {
@@ -658,7 +714,7 @@ func (x *fastReflection_HardwareNode) Range(f func(protoreflect.FieldDescriptor,
 		}
 	}
 	if len(x.Hardware) != 0 {
-		value := protoreflect.ValueOfList(&_HardwareNode_4_list{list: &x.Hardware})
+		value := protoreflect.ValueOfList(&_HardwareNode_3_list{list: &x.Hardware})
 		if !f(fd_HardwareNode_hardware, value) {
 			return
 		}
@@ -678,8 +734,6 @@ func (x *fastReflection_HardwareNode) Range(f func(protoreflect.FieldDescriptor,
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_HardwareNode) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.HardwareNode.participant":
-		return x.Participant != ""
 	case "inference.inference.HardwareNode.local_id":
 		return x.LocalId != ""
 	case "inference.inference.HardwareNode.status":
@@ -702,8 +756,6 @@ func (x *fastReflection_HardwareNode) Has(fd protoreflect.FieldDescriptor) bool 
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_HardwareNode) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.HardwareNode.participant":
-		x.Participant = ""
 	case "inference.inference.HardwareNode.local_id":
 		x.LocalId = ""
 	case "inference.inference.HardwareNode.status":
@@ -726,9 +778,6 @@ func (x *fastReflection_HardwareNode) Clear(fd protoreflect.FieldDescriptor) {
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_HardwareNode) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.HardwareNode.participant":
-		value := x.Participant
-		return protoreflect.ValueOfString(value)
 	case "inference.inference.HardwareNode.local_id":
 		value := x.LocalId
 		return protoreflect.ValueOfString(value)
@@ -737,9 +786,9 @@ func (x *fastReflection_HardwareNode) Get(descriptor protoreflect.FieldDescripto
 		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
 	case "inference.inference.HardwareNode.hardware":
 		if len(x.Hardware) == 0 {
-			return protoreflect.ValueOfList(&_HardwareNode_4_list{})
+			return protoreflect.ValueOfList(&_HardwareNode_3_list{})
 		}
-		listValue := &_HardwareNode_4_list{list: &x.Hardware}
+		listValue := &_HardwareNode_3_list{list: &x.Hardware}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -761,15 +810,13 @@ func (x *fastReflection_HardwareNode) Get(descriptor protoreflect.FieldDescripto
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_HardwareNode) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.HardwareNode.participant":
-		x.Participant = value.Interface().(string)
 	case "inference.inference.HardwareNode.local_id":
 		x.LocalId = value.Interface().(string)
 	case "inference.inference.HardwareNode.status":
 		x.Status = (HardwareNodeStatus)(value.Enum())
 	case "inference.inference.HardwareNode.hardware":
 		lv := value.List()
-		clv := lv.(*_HardwareNode_4_list)
+		clv := lv.(*_HardwareNode_3_list)
 		x.Hardware = *clv.list
 	default:
 		if fd.IsExtension() {
@@ -795,10 +842,8 @@ func (x *fastReflection_HardwareNode) Mutable(fd protoreflect.FieldDescriptor) p
 		if x.Hardware == nil {
 			x.Hardware = []*Hardware{}
 		}
-		value := &_HardwareNode_4_list{list: &x.Hardware}
+		value := &_HardwareNode_3_list{list: &x.Hardware}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.HardwareNode.participant":
-		panic(fmt.Errorf("field participant of message inference.inference.HardwareNode is not mutable"))
 	case "inference.inference.HardwareNode.local_id":
 		panic(fmt.Errorf("field local_id of message inference.inference.HardwareNode is not mutable"))
 	case "inference.inference.HardwareNode.status":
@@ -816,15 +861,13 @@ func (x *fastReflection_HardwareNode) Mutable(fd protoreflect.FieldDescriptor) p
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_HardwareNode) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.HardwareNode.participant":
-		return protoreflect.ValueOfString("")
 	case "inference.inference.HardwareNode.local_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.HardwareNode.status":
 		return protoreflect.ValueOfEnum(0)
 	case "inference.inference.HardwareNode.hardware":
 		list := []*Hardware{}
-		return protoreflect.ValueOfList(&_HardwareNode_4_list{list: &list})
+		return protoreflect.ValueOfList(&_HardwareNode_3_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.HardwareNode"))
@@ -894,10 +937,6 @@ func (x *fastReflection_HardwareNode) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		l = len(x.Participant)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
 		l = len(x.LocalId)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
@@ -953,25 +992,18 @@ func (x *fastReflection_HardwareNode) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x22
+				dAtA[i] = 0x1a
 			}
 		}
 		if x.Status != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Status))
 			i--
-			dAtA[i] = 0x18
+			dAtA[i] = 0x10
 		}
 		if len(x.LocalId) > 0 {
 			i -= len(x.LocalId)
 			copy(dAtA[i:], x.LocalId)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.LocalId)))
-			i--
-			dAtA[i] = 0x12
-		}
-		if len(x.Participant) > 0 {
-			i -= len(x.Participant)
-			copy(dAtA[i:], x.Participant)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Participant)))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -1026,38 +1058,6 @@ func (x *fastReflection_HardwareNode) ProtoMethods() *protoiface.Methods {
 			switch fieldNum {
 			case 1:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Participant = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 2:
-				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field LocalId", wireType)
 				}
 				var stringLen uint64
@@ -1088,7 +1088,7 @@ func (x *fastReflection_HardwareNode) ProtoMethods() *protoiface.Methods {
 				}
 				x.LocalId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 3:
+			case 2:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Status", wireType)
 				}
@@ -1107,7 +1107,7 @@ func (x *fastReflection_HardwareNode) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 4:
+			case 3:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Hardware", wireType)
 				}
@@ -1709,12 +1709,14 @@ func (HardwareNodeStatus) EnumDescriptor() ([]byte, []int) {
 	return file_inference_inference_hardware_node_proto_rawDescGZIP(), []int{0}
 }
 
+// IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE InferenceNode struct in decentralized-api!!!
 type HardwareNodes struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	HardwareNodes []*HardwareNode `protobuf:"bytes,1,rep,name=hardware_nodes,json=hardwareNodes,proto3" json:"hardware_nodes,omitempty"`
+	Participant   string          `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
+	HardwareNodes []*HardwareNode `protobuf:"bytes,2,rep,name=hardware_nodes,json=hardwareNodes,proto3" json:"hardware_nodes,omitempty"`
 }
 
 func (x *HardwareNodes) Reset() {
@@ -1737,6 +1739,13 @@ func (*HardwareNodes) Descriptor() ([]byte, []int) {
 	return file_inference_inference_hardware_node_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *HardwareNodes) GetParticipant() string {
+	if x != nil {
+		return x.Participant
+	}
+	return ""
+}
+
 func (x *HardwareNodes) GetHardwareNodes() []*HardwareNode {
 	if x != nil {
 		return x.HardwareNodes
@@ -1749,10 +1758,9 @@ type HardwareNode struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Participant string             `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
-	LocalId     string             `protobuf:"bytes,2,opt,name=local_id,json=localId,proto3" json:"local_id,omitempty"`
-	Status      HardwareNodeStatus `protobuf:"varint,3,opt,name=status,proto3,enum=inference.inference.HardwareNodeStatus" json:"status,omitempty"`
-	Hardware    []*Hardware        `protobuf:"bytes,4,rep,name=hardware,proto3" json:"hardware,omitempty"`
+	LocalId  string             `protobuf:"bytes,1,opt,name=local_id,json=localId,proto3" json:"local_id,omitempty"`
+	Status   HardwareNodeStatus `protobuf:"varint,2,opt,name=status,proto3,enum=inference.inference.HardwareNodeStatus" json:"status,omitempty"`
+	Hardware []*Hardware        `protobuf:"bytes,3,rep,name=hardware,proto3" json:"hardware,omitempty"`
 }
 
 func (x *HardwareNode) Reset() {
@@ -1773,13 +1781,6 @@ func (*HardwareNode) ProtoMessage() {}
 // Deprecated: Use HardwareNode.ProtoReflect.Descriptor instead.
 func (*HardwareNode) Descriptor() ([]byte, []int) {
 	return file_inference_inference_hardware_node_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *HardwareNode) GetParticipant() string {
-	if x != nil {
-		return x.Participant
-	}
-	return ""
 }
 
 func (x *HardwareNode) GetLocalId() string {
@@ -1852,23 +1853,23 @@ var file_inference_inference_hardware_node_proto_rawDesc = []byte{
 	0x0a, 0x27, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x68, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x5f, 0x6e,
 	0x6f, 0x64, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x59,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x7b,
 	0x0a, 0x0d, 0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x12,
-	0x48, 0x0a, 0x0e, 0x68, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x5f, 0x6e, 0x6f, 0x64, 0x65,
-	0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x48, 0x61,
-	0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x52, 0x0d, 0x68, 0x61, 0x72, 0x64,
-	0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x22, 0xc7, 0x01, 0x0a, 0x0c, 0x48, 0x61,
-	0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61,
-	0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x19, 0x0a, 0x08,
-	0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
+	0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
+	0x74, 0x12, 0x48, 0x0a, 0x0e, 0x68, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x5f, 0x6e, 0x6f,
+	0x64, 0x65, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x52, 0x0d, 0x68, 0x61,
+	0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x22, 0xa5, 0x01, 0x0a, 0x0c,
+	0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x12, 0x19, 0x0a, 0x08,
+	0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
 	0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x49, 0x64, 0x12, 0x3f, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75,
-	0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x48, 0x61,
 	0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
 	0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x39, 0x0a, 0x08, 0x68, 0x61, 0x72, 0x64,
-	0x77, 0x61, 0x72, 0x65, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66,
+	0x77, 0x61, 0x72, 0x65, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x52, 0x08, 0x68, 0x61, 0x72, 0x64, 0x77,
 	0x61, 0x72, 0x65, 0x22, 0x34, 0x0a, 0x08, 0x48, 0x61, 0x72, 0x64, 0x77, 0x61, 0x72, 0x65, 0x12,

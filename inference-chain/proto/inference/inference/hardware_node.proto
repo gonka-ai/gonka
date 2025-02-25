@@ -5,14 +5,14 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 
 // IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE InferenceNode struct in decentralized-api!!!
 message HardwareNodes {
-  repeated HardwareNode hardware_nodes = 1;
+  string participant = 1;
+  repeated HardwareNode hardware_nodes = 2;
 }
 
 message HardwareNode {
-  string participant = 1;
-  string local_id = 2;
-  HardwareNodeStatus status = 3;
-  repeated Hardware hardware = 4;
+  string local_id = 1;
+  HardwareNodeStatus status = 2;
+  repeated Hardware hardware = 3;
 }
 
 enum HardwareNodeStatus {

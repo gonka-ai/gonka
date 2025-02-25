@@ -157,6 +157,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
   
   }
+  
+  // Queries a list of HardwareNodesAll items.
+  rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -369,4 +375,8 @@ message QueryHardwareNodesRequest {
 message QueryHardwareNodesResponse {
   HardwareNodes nodes = 1;
 }
+
+message QueryHardwareNodesAllRequest {}
+
+message QueryHardwareNodesAllResponse {}
 

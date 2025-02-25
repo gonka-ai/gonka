@@ -31,13 +31,14 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 	}
 
 	updatedNodes := &types.HardwareNodes{
+		Participant:   msg.Creator,
 		HardwareNodes: make([]*types.HardwareNode, 0, len(nodeMap)),
 	}
 	for _, node := range nodeMap {
 		updatedNodes.HardwareNodes = append(updatedNodes.HardwareNodes, node)
 	}
 
-	if err := k.SetHardwareNodes(ctx, msg.Creator, updatedNodes); err != nil {
+	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", "err", err)
 		return nil, err
 	}

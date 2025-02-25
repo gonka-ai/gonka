@@ -43,6 +43,7 @@ const (
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
 	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                 = "/inference.inference.Query/HardwareNodes"
+	Query_HardwareNodesAll_FullMethodName              = "/inference.inference.Query/HardwareNodesAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -91,6 +92,8 @@ type QueryClient interface {
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
+	// Queries a list of HardwareNodesAll items.
+	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
 }
 
 type queryClient struct {
@@ -317,6 +320,15 @@ func (c *queryClient) HardwareNodes(ctx context.Context, in *QueryHardwareNodesR
 	return out, nil
 }
 
+func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error) {
+	out := new(QueryHardwareNodesAllResponse)
+	err := c.cc.Invoke(ctx, Query_HardwareNodesAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -363,6 +375,8 @@ type QueryServer interface {
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
+	// Queries a list of HardwareNodesAll items.
+	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -441,6 +455,9 @@ func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTask
 }
 func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodes not implemented")
+}
+func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -887,6 +904,24 @@ func _Query_HardwareNodes_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryHardwareNodesAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).HardwareNodesAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_HardwareNodesAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).HardwareNodesAll(ctx, req.(*QueryHardwareNodesAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -989,6 +1024,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HardwareNodes",
 			Handler:    _Query_HardwareNodes_Handler,
+		},
+		{
+			MethodName: "HardwareNodesAll",
+			Handler:    _Query_HardwareNodesAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

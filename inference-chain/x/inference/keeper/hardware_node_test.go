@@ -12,10 +12,10 @@ func TestSetAndGetHardwareNodes(t *testing.T) {
 	_ = ctx
 	participantId := "cosmosparticipant1"
 	nodes := &types.HardwareNodes{
+		Participant: participantId,
 		HardwareNodes: []*types.HardwareNode{
 			{
-				Participant: participantId,
-				LocalId:     "localId1",
+				LocalId: "localId1",
 				Hardware: []*types.Hardware{
 					{
 						Type:  "A100",
@@ -24,8 +24,7 @@ func TestSetAndGetHardwareNodes(t *testing.T) {
 				},
 			},
 			{
-				Participant: participantId,
-				LocalId:     "localId2",
+				LocalId: "localId2",
 				Hardware: []*types.Hardware{
 					{
 						Type:  "A100",
@@ -39,7 +38,7 @@ func TestSetAndGetHardwareNodes(t *testing.T) {
 			},
 		},
 	}
-	err := keeper.SetHardwareNodes(ctx, participantId, nodes)
+	err := keeper.SetHardwareNodes(ctx, nodes)
 	if err != nil {
 		t.Fatal("Failed to set hardware nodes", err)
 	}

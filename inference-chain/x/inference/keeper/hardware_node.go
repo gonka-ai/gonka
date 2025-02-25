@@ -1,7 +1,6 @@
 package keeper
 
 import (
-	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -16,14 +15,8 @@ func HardwareNodesKey(participantId string) []byte {
 	return types.StringKey(participantId)
 }
 
-func (k Keeper) SetHardwareNodes(ctx sdk.Context, participantId string, hardwareNodes *types.HardwareNodes) error {
-	for i, hardwareNode := range hardwareNodes.HardwareNodes {
-		if hardwareNode.Participant != participantId {
-			return fmt.Errorf("hardware node participant id does not match hardware nodes participant id. participantId = %s. participantIdAt%d = %s", participantId, i, hardwareNode.Participant)
-		}
-	}
-
-	key := HardwareNodesKey(participantId)
+func (k Keeper) SetHardwareNodes(ctx sdk.Context, hardwareNodes *types.HardwareNodes) error {
+	key := HardwareNodesKey(hardwareNodes.Participant)
 
 	SetValue(k, ctx, hardwareNodes, []byte(HardwareNodesKeysPrefix), key)
 
@@ -35,4 +28,9 @@ func (k Keeper) GetHardwareNodes(ctx sdk.Context, participantId string) (*types.
 	hardwareNodes := types.HardwareNodes{}
 
 	return GetValue(k, ctx, &hardwareNodes, []byte(HardwareNodesKeysPrefix), key)
+}
+
+func (k Keeper) GetAllHardwareNodes(ctx sdk.Context) []*types.HardwareNodes {
+	// TODO
+	return nil
 }
