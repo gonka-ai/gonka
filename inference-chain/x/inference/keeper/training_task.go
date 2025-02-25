@@ -174,3 +174,18 @@ func (k Keeper) ListInProgressTasks(ctx sdk.Context) []uint64 {
 	}
 	return taskIDs
 }
+
+func (k Keeper) GetTasks(ctx sdk.Context, ids []uint64) ([]*types.TrainingTask, error) {
+	store := PrefixStore(ctx, &k, []byte(types.TrainingTaskKeyPrefix))
+	tasks := make([]*types.TrainingTask, len(ids))
+	for _, id := range ids {
+		bz := store.Get(types.TrainingTaskKey(id))
+		if bz == nil {
+			return nil, fmt.Errorf("task %d not found", id)
+		}
+		var task types.TrainingTask
+		k.cdc.MustUnmarshal(bz, &task)
+		tasks = append(tasks, &task)
+	}
+	return tasks, nil
+}

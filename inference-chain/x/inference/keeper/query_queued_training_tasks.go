@@ -16,8 +16,13 @@ func (k Keeper) QueuedTrainingTasks(goCtx context.Context, req *types.QueryQueue
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	taskIds := k.ListQueuedTasks(ctx)
+	tasks, err := k.GetTasks(ctx, taskIds)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
-	return &types.QueryQueuedTrainingTasksResponse{}, nil
+	return &types.QueryQueuedTrainingTasksResponse{
+		Tasks: tasks,
+	}, nil
 }

@@ -23,6 +23,7 @@ func NewTrainingTaskWatcher(client cosmosclient.CosmosMessageClient, tendermintC
 		tendermintClient: tendermintClient,
 	}
 
+	// TODO: on startup do some quries to restore state (like tasks I was assigned)
 	go watcher.watchTasks()
 
 	return watcher
@@ -61,6 +62,8 @@ func (w TrainingTaskWatcher) watchTasks() {
 		if _, err = w.cosmosClient.SendTransaction(&msg); err != nil {
 			slog.Error(logTag+"Error claiming task for assignment", "err", err)
 		}
+
+		// TODO: set in some local state that you have a task claimed now!
 	}
 }
 
