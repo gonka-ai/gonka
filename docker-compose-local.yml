@@ -8,6 +8,12 @@ services:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
       - KEY_NAME=${KEY_NAME}
+      - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
+      - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
+      - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+    ports:
+      - "${RPC_PORT}:26657"
+      - "${P2P_PORT}:26656"
     networks:
       - chain-public
 
