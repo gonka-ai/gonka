@@ -41,6 +41,7 @@ const (
 	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
 	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
+	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
 )
 
 // QueryClient is the client API for Query service.
@@ -85,6 +86,8 @@ type QueryClient interface {
 	// Queries a list of TopMiner items.
 	TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error)
+	// Queries a list of TrainingTask items.
+	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 }
 
 type queryClient struct {
@@ -293,6 +296,15 @@ func (c *queryClient) TopMinerAll(ctx context.Context, in *QueryAllTopMinerReque
 	return out, nil
 }
 
+func (c *queryClient) TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error) {
+	out := new(QueryTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -335,6 +347,8 @@ type QueryServer interface {
 	// Queries a list of TopMiner items.
 	TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error)
+	// Queries a list of TrainingTask items.
+	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -407,6 +421,9 @@ func (UnimplementedQueryServer) TopMiner(context.Context, *QueryGetTopMinerReque
 }
 func (UnimplementedQueryServer) TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TopMinerAll not implemented")
+}
+func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -817,6 +834,24 @@ func _Query_TopMinerAll_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingTask(ctx, req.(*QueryTrainingTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -911,6 +946,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TopMinerAll",
 			Handler:    _Query_TopMinerAll_Handler,
+		},
+		{
+			MethodName: "TrainingTask",
+			Handler:    _Query_TrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -34,6 +34,7 @@ const (
 	Msg_SubmitSeed_FullMethodName                       = "/inference.inference.Msg/SubmitSeed"
 	Msg_SubmitUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Msg/SubmitUnitOfComputePriceProposal"
 	Msg_RegisterModel_FullMethodName                    = "/inference.inference.Msg/RegisterModel"
+	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
 )
 
 // MsgClient is the client API for Msg service.
@@ -57,6 +58,7 @@ type MsgClient interface {
 	SubmitSeed(ctx context.Context, in *MsgSubmitSeed, opts ...grpc.CallOption) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(ctx context.Context, in *MsgSubmitUnitOfComputePriceProposal, opts ...grpc.CallOption) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(ctx context.Context, in *MsgRegisterModel, opts ...grpc.CallOption) (*MsgRegisterModelResponse, error)
+	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
 }
 
 type msgClient struct {
@@ -202,6 +204,15 @@ func (c *msgClient) RegisterModel(ctx context.Context, in *MsgRegisterModel, opt
 	return out, nil
 }
 
+func (c *msgClient) CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error) {
+	out := new(MsgCreateTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateTrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -223,6 +234,7 @@ type MsgServer interface {
 	SubmitSeed(context.Context, *MsgSubmitSeed) (*MsgSubmitSeedResponse, error)
 	SubmitUnitOfComputePriceProposal(context.Context, *MsgSubmitUnitOfComputePriceProposal) (*MsgSubmitUnitOfComputePriceProposalResponse, error)
 	RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error)
+	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -274,6 +286,9 @@ func (UnimplementedMsgServer) SubmitUnitOfComputePriceProposal(context.Context, 
 }
 func (UnimplementedMsgServer) RegisterModel(context.Context, *MsgRegisterModel) (*MsgRegisterModelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterModel not implemented")
+}
+func (UnimplementedMsgServer) CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainingTask not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -558,6 +573,24 @@ func _Msg_RegisterModel_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreateTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateTrainingTask)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreateTrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateTrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateTrainingTask(ctx, req.(*MsgCreateTrainingTask))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -624,6 +657,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterModel",
 			Handler:    _Msg_RegisterModel_Handler,
+		},
+		{
+			MethodName: "CreateTrainingTask",
+			Handler:    _Msg_CreateTrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
