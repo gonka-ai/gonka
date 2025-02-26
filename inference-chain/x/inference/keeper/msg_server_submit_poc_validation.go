@@ -8,6 +8,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const PocFailureTag = "[PoC Failure]"
+
 func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubmitPocValidation) (*types.MsgSubmitPocValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 

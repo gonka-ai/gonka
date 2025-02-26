@@ -8,9 +8,15 @@ import (
 	"github.com/cosmos/gogoproto/proto"
 )
 
-func PrefixStore(ctx context.Context, k Keeper, ketPrefix []byte) *prefix.Store {
+func EmptyPrefixStore(ctx context.Context, k *Keeper) *prefix.Store {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, ketPrefix)
+	store := prefix.NewStore(storeAdapter, []byte{})
+	return &store
+}
+
+func PrefixStore(ctx context.Context, k *Keeper, keyPrefix []byte) *prefix.Store {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
 	return &store
 }
 

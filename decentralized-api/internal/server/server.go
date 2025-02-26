@@ -69,6 +69,8 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(transactionRecorder))
 	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
@@ -131,10 +133,10 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 	}
 }
 
-func LoadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
+func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNode) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
-		Response: make(chan broker.InferenceNode, 2),
+		Response: make(chan apiconfig.InferenceNode, 2),
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
@@ -462,7 +464,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -760,7 +762,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 			return
 		}
 
-		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		result, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (ValidationResult, error) {
 			return validateByInferenceId(validationRequest.Id, node, recorder)
 		})
 

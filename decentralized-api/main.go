@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/server"
 	"decentralized-api/logging"
+	"decentralized-api/participant_registration"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
@@ -51,7 +52,7 @@ func main() {
 		panic(err)
 	}
 
-	nodeBroker := broker.NewBroker()
+	nodeBroker := broker.NewBroker(recorder)
 	nodes := config.GetConfig().Nodes
 	for _, node := range nodes {
 		server.LoadNodeToBroker(nodeBroker, &node)
@@ -63,7 +64,7 @@ func main() {
 		return
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
+	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}

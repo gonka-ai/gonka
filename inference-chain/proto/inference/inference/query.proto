@@ -21,6 +21,8 @@ import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
+import "inference/inference/training_task.proto";
+import "inference/inference/hardware_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -74,107 +76,124 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-  
+
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-  
+
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-  
+
   }
-  
+
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{poc_start_block_height}";
-  
+
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-  
+
   }
-  
+
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
-  
+
   }
-  
+
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-  
+
   }
-  
+
   // Queries a TokenomicsData by index.
   rpc TokenomicsData (QueryGetTokenomicsDataRequest) returns (QueryGetTokenomicsDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/tokenomics_data";
-  
+
   }
-  
+
   // Queries a list of GetUnitOfComputePriceProposal items.
   rpc GetUnitOfComputePriceProposal (QueryGetUnitOfComputePriceProposalRequest) returns (QueryGetUnitOfComputePriceProposalResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
-  
+
   }
-  
+
   // Queries a list of CurrentEpochGroupData items.
   rpc CurrentEpochGroupData (QueryCurrentEpochGroupDataRequest) returns (QueryCurrentEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
-  
+
   }
-  
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-  
+
   }
-  
+
   // Queries a list of TopMiner items.
   rpc TopMiner    (QueryGetTopMinerRequest) returns (QueryGetTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner/{address}";
-  
+
   }
   rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner";
-  
+
   }
-  
+
   // Queries a list of InferenceTimeout items.
   rpc InferenceTimeout    (QueryGetInferenceTimeoutRequest) returns (QueryGetInferenceTimeoutResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_timeout/{expirationHeight}/{inferenceId}";
-  
+
   }
   rpc InferenceTimeoutAll (QueryAllInferenceTimeoutRequest) returns (QueryAllInferenceTimeoutResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_timeout";
-  
+
   }
-  
+
   // Queries a list of InferenceValidationDetails items.
   rpc InferenceValidationDetails    (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
-  
+
   }
   rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
-  
+
   }
-  
+
   // Queries a list of GetInferenceValidationParameters items.
   rpc GetInferenceValidationParameters (QueryGetInferenceValidationParametersRequest) returns (QueryGetInferenceValidationParametersResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_inference_validation_parameters/{ids}/{requester}";
-  
+
   }
-  
+
   // Queries a list of EpochPerformanceSummary items.
   rpc EpochPerformanceSummary    (QueryGetEpochPerformanceSummaryRequest) returns (QueryGetEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
-  
+
   }
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
-  
+
+  }
+
+  // Queries a list of TrainingTask items.
+  rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_task";
+
+  }
+
+  // Queries a list of HardwareNodes items.
+  rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
+
+  }
+
+  // Queries a list of HardwareNodesAll items.
+  rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -421,3 +440,24 @@ message QueryAllEpochPerformanceSummaryResponse {
            cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 
+message QueryTrainingTaskRequest {
+  uint64 id = 1;
+}
+
+message QueryTrainingTaskResponse {
+  TrainingTask task = 1;
+}
+
+message QueryHardwareNodesRequest {
+  string participant = 1;
+}
+
+message QueryHardwareNodesResponse {
+  HardwareNodes nodes = 1;
+}
+
+message QueryHardwareNodesAllRequest {}
+
+message QueryHardwareNodesAllResponse {
+  repeated HardwareNodes nodes = 1;
+}

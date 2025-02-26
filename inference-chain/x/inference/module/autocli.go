@@ -148,6 +148,25 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "expirationHeight"}, {ProtoField: "inferenceId"}},
 				},
 				{
+					RpcMethod:      "TrainingTask",
+					Use:            "training-task",
+					Short:          "Query trainingTask",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
 					RpcMethod: "InferenceValidationDetailsAll",
 					Use:       "list-inference-validation-details",
 					Short:     "List all inference_validation_details",
@@ -212,12 +231,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inference_id"}, {ProtoField: "response_payload"}, {ProtoField: "response_hash"}, {ProtoField: "value"}},
 				},
 				{
-					RpcMethod:      "SubmitPoC",
-					Use:            "submit-poc [block-height] [nonce]",
-					Short:          "Send a submit-poc tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "nonce"}},
-				},
-				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
 					Use:            "submit-new-unfunded-participant [address] [url] [models] [pub-key] [validator-key]",
 					Short:          "Send a submitNewUnfundedParticipant tx",
@@ -264,6 +277,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "submit-unit-of-compute-price-proposal [price]",
 					Short:          "Send a submit-unit-of-compute-price-proposal tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
+				},
+				{
+					RpcMethod:      "CreateTrainingTask",
+					Use:            "create-training-task",
+					Short:          "Send a createTrainingTask tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "SubmitHardwareDiff",
+					Use:            "submit-hardware-diff",
+					Short:          "Send a SubmitHardwareDiff tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

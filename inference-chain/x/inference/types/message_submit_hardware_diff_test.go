@@ -8,22 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMsgSubmitPoC_ValidateBasic(t *testing.T) {
+func TestMsgSubmitHardwareDiff_ValidateBasic(t *testing.T) {
 	tests := []struct {
 		name string
-
-		msg MsgSubmitPoC
-		err error
+		msg  MsgSubmitHardwareDiff
+		err  error
 	}{
 		{
 			name: "invalid address",
-			msg: MsgSubmitPoC{
+			msg: MsgSubmitHardwareDiff{
 				Creator: "invalid_address",
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
-			msg: MsgSubmitPoC{
+			msg: MsgSubmitHardwareDiff{
 				Creator: sample.AccAddress(),
 			},
 		},

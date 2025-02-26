@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	"cosmossdk.io/store/prefix"
-	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/epochgroup"
@@ -117,41 +116,4 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epoc
 		GroupDataKeeper:   k,
 		GroupData:         &data,
 	}, nil
-}
-
-func (k Keeper) SetUpcomingPower(ctx context.Context, power types.Power) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PowerKeyPrefix))
-	key := types.PowerKey(power.ParticipantAddress)
-
-	b := k.cdc.MustMarshal(&power)
-	store.Set(key, b)
-}
-
-func (k Keeper) AllUpcomingPower(ctx context.Context) (list []types.Power) {
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PowerKeyPrefix))
-
-	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
-
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var val types.Power
-		k.cdc.MustUnmarshal(iterator.Value(), &val)
-		list = append(list, val)
-	}
-
-	return
-}
-
-func (k Keeper) RemoveAllUpcomingPower(ctx context.Context) {
-	existingPower := k.AllUpcomingPower(ctx)
-
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PowerKeyPrefix))
-
-	for _, p := range existingPower {
-		store.Delete(types.PowerKey(p.ParticipantAddress))
-	}
 }

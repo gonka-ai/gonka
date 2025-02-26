@@ -52,6 +52,9 @@ func initRootCmd(
 		CreateClientCommand(),
 		DownloadGenesisCommand(),
 		SetSeedCommand(),
+		SetStateSync(),
+		SetRpcServers(),
+		SetTrustedBlock(),
 	)
 }
 

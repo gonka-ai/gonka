@@ -29,7 +29,7 @@ func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, proposalData 
 		return err
 	}
 
-	err = cosmosClient.SendTransaction(proposalMsg)
+	_, err = cosmosClient.SendTransaction(proposalMsg)
 	if err != nil {
 		return err
 	}
