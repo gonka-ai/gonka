@@ -18,6 +18,6 @@ else
   echo "User 'appuser' already exists"
 fi
 
-source /app/mlnode/packages/api/.venv/bin/activate
+source /app/packages/api/.venv/bin/activate
 
 exec "$@"

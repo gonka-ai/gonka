@@ -11,7 +11,7 @@ class ServiceState(str, Enum):
 
 def get_service_name(request: Request):
     path = request.url.path
-    return path.removeprefix(API_PREFIX).lstrip('/').split('/')[0].upper()
+    return path.removeprefix(API_PREFIX).lstrip("/").split("/")[0].upper()
 
 def update_service_state(request: Request):
     pow_running = request.app.state.pow_manager.is_running()
@@ -24,10 +24,9 @@ def update_service_state(request: Request):
         request.app.state.inference_manager.stop()
         request.app.state.train_manager.stop()
         raise HTTPException(
-            status_code=400,
-            detail="Something went wrong. MLNode can only run one service at a time. Stopping..."
+            status_code=409,
+            detail="Multiple services detected. MLNode allows only one service to run at a time. All running services have been stopped."
         )
-
 
     if pow_running:
         request.app.state.service_state = ServiceState.POW
@@ -39,20 +38,21 @@ def update_service_state(request: Request):
         request.app.state.service_state = ServiceState.STOPPED
 
 def handle_conflicts(request: Request):
-    path = request.url.path
-    method = request.method.upper()
-    requested_service_state = get_service_name(request).upper()
-    current_service_state = request.app.state.service_state
-    
-    if current_service_state == ServiceState.STOPPED:
+    requested_service = get_service_name(request)
+    current_service = request.app.state.service_state
+
+    if current_service == ServiceState.STOPPED or requested_service == "MLNODE":
         return
-    
-    if requested_service_state == 'MLNODE':
-        return
-    
-    if current_service_state != requested_service_state:
+
+    if current_service != requested_service:
         raise HTTPException(
-            status_code=400,
-            detail=f"Can't run {requested_service_state} because MLNode is in the {current_service_state} mode. "
-                   f"Stop the {current_service_state} service first."
+            status_code=409,
+            detail=(
+                f"Cannot run {requested_service} because MLNode is currently "
+                f"in {current_service} mode. Please stop {current_service} first."
+            )
         )
+
+def check_service_conflicts(request: Request):
+    update_service_state(request)
+    handle_conflicts(request)

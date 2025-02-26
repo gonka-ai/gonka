@@ -1,10 +1,10 @@
 # MLNode
 
-IMPORTNAT NOTE: Repo is originally named proof-of-work. Right after cloning, rename directory to mlnode.
+IMPORTNAT NOTE: Repo is originally named pow. Right after cloning, rename directory to mlnode.
 
 ## Setup
 
-1. Set up .env in root, packages/api, packages/proof-of-work, packages/train with the following (path below is an example):
+1. Set up .env in root, packages/api, packages/pow, packages/train with the following (path below is an example):
 ```
 PROJECT_ROOT=/mnt/ramdisk/tamaz/mlnode
 ```

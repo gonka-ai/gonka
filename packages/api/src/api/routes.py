@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
 from api.service_management import ServiceState
 from pow.service.manager import PowManager
-from inference.manager import InferenceManager
+from api.inference.manager import InferenceManager
 from zeroband.service.manager import TrainManager
-from pow.utils import create_logger
+from common.logger import create_logger
 
 logger = create_logger(__name__)
 
@@ -12,12 +13,15 @@ router = APIRouter(
     tags=["API v1"],
 )
 
-@router.post("/mlnode/state")
-async def state(request: Request):
-    state: ServiceState = request.app.state.service_state
-    return {'state': state.value}
+class StateResponse(BaseModel):
+    state: ServiceState
 
-@router.post("/mlnode/stop")
+@router.get("/state")
+async def state(request: Request) -> StateResponse:
+    state: ServiceState = request.app.state.service_state
+    return StateResponse(state=state)
+
+@router.post("/stop")
 async def stop(request: Request):
     pow_manager: PowManager = request.app.state.pow_manager
     inference_manager: InferenceManager = request.app.state.inference_manager

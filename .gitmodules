@@ -1,3 +1,3 @@
 [submodule "packages/train/third_party/gorilla"]
 	path = packages/train/third_party/gorilla
-	url = git@github.com:product-science/gorilla.git
+	url = https://github.com/product-science/gorilla.git

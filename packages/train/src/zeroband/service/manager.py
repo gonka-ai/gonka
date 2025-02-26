@@ -19,7 +19,7 @@ class TrainManager:
         print(train_dict["train_env"])
         with open("train_config.toml", "w") as f:
             toml.dump(train_dict["train_config"], f)
-        command = ["bash", "/app/mlnode/packages/train/scripts/run-diloco-node.sh", "/app/mlnode/packages/train/src/zeroband/train.py", "@train_config.toml"]
+        command = ["bash", "/app/packages/train/scripts/run-diloco-node.sh", "/app/packages/train/src/zeroband/train.py", "@train_config.toml"]
         self.process = subprocess.Popen(command)
 
     def stop(self):

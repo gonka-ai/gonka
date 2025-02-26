@@ -12,9 +12,8 @@ packages = [{include = "zeroband", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-bfcl = { path = "third_party/gorilla/berkeley-function-call-leaderboard", develop = true }
 toml = ">=0.10.2"
-torch = "2.4.1"
+torch = ">=2.4.1"
 numpy = "*"
 setuptools = "*"
 transformers = ">=4.44.2"
@@ -32,7 +31,12 @@ accelerate = ">=0.26.0"
 uvicorn = "^0.34.0"
 wandb = "^0.19.6"
 fastapi = "^0.115.8"
+bfcl = { path = "third_party/gorilla/berkeley-function-call-leaderboard", develop = false }
+mlnode-common = { path = "../common", develop = true }
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+ruff = "^0.6.9"
 
 [build-system]
 requires = ["poetry-core"]
