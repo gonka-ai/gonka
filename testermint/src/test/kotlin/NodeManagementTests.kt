@@ -4,18 +4,21 @@ import com.productscience.inferenceConfig
 import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import com.productscience.setupLocalCluster
 
 class NodeManagementTests : TestermintTest() {
     @Test
     fun `get nodes`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val nodes = highestFunded.api.getNodes()
-        assertThat(nodes).hasSizeGreaterThan(1)
+        assertThat(nodes).hasSize(1)
     }
 
     @Test
     fun `add node`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val node = highestFunded.api.addNode(InferenceNode(
@@ -33,6 +36,7 @@ class NodeManagementTests : TestermintTest() {
 
     @Test
     fun `remove nodes`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val node = highestFunded.api.addNode(InferenceNode(
@@ -54,6 +58,7 @@ class NodeManagementTests : TestermintTest() {
     
     @Test
     fun `add multiple nodes`() {
+        setupLocalCluster(2, inferenceConfig)
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val node1Name = "multinode1"
