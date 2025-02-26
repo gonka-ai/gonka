@@ -1,0 +1,29 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message TrainingTask {
+  uint64 id = 1;
+  string requested_by = 2;
+  uint64 created_at_block_height = 3;
+  uint64 assigned_at_block_height = 4;
+  uint64 finished_at_block_height = 5;
+  repeated TrainingHardwareResources hardware_resources = 6;
+  TrainingConfig config = 7;
+}
+
+message TrainingHardwareResources {
+  string type = 1;
+  uint32 count = 2;
+}
+
+message TrainingConfig {
+  TrainingDatasets datasets = 1;
+  uint32 num_uoc_estimation_steps = 2;
+}
+
+message TrainingDatasets {
+  string train = 1;
+  string test = 2;
+}

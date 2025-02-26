@@ -68,6 +68,8 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(transactionRecorder))
 	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(transactionRecorder))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
