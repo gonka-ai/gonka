@@ -18,6 +18,9 @@
           "epoch_multiplier": "1",
           "epoch_shift": "1",
           "default_unit_of_compute_price": "100"
+        },
+        "validation_params": {
+          "expiration_blocks": "10"
         }
       },
       "genesis_only_params": {

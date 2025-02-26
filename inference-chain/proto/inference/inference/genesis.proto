@@ -13,6 +13,7 @@ import "inference/inference/epoch_group_validations.proto";
 import "inference/inference/tokenomics_data.proto";
 import "inference/inference/model.proto";
 import "inference/inference/top_miner.proto";
+import "inference/inference/inference_timeout.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -30,5 +31,6 @@ message GenesisState {
            TokenomicsData        tokenomics_data              =  8;
   repeated Model                 model_list                   =  9 [(gogoproto.nullable) = false] ;
   repeated TopMiner              top_miner_list               = 10 [(gogoproto.nullable) = false] ;
+  repeated InferenceTimeout      inference_timeout_list       = 11 [(gogoproto.nullable) = false] ;
 }
 

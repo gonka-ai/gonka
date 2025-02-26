@@ -31,7 +31,6 @@ message Participant {
   // I don't see how a negative balance makes sense
   int64 coin_balance = 16;
   string validator_key = 17;
-  int64 refund_balance = 18;
-  int64 consecutive_invalid_inferences = 19;
-  string worker_public_key = 20;
+  int64 consecutive_invalid_inferences = 18;
+  string worker_public_key = 19;
 }
