@@ -2,12 +2,14 @@
 package inference
 
 import (
+	binary "encoding/binary"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
+	math "math"
 	reflect "reflect"
 	sync "sync"
 )
@@ -1175,6 +1177,7 @@ var (
 	md_ValidationWeight                protoreflect.MessageDescriptor
 	fd_ValidationWeight_member_address protoreflect.FieldDescriptor
 	fd_ValidationWeight_weight         protoreflect.FieldDescriptor
+	fd_ValidationWeight_reputation     protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1182,6 +1185,7 @@ func init() {
 	md_ValidationWeight = File_inference_inference_epoch_group_data_proto.Messages().ByName("ValidationWeight")
 	fd_ValidationWeight_member_address = md_ValidationWeight.Fields().ByName("member_address")
 	fd_ValidationWeight_weight = md_ValidationWeight.Fields().ByName("weight")
+	fd_ValidationWeight_reputation = md_ValidationWeight.Fields().ByName("reputation")
 }
 
 var _ protoreflect.Message = (*fastReflection_ValidationWeight)(nil)
@@ -1261,6 +1265,12 @@ func (x *fastReflection_ValidationWeight) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
+	if x.Reputation != float64(0) || math.Signbit(x.Reputation) {
+		value := protoreflect.ValueOfFloat64(x.Reputation)
+		if !f(fd_ValidationWeight_reputation, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -1280,6 +1290,8 @@ func (x *fastReflection_ValidationWeight) Has(fd protoreflect.FieldDescriptor) b
 		return x.MemberAddress != ""
 	case "inference.inference.ValidationWeight.weight":
 		return x.Weight != int64(0)
+	case "inference.inference.ValidationWeight.reputation":
+		return x.Reputation != float64(0) || math.Signbit(x.Reputation)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1300,6 +1312,8 @@ func (x *fastReflection_ValidationWeight) Clear(fd protoreflect.FieldDescriptor)
 		x.MemberAddress = ""
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = int64(0)
+	case "inference.inference.ValidationWeight.reputation":
+		x.Reputation = float64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1322,6 +1336,9 @@ func (x *fastReflection_ValidationWeight) Get(descriptor protoreflect.FieldDescr
 	case "inference.inference.ValidationWeight.weight":
 		value := x.Weight
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationWeight.reputation":
+		value := x.Reputation
+		return protoreflect.ValueOfFloat64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1346,6 +1363,8 @@ func (x *fastReflection_ValidationWeight) Set(fd protoreflect.FieldDescriptor, v
 		x.MemberAddress = value.Interface().(string)
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = value.Int()
+	case "inference.inference.ValidationWeight.reputation":
+		x.Reputation = value.Float()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1370,6 +1389,8 @@ func (x *fastReflection_ValidationWeight) Mutable(fd protoreflect.FieldDescripto
 		panic(fmt.Errorf("field member_address of message inference.inference.ValidationWeight is not mutable"))
 	case "inference.inference.ValidationWeight.weight":
 		panic(fmt.Errorf("field weight of message inference.inference.ValidationWeight is not mutable"))
+	case "inference.inference.ValidationWeight.reputation":
+		panic(fmt.Errorf("field reputation of message inference.inference.ValidationWeight is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1387,6 +1408,8 @@ func (x *fastReflection_ValidationWeight) NewField(fd protoreflect.FieldDescript
 		return protoreflect.ValueOfString("")
 	case "inference.inference.ValidationWeight.weight":
 		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationWeight.reputation":
+		return protoreflect.ValueOfFloat64(float64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1463,6 +1486,9 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 		if x.Weight != 0 {
 			n += 1 + runtime.Sov(uint64(x.Weight))
 		}
+		if x.Reputation != 0 || math.Signbit(x.Reputation) {
+			n += 9
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1491,6 +1517,12 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Reputation != 0 || math.Signbit(x.Reputation) {
+			i -= 8
+			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.Reputation))))
+			i--
+			dAtA[i] = 0x19
 		}
 		if x.Weight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Weight))
@@ -1604,6 +1636,17 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 3:
+				if wireType != 1 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Reputation", wireType)
+				}
+				var v uint64
+				if (iNdEx + 8) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+				iNdEx += 8
+				x.Reputation = float64(math.Float64frombits(v))
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2264,8 +2307,9 @@ type ValidationWeight struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
-	Weight        int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	MemberAddress string  `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
+	Weight        int64   `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	Reputation    float64 `protobuf:"fixed64,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
 }
 
 func (x *ValidationWeight) Reset() {
@@ -2298,6 +2342,13 @@ func (x *ValidationWeight) GetMemberAddress() string {
 func (x *ValidationWeight) GetWeight() int64 {
 	if x != nil {
 		return x.Weight
+	}
+	return 0
+}
+
+func (x *ValidationWeight) GetReputation() float64 {
+	if x != nil {
+		return x.Reputation
 	}
 	return 0
 }
@@ -2399,12 +2450,14 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x10, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
 	0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x74, 0x6f,
 	0x74, 0x61, 0x6c, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x51, 0x0a,
+	0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x71, 0x0a,
 	0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68,
 	0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72,
 	0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65,
 	0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67,
 	0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x01, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e,
 	0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
 	0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72,
 	0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65,

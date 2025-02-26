@@ -15,8 +15,8 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	b := k.cdc.MustMarshal(&epochPerformanceSummary)
 	store.Set(types.EpochPerformanceSummaryKey(
-		epochPerformanceSummary.EpochStartHeight,
 		epochPerformanceSummary.ParticipantId,
+		epochPerformanceSummary.EpochStartHeight,
 	), b)
 }
 
@@ -31,8 +31,8 @@ func (k Keeper) GetEpochPerformanceSummary(
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 
 	b := store.Get(types.EpochPerformanceSummaryKey(
-		epochStartHeight,
 		participantId,
+		epochStartHeight,
 	))
 	if b == nil {
 		return val, false
@@ -52,8 +52,8 @@ func (k Keeper) RemoveEpochPerformanceSummary(
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	store.Delete(types.EpochPerformanceSummaryKey(
-		epochStartHeight,
 		participantId,
+		epochStartHeight,
 	))
 }
 
@@ -62,6 +62,23 @@ func (k Keeper) GetAllEpochPerformanceSummary(ctx context.Context) (list []types
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.EpochPerformanceSummary
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
+	}
+
+	return
+}
+
+// GetEpochPerformanceSummariesByParticipant returns all epochPerformanceSummary for a specific participant
+func (k Keeper) GetEpochPerformanceSummariesByParticipant(ctx context.Context, participantId string) (list []types.EpochPerformanceSummary) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, types.EpochPerformanceSummaryKeyParticipantPrefix(participantId))
 
 	defer iterator.Close()
 

@@ -113,7 +113,7 @@ func (gs GenesisState) Validate() error {
 	epochPerformanceSummaryIndexMap := make(map[string]struct{})
 
 	for _, elem := range gs.EpochPerformanceSummaryList {
-		index := string(EpochPerformanceSummaryKey(elem.EpochStartHeight, elem.ParticipantId))
+		index := string(EpochPerformanceSummaryKey(elem.ParticipantId, elem.EpochStartHeight))
 		if _, ok := epochPerformanceSummaryIndexMap[index]; ok {
 			return fmt.Errorf("duplicated index for epochPerformanceSummary")
 		}

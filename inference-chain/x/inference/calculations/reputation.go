@@ -15,14 +15,29 @@ type ReputationContext struct {
 	ValidationParams     *types.ValidationParams
 }
 
-func CalculateReputation(ctx ReputationContext) decimal.Decimal {
-	if ctx.EpochCount >= ctx.ValidationParams.EpochsToMax {
+var one = decimal.NewFromInt(1)
+
+func CalculateReputation(ctx *ReputationContext) decimal.Decimal {
+	actualEpochCount := decimal.NewFromInt(ctx.EpochCount).Sub(addMissCost(ctx.EpochMissPercentages, ctx.ValidationParams))
+	if actualEpochCount.GreaterThan(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)) {
 		return decimal.NewFromFloat(1.0)
 	}
-	if ctx.EpochCount <= 0 {
+	if actualEpochCount.LessThanOrEqual(decimal.Zero) {
 		return decimal.NewFromFloat(0.0)
 	}
-	return decimal.NewFromInt(ctx.EpochCount).Div(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)).Truncate(2)
+	return actualEpochCount.Div(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)).Truncate(2)
+}
+
+func addMissCost(missPercentages []decimal.Decimal, params *types.ValidationParams) decimal.Decimal {
+	epochsToMax := decimal.NewFromInt(params.EpochsToMax)
+	singleEpochValue := one.Div(epochsToMax)
+	missCost := decimal.NewFromFloat(0.0)
+	for _, missPercentage := range missPercentages {
+		if missPercentage.GreaterThan(decimal.NewFromFloat(params.MissPercentageCutoff)) {
+			missCost = missCost.Add(missPercentage.Mul(singleEpochValue))
+		}
+	}
+	return missCost.Mul(epochsToMax)
 }
 
 func CalculateMinimumValidationAverage(recentRequestCount int64, validationParams *types.ValidationParams) decimal.Decimal {
@@ -58,7 +73,6 @@ func ShouldValidate(
 	validationParams *types.ValidationParams,
 ) (bool, string) {
 	executorReputation := decimal.NewFromFloat32(inferenceDetails.ExecutorReputation)
-	one := decimal.NewFromInt(1)
 	maxValidationAverage := decimal.NewFromFloat(validationParams.MaxValidationAverage)
 	minValidationAverage := CalculateMinimumValidationAverage(int64(inferenceDetails.TrafficBasis), validationParams)
 	rangeSize := maxValidationAverage.Sub(minValidationAverage)

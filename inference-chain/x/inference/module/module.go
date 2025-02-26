@@ -17,6 +17,8 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/shopspring/decimal"
 	"math/rand"
 
 	// this line is used by starport scaffolding # 1
@@ -279,10 +281,16 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
 		CreatedAtBlockHeight: blockHeight,
 	})
+	validationParams := am.keeper.GetParams(ctx).ValidationParams
 
 	for _, p := range activeParticipants {
 		// FIXME: add some centralized way that'd govern key enc/dec rules
-		err := upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature)
+		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
+			reputation = 0
+		}
+		err = upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature, reputation)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue
@@ -322,6 +330,32 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 func (am AppModule) computePrice(ctx context.Context) {
 
+}
+
+func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (float64, error) {
+	summaries := am.keeper.GetEpochPerformanceSummariesByParticipant(ctx, p.Index)
+
+	reputationContext := calculations.ReputationContext{
+		EpochCount:           int64(len(summaries)),
+		EpochMissPercentages: make([]decimal.Decimal, len(summaries)),
+		ValidationParams:     params,
+	}
+
+	for i, summary := range summaries {
+		inferenceCount := decimal.NewFromInt(int64(summary.InferenceCount))
+		if inferenceCount.IsZero() {
+			reputationContext.EpochMissPercentages[i] = decimal.Zero
+			continue
+		}
+
+		missed := decimal.NewFromInt(int64(summary.MissedRequests))
+		reputationMetric := missed.Div(inferenceCount)
+		reputationContext.EpochMissPercentages[i] = reputationMetric
+	}
+
+	reputation := calculations.CalculateReputation(&reputationContext)
+
+	return reputation.InexactFloat64(), nil
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {

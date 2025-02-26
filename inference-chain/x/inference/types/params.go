@@ -56,6 +56,7 @@ func DefaultParams() Params {
 			FullValidationTrafficCutoff: 10000,
 			MinValidationHalfway:        0.05,
 			MinValidationTrafficCutoff:  100,
+			MissPercentageCutoff:        0.01,
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,

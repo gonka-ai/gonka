@@ -4,8 +4,6 @@ import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
-	"github.com/productscience/inference/x/inference/calculations"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -67,22 +65,22 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	)
 	currentEpochGroup.GroupData.NumberOfRequests++
 	executorPower := uint64(0)
+	executorReputation := float64(0)
 	for _, weight := range currentEpochGroup.GroupData.ValidationWeights {
 		if weight.MemberAddress == executor.Address {
 			executorPower = uint64(weight.Weight)
+			executorReputation = weight.Reputation
 			break
 		}
 	}
+
 	inferenceDetails := types.InferenceValidationDetails{
-		InferenceId: existingInference.InferenceId,
-		ExecutorId:  existingInference.ExecutedBy,
-		ExecutorReputation: float32(calculations.CalculateReputation(calculations.ReputationContext{
-			EpochCount:       int64(executor.EpochsCompleted),
-			ValidationParams: currentEpochGroup.GroupData.ValidationParams,
-		}).InexactFloat64()),
-		TrafficBasis:  math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
-		ExecutorPower: executorPower,
-		EpochId:       currentEpochGroup.GroupData.EpochGroupId,
+		InferenceId:        existingInference.InferenceId,
+		ExecutorId:         existingInference.ExecutedBy,
+		ExecutorReputation: float32(executorReputation),
+		TrafficBasis:       math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
+		ExecutorPower:      executorPower,
+		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 	}
 	k.LogDebug(
 		"Adding Inference Validation Details",

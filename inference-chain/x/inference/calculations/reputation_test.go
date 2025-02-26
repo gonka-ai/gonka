@@ -28,10 +28,11 @@ func ExtractValidationDetails(msg string) (shouldValidate bool, randFloat float6
 
 func TestCalculateReputation(t *testing.T) {
 	tests := []struct {
-		testName    string
-		epochCount  int64
-		epochsToMax int64
-		expected    decimal.Decimal
+		testName        string
+		epochCount      int64
+		epochsToMax     int64
+		missPercentages []float64
+		expected        decimal.Decimal
 	}{
 		{
 			testName:    "no epochs",
@@ -63,16 +64,43 @@ func TestCalculateReputation(t *testing.T) {
 			epochsToMax: 30,
 			expected:    decimal.NewFromFloat(0.66),
 		},
+		{
+			testName:        "max, but with one half missed",
+			epochCount:      10,
+			epochsToMax:     10,
+			missPercentages: []float64{0.5},
+			expected:        decimal.NewFromFloat(0.95),
+		},
+		{
+			testName:        "max, but with many missed",
+			epochCount:      10,
+			epochsToMax:     10,
+			missPercentages: []float64{0.25, 0.5, 0.5, 0.5, 0.75, 0.5},
+			expected:        decimal.NewFromFloat(0.7),
+		},
+		{
+			testName:        "max, missed below threshold",
+			epochCount:      10,
+			epochsToMax:     10,
+			missPercentages: []float64{0.1},
+			expected:        decimal.NewFromFloat(1.0),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.testName, func(t *testing.T) {
-			result := CalculateReputation(ReputationContext{
+			missPercentagesDecimal := make([]decimal.Decimal, len(tt.missPercentages))
+			for i, mp := range tt.missPercentages {
+				missPercentagesDecimal[i] = decimal.NewFromFloat(mp)
+			}
+			result := CalculateReputation(&ReputationContext{
 				EpochCount: tt.epochCount,
 				ValidationParams: &types.ValidationParams{
-					EpochsToMax: tt.epochsToMax,
+					EpochsToMax:          tt.epochsToMax,
+					MissPercentageCutoff: 0.1,
 				},
+				EpochMissPercentages: missPercentagesDecimal,
 			})
-			require.True(t, tt.expected.Equal(result))
+			require.True(t, tt.expected.Equal(result), "Expected %s but got %s", tt.expected, result)
 		})
 	}
 }

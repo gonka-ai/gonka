@@ -89,14 +89,15 @@ func (k msgServer) SubmitPoC(goCtx context.Context, msg *types.MsgSubmitPoC) (*t
 		PocStageStartBlockHeight: startBlockHeight,
 		ReceivedAtBlockHeight:    currentBlockHeight,
 	})
-	group, err := k.Keeper.GetEpochGroup(ctx, uint64(startBlockHeight))
-	if err != nil {
-		return nil, err
-	}
-	err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey, msg.SeedSignature)
-	if err != nil {
-		return nil, err
-	}
+	// TODO: Isn't this method obsolete?
+	//group, err := k.Keeper.GetEpochGroup(ctx, uint64(startBlockHeight))
+	//if err != nil {
+	//	return nil, err
+	//}
+	////err = group.AddMember(ctx, msg.Creator, uint64(power), participant.ValidatorKey, msg.SeedSignature)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	return &types.MsgSubmitPoCResponse{}, nil
 }
