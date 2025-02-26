@@ -20,6 +20,7 @@ import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/training_task.proto";
+import "inference/inference/hardware_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -159,6 +160,19 @@ service Query {
   // Queries a list of TrainingTask items.
   rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task";
+
+
+  }
+
+  // Queries a list of HardwareNodes items.
+  rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
+
+  }
+
+  // Queries a list of HardwareNodesAll items.
+  rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
 
   }
 }
@@ -376,11 +390,24 @@ message QueryAllInferenceTimeoutResponse {
            cosmos.base.query.v1beta1.PageResponse pagination       = 2;
 }
 
-
 message QueryTrainingTaskRequest {
   uint64 id = 1;
 }
 
 message QueryTrainingTaskResponse {
   TrainingTask task = 1;
+}
+
+message QueryHardwareNodesRequest {
+  string participant = 1;
+}
+
+message QueryHardwareNodesResponse {
+  HardwareNodes nodes = 1;
+}
+
+message QueryHardwareNodesAllRequest {}
+
+message QueryHardwareNodesAllResponse {
+  repeated HardwareNodes nodes = 1;
 }

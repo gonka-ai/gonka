@@ -111,7 +111,6 @@ type CosmosMessageClient interface {
 	ReportValidation(transaction *inference.MsgValidation) error
 	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
-	SubmitPoC(transaction *inference.MsgSubmitPoC) error
 	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
@@ -175,12 +174,6 @@ func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.Ms
 }
 
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error {
-	transaction.Creator = icc.Address
-	_, err := icc.SendTransaction(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
 	transaction.Creator = icc.Address
 	_, err := icc.SendTransaction(transaction)
 	return err

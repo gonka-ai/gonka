@@ -132,10 +132,10 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 	}
 }
 
-func LoadNodeToBroker(nodeBroker *broker.Broker, node *broker.InferenceNode) {
+func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNode) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
-		Response: make(chan broker.InferenceNode, 2),
+		Response: make(chan apiconfig.InferenceNode, 2),
 	})
 	if err != nil {
 		slog.Error("Failed to load node to broker", "error", err)
@@ -463,7 +463,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -761,7 +761,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 			return
 		}
 
-		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.InferenceNode) (ValidationResult, error) {
+		result, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (ValidationResult, error) {
 			return validateByInferenceId(validationRequest.Id, node, recorder)
 		})
 

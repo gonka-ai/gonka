@@ -160,6 +160,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query trainingTask",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
 
 				// this line is used by ignite scaffolding # autocli/query
 			},
@@ -195,12 +207,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "validation [id] [inference-id] [response-payload] [response-hash] [value]",
 					Short:          "Send a validation tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inference_id"}, {ProtoField: "response_payload"}, {ProtoField: "response_hash"}, {ProtoField: "value"}},
-				},
-				{
-					RpcMethod:      "SubmitPoC",
-					Use:            "submit-poc [block-height] [nonce]",
-					Short:          "Send a submit-poc tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "nonce"}},
 				},
 				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
@@ -254,6 +260,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "CreateTrainingTask",
 					Use:            "create-training-task",
 					Short:          "Send a createTrainingTask tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "SubmitHardwareDiff",
+					Use:            "submit-hardware-diff",
+					Short:          "Send a SubmitHardwareDiff tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				// this line is used by ignite scaffolding # autocli/tx

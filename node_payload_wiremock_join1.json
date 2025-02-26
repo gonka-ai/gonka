@@ -7,6 +7,12 @@
     "max_concurrent": 10,
     "models": [
       "unsloth/llama-3-8b-Instruct"
+    ],
+    "hardware": [
+      {
+        "type": "v5e",
+        "count": 80
+      }
     ]
   }
 ]

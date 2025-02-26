@@ -83,6 +83,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgCreateTrainingTask int = 100
 
+	opWeightMsgSubmitHardwareDiff = "op_weight_msg_submit_hardware_diff"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSubmitHardwareDiff int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -148,17 +152,6 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 	operations = append(operations, simulation.NewWeightedOperation(
 		weightMsgValidation,
 		inferencesimulation.SimulateMsgValidation(am.accountKeeper, am.bankKeeper, am.keeper),
-	))
-
-	var weightMsgSubmitPoC int
-	simState.AppParams.GetOrGenerate(opWeightMsgSubmitPoC, &weightMsgSubmitPoC, nil,
-		func(_ *rand.Rand) {
-			weightMsgSubmitPoC = defaultWeightMsgSubmitPoC
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgSubmitPoC,
-		inferencesimulation.SimulateMsgSubmitPoC(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
 	var weightMsgSubmitNewUnfundedParticipant int
@@ -271,6 +264,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgCreateTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgSubmitHardwareDiff int
+	simState.AppParams.GetOrGenerate(opWeightMsgSubmitHardwareDiff, &weightMsgSubmitHardwareDiff, nil,
+		func(_ *rand.Rand) {
+			weightMsgSubmitHardwareDiff = defaultWeightMsgSubmitHardwareDiff
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgSubmitHardwareDiff,
+		inferencesimulation.SimulateMsgSubmitHardwareDiff(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -308,14 +312,6 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgValidation,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgValidation(am.accountKeeper, am.bankKeeper, am.keeper)
-				return nil
-			},
-		),
-		simulation.NewWeightedProposalMsg(
-			opWeightMsgSubmitPoC,
-			defaultWeightMsgSubmitPoC,
-			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
-				inferencesimulation.SimulateMsgSubmitPoC(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),
@@ -396,6 +392,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgCreateTrainingTask,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgCreateTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgSubmitHardwareDiff,
+			defaultWeightMsgSubmitHardwareDiff,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgSubmitHardwareDiff(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

@@ -10,7 +10,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func SimulateMsgSubmitPoC(
+func SimulateMsgSubmitHardwareDiff(
 	ak types.AccountKeeper,
 	bk types.BankKeeper,
 	k keeper.Keeper,
@@ -18,12 +18,12 @@ func SimulateMsgSubmitPoC(
 	return func(r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
 	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
 		simAccount, _ := simtypes.RandomAcc(r, accs)
-		msg := &types.MsgSubmitPoC{
+		msg := &types.MsgSubmitHardwareDiff{
 			Creator: simAccount.Address.String(),
 		}
 
-		// TODO: Handling the SubmitPoC simulation
+		// TODO: Handling the SubmitHardwareDiff simulation
 
-		return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "SubmitPoC simulation not implemented"), nil, nil
+		return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "SubmitHardwareDiff simulation not implemented"), nil, nil
 	}
 }

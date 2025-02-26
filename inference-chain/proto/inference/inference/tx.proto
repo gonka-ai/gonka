@@ -9,6 +9,7 @@ import "gogoproto/gogo.proto";
 import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
+import "inference/inference/hardware_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -23,7 +24,6 @@ service Msg {
   rpc FinishInference                  (MsgFinishInference                 ) returns (MsgFinishInferenceResponse                 );
   rpc SubmitNewParticipant             (MsgSubmitNewParticipant            ) returns (MsgSubmitNewParticipantResponse            );
   rpc Validation                       (MsgValidation                      ) returns (MsgValidationResponse                      );
-  rpc SubmitPoC                        (MsgSubmitPoC                       ) returns (MsgSubmitPoCResponse                       );
   rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant    ) returns (MsgSubmitNewUnfundedParticipantResponse    );
   rpc InvalidateInference              (MsgInvalidateInference             ) returns (MsgInvalidateInferenceResponse             );
   rpc RevalidateInference              (MsgRevalidateInference             ) returns (MsgRevalidateInferenceResponse             );
@@ -34,6 +34,7 @@ service Msg {
   rpc SubmitUnitOfComputePriceProposal (MsgSubmitUnitOfComputePriceProposal) returns (MsgSubmitUnitOfComputePriceProposalResponse);
   rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
+  rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -109,16 +110,6 @@ message MsgValidation {
 }
 
 message MsgValidationResponse {}
-
-message MsgSubmitPoC {
-  option (cosmos.msg.v1.signer) = "creator";
-           string creator        = 1;
-           int64  block_height   = 2;
-  repeated string nonce          = 3;
-           string seed_signature = 4;
-}
-
-message MsgSubmitPoCResponse {}
 
 message MsgSubmitNewUnfundedParticipant {
   option (cosmos.msg.v1.signer) = "creator";
@@ -218,11 +209,21 @@ message MsgRegisterModelResponse {}
 
 message MsgCreateTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
+           string                    creator            = 1;
   repeated TrainingHardwareResources hardware_resources = 2;
-  TrainingConfig config = 3;
+           TrainingConfig            config             = 3;
 }
 
 message MsgCreateTrainingTaskResponse {
   TrainingTask task = 1;
 }
+
+message MsgSubmitHardwareDiff {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  repeated HardwareNode newOrModified = 2;
+  repeated HardwareNode removed = 3;
+}
+
+message MsgSubmitHardwareDiffResponse {}
+

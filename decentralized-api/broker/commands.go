@@ -1,12 +1,14 @@
 package broker
 
+import "decentralized-api/apiconfig"
+
 type Command interface {
 	GetResponseChannelCapacity() int
 }
 
 type LockAvailableNode struct {
 	Model    string
-	Response chan *InferenceNode
+	Response chan *apiconfig.InferenceNode
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {
@@ -24,8 +26,8 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 }
 
 type RegisterNode struct {
-	Node     InferenceNode
-	Response chan InferenceNode
+	Node     apiconfig.InferenceNode
+	Response chan apiconfig.InferenceNode
 }
 
 func (r RegisterNode) GetResponseChannelCapacity() int {
@@ -77,4 +79,18 @@ func (i InferenceError) IsSuccess() bool {
 
 func (i InferenceError) GetMessage() string {
 	return i.Message
+}
+
+type SyncNodesCommand struct {
+	Response chan bool
+}
+
+func NewSyncNodesCommand() SyncNodesCommand {
+	return SyncNodesCommand{
+		Response: make(chan bool, 2),
+	}
+}
+
+func (s SyncNodesCommand) GetResponseChannelCapacity() int {
+	return cap(s.Response)
 }
