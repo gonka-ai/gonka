@@ -1,3 +1,4 @@
+#!/bin/bash
 set -e
 
 mode="$1"
@@ -17,7 +18,6 @@ fi
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration
-# SEED_IP - the ip of the seed node
 # PORT - the port to use for the API
 # PUBLIC_IP - the access point for getting to your API node from the public
 
