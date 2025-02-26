@@ -41,6 +41,8 @@ const (
 	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
 	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
+	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
+	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
 	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
 )
 
@@ -86,6 +88,9 @@ type QueryClient interface {
 	// Queries a list of TopMiner items.
 	TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error)
+	// Queries a list of InferenceTimeout items.
+	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
+	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 }
@@ -296,6 +301,24 @@ func (c *queryClient) TopMinerAll(ctx context.Context, in *QueryAllTopMinerReque
 	return out, nil
 }
 
+func (c *queryClient) InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error) {
+	out := new(QueryGetInferenceTimeoutResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceTimeout_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error) {
+	out := new(QueryAllInferenceTimeoutResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceTimeoutAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error) {
 	out := new(QueryTrainingTaskResponse)
 	err := c.cc.Invoke(ctx, Query_TrainingTask_FullMethodName, in, out, opts...)
@@ -347,6 +370,9 @@ type QueryServer interface {
 	// Queries a list of TopMiner items.
 	TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error)
+	// Queries a list of InferenceTimeout items.
+	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
+	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	mustEmbedUnimplementedQueryServer()
@@ -421,6 +447,12 @@ func (UnimplementedQueryServer) TopMiner(context.Context, *QueryGetTopMinerReque
 }
 func (UnimplementedQueryServer) TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TopMinerAll not implemented")
+}
+func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeout not implemented")
+}
+func (UnimplementedQueryServer) InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeoutAll not implemented")
 }
 func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
@@ -834,6 +866,42 @@ func _Query_TopMinerAll_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferenceTimeout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceTimeoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceTimeout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceTimeout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceTimeout(ctx, req.(*QueryGetInferenceTimeoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_InferenceTimeoutAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllInferenceTimeoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceTimeoutAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceTimeoutAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceTimeoutAll(ctx, req.(*QueryAllInferenceTimeoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_TrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTrainingTaskRequest)
 	if err := dec(in); err != nil {
@@ -946,6 +1014,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TopMinerAll",
 			Handler:    _Query_TopMinerAll_Handler,
+		},
+		{
+			MethodName: "InferenceTimeout",
+			Handler:    _Query_InferenceTimeout_Handler,
+		},
+		{
+			MethodName: "InferenceTimeoutAll",
+			Handler:    _Query_InferenceTimeoutAll_Handler,
 		},
 		{
 			MethodName: "TrainingTask",

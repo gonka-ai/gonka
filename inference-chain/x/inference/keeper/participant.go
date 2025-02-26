@@ -19,7 +19,7 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 
 	b := k.cdc.MustMarshal(&participant)
 	store.Set(key, b)
-	k.LogDebug("Saved Participant", "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance, "refund", participant.RefundBalance)
+	k.LogDebug("Saved Participant", "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
 	group, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		k.LogWarn("Failed to get current epoch group", "error", err)

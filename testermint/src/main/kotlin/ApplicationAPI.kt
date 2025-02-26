@@ -22,14 +22,14 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val resp = Fuel.get("$url/v1/participants")
             .timeoutRead(1000*60)
-            .responseObject<ParticipantsResponse>(gsonDeserializer(gsonSnakeCase))
+            .responseObject<ParticipantsResponse>(gsonDeserializer(cosmosJson))
         logResponse(resp)
         resp.third.get().participants
     }
 
     fun addInferenceParticipant(inferenceParticipant: InferenceParticipant) = wrapLog("AddInferenceParticipant", true) {
         val response = Fuel.post("$url/v1/participants")
-            .jsonBody(inferenceParticipant, gsonSnakeCase)
+            .jsonBody(inferenceParticipant, cosmosJson)
             .response()
         logResponse(response)
     }
@@ -37,14 +37,22 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     fun addUnfundedInferenceParticipant(inferenceParticipant: UnfundedInferenceParticipant) =
         wrapLog("AddUnfundedInferenceParticipant", true) {
             val response = Fuel.post("$url/v1/participants")
-                .jsonBody(inferenceParticipant, gsonSnakeCase)
+                .jsonBody(inferenceParticipant, cosmosJson)
                 .response()
             logResponse(response)
         }
 
+    fun getInferenceOrNull(inferenceId: String): InferencePayload? = wrapLog("getInferenceOrNull", true) {
+        try {
+            getInference(inferenceId)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
         val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
-            .responseObject<InferencePayload>(gsonDeserializer(gsonSnakeCase))
+            .responseObject<InferencePayload>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
     }
@@ -61,7 +69,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
                 .header("Authorization", signature)
                 .timeout(1000*60)
                 .timeoutRead(1000*60)
-                .responseObject<OpenAIResponse>(gsonDeserializer(gsonSnakeCase))
+                .responseObject<OpenAIResponse>(gsonDeserializer(cosmosJson))
             logResponse(response)
             response.third.get()
         }
@@ -92,23 +100,23 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     fun getNodes(): List<NodeResponse> =
         wrapLog("GetNodes", false) {
             val response = Fuel.get("$url/v1/nodes")
-                .responseObject<List<NodeResponse>>(gsonDeserializer(gsonSnakeCase))
+                .responseObject<List<NodeResponse>>(gsonDeserializer(cosmosJson))
             logResponse(response)
             response.third.get()
         }
 
     fun addNode(node: InferenceNode): InferenceNode = wrapLog("AddNode", true) {
         val response = Fuel.post("$url/v1/nodes")
-            .jsonBody(node, gsonSnakeCase)
-            .responseObject<InferenceNode>(gsonDeserializer(gsonSnakeCase))
+            .jsonBody(node, cosmosJson)
+            .responseObject<InferenceNode>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
     }
 
     fun addNodes(nodes: List<InferenceNode>): List<InferenceNode> = wrapLog("AddNodes", true) {
         val response = Fuel.post("$url/v1/nodes/batch")
-            .jsonBody(nodes, gsonSnakeCase)
-            .responseObject<List<InferenceNode>>(gsonDeserializer(gsonSnakeCase))
+            .jsonBody(nodes, cosmosJson)
+            .responseObject<List<InferenceNode>>(gsonDeserializer(cosmosJson))
         logResponse(response)
         response.third.get()
     }
@@ -121,7 +129,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun submitPriceProposal(proposal: UnitOfComputePriceProposalDto): String = wrapLog("SubmitPriceProposal", true) {
         val response = Fuel.post("$url/v1/admin/unit-of-compute-price-proposal")
-            .jsonBody(proposal, gsonSnakeCase)
+            .jsonBody(proposal, cosmosJson)
             .responseString()
         logResponse(response)
 
@@ -142,7 +150,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     inline fun <reified Out: Any> get(path: String): Out {
         val response = Fuel.get("$url/$path")
-            .responseObject<Out>(gsonDeserializer(gsonSnakeCase))
+            .responseObject<Out>(gsonDeserializer(cosmosJson))
         logResponse(response)
 
         return response.third.get()
@@ -150,7 +158,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     inline fun <reified In: Any, reified Out: Any> post(path: String, body: In): Out {
         val response = Fuel.post("$url/$path")
-            .jsonBody(body, gsonSnakeCase)
+            .jsonBody(body, cosmosJson)
             .responseObject<Out>()
         logResponse(response)
 
@@ -159,7 +167,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     inline fun <reified In: Any> postWithStringResponse(path: String, body: In): String {
         val response = Fuel.post("$url/$path")
-            .jsonBody(body, gsonSnakeCase)
+            .jsonBody(body, cosmosJson)
             .responseString()
         logResponse(response)
 

@@ -1,6 +1,6 @@
 import com.productscience.data.TopMinersResponse
 import com.productscience.data.spec
-import com.productscience.gsonSnakeCase
+import com.productscience.cosmosJson
 import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
 
@@ -42,14 +42,14 @@ class SpecTests {
             this[Person::camelCasedValue] = "test"
         }
         // Nice, huh? Trickier than it seemed, but totally works
-        val json = spec.toJson(gsonSnakeCase)
+        val json = spec.toJson(cosmosJson)
         assertThat(json).isEqualTo("""{"camel_cased_value":"test"}""".trimMargin())
     }
 
     @Test
     fun `output actual app_state`() {
         val spec = inferenceConfig.genesisSpec
-        val json = spec?.toJson(gsonSnakeCase)
+        val json = spec?.toJson(cosmosJson)
         println(json)
     }
 
@@ -62,7 +62,7 @@ class SpecTests {
             this[Person::name] = "John"
         }
         val merged = spec1.merge(spec2)
-        println(merged.toJson(gsonSnakeCase))
+        println(merged.toJson(cosmosJson))
     }
 
     @Test
@@ -78,12 +78,12 @@ class SpecTests {
             }
         }
         val merged = spec1.merge(spec2)
-        println(merged.toJson(gsonSnakeCase))
+        println(merged.toJson(cosmosJson))
     }
 
     @Test
     fun `parse top miner`() {
-        val topMiners = gsonSnakeCase.fromJson(topMinerJson, TopMinersResponse::class.java)
+        val topMiners = cosmosJson.fromJson(topMinerJson, TopMinersResponse::class.java)
         println(topMiners)
     }
 

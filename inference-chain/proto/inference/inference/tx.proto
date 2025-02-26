@@ -61,6 +61,7 @@ message MsgStartInference {
   string prompt_payload = 4;
   string model          = 6;
   string requested_by   = 7;
+  string assigned_to    = 8;
 }
 
 message MsgStartInferenceResponse {

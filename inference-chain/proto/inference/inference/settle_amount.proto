@@ -6,9 +6,8 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message SettleAmount {
   string participant = 1;
   uint64 reward_coins = 2;
-  uint64 refund_coins = 3;
-  uint64 work_coins = 4;
-  uint64 poc_start_height = 5;
-  string seed_signature = 6;
+  uint64 work_coins = 3;
+  uint64 poc_start_height = 4;
+  string seed_signature = 5;
 }
 

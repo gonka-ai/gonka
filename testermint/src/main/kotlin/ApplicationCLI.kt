@@ -6,6 +6,8 @@ import com.google.gson.reflect.TypeToken
 import com.productscience.data.AppExport
 import com.productscience.data.BalanceResponse
 import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceTimeoutsWrapper
+import com.productscience.data.InferencesWrapper
 import com.productscience.data.NodeInfoResponse
 import com.productscience.data.TokenomicsData
 import com.productscience.data.TopMinersResponse
@@ -21,7 +23,6 @@ import java.time.Instant
 data class ApplicationCLI(
     val containerId: String,
     override val config: ApplicationConfig,
-    var mostRecentExport: AppExport? = null,
 ) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
@@ -33,7 +34,7 @@ data class ApplicationCLI(
 
             val output = exec(readFileCommand)
             val joined = output.joinToString("")
-            gsonSnakeCase.fromJson(joined, AppExport::class.java)
+            cosmosJson.fromJson(joined, AppExport::class.java)
         }
 
     fun createContainer(doNotStartChain: Boolean = false) {
@@ -103,15 +104,14 @@ data class ApplicationCLI(
             waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
         }
     }
+    
+    fun getInferences(): InferencesWrapper = wrapLog("getInferences", false) {
+        execAndParse(listOf("query", "inference", "list-inference"))
+    }
 
-    fun exportState(height: Int? = null): AppExport =
-        wrapLog<AppExport>("GetFullState", false) {
-            execAndParse(
-                listOfNotNull("export", "--height".takeIf { height != null }, height?.toString()),
-                includeOutputFlag = false
-            )
-        }.also { this.mostRecentExport = it }
-
+    fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
+        execAndParse(listOf("query", "inference", "list-inference-timeout"))
+    }
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
@@ -177,7 +177,7 @@ data class ApplicationCLI(
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
-        return gsonSnakeCase.fromJson(output, T::class.java)
+        return cosmosJson.fromJson(output, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
@@ -187,7 +187,7 @@ data class ApplicationCLI(
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
         Logger.debug("Output: {}", output)
-        return gsonSnakeCase.fromJson(output, typeToken.type)
+        return cosmosJson.fromJson(output, typeToken.type)
     }
 
 

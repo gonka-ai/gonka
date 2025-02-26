@@ -144,6 +144,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
 				},
 				{
+					RpcMethod: "InferenceTimeoutAll",
+					Use:       "list-inference-timeout",
+					Short:     "List all inference_timeout",
+				},
+				{
+					RpcMethod:      "InferenceTimeout",
+					Use:            "show-inference-timeout [id]",
+					Short:          "Shows a inference_timeout",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "expirationHeight"}, {ProtoField: "inferenceId"}},
+				},
+				{
 					RpcMethod:      "TrainingTask",
 					Use:            "training-task",
 					Short:          "Query trainingTask",
