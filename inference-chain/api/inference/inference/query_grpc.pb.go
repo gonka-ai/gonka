@@ -43,6 +43,7 @@ const (
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
 	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
 	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
+	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
 )
 
 // QueryClient is the client API for Query service.
@@ -90,6 +91,8 @@ type QueryClient interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of TrainingTask items.
+	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 }
 
 type queryClient struct {
@@ -316,6 +319,15 @@ func (c *queryClient) InferenceTimeoutAll(ctx context.Context, in *QueryAllInfer
 	return out, nil
 }
 
+func (c *queryClient) TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error) {
+	out := new(QueryTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -361,6 +373,8 @@ type QueryServer interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of TrainingTask items.
+	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -439,6 +453,9 @@ func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInfer
 }
 func (UnimplementedQueryServer) InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeoutAll not implemented")
+}
+func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -885,6 +902,24 @@ func _Query_InferenceTimeoutAll_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingTask(ctx, req.(*QueryTrainingTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -987,6 +1022,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InferenceTimeoutAll",
 			Handler:    _Query_InferenceTimeoutAll_Handler,
+		},
+		{
+			MethodName: "TrainingTask",
+			Handler:    _Query_TrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
