@@ -217,20 +217,20 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	transaction.Creator = icc.Address
 	result, err := icc.SendTransaction(transaction)
 	if err != nil {
-		slog.Error("Failed to send transaction", "error", err, "result", result)
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
 		return nil, err
 	}
 
 	transactionAppliedResult, err := icc.Client.WaitForTx(icc.Context, result.TxHash)
 	if err != nil {
-		slog.Error("Failed to wait for transaction", "error", err, "result", transactionAppliedResult)
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
 		return nil, err
 	}
 
 	msg := inference.MsgCreateTrainingTaskResponse{}
 	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](transactionAppliedResult.TxResult.Data, 0, &msg)
 	if err != nil {
-		slog.Error("Failed to parse message response", "error", err)
+		logging.Error("Failed to parse message response", types.Messages, "error", err)
 		return nil, err
 	}
 
@@ -358,7 +358,7 @@ func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) erro
 		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
-	slog.Info("Found messages", "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
+	logging.Info("Found messages", types.Messages, "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
 		return fmt.Errorf(
 			"message index %d out of range: got %d responses",

@@ -20,6 +20,7 @@ const (
 	EventProcessing = 14
 	Upgrades        = 15
 	Server          = 16
+	Training        = 17
 )
 
 func (s SubSystem) String() string {
