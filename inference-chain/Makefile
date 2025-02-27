@@ -4,7 +4,8 @@ BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
 VERSION ?= $(shell git describe --always)
-SET_LATEST ?= $(shell if [ "$(VERSION)" = "1" ]; then echo 1; else echo 0; fi)
+SET_LATEST ?= 0
+SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
@@ -84,7 +85,8 @@ docker-push:
 	docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest
+		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+		@docker push gcr.io/decentralized-ai/inferenced:latest; \
 	fi
 
 build-for-upgrade:

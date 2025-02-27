@@ -1,7 +1,6 @@
 .PHONY: release decentralized-api-release inference-chain-release
 
 VERSION ?= $(shell git describe --always)
-SET_LATEST ?= $(shell if [ "$(VERSION)" = "1" ]; then echo 1; else echo 0; fi)
 TAG_NAME := "release/v$(VERSION)"
 
 all: build-docker
