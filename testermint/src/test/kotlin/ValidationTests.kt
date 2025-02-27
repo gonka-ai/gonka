@@ -20,29 +20,13 @@ class ValidationTests : TestermintTest() {
     fun `test valid in parallel`() {
         val (_, genesis) = initCluster()
         genesis.waitForFirstPoC()
-        runBlocking {
-            // Launch coroutines with async and collect the deferred results
-            val requests = List(100) { i ->
-                async(Dispatchers.Default) { // specify a dispatcher for parallelism
-                    Logger.warn("Starting request $i")
-                    genesis.makeInferenceRequest(inferenceRequest)
-                }
-            }
 
-            // Wait for all requests to complete and collect their results
-            val results = requests.map { it.await() }
+        val statuses = runParallelInferences(genesis, 100)
+        Logger.info("Statuses: $statuses")
 
-            genesis.node.waitForNextBlock(20)
-            // Do something with the results outside runBlocking, if needed
-            val statuses = results.map { result ->
-                val inference = genesis.api.getInference(result.id)
-                inference.status
-            }
-            Logger.info("Statuses: $statuses")
-            // Some will be validated, some will not.
-            assertThat(statuses).allMatch {
-                it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value
-            }
+        // Some will be validated, some will not.
+        assertThat(statuses).allMatch {
+            it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value
         }
 
         Thread.sleep(10000)
@@ -85,12 +69,11 @@ class ValidationTests : TestermintTest() {
 
     @Test
     fun `test invalid gets removed`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        val oddPair = pairs.last()
+        val (cluster, genesis) = initCluster()
+        val oddPair = cluster.joinPairs.last()
         oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
         val invalidResult =
-            generateSequence { getInferenceResult(highestFunded) }
+            generateSequence { getInferenceResult(genesis) }
                 .filter {
                     Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
                     it.executorBefore.id == oddPair.node.addresss
@@ -99,27 +82,60 @@ class ValidationTests : TestermintTest() {
                 .toList()
         Logger.warn("Got invalid result, waiting for invalidation.")
 
-        highestFunded.node.waitForNextBlock(10)
-        val participants = highestFunded.api.getParticipants()
+        genesis.node.waitForNextBlock(10)
+        val participants = genesis.api.getParticipants()
         participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
 
     }
 
     @Test
     fun `test valid with invalid validator gets validated`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        val oddPair = pairs.last()
+        val (cluster, genesis) = initCluster()
+        val oddPair = cluster.joinPairs.last()
         oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
         val invalidResult =
-            generateSequence { getInferenceResult(highestFunded) }
+            generateSequence { getInferenceResult(genesis) }
                 .first { it.executorBefore.id != oddPair.node.addresss }
         // The oddPair will mark it as invalid and force a vote, which should fail (valid)
 
         Logger.warn("Got invalid result, waiting for validation.")
-        highestFunded.node.waitForNextBlock(10)
-        val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
+        genesis.node.waitForNextBlock(10)
+        val newState = genesis.api.getInference(invalidResult.inference.inferenceId)
         assertThat(newState.status).isEqualTo(InferenceStatus.VALIDATED.value)
 
     }
+
+    @Test
+    fun `test reputation increases from epoch to epoch`() {
+        val (cluster, genesis) = initCluster()
+        runParallelInferences(genesis, 100)
+
+
+    }
 }
+
+fun runParallelInferences(
+    genesis: LocalInferencePair,
+    count: Int,
+    waitForBlocks: Int = 20,
+): List<Int> = runBlocking {
+    // Launch coroutines with async and collect the deferred results
+    val requests = List(count) { i ->
+        async(Dispatchers.Default) { // specify a dispatcher for parallelism
+            Logger.warn("Starting request $i")
+            genesis.makeInferenceRequest(inferenceRequest)
+        }
+    }
+
+    // Wait for all requests to complete and collect their results
+    val results = requests.map { it.await() }
+
+    genesis.node.waitForNextBlock(waitForBlocks)
+
+    // Return statuses
+    results.map { result ->
+        val inference = genesis.api.getInference(result.id)
+        inference.status
+    }
+}
+

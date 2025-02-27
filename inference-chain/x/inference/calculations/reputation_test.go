@@ -32,58 +32,58 @@ func TestCalculateReputation(t *testing.T) {
 		epochCount      int64
 		epochsToMax     int64
 		missPercentages []float64
-		expected        decimal.Decimal
+		expected        int64
 	}{
 		{
 			testName:    "no epochs",
 			epochCount:  0,
 			epochsToMax: 30,
-			expected:    decimal.NewFromFloat(0.0),
+			expected:    0,
 		},
 		{
 			testName:    "halfway",
 			epochCount:  15,
 			epochsToMax: 30,
-			expected:    decimal.NewFromFloat(0.5),
+			expected:    50,
 		},
 		{
 			testName:    "max",
 			epochCount:  30,
 			epochsToMax: 30,
-			expected:    decimal.NewFromFloat(1.0),
+			expected:    100,
 		},
 		{
 			testName:    "one third (trunc to 2 decimal places)",
 			epochCount:  10,
 			epochsToMax: 30,
-			expected:    decimal.NewFromFloat(0.33),
+			expected:    33,
 		},
 		{
 			testName:    "two thirds (trunc to 2 decimal places)",
 			epochCount:  20,
 			epochsToMax: 30,
-			expected:    decimal.NewFromFloat(0.66),
+			expected:    66,
 		},
 		{
 			testName:        "max, but with one half missed",
 			epochCount:      10,
 			epochsToMax:     10,
 			missPercentages: []float64{0.5},
-			expected:        decimal.NewFromFloat(0.95),
+			expected:        95,
 		},
 		{
 			testName:        "max, but with many missed",
 			epochCount:      10,
 			epochsToMax:     10,
 			missPercentages: []float64{0.25, 0.5, 0.5, 0.5, 0.75, 0.5},
-			expected:        decimal.NewFromFloat(0.7),
+			expected:        70,
 		},
 		{
 			testName:        "max, missed below threshold",
 			epochCount:      10,
 			epochsToMax:     10,
 			missPercentages: []float64{0.1},
-			expected:        decimal.NewFromFloat(1.0),
+			expected:        100,
 		},
 	}
 	for _, tt := range tests {
@@ -100,7 +100,7 @@ func TestCalculateReputation(t *testing.T) {
 				},
 				EpochMissPercentages: missPercentagesDecimal,
 			})
-			require.True(t, tt.expected.Equal(result), "Expected %s but got %s", tt.expected, result)
+			require.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -231,7 +231,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 0.0,
+				ExecutorReputation: 0,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -247,7 +247,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           200,
 			validatorPower:       30,
@@ -263,7 +263,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 0.5,
+				ExecutorReputation: 50,
 			},
 			totalPower:           300,
 			validatorPower:       100,
@@ -279,7 +279,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           150,
 			validatorPower:       50,
@@ -295,7 +295,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -311,7 +311,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 0.0,
+				ExecutorReputation: 0,
 			},
 			totalPower:           150,
 			validatorPower:       50,
@@ -327,7 +327,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 0.0,
+				ExecutorReputation: 0,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -343,7 +343,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -359,7 +359,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff,
-				ExecutorReputation: 0.0,
+				ExecutorReputation: 0,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -375,7 +375,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       100,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -391,7 +391,7 @@ func TestShouldValidate(t *testing.T) {
 			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
 				TrafficBasis:       defaultTrafficCutoff / 2,
-				ExecutorReputation: 1.0,
+				ExecutorReputation: 100,
 			},
 			totalPower:           150,
 			validatorPower:       50,

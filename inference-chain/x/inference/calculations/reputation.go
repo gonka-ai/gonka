@@ -17,15 +17,16 @@ type ReputationContext struct {
 
 var one = decimal.NewFromInt(1)
 
-func CalculateReputation(ctx *ReputationContext) decimal.Decimal {
+func CalculateReputation(ctx *ReputationContext) int64 {
 	actualEpochCount := decimal.NewFromInt(ctx.EpochCount).Sub(addMissCost(ctx.EpochMissPercentages, ctx.ValidationParams))
 	if actualEpochCount.GreaterThan(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)) {
-		return decimal.NewFromFloat(1.0)
+		return 100
 	}
 	if actualEpochCount.LessThanOrEqual(decimal.Zero) {
-		return decimal.NewFromFloat(0.0)
+		return 0
 	}
-	return actualEpochCount.Div(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)).Truncate(2)
+	truncate := actualEpochCount.Div(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)).Truncate(2)
+	return truncate.Mul(decimal.NewFromInt(100)).IntPart()
 }
 
 func addMissCost(missPercentages []decimal.Decimal, params *types.ValidationParams) decimal.Decimal {
@@ -72,7 +73,7 @@ func ShouldValidate(
 	executorPower uint32,
 	validationParams *types.ValidationParams,
 ) (bool, string) {
-	executorReputation := decimal.NewFromFloat32(inferenceDetails.ExecutorReputation)
+	executorReputation := decimal.NewFromInt32(inferenceDetails.ExecutorReputation).Div(decimal.NewFromInt32(100))
 	maxValidationAverage := decimal.NewFromFloat(validationParams.MaxValidationAverage)
 	minValidationAverage := CalculateMinimumValidationAverage(int64(inferenceDetails.TrafficBasis), validationParams)
 	rangeSize := maxValidationAverage.Sub(minValidationAverage)

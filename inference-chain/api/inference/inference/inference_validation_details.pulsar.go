@@ -2,14 +2,12 @@
 package inference
 
 import (
-	binary "encoding/binary"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
-	math "math"
 	reflect "reflect"
 	sync "sync"
 )
@@ -118,8 +116,8 @@ func (x *fastReflection_InferenceValidationDetails) Range(f func(protoreflect.Fi
 			return
 		}
 	}
-	if x.ExecutorReputation != float32(0) || math.Signbit(float64(x.ExecutorReputation)) {
-		value := protoreflect.ValueOfFloat32(x.ExecutorReputation)
+	if x.ExecutorReputation != int32(0) {
+		value := protoreflect.ValueOfInt32(x.ExecutorReputation)
 		if !f(fd_InferenceValidationDetails_executor_reputation, value) {
 			return
 		}
@@ -158,7 +156,7 @@ func (x *fastReflection_InferenceValidationDetails) Has(fd protoreflect.FieldDes
 	case "inference.inference.InferenceValidationDetails.executor_id":
 		return x.ExecutorId != ""
 	case "inference.inference.InferenceValidationDetails.executor_reputation":
-		return x.ExecutorReputation != float32(0) || math.Signbit(float64(x.ExecutorReputation))
+		return x.ExecutorReputation != int32(0)
 	case "inference.inference.InferenceValidationDetails.traffic_basis":
 		return x.TrafficBasis != uint64(0)
 	case "inference.inference.InferenceValidationDetails.executor_power":
@@ -186,7 +184,7 @@ func (x *fastReflection_InferenceValidationDetails) Clear(fd protoreflect.FieldD
 	case "inference.inference.InferenceValidationDetails.executor_id":
 		x.ExecutorId = ""
 	case "inference.inference.InferenceValidationDetails.executor_reputation":
-		x.ExecutorReputation = float32(0)
+		x.ExecutorReputation = int32(0)
 	case "inference.inference.InferenceValidationDetails.traffic_basis":
 		x.TrafficBasis = uint64(0)
 	case "inference.inference.InferenceValidationDetails.executor_power":
@@ -218,7 +216,7 @@ func (x *fastReflection_InferenceValidationDetails) Get(descriptor protoreflect.
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.InferenceValidationDetails.executor_reputation":
 		value := x.ExecutorReputation
-		return protoreflect.ValueOfFloat32(value)
+		return protoreflect.ValueOfInt32(value)
 	case "inference.inference.InferenceValidationDetails.traffic_basis":
 		value := x.TrafficBasis
 		return protoreflect.ValueOfUint64(value)
@@ -252,7 +250,7 @@ func (x *fastReflection_InferenceValidationDetails) Set(fd protoreflect.FieldDes
 	case "inference.inference.InferenceValidationDetails.executor_id":
 		x.ExecutorId = value.Interface().(string)
 	case "inference.inference.InferenceValidationDetails.executor_reputation":
-		x.ExecutorReputation = float32(value.Float())
+		x.ExecutorReputation = int32(value.Int())
 	case "inference.inference.InferenceValidationDetails.traffic_basis":
 		x.TrafficBasis = value.Uint()
 	case "inference.inference.InferenceValidationDetails.executor_power":
@@ -309,7 +307,7 @@ func (x *fastReflection_InferenceValidationDetails) NewField(fd protoreflect.Fie
 	case "inference.inference.InferenceValidationDetails.executor_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.InferenceValidationDetails.executor_reputation":
-		return protoreflect.ValueOfFloat32(float32(0))
+		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.InferenceValidationDetails.traffic_basis":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.InferenceValidationDetails.executor_power":
@@ -394,8 +392,8 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.ExecutorReputation != 0 || math.Signbit(float64(x.ExecutorReputation)) {
-			n += 5
+		if x.ExecutorReputation != 0 {
+			n += 1 + runtime.Sov(uint64(x.ExecutorReputation))
 		}
 		if x.TrafficBasis != 0 {
 			n += 1 + runtime.Sov(uint64(x.TrafficBasis))
@@ -442,11 +440,10 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 			i--
 			dAtA[i] = 0x28
 		}
-		if x.ExecutorReputation != 0 || math.Signbit(float64(x.ExecutorReputation)) {
-			i -= 4
-			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.ExecutorReputation))))
+		if x.ExecutorReputation != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExecutorReputation))
 			i--
-			dAtA[i] = 0x25
+			dAtA[i] = 0x20
 		}
 		if len(x.ExecutorId) > 0 {
 			i -= len(x.ExecutorId)
@@ -600,16 +597,24 @@ func (x *fastReflection_InferenceValidationDetails) ProtoMethods() *protoiface.M
 				x.ExecutorId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 4:
-				if wireType != 5 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExecutorReputation", wireType)
 				}
-				var v uint32
-				if (iNdEx + 4) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				x.ExecutorReputation = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ExecutorReputation |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-				iNdEx += 4
-				x.ExecutorReputation = float32(math.Float32frombits(v))
 			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TrafficBasis", wireType)
@@ -701,12 +706,12 @@ type InferenceValidationDetails struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	EpochId            uint64  `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
-	InferenceId        string  `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	ExecutorId         string  `protobuf:"bytes,3,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
-	ExecutorReputation float32 `protobuf:"fixed32,4,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
-	TrafficBasis       uint64  `protobuf:"varint,5,opt,name=traffic_basis,json=trafficBasis,proto3" json:"traffic_basis,omitempty"`
-	ExecutorPower      uint64  `protobuf:"varint,6,opt,name=executor_power,json=executorPower,proto3" json:"executor_power,omitempty"`
+	EpochId            uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	InferenceId        string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ExecutorId         string `protobuf:"bytes,3,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
+	ExecutorReputation int32  `protobuf:"varint,4,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
+	TrafficBasis       uint64 `protobuf:"varint,5,opt,name=traffic_basis,json=trafficBasis,proto3" json:"traffic_basis,omitempty"`
+	ExecutorPower      uint64 `protobuf:"varint,6,opt,name=executor_power,json=executorPower,proto3" json:"executor_power,omitempty"`
 }
 
 func (x *InferenceValidationDetails) Reset() {
@@ -750,7 +755,7 @@ func (x *InferenceValidationDetails) GetExecutorId() string {
 	return ""
 }
 
-func (x *InferenceValidationDetails) GetExecutorReputation() float32 {
+func (x *InferenceValidationDetails) GetExecutorReputation() int32 {
 	if x != nil {
 		return x.ExecutorReputation
 	}
@@ -788,7 +793,7 @@ var file_inference_inference_inference_validation_details_proto_rawDesc = []byte
 	0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52,
 	0x0a, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x49, 0x64, 0x12, 0x2f, 0x0a, 0x13, 0x65,
 	0x78, 0x65, 0x63, 0x75, 0x74, 0x6f, 0x72, 0x5f, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x02, 0x52, 0x12, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74,
+	0x6f, 0x6e, 0x18, 0x04, 0x20, 0x01, 0x28, 0x05, 0x52, 0x12, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74,
 	0x6f, 0x72, 0x52, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x23, 0x0a, 0x0d,
 	0x74, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x5f, 0x62, 0x61, 0x73, 0x69, 0x73, 0x18, 0x05, 0x20,
 	0x01, 0x28, 0x04, 0x52, 0x0c, 0x74, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x42, 0x61, 0x73, 0x69,

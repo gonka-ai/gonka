@@ -13,6 +13,9 @@ Some tips for how to use Cosmos Ignite to update and create things:
 ## Add new message:
 `ignite scaffold message createGame black red --module checkers --response gameIndex`
 
+## Add new query:
+`ignite scaffold query getGameResult gameIndex --module checkers --response result`
+
 ## Types that can be used in above CLI calls:
 
 | Type         | Alias   | Index | Code Type | Description                     |

@@ -247,16 +247,18 @@ func newParticipant(coinBalance int64, refundBalance int64, id string) types.Par
 
 func TestActualSettle(t *testing.T) {
 	participant1 := types.Participant{
-		Index:       "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
-		Address:     "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
-		CoinBalance: 1000,
-		Status:      types.ParticipantStatus_ACTIVE,
+		Index:             "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
+		Address:           "cosmos1sjjvddfrhdv6dn4m27wudcx53x5tzdzl67ah98",
+		CoinBalance:       1000,
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 	participant2 := types.Participant{
-		Index:       "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
-		Address:     "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
-		CoinBalance: 1000,
-		Status:      types.ParticipantStatus_ACTIVE,
+		Index:             "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
+		Address:           "cosmos1jj7kves6pwdn7whd06cjf7e8q4543s92v984fa",
+		CoinBalance:       1000,
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 	keeper, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
 	keeper.SetParticipant(ctx, participant1)

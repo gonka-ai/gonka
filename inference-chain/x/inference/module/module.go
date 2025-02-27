@@ -332,7 +332,7 @@ func (am AppModule) computePrice(ctx context.Context) {
 
 }
 
-func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (float64, error) {
+func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (int64, error) {
 	summaries := am.keeper.GetEpochPerformanceSummariesByParticipant(ctx, p.Index)
 
 	reputationContext := calculations.ReputationContext{
@@ -355,7 +355,7 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 
 	reputation := calculations.CalculateReputation(&reputationContext)
 
-	return reputation.InexactFloat64(), nil
+	return reputation, nil
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {

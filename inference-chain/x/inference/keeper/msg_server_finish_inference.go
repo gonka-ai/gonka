@@ -65,7 +65,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	)
 	currentEpochGroup.GroupData.NumberOfRequests++
 	executorPower := uint64(0)
-	executorReputation := float64(0)
+	executorReputation := int32(0)
 	for _, weight := range currentEpochGroup.GroupData.ValidationWeights {
 		if weight.MemberAddress == executor.Address {
 			executorPower = uint64(weight.Weight)
@@ -77,7 +77,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	inferenceDetails := types.InferenceValidationDetails{
 		InferenceId:        existingInference.InferenceId,
 		ExecutorId:         existingInference.ExecutedBy,
-		ExecutorReputation: float32(executorReputation),
+		ExecutorReputation: executorReputation,
 		TrafficBasis:       math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,

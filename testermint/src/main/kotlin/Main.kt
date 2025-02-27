@@ -21,7 +21,9 @@ import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.ValidationParams
 import com.productscience.data.spec
+import org.bouncycastle.dvcs.VPKCRequestBuilder
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -221,6 +223,14 @@ val inferenceConfig = ApplicationConfig(
             this[InferenceState::params] = spec<InferenceParams> {
                 this[InferenceParams::epochParams] = spec<EpochParams> {
                     this[EpochParams::epochLength] = 20L
+                }
+                this[InferenceParams::validationParams] = spec<ValidationParams> {
+                    this[ValidationParams::minValidationAverage] = 0.01
+                    this[ValidationParams::maxValidationAverage] = 1.0
+                    this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
+                    this[ValidationParams::fullValidationTrafficCutoff] = 1000L
+                    this[ValidationParams::minValidationHalfway] = 0.05
+                    this[ValidationParams::minValidationTrafficCutoff] = 10L
                 }
             }
             this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {

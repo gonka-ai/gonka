@@ -2,14 +2,12 @@
 package inference
 
 import (
-	binary "encoding/binary"
 	fmt "fmt"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
-	math "math"
 	reflect "reflect"
 	sync "sync"
 )
@@ -1265,8 +1263,8 @@ func (x *fastReflection_ValidationWeight) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
-	if x.Reputation != float64(0) || math.Signbit(x.Reputation) {
-		value := protoreflect.ValueOfFloat64(x.Reputation)
+	if x.Reputation != int32(0) {
+		value := protoreflect.ValueOfInt32(x.Reputation)
 		if !f(fd_ValidationWeight_reputation, value) {
 			return
 		}
@@ -1291,7 +1289,7 @@ func (x *fastReflection_ValidationWeight) Has(fd protoreflect.FieldDescriptor) b
 	case "inference.inference.ValidationWeight.weight":
 		return x.Weight != int64(0)
 	case "inference.inference.ValidationWeight.reputation":
-		return x.Reputation != float64(0) || math.Signbit(x.Reputation)
+		return x.Reputation != int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1313,7 +1311,7 @@ func (x *fastReflection_ValidationWeight) Clear(fd protoreflect.FieldDescriptor)
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = int64(0)
 	case "inference.inference.ValidationWeight.reputation":
-		x.Reputation = float64(0)
+		x.Reputation = int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1338,7 +1336,7 @@ func (x *fastReflection_ValidationWeight) Get(descriptor protoreflect.FieldDescr
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.ValidationWeight.reputation":
 		value := x.Reputation
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfInt32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1364,7 +1362,7 @@ func (x *fastReflection_ValidationWeight) Set(fd protoreflect.FieldDescriptor, v
 	case "inference.inference.ValidationWeight.weight":
 		x.Weight = value.Int()
 	case "inference.inference.ValidationWeight.reputation":
-		x.Reputation = value.Float()
+		x.Reputation = int32(value.Int())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1409,7 +1407,7 @@ func (x *fastReflection_ValidationWeight) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.ValidationWeight.weight":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.ValidationWeight.reputation":
-		return protoreflect.ValueOfFloat64(float64(0))
+		return protoreflect.ValueOfInt32(int32(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationWeight"))
@@ -1486,8 +1484,8 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 		if x.Weight != 0 {
 			n += 1 + runtime.Sov(uint64(x.Weight))
 		}
-		if x.Reputation != 0 || math.Signbit(x.Reputation) {
-			n += 9
+		if x.Reputation != 0 {
+			n += 1 + runtime.Sov(uint64(x.Reputation))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -1518,11 +1516,10 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.Reputation != 0 || math.Signbit(x.Reputation) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.Reputation))))
+		if x.Reputation != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Reputation))
 			i--
-			dAtA[i] = 0x19
+			dAtA[i] = 0x18
 		}
 		if x.Weight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Weight))
@@ -1637,16 +1634,24 @@ func (x *fastReflection_ValidationWeight) ProtoMethods() *protoiface.Methods {
 					}
 				}
 			case 3:
-				if wireType != 1 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Reputation", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				x.Reputation = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Reputation |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.Reputation = float64(math.Float64frombits(v))
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2307,9 +2312,9 @@ type ValidationWeight struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	MemberAddress string  `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
-	Weight        int64   `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
-	Reputation    float64 `protobuf:"fixed64,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
+	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
+	Weight        int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	Reputation    int32  `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
 }
 
 func (x *ValidationWeight) Reset() {
@@ -2346,7 +2351,7 @@ func (x *ValidationWeight) GetWeight() int64 {
 	return 0
 }
 
-func (x *ValidationWeight) GetReputation() float64 {
+func (x *ValidationWeight) GetReputation() int32 {
 	if x != nil {
 		return x.Reputation
 	}
@@ -2457,7 +2462,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67,
 	0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74,
 	0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x01, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e,
 	0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
 	0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72,
 	0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65,

@@ -29,5 +29,6 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, savedParticipant)
 }

@@ -195,6 +195,27 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a epoch_performance_summary",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochStartHeight"}, {ProtoField: "participantId"}},
 				},
+				{
+					RpcMethod:      "GetParticipantCurrentStats",
+					Use:            "get-participant-current-stats [participant-id]",
+					Short:          "Query get_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participantId"}},
+				},
+
+				{
+					RpcMethod:      "GetAllParticipantCurrentStats",
+					Use:            "get-all-participant-current-stats",
+					Short:          "Query get_all_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "GetMinimumValidationAverage",
+					Use:            "get-minimum-validation-average",
+					Short:          "Query get_minimum_validation_average",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

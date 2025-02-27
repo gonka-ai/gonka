@@ -70,7 +70,7 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string, reputation float64) error {
+func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string, reputation int64) error {
 	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
 	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
 	if !found {
@@ -88,7 +88,7 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress: address,
 		Weight:        int64(weight),
-		Reputation:    reputation,
+		Reputation:    int32(reputation),
 	})
 	eg.GroupData.TotalWeight += weight
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)

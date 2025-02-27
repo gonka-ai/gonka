@@ -28,53 +28,53 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 
 // Query defines the gRPC querier service.
 service Query {
-  
+
   // Parameters queries the parameters of the module.
   rpc Params (QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/params";
-  
+
   }
-  
+
   // Queries a list of Inference items.
   rpc Inference    (QueryGetInferenceRequest) returns (QueryGetInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference/{index}";
-  
+
   }
   rpc InferenceAll (QueryAllInferenceRequest) returns (QueryAllInferenceResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference";
-  
+
   }
-  
+
   // Queries a list of Participant items.
   rpc Participant    (QueryGetParticipantRequest) returns (QueryGetParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant/{index}";
-  
+
   }
   rpc ParticipantAll (QueryAllParticipantRequest) returns (QueryAllParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant";
-  
+
   }
 
   // Queries a list of InferenceParticipant items.
   rpc InferenceParticipant (QueryInferenceParticipantRequest) returns (QueryInferenceParticipantResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_participant/{address}";
-  
+
   }
-  
+
   // Queries a list of GetRandomExecutor items.
   rpc GetRandomExecutor (QueryGetRandomExecutorRequest) returns (QueryGetRandomExecutorResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_random_executor";
-  
+
   }
-  
+
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
-  
+
   }
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
-  
+
   }
 
   // Queries a list of SettleAmount items.
@@ -194,6 +194,25 @@ service Query {
   // Queries a list of HardwareNodesAll items.
   rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
+
+  }
+
+  // Queries a list of GetParticipantCurrentStats items.
+  rpc GetParticipantCurrentStats (QueryGetParticipantCurrentStatsRequest) returns (QueryGetParticipantCurrentStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_participant_current_stats/{participantId}";
+
+  }
+
+  // Queries a list of GetAllParticipantCurrentStats items.
+  rpc GetAllParticipantCurrentStats (QueryGetAllParticipantCurrentStatsRequest) returns (QueryGetAllParticipantCurrentStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_all_participant_current_stats";
+
+  }
+
+  // Queries a list of GetMinimumValidationAverage items.
+  rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
+
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -201,7 +220,7 @@ message QueryParamsRequest {}
 
 // QueryParamsResponse is response type for the Query/Params RPC method.
 message QueryParamsResponse {
-  
+
   // params holds all the parameters of this module.
   Params params = 1 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
@@ -461,3 +480,35 @@ message QueryHardwareNodesAllRequest {}
 message QueryHardwareNodesAllResponse {
   repeated HardwareNodes nodes = 1;
 }
+
+message QueryGetParticipantCurrentStatsRequest {
+  string participantId = 1;
+}
+
+message QueryGetParticipantCurrentStatsResponse {
+  uint64 weight     = 1;
+  int32  reputation = 2;
+}
+
+message QueryGetAllParticipantCurrentStatsRequest {}
+
+message QueryGetAllParticipantCurrentStatsResponse {
+  repeated ParticipantCurrentStats participant_current_stats = 1;
+           int64                   block_height              = 2;
+           int64                   epoch_id                  = 3;
+}
+
+message ParticipantCurrentStats {
+  string participant_id = 1;
+  uint64 weight         = 2;
+  int32  reputation     = 3;
+}
+
+message QueryGetMinimumValidationAverageRequest {}
+
+message QueryGetMinimumValidationAverageResponse {
+  uint64 traffic_basis              = 1;
+  string minimum_validation_average = 2;
+  uint64 block_height               = 3;
+}
+

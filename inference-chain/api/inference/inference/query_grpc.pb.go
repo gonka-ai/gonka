@@ -50,6 +50,9 @@ const (
 	Query_TrainingTask_FullMethodName                     = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                    = "/inference.inference.Query/HardwareNodes"
 	Query_HardwareNodesAll_FullMethodName                 = "/inference.inference.Query/HardwareNodesAll"
+	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
+	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
+	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
 )
 
 // QueryClient is the client API for Query service.
@@ -109,6 +112,12 @@ type QueryClient interface {
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of GetParticipantCurrentStats items.
+	GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error)
+	// Queries a list of GetAllParticipantCurrentStats items.
+	GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error)
+	// Queries a list of GetMinimumValidationAverage items.
+	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
 }
 
 type queryClient struct {
@@ -398,6 +407,33 @@ func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNod
 	return out, nil
 }
 
+func (c *queryClient) GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error) {
+	out := new(QueryGetParticipantCurrentStatsResponse)
+	err := c.cc.Invoke(ctx, Query_GetParticipantCurrentStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error) {
+	out := new(QueryGetAllParticipantCurrentStatsResponse)
+	err := c.cc.Invoke(ctx, Query_GetAllParticipantCurrentStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error) {
+	out := new(QueryGetMinimumValidationAverageResponse)
+	err := c.cc.Invoke(ctx, Query_GetMinimumValidationAverage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -455,6 +491,12 @@ type QueryServer interface {
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of GetParticipantCurrentStats items.
+	GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error)
+	// Queries a list of GetAllParticipantCurrentStats items.
+	GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error)
+	// Queries a list of GetMinimumValidationAverage items.
+	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -554,6 +596,15 @@ func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNod
 }
 func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
+}
+func (UnimplementedQueryServer) GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetParticipantCurrentStats not implemented")
+}
+func (UnimplementedQueryServer) GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAllParticipantCurrentStats not implemented")
+}
+func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1126,6 +1177,60 @@ func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetParticipantCurrentStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetParticipantCurrentStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetParticipantCurrentStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetParticipantCurrentStats(ctx, req.(*QueryGetParticipantCurrentStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetAllParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetAllParticipantCurrentStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetAllParticipantCurrentStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetAllParticipantCurrentStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetAllParticipantCurrentStats(ctx, req.(*QueryGetAllParticipantCurrentStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetMinimumValidationAverageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetMinimumValidationAverage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetMinimumValidationAverage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetMinimumValidationAverage(ctx, req.(*QueryGetMinimumValidationAverageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1256,6 +1361,18 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HardwareNodesAll",
 			Handler:    _Query_HardwareNodesAll_Handler,
+		},
+		{
+			MethodName: "GetParticipantCurrentStats",
+			Handler:    _Query_GetParticipantCurrentStats_Handler,
+		},
+		{
+			MethodName: "GetAllParticipantCurrentStats",
+			Handler:    _Query_GetAllParticipantCurrentStats_Handler,
+		},
+		{
+			MethodName: "GetMinimumValidationAverage",
+			Handler:    _Query_GetMinimumValidationAverage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

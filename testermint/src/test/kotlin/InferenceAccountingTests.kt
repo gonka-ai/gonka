@@ -26,24 +26,15 @@ class InferenceAccountingTests : TestermintTest() {
 
     @Test
     fun `test get participants`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        highestFunded.node.waitForNextBlock()
-        val participants = highestFunded.api.getParticipants()
+        val (_, genesis) = initCluster()
+        genesis.node.waitForNextBlock()
+        val participants = genesis.api.getParticipants()
         Logger.debug(participants)
         assertThat(participants).hasSize(3)
-        val nextSettleBlock = highestFunded.getNextSettleBlock()
-        highestFunded.node.waitForMinimumBlock(nextSettleBlock)
-        val participantsAfterEach = highestFunded.api.getParticipants()
+        val nextSettleBlock = genesis.getNextSettleBlock()
+        genesis.node.waitForMinimumBlock(nextSettleBlock)
+        val participantsAfterEach = genesis.api.getParticipants()
         Logger.debug(participantsAfterEach)
-    }
-
-    @Test
-    fun `test get inference params`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val highestFunded = initialize(pairs)
-        val params = highestFunded.node.getInferenceParams()
-        Logger.info(params)
     }
 
     @Test
