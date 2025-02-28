@@ -61,6 +61,7 @@ message ValidationParams {
   double  min_validation_halfway = 9;
   int64  min_validation_traffic_cutoff = 10;
   double miss_percentage_cutoff = 11;
+  double miss_requests_penalty = 12;
 }
 
 message PocParams {

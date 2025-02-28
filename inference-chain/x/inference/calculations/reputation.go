@@ -31,7 +31,7 @@ func addMissCost(missPercentages []decimal.Decimal, params *types.ValidationPara
 	missCost := decimal.NewFromFloat(0.0)
 	for _, missPercentage := range missPercentages {
 		if missPercentage.GreaterThan(decimal.NewFromFloat(params.MissPercentageCutoff)) {
-			missCost = missCost.Add(missPercentage.Mul(singleEpochValue))
+			missCost = missCost.Add(missPercentage.Mul(singleEpochValue)).Mul(decimal.NewFromFloat(params.MissRequestsPenalty))
 		}
 	}
 	return missCost.Mul(epochsToMax)
