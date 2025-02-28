@@ -17,8 +17,6 @@ func (k Keeper) GetMinimumValidationAverage(goCtx context.Context, req *types.Qu
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	params := k.GetParams(ctx)
-
 	currentEpochData, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		k.LogError("failed to get current epoch data", types.Validation, "error", err)
@@ -29,6 +27,6 @@ func (k Keeper) GetMinimumValidationAverage(goCtx context.Context, req *types.Qu
 	return &types.QueryGetMinimumValidationAverageResponse{
 		TrafficBasis:             trafficBasis,
 		BlockHeight:              uint64(ctx.BlockHeight()),
-		MinimumValidationAverage: calculations.CalculateMinimumValidationAverage(int64(trafficBasis), params.ValidationParams).String(),
+		MinimumValidationAverage: calculations.CalculateMinimumValidationAverage(int64(trafficBasis), currentEpochData.GroupData.ValidationParams).String(),
 	}, nil
 }
