@@ -5,26 +5,42 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+func calculateMinimumValidationAverage(recentRequestCount decimal.Decimal, validationParams validationParamsDecimal) decimal.Decimal {
+	if recentRequestCount.GreaterThanOrEqual(validationParams.FullValidationTrafficCutoff) {
+		return validationParams.MinValidationAverage
+	}
+	halfwaySize := validationParams.FullValidationTrafficCutoff.Div(decimal.NewFromInt(2))
+	if recentRequestCount.GreaterThanOrEqual(halfwaySize) {
+		return betweenFullAndHalf(recentRequestCount, validationParams, halfwaySize)
+	}
+	if recentRequestCount.GreaterThan(validationParams.MinValidationTrafficCutoff) {
+		return betweenHalfAndMin(recentRequestCount, validationParams, halfwaySize)
+	}
+	return validationParams.MaxValidationAverage
+}
+
+func betweenHalfAndMin(recentRequestCount decimal.Decimal, validationParams validationParamsDecimal, halfwaySize decimal.Decimal) decimal.Decimal {
+	distanceFromHalfway := halfwaySize.Sub(recentRequestCount)
+	bottomHalfRange := halfwaySize.Sub(validationParams.MinValidationTrafficCutoff)
+	percentageToMinimum := distanceFromHalfway.Div(bottomHalfRange)
+	averageRange := validationParams.MaxValidationAverage.Sub(validationParams.MinValidationHalfway)
+	return validationParams.MinValidationHalfway.Add(averageRange.Mul(percentageToMinimum))
+}
+
+func betweenFullAndHalf(recentRequestCount decimal.Decimal, validationParams validationParamsDecimal, halfwaySize decimal.Decimal) decimal.Decimal {
+	remainingSize := validationParams.FullValidationTrafficCutoff.Sub(recentRequestCount)
+	remainingFraction := remainingSize.Div(halfwaySize)
+	averageRange := validationParams.MinValidationHalfway.Sub(validationParams.MinValidationAverage)
+	remainingRange := averageRange.Mul(remainingFraction)
+	return remainingRange.Add(validationParams.MinValidationAverage)
+}
+
 func CalculateMinimumValidationAverage(recentRequestCount int64, validationParams *types.ValidationParams) decimal.Decimal {
-	if recentRequestCount >= validationParams.FullValidationTrafficCutoff {
-		return decimal.NewFromFloat(validationParams.MinValidationAverage)
-	}
-	halfwaySize := validationParams.FullValidationTrafficCutoff / 2
-	if recentRequestCount >= halfwaySize {
-		remainingSize := validationParams.FullValidationTrafficCutoff - recentRequestCount
-		minValidationAverage := decimal.NewFromFloat(validationParams.MinValidationAverage)
-		minValidationHalfway := decimal.NewFromFloat(validationParams.MinValidationHalfway)
-		remainingFraction := decimal.NewFromInt(remainingSize).Div(decimal.NewFromInt(halfwaySize))
-		averageRange := minValidationHalfway.Sub(minValidationAverage)
-		remainingRange := averageRange.Mul(remainingFraction)
-		return remainingRange.Add(minValidationAverage)
-	}
-	if recentRequestCount > validationParams.MinValidationTrafficCutoff {
-		distanceFromHalfway := halfwaySize - recentRequestCount
-		bottomHalfRange := halfwaySize - validationParams.MinValidationTrafficCutoff
-		percentageToMinimum := decimal.NewFromInt(distanceFromHalfway).Div(decimal.NewFromInt(bottomHalfRange))
-		averageRange := decimal.NewFromFloat(validationParams.MaxValidationAverage - validationParams.MinValidationHalfway)
-		return decimal.NewFromFloat(validationParams.MinValidationHalfway).Add(averageRange.Mul(percentageToMinimum))
-	}
-	return decimal.NewFromFloat(validationParams.MaxValidationAverage)
+	return calculateMinimumValidationAverage(decimal.NewFromInt(recentRequestCount), validationParamsDecimal{
+		FullValidationTrafficCutoff: decimal.NewFromInt(validationParams.FullValidationTrafficCutoff),
+		MinValidationAverage:        decimal.NewFromFloat(validationParams.MinValidationAverage),
+		MinValidationHalfway:        decimal.NewFromFloat(validationParams.MinValidationHalfway),
+		MinValidationTrafficCutoff:  decimal.NewFromInt(validationParams.MinValidationTrafficCutoff),
+		MaxValidationAverage:        decimal.NewFromFloat(validationParams.MaxValidationAverage),
+	})
 }

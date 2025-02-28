@@ -18,9 +18,14 @@ type reputationContextDecimal struct {
 }
 
 type validationParamsDecimal struct {
-	EpochsToMax          decimal.Decimal
-	MissPercentageCutoff decimal.Decimal
-	MissRequestsPenalty  decimal.Decimal
+	EpochsToMax                 decimal.Decimal
+	MissPercentageCutoff        decimal.Decimal
+	MissRequestsPenalty         decimal.Decimal
+	FullValidationTrafficCutoff decimal.Decimal
+	MinValidationAverage        decimal.Decimal
+	MinValidationHalfway        decimal.Decimal
+	MinValidationTrafficCutoff  decimal.Decimal
+	MaxValidationAverage        decimal.Decimal
 }
 
 var one = decimal.NewFromInt(1)
