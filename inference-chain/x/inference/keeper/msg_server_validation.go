@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"math"
 	"strconv"
@@ -56,6 +57,25 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
+		originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
+		adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
+		inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
+		for _, adjustment := range adjustments {
+			if adjustment.ParticipantId == executor.Address {
+				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
+				executor.CoinBalance += adjustment.WorkAdjustment
+			} else {
+				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
+				if !found {
+					k.LogError("Participant not found for redistribution", types.Validation, "participantId", adjustment.ParticipantId)
+					continue
+				}
+				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
+				worker.CoinBalance += adjustment.WorkAdjustment
+				k.SetParticipant(ctx, worker)
+			}
+		}
+
 		executor.ConsecutiveInvalidInferences = 0
 		executor.CurrentEpochStats.ValidatedInferences++
 	} else {

@@ -41,5 +41,6 @@ message Inference {
   ProposalDetails proposal_details = 20;
   uint64 epoch_group_id = 21;
   string assigned_to = 22;
+  repeated string validated_by = 23;
 }
 
