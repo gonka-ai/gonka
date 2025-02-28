@@ -36,8 +36,7 @@ $$
 3. After all qualifying misses, multiply once by $\text{ETM}$:
 
 $$
-\mathrm{AddMissCost}(m_1,\dots,m_k)
-=
+\mathrm{AddMissCost}(m_1,\dots,m_k)=
 \text{penalty}
 \times
 \text{ETM}.
@@ -48,8 +47,7 @@ $$
 The participant's **actual** epoch count is:
 
 $$
-\text{ActualEpochCount} = E-
-\mathrm{AddMissCost}(m_1,\dots,m_k).
+\text{ActualEpochCount} = E-\mathrm{AddMissCost}(m_1,\dots,m_k).
 $$
 
 ### 3. Reputation (clamped to 0–100)
@@ -57,8 +55,7 @@ $$
 Finally, the **reputation** is calculated as:
 
 $$
-\text{Reputation}
-=
+\text{Reputation}=
 \begin{cases}
 100,
 & \text{if }
