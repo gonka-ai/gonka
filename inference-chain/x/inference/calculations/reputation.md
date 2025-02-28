@@ -26,22 +26,22 @@ We define $\mathrm{AddMissCost}$ to figure out how much "penalty" to subtract fr
 1. Start at `penalty = 0`.
 2. For each $m_i$ that is **strictly greater** than $\text{MPC}$, update:
 
-   $$
-   \text{penalty} =
-   \bigl(\text{penalty} + \frac{m_i}{\text{ETM}}\bigr)
-   \times
-   \text{MRP}.
-   $$
+$$
+\text{penalty} =
+\bigl(\text{penalty} + \frac{m_i}{\text{ETM}}\bigr)
+\times
+\text{MRP}.
+$$
 
 3. After all qualifying misses, multiply once by $\text{ETM}$:
 
-   $$
-   \mathrm{AddMissCost}(m_1,\dots,m_k)
-   =
-   \text{penalty}
-   \times
-   \text{ETM}.
-   $$
+$$
+\mathrm{AddMissCost}(m_1,\dots,m_k)
+=
+\text{penalty}
+\times
+\text{ETM}.
+$$
 
 ### 2. Actual Epoch Count
 
