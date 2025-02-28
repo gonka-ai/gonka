@@ -11,28 +11,53 @@ type ReputationContext struct {
 	ValidationParams     *types.ValidationParams
 }
 
-var one = decimal.NewFromInt(1)
-
-func CalculateReputation(ctx *ReputationContext) int64 {
-	actualEpochCount := decimal.NewFromInt(ctx.EpochCount).Sub(addMissCost(ctx.EpochMissPercentages, ctx.ValidationParams))
-	if actualEpochCount.GreaterThan(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)) {
-		return 100
-	}
-	if actualEpochCount.LessThanOrEqual(decimal.Zero) {
-		return 0
-	}
-	truncate := actualEpochCount.Div(decimal.NewFromInt(ctx.ValidationParams.EpochsToMax)).Truncate(2)
-	return truncate.Mul(decimal.NewFromInt(100)).IntPart()
+type reputationContextDecimal struct {
+	EpochCount           decimal.Decimal
+	EpochMissPercentages []decimal.Decimal
+	ValidationParams     *validationParamsDecimal
 }
 
-func addMissCost(missPercentages []decimal.Decimal, params *types.ValidationParams) decimal.Decimal {
-	epochsToMax := decimal.NewFromInt(params.EpochsToMax)
-	singleEpochValue := one.Div(epochsToMax)
-	missCost := decimal.NewFromFloat(0.0)
+type validationParamsDecimal struct {
+	EpochsToMax          decimal.Decimal
+	MissPercentageCutoff decimal.Decimal
+	MissRequestsPenalty  decimal.Decimal
+}
+
+var one = decimal.NewFromInt(1)
+var oneHundred = decimal.NewFromInt(100)
+
+func CalculateReputation(ctx *ReputationContext) int64 {
+	// For clarity, convert everything to decimal before we calculate
+	decimalCtx := reputationContextDecimal{
+		EpochCount:           decimal.NewFromInt(ctx.EpochCount),
+		EpochMissPercentages: ctx.EpochMissPercentages,
+		ValidationParams: &validationParamsDecimal{
+			EpochsToMax:          decimal.NewFromInt(ctx.ValidationParams.EpochsToMax),
+			MissPercentageCutoff: decimal.NewFromFloat(ctx.ValidationParams.MissPercentageCutoff),
+			MissRequestsPenalty:  decimal.NewFromFloat(ctx.ValidationParams.MissRequestsPenalty),
+		},
+	}
+	return calculateReputation(&decimalCtx).IntPart()
+}
+
+func calculateReputation(ctx *reputationContextDecimal) decimal.Decimal {
+	actualEpochCount := ctx.EpochCount.Sub(addMissCost(ctx.EpochMissPercentages, ctx.ValidationParams))
+	if actualEpochCount.GreaterThan(ctx.ValidationParams.EpochsToMax) {
+		return oneHundred
+	}
+	if actualEpochCount.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero
+	}
+	return actualEpochCount.Div(ctx.ValidationParams.EpochsToMax).Truncate(2).Mul(oneHundred)
+}
+
+func addMissCost(missPercentages []decimal.Decimal, params *validationParamsDecimal) decimal.Decimal {
+	singleEpochValue := one.Div(params.EpochsToMax)
+	missCost := decimal.Zero
 	for _, missPercentage := range missPercentages {
-		if missPercentage.GreaterThan(decimal.NewFromFloat(params.MissPercentageCutoff)) {
-			missCost = missCost.Add(missPercentage.Mul(singleEpochValue)).Mul(decimal.NewFromFloat(params.MissRequestsPenalty))
+		if missPercentage.GreaterThan(params.MissPercentageCutoff) {
+			missCost = missCost.Add(missPercentage.Mul(singleEpochValue).Mul(params.MissRequestsPenalty))
 		}
 	}
-	return missCost.Mul(epochsToMax)
+	return missCost.Mul(params.EpochsToMax)
 }

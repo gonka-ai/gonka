@@ -103,6 +103,14 @@ func TestCalculateReputation(t *testing.T) {
 			multiplier:      1,
 		},
 		{
+			testName:        "max, but with many missed and multiplier",
+			epochCount:      10,
+			epochsToMax:     10,
+			missPercentages: []float64{0.25, 0.5, 0.5, 0.5, 0.75, 0.5},
+			expected:        40,
+			multiplier:      2.0,
+		},
+		{
 			testName:        "max, missed below threshold",
 			epochCount:      10,
 			epochsToMax:     10,
