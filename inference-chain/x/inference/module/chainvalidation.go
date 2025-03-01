@@ -76,7 +76,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		}
 
 		if currentActiveParticipants != nil {
-			valOutcome := getValidatorIntersectionCountV2(currentValidatorWeights, vals)
+			valOutcome := getValidationOutcome(currentValidatorWeights, vals)
 			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
 			if votedWeight < requiredValidWeight {
 				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
@@ -156,22 +156,12 @@ func getTotalWeight(validatorWeights *map[string]int64) uint64 {
 	return totalWeight
 }
 
-func getValidatorIntersectionCount(currentValidatorsSet *map[string]int64, validations []types.PoCValidation) int {
-	count := 0
-	for _, v := range validations {
-		if _, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok && !v.FraudDetected {
-			count++
-		}
-	}
-	return count
-}
-
 type validationOutcome struct {
 	ValidWeight   int64
 	InvalidWeight int64
 }
 
-func getValidatorIntersectionCountV2(currentValidatorsSet *map[string]int64, validations []types.PoCValidation) validationOutcome {
+func getValidationOutcome(currentValidatorsSet *map[string]int64, validations []types.PoCValidation) validationOutcome {
 	validWeight := int64(0)
 	invalidWeight := int64(0)
 	for _, v := range validations {
