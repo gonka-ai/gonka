@@ -2,8 +2,9 @@ package inference
 
 import (
 	"context"
-	"github.com/productscience/inference/x/inference/types"
 	"sort"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
@@ -113,11 +114,15 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 }
 
 func getParticipantWeight(batches []types.PoCBatch) int64 {
-	var weight int64
+	uniqueNonces := make(map[int64]struct{})
+
 	for _, b := range batches {
-		weight += int64(len(b.Nonces))
+		for _, nonce := range b.Nonces {
+			uniqueNonces[nonce] = struct{}{}
+		}
 	}
-	return weight
+
+	return int64(len(uniqueNonces))
 }
 
 func getActiveAddressSet(activeParticipants *types.ActiveParticipants) *map[string]struct{} {
