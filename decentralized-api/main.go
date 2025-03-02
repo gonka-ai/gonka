@@ -77,7 +77,8 @@ func main() {
 		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
 
-	training.NewAssigner(recorder, &tendermintClient)
+	// FIXME: What context to pass?
+	training.NewAssigner(recorder, &tendermintClient, context.Background())
 
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
