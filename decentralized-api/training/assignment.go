@@ -19,7 +19,7 @@ type Assigner struct {
 }
 
 type taskToAssignState struct {
-	taskId uint64
+	task *types.TrainingTask
 }
 
 const logTag = "[training-task-assigner] "
@@ -96,7 +96,7 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 
 	slog.Info(logTag+"Claimed task for assignment", "taskId", task.Id)
 	a.task = &taskToAssignState{
-		taskId: task.Id,
+		task: task,
 	}
 }
 
@@ -133,5 +133,58 @@ func (a *Assigner) chooseTrainingTask(tasks []*types.TrainingTask, currentBlockH
 }
 
 func (a *Assigner) assignTask() {
+	participants, err := getParticipantsWithHardwareNodes(a.ctx, a.cosmosClient.NewInferenceQueryClient())
+	if err != nil {
+		return
+	}
+
+	getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources)
+	_ = participants
+}
+
+type participantHardwareNodes struct {
+	participant string
+	weight      int64
+	hardware    *types.HardwareNodes
+}
+
+func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.QueryClient) (map[string]participantHardwareNodes, error) {
+	req := &types.QueryCurrentEpochGroupDataRequest{}
+	resp, err := queryClient.CurrentEpochGroupData(ctx, req)
+	if err != nil {
+		slog.Error(logTag+"Error querying for current epoch group data", "err", err)
+		return nil, err
+	}
+
+	participants := resp.EpochGroupData.ValidationWeights
+
+	// FIXME: could be optimized if we queried only nodes of actual participants instead of ALL participants
+	//  or maybe we should do some hardware nodes pruning
+	r := &types.QueryHardwareNodesAllRequest{}
+	hardwareNodes, err := queryClient.HardwareNodesAll(ctx, r)
+	if err != nil {
+		slog.Error(logTag+"Error querying for hardware nodes", "err", err)
+		return nil, err
+	}
+
+	hardwareNodesByParticipant := make(map[string]*types.HardwareNodes)
+	for _, nodes := range hardwareNodes.Nodes {
+		hardwareNodesByParticipant[nodes.Participant] = nodes
+	}
+
+	participantsWithHardware := make(map[string]participantHardwareNodes)
+	for _, participant := range participants {
+		address := participant.MemberAddress
+		participantsWithHardware[address] = participantHardwareNodes{
+			participant: address,
+			weight:      participant.Weight,
+			hardware:    hardwareNodesByParticipant[address],
+		}
+	}
+
+	return participantsWithHardware, nil
+}
+
+func getParticipantListMatchingHardwareSpec(hardwareSpec []*types.TrainingHardwareResources) {
 
 }
