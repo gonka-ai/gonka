@@ -7,11 +7,29 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const trainingTaskAssignmentDeadline = 50
+
 func (k msgServer) ClaimTrainingTaskForAssignment(goCtx context.Context, msg *types.MsgClaimTrainingTaskForAssignment) (*types.MsgClaimTrainingTaskForAssignmentResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Handling the message
-	_ = ctx
+	task, found := k.GetTrainingTask(ctx, msg.TaskId)
+	if !found {
+		return nil, types.ErrTrainingTaskNotFound
+	}
+
+	if task.AssignedAtBlockHeight != 0 {
+		return nil, types.ErrTrainingTaskAlreadyAssigned
+	}
+
+	blockHeight := uint64(ctx.BlockHeight())
+	blocksSinceAssignment := task.ClaimedByAssignerAtBlockHeight - blockHeight
+	if task.Assigner != "" && blocksSinceAssignment < trainingTaskAssignmentDeadline {
+		return nil, types.ErrTrainingTaskAlreadyAssigned
+	}
+
+	task.Assigner = msg.Creator
+	task.ClaimedByAssignerAtBlockHeight = blockHeight
+	k.SetTrainingTask(ctx, task)
 
 	return &types.MsgClaimTrainingTaskForAssignmentResponse{}, nil
 }

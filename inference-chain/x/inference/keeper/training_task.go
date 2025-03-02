@@ -120,16 +120,14 @@ func (k Keeper) CompleteTask(ctx sdk.Context, taskId uint64) error {
 	return nil
 }
 
-// GetTask retrieves the full task object given its taskId.
-func (k Keeper) GetTask(ctx sdk.Context, taskId uint64) (types.TrainingTask, error) {
-	store := EmptyPrefixStore(ctx, &k)
-	bz := store.Get(types.TrainingTaskFullKey(taskId))
-	if bz == nil {
-		return types.TrainingTask{}, fmt.Errorf("task %d not found", taskId)
-	}
+// GetTrainingTask retrieves the full task object given its taskId.
+func (k Keeper) GetTrainingTask(ctx sdk.Context, taskId uint64) (*types.TrainingTask, bool) {
 	var task types.TrainingTask
-	k.cdc.MustUnmarshal(bz, &task)
-	return task, nil
+	return GetValue(k, ctx, &task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(taskId))
+}
+
+func (k Keeper) SetTrainingTask(ctx sdk.Context, task *types.TrainingTask) {
+	SetValue(k, ctx, task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(task.Id))
 }
 
 // ListQueuedTasks returns all task IDs in the queued state by iterating over keys
