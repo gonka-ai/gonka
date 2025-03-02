@@ -10,26 +10,26 @@ import (
 	"time"
 )
 
-type TrainingTaskAssignmentClaimer struct {
+type Assigner struct {
 	cosmosClient     cosmosclient.CosmosMessageClient
 	tendermintClient *cosmosclient.TendermintClient
 }
 
-const logTag = "[training-task-watcher] "
+const logTag = "[training-task-assigner] "
 
-func NewTrainingTaskAssignmentClaimer(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *TrainingTaskAssignmentClaimer {
-	watcher := &TrainingTaskAssignmentClaimer{
+func NewAssigner(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *Assigner {
+	watcher := &Assigner{
 		cosmosClient:     client,
 		tendermintClient: tendermintClient,
 	}
 
 	// TODO: on startup do some quries to restore state (like tasks I was assigned)
-	go watcher.watchTasks()
+	go watcher.claimTasksForAssignment()
 
 	return watcher
 }
 
-func (w TrainingTaskAssignmentClaimer) watchTasks() {
+func (w Assigner) claimTasksForAssignment() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
