@@ -3,6 +3,7 @@ package training
 import (
 	"decentralized-api/cosmosclient"
 	"github.com/cometbft/cometbft/libs/rand"
+	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"time"
@@ -54,12 +55,13 @@ func (w TrainingTaskWatcher) watchTasks() {
 		}
 
 		task := chooseTrainingTask(resp.Tasks, blockHeight)
-		_ = task
 
-		msg := types.MsgClaimTrainingTaskForAssignment{
-			Creator: w.cosmosClient.GetAddress(),
+		msg := inference.MsgClaimTrainingTaskForAssignment{
+			TaskId: task.Id,
 		}
-		if _, err = w.cosmosClient.SendTransaction(&msg); err != nil {
+
+		_, err = w.cosmosClient.ClaimTrainingTaskForAssignment(&msg)
+		if err != nil {
 			slog.Error(logTag+"Error claiming task for assignment", "err", err)
 		}
 

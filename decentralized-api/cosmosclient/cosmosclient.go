@@ -116,6 +116,7 @@ type CosmosMessageClient interface {
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
+	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -237,6 +238,19 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	return &msg, err
 }
 
+func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		slog.Error("Failed to send transaction", "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgClaimTrainingTaskForAssignmentResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
 var accountRetriever = authtypes.AccountRetriever{}
 var highestSequence int64 = -1
@@ -355,11 +369,13 @@ func ParseMsgFromTxResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex in
 func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) error {
 	var txMsgData sdk.TxMsgData
 	if err := proto.Unmarshal(data, &txMsgData); err != nil {
+		slog.Error("Failed to unmarshal TxMsgData", "error", err, "data", data)
 		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
 	slog.Info("Found messages", "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
+		slog.Error("Message index out of range", "msgIndex", msgIndex, "len(messages)", len(txMsgData.MsgResponses))
 		return fmt.Errorf(
 			"message index %d out of range: got %d responses",
 			msgIndex, len(txMsgData.MsgResponses),
@@ -369,8 +385,19 @@ func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) erro
 	anyResp := txMsgData.MsgResponses[msgIndex]
 
 	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
+		slog.Error("Failed to unmarshal response", "error", err, "msgIndex", msgIndex, "response", anyResp.Value)
 		return fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
 	}
 
 	return nil
+}
+
+func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.Client, txHash string, dstMsg T) error {
+	transactionAppliedResult, err := client.WaitForTx(ctx, txHash)
+	if err != nil {
+		slog.Error("Failed to wait for transaction", "error", err, "result", transactionAppliedResult)
+		return err
+	}
+
+	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
 }
