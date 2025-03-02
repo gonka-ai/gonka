@@ -78,6 +78,16 @@ func TestGenesisState_Validate(t *testing.T) {
 						Address: "1",
 					},
 				},
+				InferenceTimeoutList: []types.InferenceTimeout{
+					{
+						ExpirationHeight: 0,
+						InferenceId:      "0",
+					},
+					{
+						ExpirationHeight: 1,
+						InferenceId:      "1",
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -163,6 +173,22 @@ func TestGenesisState_Validate(t *testing.T) {
 					},
 					{
 						Address: "0",
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated inferenceTimeout",
+			genState: &types.GenesisState{
+				InferenceTimeoutList: []types.InferenceTimeout{
+					{
+						ExpirationHeight: 0,
+						InferenceId:      "0",
+					},
+					{
+						ExpirationHeight: 0,
+						InferenceId:      "0",
 					},
 				},
 			},

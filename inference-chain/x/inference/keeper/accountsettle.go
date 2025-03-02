@@ -132,33 +132,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		if found {
 			amount.Settle.SeedSignature = seedSignature
 		}
-		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins + amount.Settle.RefundCoins
+		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
 		if totalPayment == 0 {
 			k.LogDebug("No payment needed for participant", "address", amount.Settle.Participant)
 			continue
 		}
-		k.LogInfo("Settle for participant", "rewardCoins", amount.Settle.RewardCoins, "refundCoins", amount.Settle.RefundCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
+		k.LogInfo("Settle for participant", "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
 		participant, found := k.GetParticipant(ctx, amount.Settle.Participant)
 		if !found {
 			k.LogError("Participant not found", "address", amount.Settle.Participant)
 			continue
 		}
-		// Issue refunds right away, participants may not be validating
-		if amount.Settle.RefundCoins > 0 {
-			k.LogInfo("Paying refund", "address", participant.Address, "amount", amount.Settle.RefundCoins)
-			err = k.PayParticipantFromEscrow(ctx, amount.Settle.Participant, amount.Settle.RefundCoins)
-			if err != nil {
-				k.LogError("Error paying refund", "error", err)
-				continue
-			}
-			k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalRefunded: amount.Settle.RefundCoins})
-			amount.Settle.RefundCoins = 0
-		}
 		if amount.Settle.RewardCoins > 0 && participant.Reputation < 1.0 {
 			participant.Reputation += 0.01
 		}
 		participant.CoinBalance = 0
-		participant.RefundBalance = 0
 		k.SetParticipant(ctx, participant)
 		amount.Settle.PocStartHeight = pocBlockHeight
 		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
@@ -168,7 +156,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			if err != nil {
 				k.LogError("Error burning coins", "error", err)
 			}
-			k.AddTokenomicsData(ctx, &types.TokenomicsData{TotalBurned: previousSettle.GetTotalCoins()})
 		}
 		k.SetSettleAmount(ctx, *amount.Settle)
 	}
@@ -203,7 +190,7 @@ func getWorkTotals(participants []types.Participant) (int64, int64) {
 	invalidatedBalance := int64(0)
 	for _, p := range participants {
 		// Do not count invalid participants work as "work", since it should not be part of the distributions
-		if p.CoinBalance > 0 && p.RefundBalance >= 0 && p.Status != types.ParticipantStatus_INVALID {
+		if p.CoinBalance > 0 && p.Status != types.ParticipantStatus_INVALID {
 			totalWork += p.CoinBalance
 		}
 		if p.CoinBalance > 0 && p.Status == types.ParticipantStatus_INVALID {
@@ -220,17 +207,10 @@ func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoi
 	if participant.CoinBalance < 0 {
 		return settle, types.ErrNegativeCoinBalance
 	}
-	if participant.RefundBalance < 0 {
-		return settle, types.ErrNegativeRefundBalance
-	}
-	if participant.CoinBalance == 0 && participant.RefundBalance == 0 {
-		return settle, nil
-	}
 	if participant.Status == types.ParticipantStatus_INVALID {
 		return settle, nil
 	}
 	workCoins := participant.CoinBalance
-	refundCoins := participant.RefundBalance
 	rewardCoins := int64(0)
 	for _, distribution := range rewardInfo {
 		if participant.Status == types.ParticipantStatus_INVALID {
@@ -240,7 +220,6 @@ func getSettleAmount(participant *types.Participant, rewardInfo []DistributedCoi
 	}
 	return &types.SettleAmount{
 		RewardCoins: uint64(rewardCoins),
-		RefundCoins: uint64(refundCoins),
 		WorkCoins:   uint64(workCoins),
 		Participant: participant.Address,
 	}, nil
@@ -261,6 +240,9 @@ type DistributedCoinInfo struct {
 }
 
 func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) int64 {
+	if participantWorkDone == 0 {
+		return 0
+	}
 	wd := decimal.NewFromInt(participantWorkDone)
 	tw := decimal.NewFromInt(rc.totalWork)
 	tr := decimal.NewFromInt(rc.totalRewardCoin)

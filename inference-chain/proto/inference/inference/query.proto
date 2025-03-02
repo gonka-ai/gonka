@@ -18,6 +18,7 @@ import "inference/inference/unit_of_compute.proto";
 import "inference/inference/model.proto";
 import "inference/inference/top_miner.proto";
 import "cosmos/base/v1beta1/coin.proto";
+import "inference/inference/inference_timeout.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 
@@ -79,101 +80,112 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
   
   }
-  
+
   // Queries a list of SettleAmount items.
   rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
-  
+
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
-  
+
   }
-  
+
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations/{participant}/{poc_start_block_height}";
-  
+
   }
   rpc EpochGroupValidationsAll (QueryAllEpochGroupValidationsRequest) returns (QueryAllEpochGroupValidationsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_validations";
-  
+
   }
-  
+
   // Queries a list of PocBatchesForStage items.
   rpc PocBatchesForStage (QueryPocBatchesForStageRequest) returns (QueryPocBatchesForStageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_batches_for_stage/{block_height}";
-  
+
   }
-  
+
   // Queries a list of GetCurrentEpoch items.
   rpc GetCurrentEpoch (QueryGetCurrentEpochRequest) returns (QueryGetCurrentEpochResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_current_epoch";
-  
+
   }
-  
+
   // Queries a TokenomicsData by index.
   rpc TokenomicsData (QueryGetTokenomicsDataRequest) returns (QueryGetTokenomicsDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/tokenomics_data";
-  
+
   }
-  
+
   // Queries a list of GetUnitOfComputePriceProposal items.
   rpc GetUnitOfComputePriceProposal (QueryGetUnitOfComputePriceProposalRequest) returns (QueryGetUnitOfComputePriceProposalResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_unit_of_compute_price_proposal";
-  
+
   }
-  
+
   // Queries a list of CurrentEpochGroupData items.
   rpc CurrentEpochGroupData (QueryCurrentEpochGroupDataRequest) returns (QueryCurrentEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/current_epoch_group_data";
-  
+
   }
-  
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
-  
+
   }
-  
+
   // Queries a list of TopMiner items.
   rpc TopMiner    (QueryGetTopMinerRequest) returns (QueryGetTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner/{address}";
-  
+
   }
   rpc TopMinerAll (QueryAllTopMinerRequest) returns (QueryAllTopMinerResponse) {
     option (google.api.http).get = "/productscience/inference/inference/top_miner";
-  
+
   }
-  
+
+  // Queries a list of InferenceTimeout items.
+  rpc InferenceTimeout    (QueryGetInferenceTimeoutRequest) returns (QueryGetInferenceTimeoutResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_timeout/{expirationHeight}/{inferenceId}";
+
+  }
+  rpc InferenceTimeoutAll (QueryAllInferenceTimeoutRequest) returns (QueryAllInferenceTimeoutResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/inference_timeout";
+
+  }
+
   // Queries a list of TrainingTask items.
   rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task";
-  
+
+
   }
-  
+
   // Queries a list of HardwareNodes items.
   rpc HardwareNodes (QueryHardwareNodesRequest) returns (QueryHardwareNodesResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes/{participant}";
-  
+
   }
-  
+
   // Queries a list of HardwareNodesAll items.
   rpc HardwareNodesAll (QueryHardwareNodesAllRequest) returns (QueryHardwareNodesAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/hardware_nodes_all";
-  
+
   }
-  
+
   // Queries a list of QueuedTrainingTasks items.
   rpc QueuedTrainingTasks (QueryQueuedTrainingTasksRequest) returns (QueryQueuedTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/queued_training_tasks";
-  
+
   }
-  
+
   // Queries a list of TrainingTaskAll items.
   rpc TrainingTaskAll (QueryTrainingTaskAllRequest) returns (QueryTrainingTaskAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task_all";
-  
+
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -372,6 +384,24 @@ message QueryAllTopMinerResponse {
            cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
+message QueryGetInferenceTimeoutRequest {
+  uint64 expirationHeight = 1;
+  string inferenceId      = 2;
+}
+
+message QueryGetInferenceTimeoutResponse {
+  InferenceTimeout inference_timeout = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAllInferenceTimeoutRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAllInferenceTimeoutResponse {
+  repeated InferenceTimeout                       inference_timeout = 1 [(gogoproto.nullable) = false];
+           cosmos.base.query.v1beta1.PageResponse pagination       = 2;
+}
+
 message QueryTrainingTaskRequest {
   uint64 id = 1;
 }
@@ -405,4 +435,3 @@ message QueryTrainingTaskAllRequest {}
 message QueryTrainingTaskAllResponse {
   repeated TrainingTask tasks = 1;
 }
-

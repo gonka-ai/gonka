@@ -2,6 +2,8 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
+import com.productscience.Consumer.Companion.create
+import com.productscience.data.UnfundedInferenceParticipant
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -99,7 +101,7 @@ data class DockerGroup(
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
         publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
-        val jsonOverrides = config.genesisSpec?.toJson(gsonSnakeCase)?.let { "{ \"app_state\": $it }" } ?: "{}"
+        val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
     }
 
@@ -170,6 +172,16 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     return allGroups
 }
 
+fun initCluster(
+    joinCount: Int = 2,
+    config: ApplicationConfig = inferenceConfig,
+    reboot: Boolean = false,
+): LocalCluster {
+    val cluster = setupLocalCluster(joinCount, config, reboot)
+    initialize(cluster.allPairs)
+    return cluster
+}
+
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = getLocalCluster(config)
     if (clusterMatchesConfig(currentCluster, joinCount, config) && !reboot) {
@@ -218,4 +230,39 @@ data class LocalCluster(
         return getLocalCluster(this.genesis.config)!!
     }
 
+    fun withConsumer(name: String, action: (Consumer) -> Unit) {
+        val consumer = create(this, name)
+        try {
+            action(consumer)
+        } finally {
+            consumer.pair.node.close()
+        }
+    }
+
+}
+
+class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
+    companion object {
+        fun create(localCluster: LocalCluster, name: String): Consumer {
+            val cli = ApplicationCLI(name, localCluster.genesis.config)
+            cli.createContainer(doNotStartChain = true)
+            val newKey = cli.createKey(name)
+            localCluster.genesis.api.addUnfundedInferenceParticipant(
+                UnfundedInferenceParticipant(
+                    "",
+                    listOf(),
+                    "",
+                    newKey.pubkey.key,
+                    newKey.address
+                )
+            )
+            // Need time to make sure consumer is added
+            localCluster.genesis.node.waitForNextBlock(2)
+            return Consumer(
+                name = name,
+                pair = LocalInferencePair(cli, localCluster.genesis.api, null, name, localCluster.genesis.config),
+                address = newKey.address,
+            )
+        }
+    }
 }

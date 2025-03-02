@@ -12,15 +12,19 @@ class InferenceMock(port: Int, val name: String) {
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
 
-    fun setInferenceResponse(response: String) =
+    fun setInferenceResponse(response: String, delay: Int = 0) =
         this.givenThat(
             post(urlEqualTo("/v1/chat/completions"))
-                .willReturn(aResponse().withStatus(200).withBody(response))
+                .willReturn(aResponse()
+                    .withFixedDelay(delay.toInt())
+                    .withStatus(200)
+                    .withBody(response))
+
         )
 
-    fun setInferenceResponse(openAIResponse: OpenAIResponse) =
+    fun setInferenceResponse(openAIResponse: OpenAIResponse, delay: Int = 0) =
         this.setInferenceResponse(
-            gsonSnakeCase.toJson(openAIResponse))
+            openAiJson.toJson(openAIResponse), delay)
 
     fun setPocResponse(weight: Long) {
         val nonces = (1..weight).toList()

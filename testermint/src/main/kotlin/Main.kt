@@ -109,7 +109,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.node.waitForMinimumBlock(10)
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
-        it.node.exportState()
+        it.getParams()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
@@ -183,7 +183,7 @@ private fun TxResponse.assertSuccess() {
 }
 
 val defaultFunding = 20_000_000L
-val gsonSnakeCase: Gson = GsonBuilder()
+val cosmosJson: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
@@ -191,6 +191,12 @@ val gsonSnakeCase: Gson = GsonBuilder()
     .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
     .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+    .create()
+
+val openAiJson: Gson = GsonBuilder()
+    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+    .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+    .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .create()
 
 val gsonCamelCase = GsonBuilder()
@@ -1822,4 +1828,4 @@ val defaultInferenceResponse = """
     }
 """.trimIndent()
 
-val defaultInferenceResponseObject = gsonSnakeCase.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
+val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)

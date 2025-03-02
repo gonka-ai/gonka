@@ -71,6 +71,7 @@ data class ValidationParams(
     val passValue: Double,
     val minValidationAverage: Double,
     val maxValidationAverage: Double,
+    val expirationBlocks: Long,
 )
 
 data class PocParams(
@@ -137,7 +138,7 @@ data class DenomMetadata(
 
         val exponentDiff = fromUnit.exponent - toUnit.exponent
         val conversionFactor = BigDecimal.TEN.pow(exponentDiff)
-        return amount * (conversionFactor.toLong())
+        return conversionFactor.multiply(BigDecimal(amount)).toLong()
     }
 
 }

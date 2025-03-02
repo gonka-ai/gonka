@@ -10,6 +10,7 @@ api-build-docker:
 node-build-docker:
 	@make -C inference-chain build-docker
 
+# TODO 'build and push'
 all-build-and-push-docker: api-build-and-push-docker node-build-and-push-docker
 
 api-build-and-push-docker:
@@ -27,3 +28,10 @@ decentralized-api-release:
 inference-chain-release:
 	@echo "Releasing inference-chain..."
 	@make -C inference-chain release
+
+launch-test-chain:
+	./launch-local-test-chain.sh
+
+stop-test-chain:
+	./stop-test-local-chain.sh
+

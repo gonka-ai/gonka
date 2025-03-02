@@ -51,11 +51,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
 	if refundAmount > 0 {
-		if requester.Address == executor.Address {
-			executor.RefundBalance += refundAmount
-		} else {
-			requester.RefundBalance += refundAmount
-			k.SetParticipant(ctx, requester)
+		err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address)
+		if err != nil {
+			k.LogError("Unable to Issue Refund for finished inference", err)
 		}
 	}
 

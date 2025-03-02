@@ -73,6 +73,16 @@ func TestGenesis(t *testing.T) {
 				Address: "1",
 			},
 		},
+		InferenceTimeoutList: []types.InferenceTimeout{
+			{
+				ExpirationHeight: 0,
+				InferenceId:      "0",
+			},
+			{
+				ExpirationHeight: 1,
+				InferenceId:      "1",
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -110,5 +120,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
 	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
 	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
+	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

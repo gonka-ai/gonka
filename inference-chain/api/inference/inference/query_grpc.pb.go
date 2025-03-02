@@ -41,11 +41,11 @@ const (
 	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
 	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
 	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
+	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
+	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
 	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                 = "/inference.inference.Query/HardwareNodes"
 	Query_HardwareNodesAll_FullMethodName              = "/inference.inference.Query/HardwareNodesAll"
-	Query_QueuedTrainingTasks_FullMethodName           = "/inference.inference.Query/QueuedTrainingTasks"
-	Query_TrainingTaskAll_FullMethodName               = "/inference.inference.Query/TrainingTaskAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -90,16 +90,15 @@ type QueryClient interface {
 	// Queries a list of TopMiner items.
 	TopMiner(ctx context.Context, in *QueryGetTopMinerRequest, opts ...grpc.CallOption) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(ctx context.Context, in *QueryAllTopMinerRequest, opts ...grpc.CallOption) (*QueryAllTopMinerResponse, error)
+	// Queries a list of InferenceTimeout items.
+	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
+	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
-	// Queries a list of QueuedTrainingTasks items.
-	QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error)
-	// Queries a list of TrainingTaskAll items.
-	TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error)
 }
 
 type queryClient struct {
@@ -308,6 +307,24 @@ func (c *queryClient) TopMinerAll(ctx context.Context, in *QueryAllTopMinerReque
 	return out, nil
 }
 
+func (c *queryClient) InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error) {
+	out := new(QueryGetInferenceTimeoutResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceTimeout_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error) {
+	out := new(QueryAllInferenceTimeoutResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceTimeoutAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error) {
 	out := new(QueryTrainingTaskResponse)
 	err := c.cc.Invoke(ctx, Query_TrainingTask_FullMethodName, in, out, opts...)
@@ -329,24 +346,6 @@ func (c *queryClient) HardwareNodes(ctx context.Context, in *QueryHardwareNodesR
 func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error) {
 	out := new(QueryHardwareNodesAllResponse)
 	err := c.cc.Invoke(ctx, Query_HardwareNodesAll_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error) {
-	out := new(QueryQueuedTrainingTasksResponse)
-	err := c.cc.Invoke(ctx, Query_QueuedTrainingTasks_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error) {
-	out := new(QueryTrainingTaskAllResponse)
-	err := c.cc.Invoke(ctx, Query_TrainingTaskAll_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -395,16 +394,15 @@ type QueryServer interface {
 	// Queries a list of TopMiner items.
 	TopMiner(context.Context, *QueryGetTopMinerRequest) (*QueryGetTopMinerResponse, error)
 	TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error)
+	// Queries a list of InferenceTimeout items.
+	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
+	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
-	// Queries a list of QueuedTrainingTasks items.
-	QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error)
-	// Queries a list of TrainingTaskAll items.
-	TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -478,6 +476,12 @@ func (UnimplementedQueryServer) TopMiner(context.Context, *QueryGetTopMinerReque
 func (UnimplementedQueryServer) TopMinerAll(context.Context, *QueryAllTopMinerRequest) (*QueryAllTopMinerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TopMinerAll not implemented")
 }
+func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeout not implemented")
+}
+func (UnimplementedQueryServer) InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeoutAll not implemented")
+}
 func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
 }
@@ -486,12 +490,6 @@ func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNod
 }
 func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
-}
-func (UnimplementedQueryServer) QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method QueuedTrainingTasks not implemented")
-}
-func (UnimplementedQueryServer) TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method TrainingTaskAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -902,6 +900,42 @@ func _Query_TopMinerAll_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferenceTimeout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceTimeoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceTimeout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceTimeout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceTimeout(ctx, req.(*QueryGetInferenceTimeoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_InferenceTimeoutAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllInferenceTimeoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceTimeoutAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceTimeoutAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceTimeoutAll(ctx, req.(*QueryAllInferenceTimeoutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_TrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTrainingTaskRequest)
 	if err := dec(in); err != nil {
@@ -952,42 +986,6 @@ func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).HardwareNodesAll(ctx, req.(*QueryHardwareNodesAllRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_QueuedTrainingTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryQueuedTrainingTasksRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).QueuedTrainingTasks(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_QueuedTrainingTasks_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).QueuedTrainingTasks(ctx, req.(*QueryQueuedTrainingTasksRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_TrainingTaskAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryTrainingTaskAllRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).TrainingTaskAll(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_TrainingTaskAll_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).TrainingTaskAll(ctx, req.(*QueryTrainingTaskAllRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1088,6 +1086,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_TopMinerAll_Handler,
 		},
 		{
+			MethodName: "InferenceTimeout",
+			Handler:    _Query_InferenceTimeout_Handler,
+		},
+		{
+			MethodName: "InferenceTimeoutAll",
+			Handler:    _Query_InferenceTimeoutAll_Handler,
+		},
+		{
 			MethodName: "TrainingTask",
 			Handler:    _Query_TrainingTask_Handler,
 		},
@@ -1098,14 +1104,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HardwareNodesAll",
 			Handler:    _Query_HardwareNodesAll_Handler,
-		},
-		{
-			MethodName: "QueuedTrainingTasks",
-			Handler:    _Query_QueuedTrainingTasks_Handler,
-		},
-		{
-			MethodName: "TrainingTaskAll",
-			Handler:    _Query_TrainingTaskAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
