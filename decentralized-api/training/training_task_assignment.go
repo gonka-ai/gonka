@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-type TrainingTaskWatcher struct {
+type TrainingTaskAssignmentClaimer struct {
 	cosmosClient     cosmosclient.CosmosMessageClient
 	tendermintClient *cosmosclient.TendermintClient
 }
 
 const logTag = "[training-task-watcher] "
 
-func NewTrainingTaskWatcher(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *TrainingTaskWatcher {
-	watcher := &TrainingTaskWatcher{
+func NewTrainingTaskAssignmentClaimer(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *TrainingTaskAssignmentClaimer {
+	watcher := &TrainingTaskAssignmentClaimer{
 		cosmosClient:     client,
 		tendermintClient: tendermintClient,
 	}
@@ -29,7 +29,7 @@ func NewTrainingTaskWatcher(client cosmosclient.CosmosMessageClient, tendermintC
 	return watcher
 }
 
-func (w TrainingTaskWatcher) watchTasks() {
+func (w TrainingTaskAssignmentClaimer) watchTasks() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -54,6 +54,10 @@ func (w TrainingTaskWatcher) watchTasks() {
 		}
 
 		task := chooseTrainingTask(resp.Tasks, blockHeight)
+		if task == nil {
+			slog.Info(logTag + "No training tasks to claim for assignment")
+			continue
+		}
 
 		msg := inference.MsgClaimTrainingTaskForAssignment{
 			TaskId: task.Id,
@@ -71,7 +75,7 @@ func (w TrainingTaskWatcher) watchTasks() {
 func chooseTrainingTask(tasks []*types.TrainingTask, currentBlockHeight int64) *types.TrainingTask {
 	filteredTasks := make([]*types.TrainingTask, 0)
 	for _, task := range tasks {
-		if task.Assigner == "" || (uint64(currentBlockHeight)-task.ClaimedByAssignerAtBlockHeight) > keeper.TrainingTaskAssignmentDeadline {
+		if task.AssignedAtBlockHeight == 0 && (task.Assigner == "" || (uint64(currentBlockHeight)-task.ClaimedByAssignerAtBlockHeight) > keeper.TrainingTaskAssignmentDeadline) {
 			filteredTasks = append(filteredTasks, task)
 		}
 	}

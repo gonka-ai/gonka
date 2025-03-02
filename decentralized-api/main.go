@@ -77,7 +77,7 @@ func main() {
 		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
 	}()
 
-	training.NewTrainingTaskWatcher(recorder, &tendermintClient)
+	training.NewTrainingTaskAssignmentClaimer(recorder, &tendermintClient)
 
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
