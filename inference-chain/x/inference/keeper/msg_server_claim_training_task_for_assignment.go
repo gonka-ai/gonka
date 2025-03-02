@@ -7,7 +7,9 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const trainingTaskAssignmentDeadline = 50
+// FIXME: move to chain params?
+// Number of blocks an assinger has to finish the assignment process
+const TrainingTaskAssignmentDeadline = 100
 
 func (k msgServer) ClaimTrainingTaskForAssignment(goCtx context.Context, msg *types.MsgClaimTrainingTaskForAssignment) (*types.MsgClaimTrainingTaskForAssignmentResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -23,7 +25,7 @@ func (k msgServer) ClaimTrainingTaskForAssignment(goCtx context.Context, msg *ty
 
 	blockHeight := uint64(ctx.BlockHeight())
 	blocksSinceAssignment := task.ClaimedByAssignerAtBlockHeight - blockHeight
-	if task.Assigner != "" && blocksSinceAssignment < trainingTaskAssignmentDeadline {
+	if task.Assigner != "" && blocksSinceAssignment < TrainingTaskAssignmentDeadline {
 		return nil, types.ErrTrainingTaskAlreadyAssigned
 	}
 

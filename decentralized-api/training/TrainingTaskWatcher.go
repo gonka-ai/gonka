@@ -4,6 +4,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"github.com/cometbft/cometbft/libs/rand"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"time"
@@ -14,8 +15,6 @@ type TrainingTaskWatcher struct {
 	tendermintClient *cosmosclient.TendermintClient
 }
 
-// Number of blocks a person
-const assignerDeadline = 300
 const logTag = "[training-task-watcher] "
 
 func NewTrainingTaskWatcher(client cosmosclient.CosmosMessageClient, tendermintClient *cosmosclient.TendermintClient) *TrainingTaskWatcher {
@@ -72,7 +71,7 @@ func (w TrainingTaskWatcher) watchTasks() {
 func chooseTrainingTask(tasks []*types.TrainingTask, currentBlockHeight int64) *types.TrainingTask {
 	filteredTasks := make([]*types.TrainingTask, 0)
 	for _, task := range tasks {
-		if task.Assigner == "" || (uint64(currentBlockHeight)-task.ClaimedByAssignerAtBlockHeight) > assignerDeadline {
+		if task.Assigner == "" || (uint64(currentBlockHeight)-task.ClaimedByAssignerAtBlockHeight) > keeper.TrainingTaskAssignmentDeadline {
 			filteredTasks = append(filteredTasks, task)
 		}
 	}
