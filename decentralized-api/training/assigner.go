@@ -3,11 +3,13 @@ package training
 import (
 	"context"
 	"decentralized-api/cosmosclient"
+	"fmt"
 	"github.com/cometbft/cometbft/libs/rand"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -138,7 +140,7 @@ func (a *Assigner) assignTask() {
 		return
 	}
 
-	getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources)
+	getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources, participants)
 	_ = participants
 }
 
@@ -185,6 +187,121 @@ func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.Que
 	return participantsWithHardware, nil
 }
 
-func getParticipantListMatchingHardwareSpec(hardwareSpec []*types.TrainingHardwareResources) {
+type candidateNode struct {
+	participant       string
+	participantWeight int64
+	nodeId            string
+	available         map[string]uint32
+}
 
+// getParticipantListMatchingHardwareSpec returns a mapping from participant IDs to the list of node IDs
+// that, when combined, cover the task's hardware requirements. Returns an error if no such set exists.
+func getParticipantListMatchingHardwareSpec(
+	hardwareRequirements []*types.TrainingHardwareResources,
+	participants map[string]participantHardwareNodes,
+) (map[string][]string, error) {
+	remaining := make(map[string]uint32)
+	for _, req := range hardwareRequirements {
+		remaining[req.Type] += req.Count
+	}
+
+	// Flatten the candidateNode pool: one candidateNode per available node.
+	var candidates []candidateNode
+	for _, p := range participants {
+		if p.hardware == nil {
+			continue
+		}
+		for _, node := range p.hardware.HardwareNodes {
+			if node.Status != types.HardwareNodeStatus_INFERENCE {
+				continue
+			}
+			avail := make(map[string]uint32)
+			for _, hw := range node.Hardware {
+				avail[hw.Type] += hw.Count
+			}
+			candidates = append(candidates, candidateNode{
+				participant:       p.participant,
+				participantWeight: p.weight,
+				nodeId:            node.LocalId,
+				available:         avail,
+			})
+		}
+	}
+
+	// Sort candidates by participantWeight descending (higher participantWeight first)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].participantWeight > candidates[j].participantWeight
+	})
+
+	// We'll mark which candidates have been selected.
+	selected := make([]bool, len(candidates))
+
+	var selectedCandidates []candidateNode
+
+	// Greedy loop: try to cover the remaining requirements.
+	for {
+		allRequirementsMet := true
+		for _, req := range remaining {
+			if req > 0 {
+				allRequirementsMet = false
+				break
+			}
+		}
+		if allRequirementsMet {
+			break
+		}
+
+		bestCandidateIdx := findHighestContributingCandidate(candidates, selected, remaining)
+		if bestCandidateIdx == -1 {
+			return nil, fmt.Errorf(logTag + "insufficient hardware across nodes to satisfy task requirements")
+		}
+
+		// Select the best candidateNode and update the remaining requirements.
+		selected[bestCandidateIdx] = true
+		selectedCandidates = append(selectedCandidates, candidates[bestCandidateIdx])
+		bestCandidate := candidates[bestCandidateIdx]
+		for hwType, availCount := range bestCandidate.available {
+			if need, ok := remaining[hwType]; ok && need > 0 {
+				if availCount >= need {
+					remaining[hwType] = 0
+				} else {
+					remaining[hwType] = need - availCount
+				}
+			}
+		}
+	}
+
+	result := make(map[string][]string)
+	for _, cand := range selectedCandidates {
+		result[cand.participant] = append(result[cand.participant], cand.nodeId)
+	}
+	return result, nil
+}
+
+func findHighestContributingCandidate(candidates []candidateNode, selected []bool, remaining map[string]uint32) int {
+	var bestCandidateIdx int = -1
+	var bestContribution uint32 = 0
+
+	for i, cand := range candidates {
+		if selected[i] {
+			continue
+		}
+		var contribution uint32 = 0
+		for hwType, availCount := range cand.available {
+			if need, ok := remaining[hwType]; ok && need > 0 {
+				if availCount < need {
+					contribution += availCount
+				} else {
+					contribution += need
+				}
+			}
+		}
+		// Update the best candidateNode if this one offers a higher contribution.
+		if contribution > bestContribution {
+			bestContribution = contribution
+			bestCandidateIdx = i
+		}
+	}
+
+	return bestCandidateIdx
 }
