@@ -79,6 +79,7 @@ func main() {
 
 	// FIXME: What context to pass?
 	training.NewAssigner(recorder, &tendermintClient, context.Background())
+	training.NewExecutor(nodeBroker)
 
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
