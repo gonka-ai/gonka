@@ -229,6 +229,16 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.R
 	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
 
+func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http.Response, error) {
+	inferenceDownUrl, err := url.JoinPath(node.PoCUrl(), InferenceDownPath)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("Sending inference/down request to node", "inferenceDownUrl", inferenceDownUrl)
+	return sendPostRequest(o.HTTPClient, inferenceDownUrl, nil)
+}
+
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := o.buildInitDto(blockHeight, totalNodes, int64(node.NodeNum), blockHash, o.getPocValidateCallbackUrl())
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
