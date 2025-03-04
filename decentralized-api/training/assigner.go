@@ -135,13 +135,44 @@ func (a *Assigner) chooseTrainingTask(tasks []*types.TrainingTask, currentBlockH
 }
 
 func (a *Assigner) assignTask() {
-	participants, err := getParticipantsWithHardwareNodes(a.ctx, a.cosmosClient.NewInferenceQueryClient())
+	queryClient := a.cosmosClient.NewInferenceQueryClient()
+	participants, err := getParticipantsWithHardwareNodes(a.ctx, queryClient)
 	if err != nil {
 		return
 	}
 
-	getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources, participants)
-	_ = participants
+	selectedParticipants, err := getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources, participants)
+	if err != nil {
+		// FIXME: Returning and sleeping 60 more secs. Not sure if it's the best strategy
+		//  We need to be able to distinguish between:
+		//   a. "can't do because everyone's busy"
+		//   vs
+		//   b. "can't do because network doesn't have required hardware"
+		//  And the treat them differently
+		//   a. Retry, but when?
+		//   b. Mark task as failed?
+		slog.Error(logTag+"Error picking task", "err", err)
+		return
+	}
+
+	for _, p := range selectedParticipants {
+		participant, err := queryClient.Participant(a.ctx, &types.QueryGetParticipantRequest{Index: p.participant})
+		if err != nil {
+			slog.Error(logTag+"Error querying for participant", "participant", p.participant, "err", err)
+			return
+		}
+
+		err = confirmAvailability(participant.Participant.InferenceUrl, p.nodeIds)
+		if err != nil {
+			// FIXME: Returning and sleeping 60 more secs.
+			// 	Because by the next iteration chain state of hardware nodes may become up to date
+			//   and we would select a different set of participants
+			slog.Error(logTag+"Error confirming availability", "participant", p.participant, "err", err)
+			return
+		}
+	}
+
+	// TODO: make final transaction
 }
 
 type participantHardwareNodes struct {
@@ -160,12 +191,12 @@ func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.Que
 
 	participants := resp.EpochGroupData.ValidationWeights
 
-	// FIXME: could be optimized if we queried only nodes of actual participants instead of ALL participants
-	//  or maybe we should do some hardware nodes pruning
+	// FIXME: could be optimized if we queried only nodeIds of actual participants instead of ALL participants
+	//  or maybe we should do some hardware nodeIds pruning
 	r := &types.QueryHardwareNodesAllRequest{}
 	hardwareNodes, err := queryClient.HardwareNodesAll(ctx, r)
 	if err != nil {
-		slog.Error(logTag+"Error querying for hardware nodes", "err", err)
+		slog.Error(logTag+"Error querying for hardware nodeIds", "err", err)
 		return nil, err
 	}
 
@@ -187,6 +218,11 @@ func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.Que
 	return participantsWithHardware, nil
 }
 
+type selectedParticipant struct {
+	participant string
+	nodeIds     []string
+}
+
 type candidateNode struct {
 	participant       string
 	participantWeight int64
@@ -199,7 +235,7 @@ type candidateNode struct {
 func getParticipantListMatchingHardwareSpec(
 	hardwareRequirements []*types.TrainingHardwareResources,
 	participants map[string]participantHardwareNodes,
-) (map[string][]string, error) {
+) ([]selectedParticipant, error) {
 	remaining := make(map[string]uint32)
 	for _, req := range hardwareRequirements {
 		remaining[req.Type] += req.Count
@@ -253,7 +289,7 @@ func getParticipantListMatchingHardwareSpec(
 
 		bestCandidateIdx := findHighestContributingCandidate(candidates, selected, remaining)
 		if bestCandidateIdx == -1 {
-			return nil, fmt.Errorf(logTag + "insufficient hardware across nodes to satisfy task requirements")
+			return nil, fmt.Errorf(logTag + "insufficient hardware across nodeIds to satisfy task requirements")
 		}
 
 		// Select the best candidateNode and update the remaining requirements.
@@ -271,10 +307,19 @@ func getParticipantListMatchingHardwareSpec(
 		}
 	}
 
-	result := make(map[string][]string)
+	resultMap := make(map[string][]string)
 	for _, cand := range selectedCandidates {
-		result[cand.participant] = append(result[cand.participant], cand.nodeId)
+		resultMap[cand.participant] = append(resultMap[cand.participant], cand.nodeId)
 	}
+
+	result := make([]selectedParticipant, 0, len(resultMap))
+	for participant, nodes := range resultMap {
+		result = append(result, selectedParticipant{
+			participant: participant,
+			nodeIds:     nodes,
+		})
+	}
+
 	return result, nil
 }
 
@@ -304,4 +349,9 @@ func findHighestContributingCandidate(candidates []candidateNode, selected []boo
 	}
 
 	return bestCandidateIdx
+}
+
+func confirmAvailability(participantUrl string, nodeIds []string) error {
+	// TODO
+	return nil
 }
