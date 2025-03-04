@@ -21,5 +21,6 @@ type TrainingDatasetsDto struct {
 }
 
 type LockTrainingNodesDto struct {
-	NodeIds []string `json:"node_ids"`
+	TrainingTaskId uint64   `json:"training_task_id"`
+	NodeIds        []string `json:"node_ids"`
 }

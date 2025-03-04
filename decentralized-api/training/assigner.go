@@ -57,7 +57,7 @@ func (a *Assigner) claimTasksForAssignment() {
 
 			// Task could be assigned in the "if" above, thus we're rechecking here
 			if a.task != nil {
-				a.assignTask()
+				a.assignTask(*a.task.task)
 			}
 		}
 	}
@@ -137,14 +137,15 @@ func (a *Assigner) chooseTrainingTask(tasks []*types.TrainingTask, currentBlockH
 	return unclaimedTasks[i]
 }
 
-func (a *Assigner) assignTask() {
+func (a *Assigner) assignTask(task types.TrainingTask) {
 	queryClient := a.cosmosClient.NewInferenceQueryClient()
 	participants, err := getParticipantsWithHardwareNodes(a.ctx, queryClient)
 	if err != nil {
+		slog.Error(logTag+"Error querying participants with hardware nodes", "err", err)
 		return
 	}
 
-	selectedParticipants, err := getParticipantListMatchingHardwareSpec(a.task.task.HardwareResources, participants)
+	selectedParticipants, err := getParticipantListMatchingHardwareSpec(task.HardwareResources, participants)
 	if err != nil {
 		// FIXME: Returning and sleeping 60 more secs. Not sure if it's the best strategy
 		//  We need to be able to distinguish between:
@@ -166,7 +167,7 @@ func (a *Assigner) assignTask() {
 			return
 		}
 
-		err = confirmAvailability(httpClient, participant.Participant.InferenceUrl, p.nodeIds)
+		err = confirmAvailability(httpClient, participant.Participant.InferenceUrl, task.Id, p.nodeIds)
 		if err != nil {
 			// FIXME: Returning and sleeping 60 more secs.
 			// 	Because by the next iteration chain state of hardware nodes may become up to date
@@ -184,7 +185,7 @@ func (a *Assigner) assignTask() {
 		}
 	}
 	msg := &inference.MsgAssignTrainingTask{
-		TaskId:    a.task.task.Id,
+		TaskId:    task.Id,
 		Assignees: assignees,
 	}
 	_, err = a.cosmosClient.AssignTrainingTask(msg)
@@ -373,10 +374,11 @@ func findHighestContributingCandidate(candidates []candidateNode, selected []boo
 	return bestCandidateIdx
 }
 
-func confirmAvailability(client *http.Client, participantUrl string, nodeIds []string) error {
+func confirmAvailability(client *http.Client, participantUrl string, taskId uint64, nodeIds []string) error {
 	url := participantUrl + "/v1/training/lock-nodes"
 	payload := model.LockTrainingNodesDto{
-		NodeIds: nodeIds,
+		TrainingTaskId: taskId,
+		NodeIds:        nodeIds,
 	}
 	_, err := utils.SendPostJsonRequest(client, url, payload)
 	return err
