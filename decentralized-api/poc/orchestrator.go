@@ -7,13 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/x/inference/proofofcompute"
-	"github.com/productscience/inference/x/inference/types"
-	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/sagikazarmark/slog-shim"
 )
 
 type PoCOrchestrator struct {
@@ -213,7 +214,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
-		nodePoCOrchestrator.Start(blockHeight, blockHash)
+		nodePoCOrchestrator.StartPoC(blockHeight, blockHash)
 
 		GenerateSeed(blockHeight, &transactionRecorder, configManager)
 
@@ -242,7 +243,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
 		slog.Info("IsEndOfPoCValidationStage")
 
-		nodePoCOrchestrator.Stop()
+		nodePoCOrchestrator.StopPoC()
 
 		return
 	}
