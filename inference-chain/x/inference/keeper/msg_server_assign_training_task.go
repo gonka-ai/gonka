@@ -10,8 +10,14 @@ import (
 func (k msgServer) AssignTrainingTask(goCtx context.Context, msg *types.MsgAssignTrainingTask) (*types.MsgAssignTrainingTaskResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Handling the message
-	_ = ctx
+	task, found := k.GetTrainingTask(ctx, msg.TaskId)
+	if !found {
+		return nil, types.ErrTrainingTaskNotFound
+	}
+
+	task.Assignees = msg.Assignees
+
+	k.SetTrainingTask(ctx, task)
 
 	return &types.MsgAssignTrainingTaskResponse{}, nil
 }
