@@ -10,7 +10,7 @@ import (
 	"math/rand"
 )
 
-func GenerateSeed(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient, manager *apiconfig.ConfigManager) {
+func generateSeed(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient, manager *apiconfig.ConfigManager) {
 	slog.Debug("Old Seed Signature", "seed", manager.GetCurrentSeed())
 	newSeed, err := createNewSeed(blockHeight, transactionRecorder)
 	if err != nil {
@@ -33,7 +33,7 @@ func GenerateSeed(blockHeight int64, transactionRecorder *cosmosclient.Inference
 	}
 }
 
-func ChangeCurrentSeed(manager *apiconfig.ConfigManager) {
+func changeCurrentSeed(manager *apiconfig.ConfigManager) {
 	err := manager.SetPreviousSeed(manager.GetCurrentSeed())
 	if err != nil {
 		slog.Error("Failed to set previous seed", "error", err)
@@ -51,8 +51,7 @@ func ChangeCurrentSeed(manager *apiconfig.ConfigManager) {
 	}
 }
 
-func RequestMoney(transactionRecorder *cosmosclient.InferenceCosmosClient, manager *apiconfig.ConfigManager) {
-
+func requestMoney(transactionRecorder *cosmosclient.InferenceCosmosClient, manager *apiconfig.ConfigManager) {
 	// FIXME: we can also imagine a scenario where we weren't updating the seed for a few epochs
 	//  e.g. generation fails a few times in a row for some reason
 	//  Solution: query seed here?
@@ -81,10 +80,9 @@ func createNewSeed(
 		slog.Error("Failed to sign bytes", "error", err)
 		return nil, err
 	}
-	seedInfo := apiconfig.SeedInfo{
+	return &apiconfig.SeedInfo{
 		Seed:      newSeed,
 		Height:    newHeight,
 		Signature: hex.EncodeToString(signature),
-	}
-	return &seedInfo, nil
+	}, nil
 }

@@ -4,18 +4,13 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"errors"
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"reflect"
 	"sort"
 	"time"
 )
-
-type Broker struct {
-	commands chan Command
-	nodes    map[string]*NodeWithState
-	client   cosmosclient.CosmosMessageClient
-}
 
 /*
 enum HardwareNodeStatus {
@@ -26,8 +21,33 @@ TRAINING = 3;
 }
 */
 
+type Broker struct {
+	commands chan Command
+	nodes    map[string]*NodeWithState
+	client   cosmosclient.CosmosMessageClient
+}
+
+type Node struct {
+	Host          string
+	InferencePort int
+	PoCPort       int
+	Models        []string
+	Id            string
+	MaxConcurrent int
+	NodeNum       uint64
+	Hardware      []apiconfig.Hardware
+}
+
+func (n *Node) InferenceUrl() string {
+	return fmt.Sprintf("http://%s:%d", n.Host, n.InferencePort)
+}
+
+func (n *Node) PoCUrl() string {
+	return fmt.Sprintf("http://%s:%d", n.Host, n.PoCPort)
+}
+
 type NodeWithState struct {
-	Node  apiconfig.InferenceNode
+	Node  Node
 	State NodeState
 }
 
@@ -40,8 +60,8 @@ type NodeState struct {
 }
 
 type NodeResponse struct {
-	Node  *apiconfig.InferenceNode `json:"node"`
-	State *NodeState               `json:"state"`
+	Node  *Node      `json:"node"`
+	State *NodeState `json:"state"`
 }
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
@@ -52,9 +72,7 @@ func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	}
 
 	go broker.processCommands()
-
 	go nodeSyncWorker(broker)
-
 	return broker
 }
 
@@ -84,7 +102,7 @@ func (b *Broker) processCommands() {
 		case GetNodesCommand:
 			b.getNodes(command)
 		case SyncNodesCommand:
-			b.syncNodes(command)
+			b.syncNodes()
 		default:
 			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
 		}
@@ -119,13 +137,20 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 }
 
 func (b *Broker) registerNode(command RegisterNode) {
+	curNodesAmount := len(b.nodes)
+
 	b.nodes[command.Node.Id] = &NodeWithState{
-		Node: command.Node,
-		State: NodeState{
-			LockCount:     0,
-			Operational:   true,
-			FailureReason: "",
+		Node: Node{
+			Host:          command.Node.Host,
+			InferencePort: command.Node.InferencePort,
+			PoCPort:       command.Node.PoCPort,
+			Models:        command.Node.Models,
+			Id:            command.Node.Id,
+			MaxConcurrent: command.Node.MaxConcurrent,
+			NodeNum:       uint64(curNodesAmount + 1),
+			Hardware:      command.Node.Hardware,
 		},
+		State: NodeState{Operational: true},
 	}
 	slog.Debug("Registered node", "node", command.Node)
 	command.Response <- command.Node
@@ -151,9 +176,11 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 			}
 		}
 	}
+
 	if leastBusyNode != nil {
 		leastBusyNode.State.LockCount++
 	}
+
 	slog.Debug("Locked node", "node", leastBusyNode)
 	if leastBusyNode == nil {
 		command.Response <- nil
@@ -194,10 +221,10 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 func LockNode[T any](
 	b *Broker,
 	model string,
-	action func(node *apiconfig.InferenceNode) (T, error),
+	action func(node *Node) (T, error),
 ) (T, error) {
 	var zero T
-	nodeChan := make(chan *apiconfig.InferenceNode, 2)
+	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
 		Model:    model,
 		Response: nodeChan,
@@ -244,7 +271,7 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 	return nodes, nil
 }
 
-func (b *Broker) syncNodes(command SyncNodesCommand) {
+func (b *Broker) syncNodes() {
 	queryClient := b.client.NewInferenceQueryClient()
 
 	req := &types.QueryHardwareNodesRequest{

@@ -6,8 +6,8 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
-	"decentralized-api/poc"
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
@@ -24,9 +24,10 @@ import (
 	"time"
 )
 
+// TODO idea for refactoring: create EventListener struct, which will contain this global vars and all params passed to StartEventListener as fields fields
 var (
 	syncStatusMu sync.RWMutex
-	nodeCaughtUp = false
+	nodeCaughtUp bool
 )
 
 func isNodeSynced() bool {
@@ -122,7 +123,6 @@ func StartEventListener(
 					slog.Error("Go worker received nil chain event")
 					continue
 				}
-
 				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
 			}
 		}()

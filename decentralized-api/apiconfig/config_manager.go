@@ -113,7 +113,7 @@ func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
 	return cm.currentConfig.UpcomingSeed
 }
 
-func (cm *ConfigManager) SetNodes(nodes []InferenceNode) error {
+func (cm *ConfigManager) SetNodes(nodes []InferenceNodeConfig) error {
 	cm.currentConfig.Nodes = nodes
 	slog.Info("Setting nodes", "nodes", nodes)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
@@ -190,7 +190,6 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err := loadNodeConfig(&config); err != nil {
 		log.Fatalf("error loading node config: %v", err)
 	}
-
 	return config, nil
 }
 
@@ -269,7 +268,7 @@ func loadNodeConfig(config *Config) error {
 	return nil
 }
 
-func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]InferenceNode, error) {
+func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]InferenceNodeConfig, error) {
 	file, err := os.Open(nodeConfigPath)
 	if err != nil {
 		slog.Error("Failed to open node config file", "error", err)
@@ -283,7 +282,7 @@ func parseInferenceNodesFromNodeConfigJson(nodeConfigPath string) ([]InferenceNo
 		return nil, err
 	}
 
-	var newNodes []InferenceNode
+	var newNodes []InferenceNodeConfig
 	if err := json.Unmarshal(bytes, &newNodes); err != nil {
 		slog.Error("Failed to parse node config JSON", "error", err)
 		return nil, err

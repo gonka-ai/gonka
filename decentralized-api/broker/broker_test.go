@@ -7,7 +7,7 @@ import (
 
 func TestSingleNode(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -15,8 +15,8 @@ func TestSingleNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
@@ -33,7 +33,7 @@ func TestSingleNode(t *testing.T) {
 
 func TestNodeRemoval(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -41,8 +41,8 @@ func TestNodeRemoval(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
@@ -64,7 +64,7 @@ func TestNodeRemoval(t *testing.T) {
 
 func TestModelMismatch(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -72,8 +72,8 @@ func TestModelMismatch(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model2", availableNode})
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got node1")
@@ -82,7 +82,7 @@ func TestModelMismatch(t *testing.T) {
 
 func TestHighConcurrency(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -90,8 +90,8 @@ func TestHighConcurrency(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 100,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	for i := 0; i < 100; i++ {
 		queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 		if <-availableNode == nil {
@@ -102,7 +102,7 @@ func TestHighConcurrency(t *testing.T) {
 
 func TestMultipleNodes(t *testing.T) {
 	broker := NewBroker(nil)
-	node1 := apiconfig.InferenceNode{
+	node1 := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -110,7 +110,7 @@ func TestMultipleNodes(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	node2 := apiconfig.InferenceNode{
+	node2 := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -118,9 +118,9 @@ func TestMultipleNodes(t *testing.T) {
 		Id:            "node2",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node1, make(chan apiconfig.InferenceNode, 2)})
-	queueMessage(t, broker, RegisterNode{node2, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node1, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node2, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	firstNode := <-availableNode
 	if firstNode == nil {
@@ -150,7 +150,7 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 
 func TestReleaseNode(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -158,8 +158,8 @@ func TestReleaseNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNode, 2)})
-	availableNode := make(chan *apiconfig.InferenceNode, 2)
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", availableNode})
 	runningNode := <-availableNode
 	if runningNode == nil {
@@ -182,7 +182,7 @@ func TestReleaseNode(t *testing.T) {
 
 func TestCapacityCheck(t *testing.T) {
 	broker := NewBroker(nil)
-	node := apiconfig.InferenceNode{
+	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
@@ -190,7 +190,7 @@ func TestCapacityCheck(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	if err := broker.QueueMessage(RegisterNode{node, make(chan apiconfig.InferenceNode, 0)}); err == nil {
+	if err := broker.QueueMessage(RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 0)}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
