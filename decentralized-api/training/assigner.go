@@ -2,13 +2,16 @@ package training
 
 import (
 	"context"
+	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/utils"
 	"fmt"
 	"github.com/cometbft/cometbft/libs/rand"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
+	"net/http"
 	"sort"
 	"time"
 )
@@ -155,6 +158,7 @@ func (a *Assigner) assignTask() {
 		return
 	}
 
+	httpClient := utils.NewHttpClient(120 * time.Second)
 	for _, p := range selectedParticipants {
 		participant, err := queryClient.Participant(a.ctx, &types.QueryGetParticipantRequest{Index: p.participant})
 		if err != nil {
@@ -162,7 +166,7 @@ func (a *Assigner) assignTask() {
 			return
 		}
 
-		err = confirmAvailability(participant.Participant.InferenceUrl, p.nodeIds)
+		err = confirmAvailability(httpClient, participant.Participant.InferenceUrl, p.nodeIds)
 		if err != nil {
 			// FIXME: Returning and sleeping 60 more secs.
 			// 	Because by the next iteration chain state of hardware nodes may become up to date
@@ -351,7 +355,11 @@ func findHighestContributingCandidate(candidates []candidateNode, selected []boo
 	return bestCandidateIdx
 }
 
-func confirmAvailability(participantUrl string, nodeIds []string) error {
-	// TODO
-	return nil
+func confirmAvailability(client *http.Client, participantUrl string, nodeIds []string) error {
+	url := participantUrl + "/v1/training/lock-nodes"
+	payload := model.LockTrainingNodesDto{
+		NodeIds: nodeIds,
+	}
+	_, err := utils.SendPostJsonRequest(client, url, payload)
+	return err
 }

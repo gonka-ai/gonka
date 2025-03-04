@@ -1,12 +1,11 @@
 package poc
 
 import (
-	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
-	"encoding/json"
+	"decentralized-api/utils"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
@@ -141,7 +140,7 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *apiconfig.InferenceN
 
 	slog.Info("Sending init-generate request to node.", "url", initUrl, "initDto", initDto)
 
-	return sendPostRequest(o.HTTPClient, initUrl, initDto)
+	return utils.SendPostJsonRequest(o.HTTPClient, initUrl, initDto)
 }
 
 func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, callbackUrl string) InitDto {
@@ -194,7 +193,7 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *apiconfig.InferenceNode) (*h
 
 	slog.Info("Sending stop request to node", "stopUrl", stopUrl)
 
-	return sendPostRequest(o.HTTPClient, stopUrl, nil)
+	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
 }
 
 func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *apiconfig.InferenceNode) (*http.Response, error) {
@@ -212,7 +211,7 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *apiconfig.InferenceNo
 
 	slog.Info("Sending inference/up request to node", "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
 
-	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
+	return utils.SendPostJsonRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
 
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *apiconfig.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
@@ -223,30 +222,7 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *apiconfig.InferenceN
 		return nil, err
 	}
 
-	return sendPostRequest(o.HTTPClient, initUrl, initDto)
-}
-
-func sendPostRequest(client *http.Client, url string, payload any) (*http.Response, error) {
-	var req *http.Request
-	var err error
-
-	if payload == nil {
-		// Create a POST request with no body if payload is nil.
-		req, err = http.NewRequest(http.MethodPost, url, nil)
-	} else {
-		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		req, err = http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonData))
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return client.Do(req)
+	return utils.SendPostJsonRequest(o.HTTPClient, initUrl, initDto)
 }
 
 func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
@@ -356,7 +332,7 @@ func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *apiconfig.Inference
 		return nil, err
 	}
 
-	return sendPostRequest(o.HTTPClient, validateBatchUrl, batch)
+	return utils.SendPostJsonRequest(o.HTTPClient, validateBatchUrl, batch)
 }
 
 func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
