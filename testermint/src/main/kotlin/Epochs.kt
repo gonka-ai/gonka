@@ -63,13 +63,14 @@ fun EpochParams.getStartBlockHeightFromStartOfPocValidationStage(blockHeight: Lo
 
 fun EpochParams.getStartOfPoCStage(): Long = 0L
 
-fun EpochParams.getEndOfPoCStage(): Long = getStartOfPoCStage() + 10L * epochMultiplier
+fun EpochParams.getEndOfPoCStage(): Long = getStartOfPoCStage() + pocValidationDuration * epochMultiplier
 
-fun EpochParams.getPoCExchangeDeadline(): Long = this.getEndOfPoCStage() + 2 * epochMultiplier
+fun EpochParams.getPoCExchangeDeadline(): Long = this.getEndOfPoCStage() + pocExchangeDuration * epochMultiplier
 
-fun EpochParams.getStartOfPoCValidationStage(): Long = this.getEndOfPoCStage() + 2 * epochMultiplier
+fun EpochParams.getStartOfPoCValidationStage(): Long = this.getEndOfPoCStage() + pocValidationDelay * epochMultiplier
 
-fun EpochParams.getEndOfPoCValidationStage(): Long = this.getStartOfPoCValidationStage() + 6 * epochMultiplier
+fun EpochParams.getEndOfPoCValidationStage(): Long =
+    this.getStartOfPoCValidationStage() + pocValidationDuration * epochMultiplier
 
 fun EpochParams.getSetNewValidatorsStage(): Long = this.getEndOfPoCValidationStage() + 1 * epochMultiplier
 

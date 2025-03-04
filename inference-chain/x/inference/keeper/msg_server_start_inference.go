@@ -54,6 +54,14 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	})
 	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
 
+	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
+	} else {
+		currentEpochGroup.GroupData.NumberOfRequests++
+		k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
+	}
+
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,
 	}, nil

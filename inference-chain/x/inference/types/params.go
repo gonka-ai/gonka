@@ -44,6 +44,10 @@ func DefaultParams() Params {
 			EpochMultiplier:           1,
 			EpochShift:                0,
 			DefaultUnitOfComputePrice: 100,
+			PocStageDuration:          10,
+			PocExchangeDuration:       2,
+			PocValidationDelay:        2,
+			PocValidationDuration:     6,
 		},
 		ValidationParams: &ValidationParams{
 			FalsePositiveRate:           0.05,

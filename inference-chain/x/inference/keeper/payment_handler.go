@@ -31,6 +31,13 @@ func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Infere
 }
 
 func (k *Keeper) MintRewardCoins(ctx context.Context, newCoins int64) error {
+	if newCoins == 0 {
+		return nil
+	}
+	if newCoins < 0 {
+		k.LogError("Cannot mint negative coins", types.Payments, "coins", newCoins)
+		return sdkerrors.Wrapf(types.ErrCannotMintNegativeCoins, "coins: %d", newCoins)
+	}
 	k.LogInfo("Minting coins", types.Payments, "coins", newCoins, "moduleAccount", types.ModuleName)
 	return k.BankKeeper.MintCoins(ctx, types.ModuleName, types.GetCoins(newCoins))
 }

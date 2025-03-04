@@ -62,16 +62,18 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
 		for _, adjustment := range adjustments {
 			if adjustment.ParticipantId == executor.Address {
-				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
 				executor.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting executor CoinBalance for validation", types.Payments, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
 			} else {
 				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
 				if !found {
 					k.LogError("Participant not found for redistribution", types.Validation, "participantId", adjustment.ParticipantId)
 					continue
 				}
-				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
 				worker.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting worker CoinBalance for validation", types.Payments, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
 				k.SetParticipant(ctx, worker)
 			}
 		}

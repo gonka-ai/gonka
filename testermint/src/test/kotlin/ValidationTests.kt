@@ -3,11 +3,8 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
 import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
-import com.productscience.getLocalInferencePairs
-import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
 import com.productscience.initCluster
-import com.productscience.initialize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -19,7 +16,7 @@ class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
         val (_, genesis) = initCluster()
-        genesis.waitForFirstPoC()
+        genesis.waitForFirstValidators()
 
         val statuses = runParallelInferences(genesis, 100)
         Logger.info("Statuses: $statuses")
@@ -62,7 +59,7 @@ class ValidationTests : TestermintTest() {
                     "Output was:${invalidResult.inference.responsePayload}"
         )
 
-        highestFunded.node.waitForNextBlock(10)
+        highestFunded.node.waitForNextBlock(2)
         val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
         return newState
     }
@@ -102,14 +99,6 @@ class ValidationTests : TestermintTest() {
         genesis.node.waitForNextBlock(10)
         val newState = genesis.api.getInference(invalidResult.inference.inferenceId)
         assertThat(newState.status).isEqualTo(InferenceStatus.VALIDATED.value)
-
-    }
-
-    @Test
-    fun `test reputation increases from epoch to epoch`() {
-        val (cluster, genesis) = initCluster()
-        runParallelInferences(genesis, 100)
-
 
     }
 }
