@@ -94,3 +94,20 @@ func NewSyncNodesCommand() SyncNodesCommand {
 func (s SyncNodesCommand) GetResponseChannelCapacity() int {
 	return cap(s.Response)
 }
+
+type LockNodesForTrainingCommand struct {
+	NodeIds []string
+	// FIXME: maybe add description which exact nodes were busy?
+	Response chan bool
+}
+
+func NewLockNodesForTrainingCommand(nodeIds []string) LockNodesForTrainingCommand {
+	return LockNodesForTrainingCommand{
+		NodeIds:  nodeIds,
+		Response: make(chan bool, 2),
+	}
+}
+
+func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}

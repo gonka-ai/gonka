@@ -85,6 +85,8 @@ func (b *Broker) processCommands() {
 			b.getNodes(command)
 		case SyncNodesCommand:
 			b.syncNodes(command)
+		case LockNodesForTrainingCommand:
+			b.lockNodesForTraining(command)
 		default:
 			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
 		}
@@ -293,6 +295,10 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 			slog.Error("[sync nodes] Error submitting diff", "error", err)
 		}
 	}
+}
+
+func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
+	// TODO: implement
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.

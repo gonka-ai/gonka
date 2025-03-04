@@ -19,3 +19,7 @@ type TrainingDatasetsDto struct {
 	Train string `json:"train"`
 	Test  string `json:"test"`
 }
+
+type LockTrainingNodesDto struct {
+	NodeIds []string `json:"node_ids"`
+}
