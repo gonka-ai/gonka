@@ -117,6 +117,7 @@ type CosmosMessageClient interface {
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
 	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
+	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -247,6 +248,19 @@ func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *in
 	}
 
 	response := inference.MsgClaimTrainingTaskForAssignmentResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
+func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		slog.Error("Failed to send transaction", "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgAssignTrainingTaskResponse{}
 	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
 	return &response, err
 }

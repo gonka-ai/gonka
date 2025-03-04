@@ -176,7 +176,25 @@ func (a *Assigner) assignTask() {
 		}
 	}
 
-	// TODO: make final transaction
+	assignees := make([]*inference.TrainingTaskAssignee, 0, len(selectedParticipants))
+	for i, p := range selectedParticipants {
+		assignees[i] = &inference.TrainingTaskAssignee{
+			Participant: p.participant,
+			NodeIds:     p.nodeIds,
+		}
+	}
+	msg := &inference.MsgAssignTrainingTask{
+		TaskId:    a.task.task.Id,
+		Assignees: assignees,
+	}
+	_, err = a.cosmosClient.AssignTrainingTask(msg)
+	if err != nil {
+		slog.Error(logTag+"Error sending assign task transaction", "err", err)
+		// TODO: what should we do? We need to know the reason, maybe someone else assigned it
+		//  Get back here once you implement msg processing and understand what can go wrong here
+	} else {
+		a.task = nil
+	}
 }
 
 type participantHardwareNodes struct {

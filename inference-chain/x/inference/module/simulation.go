@@ -91,6 +91,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgClaimTrainingTaskForAssignment int = 100
 
+	opWeightMsgAssignTrainingTask = "op_weight_msg_assign_training_task"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgAssignTrainingTask int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -290,6 +294,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgAssignTrainingTask int
+	simState.AppParams.GetOrGenerate(opWeightMsgAssignTrainingTask, &weightMsgAssignTrainingTask, nil,
+		func(_ *rand.Rand) {
+			weightMsgAssignTrainingTask = defaultWeightMsgAssignTrainingTask
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgAssignTrainingTask,
+		inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -423,6 +438,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgClaimTrainingTaskForAssignment,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgAssignTrainingTask,
+			defaultWeightMsgAssignTrainingTask,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

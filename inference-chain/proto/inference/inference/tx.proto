@@ -36,6 +36,7 @@ service Msg {
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
   rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
+  rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -235,4 +236,13 @@ message MsgClaimTrainingTaskForAssignment {
 }
 
 message MsgClaimTrainingTaskForAssignmentResponse {}
+
+message MsgAssignTrainingTask {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 task_id = 2;
+  repeated TrainingTaskAssignee assignees = 3;
+}
+
+message MsgAssignTrainingTaskResponse {}
 
