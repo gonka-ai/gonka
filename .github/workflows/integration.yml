@@ -1,0 +1,36 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: gradle:jdk19-focal
+      options: --user root
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
+      - name: Run Tests
+        run: make run-tests
+
+      - name: Archive Test Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-logs
+          path: ./testermint/logs
+
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: ./testermint/build/test-results/**/*.xml

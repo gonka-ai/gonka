@@ -179,7 +179,14 @@ fun initCluster(
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
     val cluster = setupLocalCluster(joinCount, config, reboot)
-    initialize(cluster.allPairs)
+    try {
+        initialize(cluster.allPairs)
+    } catch (e: Exception) {
+        if (reboot) {
+            throw e
+        }
+        return initCluster(joinCount, config, reboot = true)
+    }
     return cluster to cluster.genesis
 }
 

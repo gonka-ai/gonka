@@ -8,8 +8,11 @@ import com.productscience.setupLocalCluster
 import org.junit.jupiter.api.Test
 import kotlin.test.assertNotNull
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 
-class InitializationTests {
+// These are for testing the infrastructure, not features
+@Tag("exclude")
+class InitializationTests : TestermintTest() {
 
     @Test
     fun init3() {

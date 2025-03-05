@@ -2,7 +2,7 @@ import com.productscience.initCluster
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 
-class ParticipantTests {
+class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
@@ -23,7 +23,7 @@ class ParticipantTests {
         var startMin = genesis.node.getMinimumValidationAverage()
         if (startMin.trafficBasis >= 10) {
             // Wait for current and previous values to no longer apply
-            genesis.node.waitForMinimumBlock(startMin.blockHeight + genesis.getEpochLength()*2)
+            genesis.node.waitForMinimumBlock(startMin.blockHeight + genesis.getEpochLength() * 2)
             startMin = genesis.node.getMinimumValidationAverage()
         }
         genesis.waitForNextSettle()

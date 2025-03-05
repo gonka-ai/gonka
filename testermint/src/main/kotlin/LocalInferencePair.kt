@@ -14,6 +14,7 @@ import com.productscience.data.PubKey
 import com.productscience.data.Spec
 import org.tinylog.kotlin.Logger
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 val nameExtractor = "(.+)-node".toRegex()
 
@@ -34,8 +35,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
         val matchingMock: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
-        attachLogs(dockerClient, name, "node", it.id)
-        attachLogs(dockerClient, name, "api", matchingApi.id)
+        attachDockerLogs(dockerClient, name, "node", it.id)
+        attachDockerLogs(dockerClient, name, "api", matchingApi.id)
 
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
@@ -87,20 +88,25 @@ private fun DockerClient.executeCommand(
 //
 //}
 
-private fun attachLogs(
+
+private val attachedContainers = ConcurrentHashMap.newKeySet<String>()
+
+private fun attachDockerLogs(
     dockerClient: DockerClient,
     name: String,
     type: String,
     id: String,
 ) {
-    dockerClient.logContainerCmd(id)
-        .withSince(Instant.now().epochSecond.toInt())
-        .withStdErr(true)
-        .withStdOut(true)
-        .withFollowStream(true)
-        // Timestamps allow LogOutput to detect multi-line messages
-        .withTimestamps(true)
-        .exec(LogOutput(name, type))
+    if (attachedContainers.add(id)) {
+        dockerClient.logContainerCmd(id)
+            .withSince(Instant.now().epochSecond.toInt())
+            .withStdErr(true)
+            .withStdOut(true)
+            .withFollowStream(true)
+            // Timestamps allow LogOutput to detect multi-line messages
+            .withTimestamps(true)
+            .exec(LogOutput(name, type))
+    }
 }
 
 data class LocalInferencePair(

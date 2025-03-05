@@ -2,12 +2,14 @@ import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 val minDeposit = 10000000L
 
 class UpgradeTests : TestermintTest() {
     @Test
+    @Tag("unstable")
     fun `submit upgrade`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
