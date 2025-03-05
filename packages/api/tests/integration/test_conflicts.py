@@ -87,6 +87,8 @@ def test_exclusive_services(
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
         pow_client.init_generate(
+            node_id=0,
+            node_count=1,
             url=batch_reciever_url,
             block_hash=block_hash,
             block_height=1,
@@ -104,6 +106,8 @@ def test_exclusive_services(
 
     with pytest.raises(requests.exceptions.HTTPError) as exc_info:
         pow_client.init_generate(
+            node_id=0,
+            node_count=1,
             url=batch_reciever_url,
             block_hash=block_hash,
             block_height=1,
@@ -122,6 +126,8 @@ def test_exclusive_services(
     inference_client.inference_down()
 
     pow_client.init_generate(
+        node_id=0,
+        node_count=1,
         url=batch_reciever_url,
         block_hash=block_hash,
         block_height=1,

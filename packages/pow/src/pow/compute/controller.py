@@ -7,7 +7,10 @@ from itertools import count
 import torch
 
 from pow.compute.compute import ProofBatch
-from pow.compute.utils import Phase
+from pow.compute.utils import (
+    Phase,
+    NonceIterator,
+)
 from pow.compute.worker import Worker
 from pow.models.utils import Params
 from common.logger import create_logger
@@ -27,7 +30,7 @@ class Controller:
         batch_size: int,
         r_target: float,
         devices: List[str],
-        generator: Iterator[int],
+        iterator: Iterator[int],
         phase: Value,
         generated_batch_queue: Queue,
         validated_batch_queue: Queue,
@@ -59,7 +62,7 @@ class Controller:
                 batch_size,
                 r_target,
                 devices,
-                generator,
+                iterator,
             ),
             daemon=False,
         )
@@ -79,7 +82,7 @@ class Controller:
         batch_size: int,
         r_target: float,
         devices: List[str],
-        generator: Iterator[int],
+        iterator: Iterator[int],
     ):
         worker = Worker(
             idx,
@@ -95,7 +98,7 @@ class Controller:
             batch_size,
             r_target,
             devices,
-            generator,
+            iterator,
         )
         worker.run()
 
@@ -105,6 +108,7 @@ class Controller:
             time.sleep(1)
 
     def stop(self):
+        self.phase.value = Phase.STOP
         self.process.join(timeout=10)
         if self.process.is_alive():
             logger.error("Worker process did not stop in time")
@@ -144,6 +148,8 @@ class ParallelController:
         block_hash: str,
         block_height: int,
         public_key: str,
+        node_id: int,
+        node_count: int,
         batch_size: int,
         r_target: float,
         devices: List[str] = None,
@@ -164,6 +170,8 @@ class ParallelController:
         self.block_hash = block_hash
         self.block_height = block_height
         self.public_key = public_key
+        self.node_id = node_id
+        self.node_count = node_count
         self.batch_size = batch_size
 
         self.controllers = [
@@ -176,7 +184,12 @@ class ParallelController:
                 batch_size=batch_size,
                 r_target=r_target,
                 devices=device,
-                generator=count(idx, len(devices)),
+                iterator=NonceIterator(
+                    node_id=self.node_id,
+                    n_nodes=self.node_count,
+                    device_id=idx,
+                    n_devices=len(devices),
+                ),
                 phase=self.phase,
                 generated_batch_queue=self.generated_batch_queue,
                 validated_batch_queue=self.validated_batch_queue,

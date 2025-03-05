@@ -1,7 +1,8 @@
 import time
+import itertools
 from contextlib import contextmanager
 from textwrap import dedent
-
+from dataclasses import dataclass
 from pow.data import ProofBatch
 from common.logger import create_logger
 
@@ -174,3 +175,22 @@ class Stats:
         if detailed:
             report += "\n" + str(self.time_stats)
         return dedent(report)
+
+
+@dataclass
+class NonceIterator:
+    node_id: int
+    n_nodes: int
+    device_id: int
+    n_devices: int
+    _current_x: int = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        offset = self.node_id + self.device_id * self.n_nodes
+        step = self.n_devices * self.n_nodes
+        value = offset + self._current_x * step
+        self._current_x += 1
+        return value

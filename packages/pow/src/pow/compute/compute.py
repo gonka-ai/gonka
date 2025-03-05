@@ -5,6 +5,7 @@ from abc import (
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import (
     List,
+    Tuple,
 )
 
 import numpy as np
@@ -33,20 +34,23 @@ class BaseCompute(ABC):
     @abstractmethod
     def __call__(
         self, 
-        nonces: List[int]
-    ) -> List[float]:
+        nonces: List[int],
+        public_key: str,
+        target: np.ndarray,
+        next_nonces: List[int] = None,
+        use_cache: bool = False,
+    ) -> Future[ProofBatch]:
         pass
 
     @abstractmethod
     def validate(
         self,
-        nonces: List[int],
-        public_key_to_validate: str
-    ) -> List[float]:
+        proof_batch: ProofBatch,
+    ) -> ProofBatch:
         pass
 
 
-class Compute:
+class Compute(BaseCompute):
     def __init__(
         self,
         params: Params,
@@ -54,7 +58,7 @@ class Compute:
         block_height: int,
         public_key: str,
         r_target: float,
-        devices: str,
+        devices: List[str],
     ):
         self.public_key = public_key
         self.block_hash = block_hash
@@ -80,12 +84,12 @@ class Compute:
 
         self.device = torch.device(self.devices[0])
 
-    def prepare_batch(
+    def _prepare_batch(
         self,
         nonces: List[int],
         public_key: str,
         thread_batch_size: int = 256,
-    ):
+    ) -> Tuple[torch.Tensor, np.ndarray]:
         nonce_batches = [
             nonces[i : i + thread_batch_size]
             for i in range(0, len(nonces), thread_batch_size)
@@ -130,7 +134,7 @@ class Compute:
  
         return inputs, permutations
 
-    def process_batch(
+    def _process_batch(
         self,
         inputs: torch.Tensor,
         permutations: np.ndarray,
@@ -193,18 +197,18 @@ class Compute:
             ):
                 inputs, permutations = self.next_batch_future.result()
             else:
-                inputs, permutations = self.prepare_batch(nonces, public_key)
+                inputs, permutations = self._prepare_batch(nonces, public_key)
 
             if next_nonces is not None:
                 self.next_batch_future = self.executor.submit(
-                    self.prepare_batch, next_nonces, public_key
+                    self._prepare_batch, next_nonces, public_key
                 )
                 self.next_public_key = public_key
             else:
                 self.next_batch_future = None
                 self.next_public_key = None
 
-        return self.process_batch(inputs, permutations, target, nonces, public_key)
+        return self._process_batch(inputs, permutations, target, nonces, public_key)
 
     def validate(
         self,

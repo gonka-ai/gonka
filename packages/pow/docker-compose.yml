@@ -4,7 +4,7 @@ x-common-config: &common-config
     - ${PROJECT_ROOT}/packages/pow/.env
   shm_size: "120g"
   volumes:
-    - ${CACHE_DIR}:/root/.cache
+    - ${CACHE_DIR:-./cache}:/root/.cache
 
 services:
   server:

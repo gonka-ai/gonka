@@ -87,13 +87,13 @@ class ProofBatch:
 
         block_hashes = [proof_batch.block_hash for proof_batch in proof_batches]
         assert len(set(block_hashes)) == 1, \
-            "All block hashes must be the same"
+            "All block hashes must be the same %s" % block_hashes
         block_heights = [proof_batch.block_height for proof_batch in proof_batches]
         assert len(set(block_heights)) == 1, \
-            "All block heights must be the same"
+            "All block heights must be the same %s" % block_heights
         public_keys = [proof_batch.public_key for proof_batch in proof_batches]
         assert len(set(public_keys)) == 1, \
-            "All public keys must be the same"
+            "All public keys must be the same %s" % public_keys
         all_nonces = []
         all_dist = []
         for proof_batch in proof_batches:

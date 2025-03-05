@@ -1,5 +1,13 @@
 .PHONY: all
 
+export PROJECT_ROOT := $(shell git rev-parse --show-toplevel)
+
+ENV_FILES := $(wildcard $(PROJECT_ROOT)/.env ./.env)
+ifneq ($(ENV_FILES),)
+include $(ENV_FILES)
+export
+endif
+
 setup-envs:
 	@echo "" > .env
 

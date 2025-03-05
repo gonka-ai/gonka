@@ -3,6 +3,7 @@ import requests
 from pow.models.utils import Params
 from pow.compute.compute import ProofBatch
 
+from pow.service.manager import PowInitRequestUrl
 
 class PowClient:
     def __init__(self, base_url):
@@ -19,22 +20,44 @@ class PowClient:
             raise
         return response.json()
 
-    def init(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=Params()):
+    def init(
+        self,
+        url,
+        block_hash,
+        block_height,
+        public_key,
+        batch_size,
+        r_target,
+        fraud_threshold,
+        params=Params()
+    ):
         return self._request("post", "/pow/init", json={
             "url": url,
             "block_hash": block_hash,
             "block_height": block_height,
-            "public_key": public_key,
-            "batch_size": batch_size,
             "r_target": r_target,
             "fraud_threshold": fraud_threshold,
             "params": params.__dict__,
         })
 
-    def init_generate(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=None):
+    def init_generate(
+        self,
+        node_id,
+        node_count,
+        url,
+        block_hash,
+        block_height,
+        public_key,
+        batch_size,
+        r_target,
+        fraud_threshold,
+        params=None
+    ):
         if params is None:
             params = Params()
         return self._request("post", "/pow/init/generate", json={
+            "node_id": node_id,
+            "node_count": node_count,
             "url": url,
             "block_hash": block_hash,
             "block_height": block_height,
@@ -45,13 +68,21 @@ class PowClient:
             "params": params.__dict__,
         })
 
-    def init_validate(self, url, block_hash, block_height, public_key, batch_size, r_target, fraud_threshold, params=Params()):
+    def init_validate(
+        self,
+        url,
+        block_hash,
+        block_height,
+        public_key,
+        batch_size,
+        r_target,
+        fraud_threshold,
+        params=Params()
+    ):
         return self._request("post", "/pow/init/validate", json={
             "url": url,
             "block_hash": block_hash,
             "block_height": block_height,
-            "public_key": public_key,
-            "batch_size": batch_size,
             "r_target": r_target,
             "fraud_threshold": fraud_threshold,
             "params": params.__dict__,

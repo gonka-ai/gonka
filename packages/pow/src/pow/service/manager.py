@@ -20,6 +20,8 @@ class PowState(Enum):
 
 
 class PowInitRequest(BaseModel):
+    node_id: int = -1
+    node_count: int = -1
     block_hash: str
     block_height: int
     public_key: str
@@ -63,6 +65,8 @@ class PowManager:
             block_hash=init_request.block_hash,
             block_height=init_request.block_height,
             public_key=init_request.public_key,
+            node_id=init_request.node_id,
+            node_count=init_request.node_count,
             batch_size=init_request.batch_size,
             r_target=init_request.r_target,
             devices=None,

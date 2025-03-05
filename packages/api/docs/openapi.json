@@ -532,6 +532,16 @@
       },
       "PowInitRequestUrl": {
         "properties": {
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id",
+            "default": -1
+          },
+          "node_count": {
+            "type": "integer",
+            "title": "Node Count",
+            "default": -1
+          },
           "block_hash": {
             "type": "string",
             "title": "Block Hash"

@@ -12,7 +12,10 @@ router = APIRouter(
     tags=["API v1"],
 )
 
-@router.post("/pow/init")
+@router.post(
+    "/pow/init",
+    status_code=200,
+)
 async def init(
     request: Request,
     init_request: PowInitRequestUrl
@@ -25,11 +28,19 @@ async def init(
     }
 
 
-@router.post("/pow/init/generate")
+@router.post(
+    "/pow/init/generate",
+    status_code=200,
+)
 async def init_generate(
     request: Request,
     init_request: PowInitRequestUrl
 ):
+    if init_request.node_id == -1 or init_request.node_count == -1:
+        raise HTTPException(
+            status_code=400,
+            detail="Node ID and node count must be set"
+        )
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
         manager.switch_to_pow(init_request)
@@ -44,7 +55,10 @@ async def init_generate(
     }
 
 
-@router.post("/pow/init/validate")
+@router.post(
+    "/pow/init/validate",
+    status_code=200,
+)
 async def init_validate(
     request: Request,
     init_request: PowInitRequestUrl
@@ -63,9 +77,17 @@ async def init_validate(
     }
 
 
-@router.post("/pow/phase/generate")
+@router.post(
+    "/pow/phase/generate",
+    status_code=200,
+)
 async def start_generate(request: Request):
     manager: PowManager = request.app.state.pow_manager
+    if manager.init_request.node_id == -1 or manager.init_request.node_count == -1:
+        raise HTTPException(
+            status_code=400,
+            detail="Node ID and node count must be set to start generating"
+        )
     if not manager.is_running():
         raise HTTPException(
             status_code=400,
@@ -78,7 +100,10 @@ async def start_generate(request: Request):
     }
 
 
-@router.post("/pow/phase/validate")
+@router.post(
+    "/pow/phase/validate",
+    status_code=200,
+)
 async def start_validate(request: Request):
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():
@@ -93,7 +118,10 @@ async def start_validate(request: Request):
     }
 
 
-@router.post("/pow/validate")
+@router.post(
+    "/pow/validate",
+    status_code=200,
+)
 async def validate(
     request: Request,
     proof_batch: ProofBatch = Body(...)
@@ -109,13 +137,19 @@ async def validate(
     manager.pow_sender.in_validation_queue.put(proof_batch)
 
 
-@router.get("/pow/status")
+@router.get(
+    "/pow/status",
+    status_code=200,
+)
 async def status(request: Request):
     manager: PowManager = request.app.state.pow_manager
     return manager.get_pow_status()
 
 
-@router.post("/pow/stop")
+@router.post(
+    "/pow/stop",
+    status_code=200,
+)
 async def stop(request: Request):
     manager: PowManager = request.app.state.pow_manager
     if not manager.is_running():

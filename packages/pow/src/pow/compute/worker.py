@@ -97,6 +97,7 @@ class Worker(multiprocessing.Process):
 
             nonces = next_nonces
             next_nonces = [next(self.generator) for _ in range(self.batch_size)]
+            logger.info(f"[{self.id}] Generated batch: {nonces}")
 
             batch = self.compute(
                 nonces=nonces,
