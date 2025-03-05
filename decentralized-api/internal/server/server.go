@@ -195,6 +195,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
+		// TODO remove FundedByTransferNode
 		if chatRequest.AuthKey == "" && !chatRequest.FundedByTransferNode {
 			slog.Warn("Request without authorization", "path", request.URL.Path)
 			http.Error(w, "Authorization is required", http.StatusUnauthorized)
@@ -205,6 +206,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 			slog.Info("Executor request", "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed, "pubKey", chatRequest.PubKey)
 			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, configManager.GetConfig())
 			return
+			// TODO X-Requester-Address header seems to be read only
 		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
 			slog.Info("Transfer request", "requesterAddress", chatRequest.RequesterAddress)
 			handleTransferRequest(request.Context(), w, chatRequest, recorder)
@@ -213,7 +215,6 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-
 	}
 }
 
