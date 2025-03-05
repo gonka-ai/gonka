@@ -13,7 +13,7 @@ import (
 	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/json"
-	errors2 "errors"
+	"errors"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/google/uuid"
@@ -32,14 +32,6 @@ import (
 )
 
 const testModel = "unsloth/llama-3-8b-Instruct"
-
-const (
-	authorizationHeader     = "Authorization"
-	xPublicKeyHeader        = "X-Public-Key"
-	xSeedHeader             = "X-Seed"
-	xInferenceIdHeader      = "X-Inference-Id"
-	xRequesterAddressHeader = "X-Requester-Address"
-)
 
 func StartInferenceServerWrapper(
 	nodeBroker *broker.Broker,
@@ -181,11 +173,11 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		Body:                 body,
 		Request:              request,
 		OpenAiRequest:        openAiRequest,
-		AuthKey:              request.Header.Get(authorizationHeader),
-		PubKey:               request.Header.Get(xPublicKeyHeader),
-		Seed:                 request.Header.Get(xSeedHeader),
-		InferenceId:          request.Header.Get(xInferenceIdHeader),
-		RequesterAddress:     request.Header.Get(xRequesterAddressHeader),
+		AuthKey:              request.Header.Get(utils.AuthorizationHeader),
+		PubKey:               request.Header.Get(utils.XPublicKeyHeader),
+		Seed:                 request.Header.Get(utils.XSeedHeader),
+		InferenceId:          request.Header.Get(utils.XInferenceIdHeader),
+		RequesterAddress:     request.Header.Get(utils.XRequesterAddressHeader),
 		FundedByTransferNode: fundedByTransferNode,
 	}, nil
 }
@@ -290,10 +282,10 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-	req.Header.Set(xInferenceIdHeader, inferenceUUID)
-	req.Header.Set(xSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(xPublicKeyHeader, pubkey)
-	req.Header.Set(authorizationHeader, request.AuthKey)
+	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
+	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
+	req.Header.Set(utils.XPublicKeyHeader, pubkey)
+	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 	req.Header.Set("X-Funded-By-Transfer-Node", strconv.FormatBool(request.FundedByTransferNode))
 
@@ -530,7 +522,7 @@ func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
 	valid := actualKey.VerifySignature(request.Body, keyBytes)
 	if !valid {
 		slog.Warn("Signature did not match pubkey")
-		return errors2.New("invalid signature")
+		return errors.New("invalid signature")
 	}
 	return nil
 }
