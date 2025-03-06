@@ -35,3 +35,12 @@ func SendPostJsonRequest(client *http.Client, url string, payload any) (*http.Re
 
 	return client.Do(req)
 }
+
+func SendGetRequest(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return client.Do(req)
+}

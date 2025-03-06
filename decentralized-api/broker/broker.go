@@ -148,7 +148,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 
 	for _, node := range b.nodes {
 		if nodeAvailable(node, command.Model) {
-			if leastBusyNode == nil || node.State.LockCount < node.State.LockCount {
+			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
 		}

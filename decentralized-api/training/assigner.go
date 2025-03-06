@@ -44,7 +44,7 @@ func NewAssigner(client cosmosclient.CosmosMessageClient, tendermintClient *cosm
 }
 
 func (a *Assigner) claimTasksForAssignment() {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {

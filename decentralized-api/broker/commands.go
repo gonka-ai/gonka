@@ -111,3 +111,7 @@ func NewLockNodesForTrainingCommand(nodeIds []string) LockNodesForTrainingComman
 func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
+
+type StartPoC struct {
+	Response chan bool
+}

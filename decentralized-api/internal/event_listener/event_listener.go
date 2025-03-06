@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server"
 	"decentralized-api/poc"
+	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
@@ -60,9 +61,10 @@ func startSyncStatusChecker(chainNodeUrl string) {
 }
 
 const (
-	finishInferenceAction   = "/inference.inference.MsgFinishInference"
-	validationAction        = "/inference.inference.MsgValidation"
-	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
+	finishInferenceAction      = "/inference.inference.MsgFinishInference"
+	validationAction           = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -73,6 +75,7 @@ func StartEventListener(
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
 	params *types.Params,
+	trainingExecutor *training.Executor,
 ) {
 	websocketUrl := getWebsocketUrl(configManager.GetConfig())
 	slog.Info("Connecting to websocket at", "url", websocketUrl)
@@ -88,6 +91,7 @@ func StartEventListener(
 	subscribeToEvents(ws, "tm.event='NewBlock'")
 	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
 
 	go startSyncStatusChecker(configManager.GetConfig().ChainNode.Url)
 
@@ -126,7 +130,7 @@ func StartEventListener(
 					continue
 				}
 
-				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator, trainingExecutor)
 			}
 		}()
 	}
@@ -165,6 +169,7 @@ func processEvent(
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	trainingExecutor *training.Executor,
 ) {
 	switch event.Result.Data.Type {
 	case newBlockEventType:
@@ -174,7 +179,7 @@ func processEvent(
 		}
 		upgrade.ProcessNewBlockEvent(event, transactionRecorder, configManager)
 	case txEventType:
-		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
+		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig(), trainingExecutor)
 	default:
 		slog.Warn("Unexpected event type received", "type", event.Result.Data.Type)
 	}
@@ -185,6 +190,7 @@ func handleMessage(
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	event *chainevents.JSONRPCResponse,
 	currentConfig *apiconfig.Config,
+	executor *training.Executor,
 ) {
 	if waitForEventHeight(event, currentConfig) {
 		return
@@ -218,6 +224,11 @@ func handleMessage(
 	case submitGovProposalAction:
 		proposalIdOrNil := event.Result.Events["proposal_id"]
 		slog.Debug("New proposal submitted", "proposalId", proposalIdOrNil)
+	case trainingTaskAssignedAction:
+		if isNodeSynced() {
+			// TODO:
+			slog.Debug("MsgAssignTrainingTask event", "event", event)
+		}
 	default:
 		slog.Debug("Unhandled action received", "action", action)
 	}

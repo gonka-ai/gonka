@@ -22,6 +22,6 @@ func (k Keeper) TrainingTask(goCtx context.Context, req *types.QueryTrainingTask
 	}
 
 	return &types.QueryTrainingTaskResponse{
-		Task: &task,
+		Task: task,
 	}, nil
 }

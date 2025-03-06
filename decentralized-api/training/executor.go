@@ -18,8 +18,17 @@ func NewExecutor(nodeBroker *broker.Broker) *Executor {
 }
 
 func (e Executor) PreassignTask(task *inference.TrainingTask) {
+	e.tasks[task.Id] = task
 }
 
 func (e *Executor) AssignTask(task *inference.TrainingTask) {
 	e.tasks[task.Id] = task
+}
+
+func (e *Executor) ProcessTaskAssignedEvent() {
+
+}
+
+func (e *Executor) CheckStatusRoutine() {
+
 }

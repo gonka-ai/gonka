@@ -73,13 +73,13 @@ func main() {
 	tendermintClient := cosmosclient.TendermintClient{
 		ChainNodeUrl: config.GetConfig().ChainNode.Url,
 	}
-	go func() {
-		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
-	}()
-
 	// FIXME: What context to pass?
 	training.NewAssigner(recorder, &tendermintClient, context.Background())
-	training.NewExecutor(nodeBroker)
+	trainingExecutor := training.NewExecutor(nodeBroker)
+
+	go func() {
+		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params, trainingExecutor)
+	}()
 
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
