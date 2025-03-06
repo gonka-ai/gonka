@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: gradle:jdk19-focal
-      options: --user root
+      options: --user root --volume /var/run/docker.sock:/var/run/docker.sock
 
     steps:
       - name: Verify Docker Installation
