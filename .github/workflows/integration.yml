@@ -30,7 +30,9 @@ jobs:
           path: ./testermint/logs
 
       - name: Publish Test Results
+        uses: dorny/test-reporter@v1
         if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          files: ./testermint/build/test-results/**/*.xml
+          name: Integration Tests
+          path: ./testermint/build/test-results/**/*.xml
+          reporter: java-junit
