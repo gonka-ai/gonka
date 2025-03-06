@@ -15,6 +15,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - name: Install Make
+        run: |
+          apt-get update
+          apt-get install -y make
 
       - name: Set up Java
         uses: actions/setup-java@v3
