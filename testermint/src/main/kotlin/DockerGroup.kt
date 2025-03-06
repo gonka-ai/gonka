@@ -58,6 +58,8 @@ data class DockerGroup(
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
+        // Just register the log events
+        getLocalInferencePairs(config)
     }
 
     fun tearDownExisting() {
@@ -96,7 +98,7 @@ data class DockerGroup(
             try {
                 prodLocal.deleteRecursively()
             } catch (e: FileSystemException) {
-                e.suppressed.forEach { Logger.error(it, "Error deleting directory") }
+                e.suppressed.forEach { Logger.error("Error deleting directory:{}", e.message) }
             }
         }
 
