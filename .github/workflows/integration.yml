@@ -7,20 +7,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  setup-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
+
   integration-tests:
+    needs: setup-docker
     runs-on: ubuntu-latest
     container:
       image: gradle:jdk19-focal
       options: --user root
 
     steps:
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
       - uses: actions/checkout@v3
       - name: Install Make
         run: |
           apt-get update
           apt-get install -y make
-      - name: Install Docker CLI
-        uses: docker/setup-docker-action@v4
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
