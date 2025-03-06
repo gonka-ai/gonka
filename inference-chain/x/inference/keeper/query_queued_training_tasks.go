@@ -16,7 +16,10 @@ func (k Keeper) QueuedTrainingTasks(goCtx context.Context, req *types.QueryQueue
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	taskIds := k.ListQueuedTasks(ctx)
+	taskIds, err := k.ListQueuedTasks(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	tasks, err := k.GetTasks(ctx, taskIds)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
