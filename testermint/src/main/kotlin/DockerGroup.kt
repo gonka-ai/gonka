@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
 import com.productscience.data.UnfundedInferenceParticipant
+import org.tinylog.Logger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -51,12 +52,15 @@ data class DockerGroup(
     fun init() {
         tearDownExisting()
         setupFiles()
-        val process = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
-            .start()
+        val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
+        val process = dockerProcess.start()
+        process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
+        process.errorStream.bufferedReader().lines().forEach { Logger.error(it, "") }
         process.waitFor()
     }
 
     fun tearDownExisting() {
+        Logger.info("Tearing down existing docker group with keyName={}", keyName)
         dockerProcess("compose", "-p", keyName, "down").start().waitFor()
     }
 
@@ -107,6 +111,7 @@ data class DockerGroup(
         }
         val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
+        Logger.info("Setup files for keyName={}", keyName)
     }
 
     val apiUrl = "http://$keyName-api:8080"
@@ -169,6 +174,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     val joinGroups =
         (1..joinCount).map { createDockerGroup(it, GenesisUrls(genesisGroup.keyName.trimStart('/')), config) }
     val allGroups = listOf(genesisGroup) + joinGroups
+    Logger.info("Initializing cluster with {} nodes", allGroups.size)
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
     Thread.sleep(Duration.ofSeconds(10L))
