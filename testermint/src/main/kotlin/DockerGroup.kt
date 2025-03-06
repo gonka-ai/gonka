@@ -101,7 +101,10 @@ data class DockerGroup(
         Files.createDirectories(filesDir)
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
-        publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
+
+        if (Files.exists(publicHtmlDir)) {
+            publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
+        }
         val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
     }
