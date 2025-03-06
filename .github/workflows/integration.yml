@@ -30,6 +30,8 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '19'
+      - name: Make Docker Images
+        run: make build-docker
 
       - name: Run Tests
         run: make run-tests
