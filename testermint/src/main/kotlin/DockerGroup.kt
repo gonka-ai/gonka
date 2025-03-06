@@ -228,6 +228,9 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
 fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
     val currentPairs = getLocalInferencePairs(config)
     val (genesis, join) = currentPairs.partition { it.name == "/${config.genesisName}" }
+    if (genesis.size != 1) {
+        Logger.error("Expected exactly one genesis pair, found ${genesis.size}", "")
+    }
     return genesis.singleOrNull()?.let {
         LocalCluster(it, join)
     }

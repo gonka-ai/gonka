@@ -19,9 +19,14 @@ import java.util.concurrent.ConcurrentHashMap
 val nameExtractor = "(.+)-node".toRegex()
 
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
+    Logger.info("Getting local inference pairs")
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
     val containers = dockerClient.listContainersCmd().exec()
+    Logger.info("Found ${containers.size} containers")
+    containers.forEach {
+        Logger.info("Container: ${it.names.first()} Status: ${it.state} Image: ${it.image} ID: ${it.id}")
+    }
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.wireMockImageName }
@@ -38,6 +43,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         attachDockerLogs(dockerClient, name, "node", it.id)
         attachDockerLogs(dockerClient, name, "api", matchingApi.id)
 
+        Logger.info("Creating local inference pair for $name")
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
             ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
