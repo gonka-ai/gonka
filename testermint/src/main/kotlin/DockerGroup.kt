@@ -55,7 +55,7 @@ data class DockerGroup(
         val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
-        process.errorStream.bufferedReader().lines().forEach { Logger.error(it, "") }
+        process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
     }
 

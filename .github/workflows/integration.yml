@@ -20,9 +20,8 @@ jobs:
           apt-get update
           apt-get install -y make
       - name: Install Docker CLI
-        run: |
-          apt-get update
-          apt-get install -y docker.io
+        uses: docker/setup-docker-action@v4
+        version: latest
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
