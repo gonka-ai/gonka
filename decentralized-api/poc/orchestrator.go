@@ -4,12 +4,12 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
 	"sync"
@@ -175,15 +175,15 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	// Check for any upcoming upgrade plan
 	plan, err := transactionRecorder.GetUpgradePlan()
 	if err != nil {
-		slog.Error("Unable to get upgrade plan", "error", err)
+		logging.Error("Unable to get upgrade plan", types.Upgrades, "error", err)
 	} else {
-		slog.Info("Upgrade plan", "plan", plan.Plan)
+		logging.Info("Upgrade plan", types.Upgrades, "plan", plan.Plan)
 
 	}
 
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
-	//		slog.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
+	//		logging.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
 	//	}
 	//}
 
@@ -191,25 +191,25 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 
 	blockHeight, err := getBlockHeight(data)
 	if err != nil {
-		slog.Error("Failed to get blockHeight from event data", "error", err)
+		logging.Error("Failed to get blockHeight from event data", types.EventProcessing, "error", err)
 		return
 	}
 	err = configManager.SetHeight(blockHeight)
 	if err != nil {
-		slog.Warn("Failed to write config", "error", err)
+		logging.Warn("Failed to write config", types.Config, "error", err)
 	}
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
-		slog.Error("Failed to get blockHash from event data", "error", err)
+		logging.Error("Failed to get blockHash from event data", types.EventProcessing, "error", err)
 		return
 	}
 
 	epochParams := nodePoCOrchestrator.GetParams().EpochParams
-	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
+	logging.Debug("New block event received", types.EventProcessing, "blockHeight", blockHeight, "blockHash", blockHash)
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
-		slog.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
+		logging.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator", types.PoC)
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
@@ -221,7 +221,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	}
 
 	if epochParams.IsEndOfPoCStage(blockHeight) {
-		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
+		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.PoC)
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
@@ -230,7 +230,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	}
 
 	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
-		slog.Info("IsStartOfPoCValidationStage")
+		logging.Info("IsStartOfPoCValidationStage", types.PoC)
 
 		go func() {
 			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
@@ -240,7 +240,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	}
 
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
-		slog.Info("IsEndOfPoCValidationStage")
+		logging.Info("IsEndOfPoCValidationStage", types.PoC)
 
 		nodePoCOrchestrator.Stop()
 

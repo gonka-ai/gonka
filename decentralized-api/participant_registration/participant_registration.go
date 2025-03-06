@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/logging"
 	"decentralized-api/cosmosclient"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -44,7 +44,7 @@ func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) 
 	response, err := queryClient.Participant(*recorder.GetContext(), request)
 	if err != nil {
 		if strings.Contains(err.Error(), "code = NotFound") {
-			slog.Info("Participant does not exist", "address", recorder.GetAddress(), "err", err)
+			logging.Info("Participant does not exist", types.Participants, "address", recorder.GetAddress(), "err", err)
 			return false, nil
 		} else {
 			return false, err
@@ -72,7 +72,7 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 		default:
 			status, err := client.Status(ctx)
 			if err != nil {
-				slog.Debug("Waiting for chain to start...", "error", err)
+				logging.Debug("Waiting for chain to start...", types.System, "error", err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -95,7 +95,7 @@ func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, conf
 func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
-		slog.Info("Genesis participant already exists")
+		logging.Info("Genesis participant already exists", types.Participants)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Failed to check if genesis participant exists: %w", err)
@@ -115,7 +115,7 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("Failed to get unique models: %w", err)
 	}
 
-	slog.Info("Registering genesis participant", "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
+	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
 
 	msg := &inference.MsgSubmitNewParticipant{
 		Url:          config.Api.PublicUrl,
@@ -142,7 +142,7 @@ type submitUnfundedNewParticipantDto struct {
 func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	config := configManager.GetConfig()
 	if exists, err := participantExistsWithWait(recorder, config); exists {
-		slog.Info("Participant already exists, skipping registration")
+		logging.Info("Participant already exists, skipping registration", types.Participants)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Failed to check if participant exists: %w", err)
@@ -171,9 +171,9 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	}
 	pubKeyString := base64.StdEncoding.EncodeToString(pubKey.Bytes())
 
-	slog.Info(
+	logging.Info(
 		"Registering joining participant",
-		"validatorKey", validatorKeyString,
+		types.Participants, "validatorKey", validatorKeyString,
 		"Url", config.Api.PublicUrl,
 		"Models", uniqueModelsList,
 		"Address", address,
@@ -207,7 +207,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	slog.Info("Sending request to seed node", "url", requestUrl)
+	logging.Info("Sending request to seed node", types.Participants, "url", requestUrl)
 
 	// Send the request
 	client := &http.Client{}

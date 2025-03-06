@@ -15,7 +15,7 @@ func (k Keeper) SetPocBatch(ctx context.Context, batch types.PoCBatch) {
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocBatchKeyPrefix))
 	key := types.PoCBatchKey(batch.PocStageStartBlockHeight, batch.ParticipantAddress, batch.BatchId)
 
-	k.LogInfo("PoC: Storing batch", "key", key, "batch", batch)
+	k.LogInfo("PoC: Storing batch", types.PoC, "key", key, "batch", batch)
 
 	b := k.cdc.MustMarshal(&batch)
 	store.Set(key, b)
@@ -86,7 +86,7 @@ func (k Keeper) SetPoCValidation(ctx context.Context, validation types.PoCValida
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.PocValidationPrefix))
 	key := types.PoCValidationKey(validation.PocStageStartBlockHeight, validation.ParticipantAddress, validation.ValidatorParticipantAddress)
 
-	k.LogInfo("PoC: Storing validation", "key", key, "validation", validation)
+	k.LogInfo("PoC: Storing validation", types.PoC, "key", key, "validation", validation)
 
 	b := k.cdc.MustMarshal(&validation)
 	store.Set(key, b)

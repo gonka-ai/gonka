@@ -7,6 +7,7 @@ import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
 import com.productscience.data.EpochParams
 import com.productscience.data.FloatSerializer
+import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
@@ -20,7 +21,9 @@ import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.ValidationParams
 import com.productscience.data.spec
+import org.bouncycastle.dvcs.VPKCRequestBuilder
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -214,12 +217,24 @@ val inferenceConfig = ApplicationConfig(
     apiImageName = "gcr.io/decentralized-ai/api",
     denom = "nicoin",
     stateDirName = ".inference",
+    // TODO: probably need to add more to the spec here, so if tests change them we change back
     genesisSpec = spec {
         this[AppState::inference] = spec<InferenceState> {
             this[InferenceState::params] = spec<InferenceParams> {
                 this[InferenceParams::epochParams] = spec<EpochParams> {
                     this[EpochParams::epochLength] = 20L
                 }
+                this[InferenceParams::validationParams] = spec<ValidationParams> {
+                    this[ValidationParams::minValidationAverage] = 0.01
+                    this[ValidationParams::maxValidationAverage] = 1.0
+                    this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
+                    this[ValidationParams::fullValidationTrafficCutoff] = 1000L
+                    this[ValidationParams::minValidationHalfway] = 0.05
+                    this[ValidationParams::minValidationTrafficCutoff] = 10L
+                }
+            }
+            this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+                this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
             }
         }
     }

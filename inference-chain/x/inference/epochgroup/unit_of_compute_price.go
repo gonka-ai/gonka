@@ -14,7 +14,7 @@ type weightedProposal struct {
 
 func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, proposals []*types.UnitOfComputePriceProposal, defaultProposal uint64) (uint64, error) {
 	members, err := eg.getGroupMembers(ctx)
-	eg.Logger.LogInfo("unitOfCompute: ", "len(members)", len(members))
+	eg.Logger.LogInfo("unitOfCompute: ", types.Pricing, "len(members)", len(members))
 	if err != nil {
 		return 0, err
 	}
@@ -28,7 +28,7 @@ func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, proposals [
 	for _, member := range members {
 		price, exists := proposalsByMember[member.Member.Address]
 		if !exists {
-			eg.Logger.LogInfo("No proposal found for member. Falling back to default.", "member", member.Member.Address, "defaultProposal", defaultProposal)
+			eg.Logger.LogInfo("No proposal found for member. Falling back to default.", types.Pricing, "member", member.Member.Address, "defaultProposal", defaultProposal)
 			price = defaultProposal
 		}
 
@@ -41,7 +41,7 @@ func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, proposals [
 		weightedProposals = append(weightedProposals, proposal)
 	}
 
-	eg.Logger.LogInfo("unitOfCompute: ", "weightedProposals", weightedProposals)
+	eg.Logger.LogInfo("unitOfCompute: ", types.Pricing, "weightedProposals", weightedProposals)
 
 	medianProposal := weightedMedian(weightedProposals)
 

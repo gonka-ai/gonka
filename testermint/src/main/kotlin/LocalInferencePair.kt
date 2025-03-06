@@ -123,6 +123,10 @@ data class LocalInferencePair(
         api.addInferenceParticipant(self)
     }
 
+    fun getEpochLength(): Long {
+        return this.mostRecentParams?.epochParams?.epochLength ?: this.getParams().epochParams.epochLength
+    }
+
     fun getParams(): InferenceParams {
         this.mostRecentParams = this.node.getInferenceParams()
         return this.mostRecentParams!!

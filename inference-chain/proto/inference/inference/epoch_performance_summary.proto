@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message EpochPerformanceSummary {
+  uint64 epoch_start_height = 1;
+  string participant_id = 2;
+  uint64 inference_count = 3;
+  uint64 missed_requests = 4;
+  uint64 earned_coins = 5;
+  uint64 rewarded_coins = 6;
+  uint64 burned_coins = 7;
+  uint64 validated_inferences = 8;
+  uint64 invalidated_inferences = 9;
+  bool claimed = 10;
+}

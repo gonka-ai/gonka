@@ -69,18 +69,18 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
-func (k Keeper) LogInfo(msg string, keyvals ...interface{}) {
-	k.Logger().Info("INFO+"+msg, keyvals...)
+func (k Keeper) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	k.Logger().Info(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
 
-func (k Keeper) LogError(msg string, keyvals ...interface{}) {
-	k.Logger().Error(msg, keyvals...)
+func (k Keeper) LogError(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	k.Logger().Error(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
 
-func (k Keeper) LogWarn(msg string, keyvals ...interface{}) {
-	k.Logger().Warn(msg, keyvals...)
+func (k Keeper) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	k.Logger().Warn(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
 
-func (k Keeper) LogDebug(msg string, keyvals ...interface{}) {
-	k.Logger().Debug(msg, keyvals...)
+func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	k.Logger().Debug(msg, append(keyvals, "subsystem", subSystem.String())...)
 }

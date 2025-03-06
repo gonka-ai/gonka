@@ -1,15 +1,16 @@
 package api
 
 import (
+	"decentralized-api/logging"
 	"encoding/json"
-	"log/slog"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 )
 
 func RespondWithJson(w http.ResponseWriter, response interface{}) {
 	respBytes, err := json.Marshal(response)
 	if err != nil {
-		slog.Error("Failed to marshal response", "error", err)
+		logging.Error("Failed to marshal response", types.System, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -24,8 +25,8 @@ func parseJsonBody[T any](r *http.Request) (T, error) {
 	defer r.Body.Close()
 
 	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
-		slog.Error("failed to decode request body",
-			"path", r.URL.Path,
+		logging.Error("failed to decode request body",
+			types.System, "path", r.URL.Path,
 			"error", err,
 		)
 		return t, err

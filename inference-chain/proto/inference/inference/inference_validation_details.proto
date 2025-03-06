@@ -1,0 +1,14 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message InferenceValidationDetails {
+  uint64 epoch_id = 1;
+  string inference_id = 2;
+  string executor_id = 3;
+  int32 executor_reputation = 4;
+  uint64 traffic_basis = 5;
+  uint64 executor_power = 6;
+}
+
