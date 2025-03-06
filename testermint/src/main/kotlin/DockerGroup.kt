@@ -5,6 +5,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
 import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.Logger
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
