@@ -63,6 +63,29 @@ data class ApplicationCLI(
         }
     }
 
+    fun waitFor(
+        check: (ApplicationCLI) -> Boolean,
+        description: String,
+        timeout: Duration = Duration.ofSeconds(20),
+        sleepTimeMillis: Long = 1000,
+    ) {
+        wrapLog("waitFor", false) {
+            Logger.info("Waiting for: {}", description)
+            val startTime = Instant.now()
+            while (true) {
+                if (check(this)) {
+                    Logger.info("Check reached: $description")
+                    break
+                }
+                if (Duration.between(startTime, Instant.now()) > timeout) {
+                    Logger.error("Failed to wait for $description within $timeout")
+                    error("Failed to wait for $description within $timeout")
+                }
+                Thread.sleep(sleepTimeMillis)
+            }
+        }
+    }
+
     fun waitForState(
         check: (status: NodeInfoResponse) -> Boolean,
         description: String,

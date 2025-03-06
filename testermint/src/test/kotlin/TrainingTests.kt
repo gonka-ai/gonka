@@ -7,6 +7,7 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.setupLocalCluster
 import org.junit.jupiter.api.Test
+import java.time.Duration
 
 class TrainingTests : TestermintTest() {
     @Test
@@ -28,6 +29,17 @@ class TrainingTests : TestermintTest() {
                     100u,
                 )
             )
+        )
+
+        instance.node.waitFor(
+            check = { app ->
+                // FIXME
+                val result = app.exec(listOf("inferenced", "query", "inference", "training-task-all"))
+                true
+            },
+            description = "Training assigned",
+            timeout = Duration.ofSeconds(40),
+            sleepTimeMillis = 3000
         )
 
         println("RESPONSE!!!")
