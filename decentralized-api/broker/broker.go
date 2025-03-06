@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -127,6 +128,9 @@ func (b *Broker) registerNode(command RegisterNode) {
 			LockCount:     0,
 			Operational:   true,
 			FailureReason: "",
+			// FIXME
+			// 	PRTODO: !!! it can be different!, query the node for it's status
+			Status: types.HardwareNodeStatus_INFERENCE,
 		},
 	}
 	slog.Debug("Registered node", "node", command.Node)
@@ -315,6 +319,8 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		LocalId:  node.Id,
 		Status:   in.State.Status,
 		Hardware: hardware,
+		Host:     node.Host,
+		Port:     strconv.Itoa(node.PoCPort),
 	}
 }
 

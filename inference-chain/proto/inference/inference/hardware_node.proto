@@ -14,7 +14,7 @@ message HardwareNode {
   HardwareNodeStatus status = 2;
   repeated Hardware hardware = 3;
   string host = 4;
-  string training_port = 5;
+  string port = 5;
 }
 
 enum HardwareNodeStatus {
