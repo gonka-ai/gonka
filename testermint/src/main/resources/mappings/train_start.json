@@ -1,4 +1,6 @@
 {
+  "scenarioName": "ModelState",
+  "requiredScenarioState": "STOPPED",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/train/start"
@@ -8,6 +10,7 @@
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": ""
+    "body": "",
+    "newScenarioState": "TRAIN"
   }
 }

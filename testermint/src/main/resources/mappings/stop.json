@@ -1,4 +1,5 @@
 {
+  "scenarioName": "ModelState",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/pow/stop"
@@ -8,6 +9,7 @@
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": ""
+    "body": "",
+    "newScenarioState": "STOPPED"
   }
 }
