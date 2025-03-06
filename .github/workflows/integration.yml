@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Docker (Latest Version)
         uses: docker/setup-docker-action@v4
         with:
@@ -20,7 +23,6 @@ jobs:
         run: |
           docker --version
           docker compose version
-      - uses: actions/checkout@v3
       - name: Install Make
         run: |
           sudo apt-get update
@@ -31,6 +33,8 @@ jobs:
           distribution: 'temurin'
           java-version: '19'
       - name: Make Docker Images
+        env:
+          GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
         run: make build-docker
 
       - name: Run Tests
