@@ -193,7 +193,7 @@ data class ApplicationCLI(
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
-    private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
         val argsWithJson = listOf(config.appName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))

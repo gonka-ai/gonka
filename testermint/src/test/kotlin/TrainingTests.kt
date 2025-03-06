@@ -34,12 +34,14 @@ class TrainingTests : TestermintTest() {
         instance.node.waitFor(
             check = { app ->
                 // FIXME
-                val result = app.exec(listOf("inferenced", "query", "inference", "training-task-all"))
+                val result = app.execAndParse<Map<String, Any>>(listOf("query", "inference", "training-task-all"))
+                println("QUERY RESULTS")
+                println(result)
                 true
             },
             description = "Training assigned",
             timeout = Duration.ofSeconds(40),
-            sleepTimeMillis = 3000
+            sleepTimeMillis = 5000
         )
 
         println("RESPONSE!!!")

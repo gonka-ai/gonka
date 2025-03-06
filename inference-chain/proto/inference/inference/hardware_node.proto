@@ -13,6 +13,8 @@ message HardwareNode {
   string local_id = 1;
   HardwareNodeStatus status = 2;
   repeated Hardware hardware = 3;
+  string host = 4;
+  string training_port = 5;
 }
 
 enum HardwareNodeStatus {

@@ -86,7 +86,7 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 
 	task := a.chooseTrainingTask(resp.Tasks, blockHeight)
 	if task == nil {
-		slog.Info(logTag + "No training tasks to claim for assignment")
+		// slog.Info(logTag + "No training tasks to claim for assignment")
 		return
 	}
 
@@ -213,6 +213,7 @@ func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.Que
 	}
 
 	participants := resp.EpochGroupData.ValidationWeights
+	slog.Info(logTag+"Participants", "participants", participants)
 
 	// FIXME: could be optimized if we queried only nodeIds of actual participants instead of ALL participants
 	//  or maybe we should do some hardware nodeIds pruning
@@ -237,6 +238,7 @@ func getParticipantsWithHardwareNodes(ctx context.Context, queryClient types.Que
 			hardware:    hardwareNodesByParticipant[address],
 		}
 	}
+	slog.Info(logTag+"Participants with hardware nodes", "participants", participantsWithHardware)
 
 	return participantsWithHardware, nil
 }
@@ -263,6 +265,7 @@ func getParticipantListMatchingHardwareSpec(
 	for _, req := range hardwareRequirements {
 		remaining[req.Type] += req.Count
 	}
+	slog.Info(logTag+"Matching hardware requirements", "requirements", hardwareRequirements)
 
 	// Flatten the candidateNode pool: one candidateNode per available node.
 	var candidates []candidateNode
@@ -291,6 +294,7 @@ func getParticipantListMatchingHardwareSpec(
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].participantWeight > candidates[j].participantWeight
 	})
+	slog.Info(logTag+"Candidates", "candidates", candidates)
 
 	// We'll mark which candidates have been selected.
 	selected := make([]bool, len(candidates))
