@@ -24,6 +24,7 @@ import kotlin.test.assertNotNull
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
+    @Tag("health")
     fun `test immediate pre settle amounts`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForNextSettle()
