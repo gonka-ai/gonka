@@ -92,7 +92,11 @@ data class DockerGroup(
         val baseDir = Path.of(workingDirectory)
         if (isGenesis) {
             val prodLocal = baseDir.resolve("prod-local")
-            prodLocal.deleteRecursively()
+            try {
+                prodLocal.deleteRecursively()
+            } catch (e: FileSystemException) {
+                e.suppressed.forEach { Logger.error(it, "Error deleting directory") }
+            }
         }
 
         val inferenceDir = baseDir.resolve("prod-local/$keyName")
