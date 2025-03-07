@@ -74,6 +74,6 @@ func TestAddMembers(t *testing.T) {
 	testEG := createTestEpochGroup(t)
 	testEG.GroupMock.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any()).Return(nil, nil)
 	testEG.GroupMock.EXPECT().UpdateGroupMetadata(gomock.Any(), gomock.Any()).Return(nil, nil)
-	testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature")
+	testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature", 1)
 
 }

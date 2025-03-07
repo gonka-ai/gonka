@@ -2,12 +2,12 @@ package cosmosclient
 
 import (
 	"crypto/sha256"
+	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/hex"
-	"log/slog"
-
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -17,7 +17,7 @@ import (
 func PubKeyToAddress(pubKeyHex string) (string, error) {
 	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
 	if err != nil {
-		slog.Error("Invalid public key hex", "err", err)
+		logging.Error("Invalid public key hex", types.Participants, "err", err)
 		return "", err
 	}
 
@@ -33,13 +33,13 @@ func PubKeyToAddress(pubKeyHex string) (string, error) {
 	prefix := "cosmos"
 	fiveBitData, err := bech32.ConvertBits(ripemdHash, 8, 5, true)
 	if err != nil {
-		slog.Error("Failed to convert bits", "err", err)
+		logging.Error("Failed to convert bits", types.Participants, "err", err)
 		return "", err
 	}
 
 	address, err := bech32.Encode(prefix, fiveBitData)
 	if err != nil {
-		slog.Error("Failed to encode address", "err", err)
+		logging.Error("Failed to encode address", types.Participants, "err", err)
 		return "", err
 	}
 

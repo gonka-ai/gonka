@@ -1,32 +1,17 @@
-package keeper
+package calculations
 
 import (
 	"fmt"
-	"testing"
-
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
-
-var fixedInferenceId = "inferenceId"
-
-// Given fixedInferenceId, these seeds will produce close (slightly higher) to all of these probabilities
-var ninetyPercentSeed = int64(5798067479865859744)
-var fiftyPercentSeed = int64(6669939700021626378)
-var tenPercentSeed = int64(2925341513999858939)
-
-// ExtractValidationDetails parses and extracts values from a message.
-func ExtractValidationDetails(msg string) (shouldValidate bool, randFloat float64, ourProbability float64, err error) {
-	// Define the layout to match the expected string format
-	_, err = fmt.Sscanf(msg, "Should Validate: %t randFloat: %f ourProbability: %f", &shouldValidate, &randFloat, &ourProbability)
-	return
-}
 
 func TestShouldValidate(t *testing.T) {
 	tests := []struct {
 		name                 string
 		seed                 int64
-		inferenceDetails     *types.InferenceDetail
+		inferenceDetails     *types.InferenceValidationDetails
 		totalPower           uint32
 		validatorPower       uint32
 		executorPower        uint32
@@ -38,8 +23,9 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation 0, full validator power",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
+				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0,
 			},
 			totalPower:           100,
@@ -53,9 +39,10 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation 1, low validator power",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
-				ExecutorReputation: 1,
+				TrafficBasis:       defaultTrafficCutoff,
+				ExecutorReputation: 100,
 			},
 			totalPower:           200,
 			validatorPower:       30,
@@ -68,9 +55,10 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor higher power, mid reputation",
 			seed: tenPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
-				ExecutorReputation: 0.5,
+				TrafficBasis:       defaultTrafficCutoff,
+				ExecutorReputation: 50,
 			},
 			totalPower:           300,
 			validatorPower:       100,
@@ -83,9 +71,10 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "executor reputation at max, equal powers",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
-				ExecutorReputation: 1,
+				TrafficBasis:       defaultTrafficCutoff,
+				ExecutorReputation: 100,
 			},
 			totalPower:           150,
 			validatorPower:       50,
@@ -98,9 +87,10 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "max reputation, equal powers, small range",
 			seed: fiftyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
-				ExecutorReputation: 1,
+				TrafficBasis:       defaultTrafficCutoff,
+				ExecutorReputation: 100,
 			},
 			totalPower:           100,
 			validatorPower:       50,
@@ -113,8 +103,9 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "min reputation, equal powers, small range",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
+				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0,
 			},
 			totalPower:           150,
@@ -128,8 +119,9 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "only one non-executor, bad reputation",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
+				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0,
 			},
 			totalPower:           100,
@@ -143,23 +135,25 @@ func TestShouldValidate(t *testing.T) {
 		{
 			name: "only one non-executor, perfect reputation",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
-				ExecutorReputation: 0,
+				TrafficBasis:       defaultTrafficCutoff,
+				ExecutorReputation: 100,
 			},
 			totalPower:           100,
 			validatorPower:       50,
 			executorPower:        50,
-			expectedResult:       true,
-			expectedProbability:  1.0,
+			expectedResult:       false,
+			expectedProbability:  0.5,
 			minValidationAverage: 0.5,
 			maxValidationAverage: 1.0,
 		},
 		{
 			name: "never more than 1.0",
 			seed: ninetyPercentSeed,
-			inferenceDetails: &types.InferenceDetail{
+			inferenceDetails: &types.InferenceValidationDetails{
 				InferenceId:        fixedInferenceId,
+				TrafficBasis:       defaultTrafficCutoff,
 				ExecutorReputation: 0,
 			},
 			totalPower:           100,
@@ -170,13 +164,49 @@ func TestShouldValidate(t *testing.T) {
 			minValidationAverage: 0.5,
 			maxValidationAverage: 100.0,
 		},
+		{
+			name: "minimum traffic, perfect reputation",
+			seed: fiftyPercentSeed,
+			inferenceDetails: &types.InferenceValidationDetails{
+				InferenceId:        fixedInferenceId,
+				TrafficBasis:       100,
+				ExecutorReputation: 100,
+			},
+			totalPower:           100,
+			validatorPower:       50,
+			executorPower:        10,
+			expectedResult:       true,
+			expectedProbability:  0.5555555555555556,
+			minValidationAverage: 0.1,
+			maxValidationAverage: 1.0,
+		},
+		{
+			name: "middle traffic, perfect reputation",
+			seed: fiftyPercentSeed,
+			inferenceDetails: &types.InferenceValidationDetails{
+				InferenceId:        fixedInferenceId,
+				TrafficBasis:       defaultTrafficCutoff / 2,
+				ExecutorReputation: 100,
+			},
+			totalPower:           150,
+			validatorPower:       50,
+			executorPower:        50,
+			expectedResult:       false,
+			expectedProbability:  0.025,
+			minValidationAverage: 0.01,
+			maxValidationAverage: 1.0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testParams := &types.ValidationParams{
-				MinValidationAverage: tt.minValidationAverage,
-				MaxValidationAverage: tt.maxValidationAverage,
+				MinValidationAverage:        tt.minValidationAverage,
+				MaxValidationAverage:        tt.maxValidationAverage,
+				FullValidationTrafficCutoff: defaultTrafficCutoff,
+				MinValidationTrafficCutoff:  100,
+				MinValidationHalfway:        0.05,
+				EpochsToMax:                 defaultEpochsToMax,
 			}
 			_ = testParams
 			result, text := ShouldValidate(tt.seed, tt.inferenceDetails, tt.totalPower, tt.validatorPower, tt.executorPower, testParams)

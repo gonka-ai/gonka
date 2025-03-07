@@ -152,7 +152,7 @@ func TestNoLoggingToStdout(t *testing.T) {
 // Example function in the library
 func LibraryFunctionThatShouldNotLog() {
 	// Simulate a log that should not reach stdout
-	//slog.Info("Oops, this log should fail the test")
+	//logging.Info("Oops, this log should fail the test")
 	fmt.Println("This should fail the test")
 }
 

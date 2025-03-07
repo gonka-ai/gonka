@@ -3,10 +3,11 @@ package poc
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/binary"
 	"encoding/hex"
 	"github.com/productscience/inference/api/inference/inference"
-	"log/slog"
+	"github.com/productscience/inference/x/inference/types"
 	"math/rand"
 )
 
@@ -14,39 +15,39 @@ func generateSeed(blockHeight int64, transactionRecorder *cosmosclient.Inference
 	slog.Debug("Old Seed Signature", "seed", manager.GetCurrentSeed())
 	newSeed, err := createNewSeed(blockHeight, transactionRecorder)
 	if err != nil {
-		slog.Error("Failed to get next seed signature", "error", err)
+		logging.Error("Failed to get next seed signature", types.Claims, "error", err)
 		return
 	}
 	err = manager.SetUpcomingSeed(*newSeed)
 	if err != nil {
-		slog.Error("Failed to set upcoming seed", "error", err)
+		logging.Error("Failed to set upcoming seed", types.Claims, "error", err)
 		return
 	}
-	slog.Debug("New Seed Signature", "seed", manager.GetUpcomingSeed())
+	logging.Debug("New Seed Signature", types.Claims, "seed", manager.GetUpcomingSeed())
 
 	err = transactionRecorder.SubmitSeed(&inference.MsgSubmitSeed{
 		BlockHeight: manager.GetUpcomingSeed().Height,
 		Signature:   manager.GetUpcomingSeed().Signature,
 	})
 	if err != nil {
-		slog.Error("Failed to send SubmitSeed transaction", "error", err)
+		logging.Error("Failed to send SubmitSeed transaction", types.Claims, "error", err)
 	}
 }
 
 func changeCurrentSeed(manager *apiconfig.ConfigManager) {
 	err := manager.SetPreviousSeed(manager.GetCurrentSeed())
 	if err != nil {
-		slog.Error("Failed to set previous seed", "error", err)
+		logging.Error("Failed to set previous seed", types.Claims, "error", err)
 		return
 	}
 	err = manager.SetCurrentSeed(manager.GetUpcomingSeed())
 	if err != nil {
-		slog.Error("Failed to set current seed", "error", err)
+		logging.Error("Failed to set current seed", types.Claims, "error", err)
 		return
 	}
 	err = manager.SetUpcomingSeed(apiconfig.SeedInfo{})
 	if err != nil {
-		slog.Error("Failed to set upcoming seed", "error", err)
+		logging.Error("Failed to set upcoming seed", types.Claims, "error", err)
 		return
 	}
 }
@@ -57,13 +58,13 @@ func requestMoney(transactionRecorder *cosmosclient.InferenceCosmosClient, manag
 	//  Solution: query seed here?
 	seed := manager.GetPreviousSeed()
 
-	slog.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", "seed", seed)
+	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
 	err := transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
 		Seed:           seed.Seed,
 		PocStartHeight: uint64(seed.Height),
 	})
 	if err != nil {
-		slog.Error("Failed to send ClaimRewards transaction", "error", err)
+		logging.Error("Failed to send ClaimRewards transaction", types.Claims, "error", err)
 	}
 }
 
@@ -77,7 +78,7 @@ func createNewSeed(
 	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
 	signature, err := transactionRecorder.SignBytes(seedBytes)
 	if err != nil {
-		slog.Error("Failed to sign bytes", "error", err)
+		logging.Error("Failed to sign bytes", types.Claims, "error", err)
 		return nil, err
 	}
 	return &apiconfig.SeedInfo{

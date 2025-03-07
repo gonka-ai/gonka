@@ -20,7 +20,13 @@
           "default_unit_of_compute_price": "100"
         },
         "validation_params": {
-          "expiration_blocks": "10"
+          "expiration_blocks": "10",
+          "min_validation_average": "0.01",
+          "max_validation_average": "1.0",
+          "epochs_to_max": "100",
+          "full_validation_traffic_cutoff": "1000",
+          "min_validation_halfway": "0.05",
+          "min_validation_traffic_cutoff": "10"
         }
       },
       "genesis_only_params": {

@@ -18,7 +18,7 @@ func (k Keeper) HardwareNodesAll(goCtx context.Context, req *types.QueryHardware
 
 	nodes, err := k.GetAllHardwareNodes(ctx)
 	if err != nil {
-		k.LogError("HardwareNodesAll query: error getting all hardware nodes", "err", err)
+		k.LogError("HardwareNodesAll query: error getting all hardware nodes", types.Nodes, "err", err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 

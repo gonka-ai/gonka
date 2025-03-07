@@ -14,10 +14,10 @@ const FaucetRequests = 50
 func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *types.MsgSubmitNewUnfundedParticipant) (*types.MsgSubmitNewUnfundedParticipantResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	k.LogInfo("Adding new account directly", "address", msg.Address)
+	k.LogInfo("Adding new account directly", types.Participants, "address", msg.Address)
 	// First, add the account
 	if k.AccountKeeper.GetAccount(ctx, sdk.MustAccAddressFromBech32(msg.Address)) != nil {
-		k.LogError("Account already exists", "address", msg.Address)
+		k.LogError("Account already exists", types.Participants, "address", msg.Address)
 		return nil, types.ErrAccountAlreadyExists
 	}
 	newAccount := k.AccountKeeper.NewAccountWithAddress(ctx, sdk.MustAccAddressFromBech32(msg.Address))
@@ -28,10 +28,10 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 	actualKey := secp256k1.PubKey{Key: pubKeyBytes}
 	err = newAccount.SetPubKey(&actualKey)
 	if err != nil {
-		k.LogError("Error setting pubkey", "error", err)
+		k.LogError("Error setting pubkey", types.Participants, "error", err)
 		return nil, err
 	}
-	k.LogInfo("added account with pubkey", "pubkey", newAccount.GetPubKey(), "address", newAccount.GetAddress())
+	k.LogInfo("added account with pubkey", types.Participants, "pubkey", newAccount.GetPubKey(), "address", newAccount.GetAddress())
 
 	k.AccountKeeper.SetAccount(ctx, newAccount)
 	// TODO: Handling the message
@@ -44,20 +44,20 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			ValidatorKey: msg.GetValidatorKey(),
 			WorkerKey:    msg.GetWorkerKey(),
 		})
-	k.LogDebug("Adding new participant", "participant", newParticipant)
+	k.LogDebug("Adding new participant", types.Participants, "participant", newParticipant)
 	k.SetParticipant(ctx, newParticipant)
 	if newParticipant.GetInferenceUrl() == "" {
 		// Consumer only!
-		k.LogInfo("Funding new consumer", "consumer", newParticipant)
+		k.LogInfo("Funding new consumer", types.Participants, "consumer", newParticipant)
 		starterAmount := int64(DefaultMaxTokens * TokenCost * FaucetRequests)
 		err := k.MintRewardCoins(ctx, starterAmount)
 		if err != nil {
-			k.LogError("Error minting coins", "error", err)
+			k.LogError("Error minting coins", types.Participants, "error", err)
 			return nil, err
 		}
 		err = k.PayParticipantFromModule(ctx, msg.GetAddress(), uint64(starterAmount), types.ModuleName)
 		if err != nil {
-			k.LogError("Error sending coins", "error", err)
+			k.LogError("Error sending coins", types.Participants, "error", err)
 			return nil, err
 		}
 	}

@@ -10,25 +10,25 @@ import (
 func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInvalidateInference) (*types.MsgInvalidateInferenceResponse, error) {
 	inference, found := k.GetInference(goCtx, msg.InferenceId)
 	if found != true {
-		k.LogError("Validation: Inference not found", "inferenceId", msg.InferenceId)
+		k.LogError("Inference not found", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, errorsmod.Wrapf(types.ErrInferenceNotFound, "inference with id %s not found", msg.InferenceId)
 	}
 
 	if msg.Creator != inference.ProposalDetails.PolicyAddress {
-		k.LogError("Validation: Invalid authority", "expected", inference.ProposalDetails.PolicyAddress, "got", msg.Creator)
+		k.LogError("Invalid authority", types.Validation, "expected", inference.ProposalDetails.PolicyAddress, "got", msg.Creator)
 		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", inference.ProposalDetails.PolicyAddress, msg.Creator)
 	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
 	if found != true {
-		k.LogError("Validation: Participant not found", "address", inference.ExecutedBy)
+		k.LogError("Participant not found", types.Validation, "address", inference.ExecutedBy)
 		return nil, errorsmod.Wrapf(types.ErrParticipantNotFound, "participant with address %s not found", inference.ExecutedBy)
 	}
 
 	// Idempotent, so no error
 	if inference.Status == types.InferenceStatus_INVALIDATED {
-		k.LogDebug("Validation: Inference already invalidated", "inferenceId", msg.InferenceId)
+		k.LogDebug("Inference already invalidated", types.Validation, "inferenceId", msg.InferenceId)
 		return nil, nil
 	}
 
@@ -45,19 +45,19 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 
 func (k msgServer) markInferenceAsInvalid(executor *types.Participant, inference *types.Inference, ctx sdk.Context) error {
 	inference.Status = types.InferenceStatus_INVALIDATED
-	executor.InvalidatedInferences++
+	executor.CurrentEpochStats.InvalidatedInferences++
 	executor.ConsecutiveInvalidInferences++
 	executor.CoinBalance -= inference.ActualCost
 	// We need to refund the cost, so we have to lookup the person who paid
 	payer, found := k.GetParticipant(ctx, inference.RequestedBy)
 	if !found {
-		k.Logger().Error("Validation: Payer not found", "address", inference.RequestedBy)
+		k.LogError("Payer not found", types.Validation, "address", inference.RequestedBy)
 		return types.ErrParticipantNotFound
 	}
 	err := k.IssueRefund(ctx, uint64(inference.ActualCost), payer.Address)
 	if err != nil {
-		k.Logger().Error("Validation: Refund failed", "error", err)
+		k.LogError("Refund failed", types.Validation, "error", err)
 	}
-	k.Logger().Info("Validation: Inference invalidated", "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
+	k.LogInfo("Inference invalidated", types.Inferences, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
 	return nil
 }

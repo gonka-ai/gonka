@@ -19,33 +19,40 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName                        = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName                     = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName                  = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName                   = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName                = "/inference.inference.Query/ParticipantAll"
-	Query_GetInferencesWithExecutors_FullMethodName    = "/inference.inference.Query/GetInferencesWithExecutors"
-	Query_InferenceParticipant_FullMethodName          = "/inference.inference.Query/InferenceParticipant"
-	Query_GetRandomExecutor_FullMethodName             = "/inference.inference.Query/GetRandomExecutor"
-	Query_EpochGroupData_FullMethodName                = "/inference.inference.Query/EpochGroupData"
-	Query_EpochGroupDataAll_FullMethodName             = "/inference.inference.Query/EpochGroupDataAll"
-	Query_SettleAmount_FullMethodName                  = "/inference.inference.Query/SettleAmount"
-	Query_SettleAmountAll_FullMethodName               = "/inference.inference.Query/SettleAmountAll"
-	Query_EpochGroupValidations_FullMethodName         = "/inference.inference.Query/EpochGroupValidations"
-	Query_EpochGroupValidationsAll_FullMethodName      = "/inference.inference.Query/EpochGroupValidationsAll"
-	Query_PocBatchesForStage_FullMethodName            = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName               = "/inference.inference.Query/GetCurrentEpoch"
-	Query_TokenomicsData_FullMethodName                = "/inference.inference.Query/TokenomicsData"
-	Query_GetUnitOfComputePriceProposal_FullMethodName = "/inference.inference.Query/GetUnitOfComputePriceProposal"
-	Query_CurrentEpochGroupData_FullMethodName         = "/inference.inference.Query/CurrentEpochGroupData"
-	Query_ModelsAll_FullMethodName                     = "/inference.inference.Query/ModelsAll"
-	Query_TopMiner_FullMethodName                      = "/inference.inference.Query/TopMiner"
-	Query_TopMinerAll_FullMethodName                   = "/inference.inference.Query/TopMinerAll"
-	Query_InferenceTimeout_FullMethodName              = "/inference.inference.Query/InferenceTimeout"
-	Query_InferenceTimeoutAll_FullMethodName           = "/inference.inference.Query/InferenceTimeoutAll"
-	Query_TrainingTask_FullMethodName                  = "/inference.inference.Query/TrainingTask"
-	Query_HardwareNodes_FullMethodName                 = "/inference.inference.Query/HardwareNodes"
-	Query_HardwareNodesAll_FullMethodName              = "/inference.inference.Query/HardwareNodesAll"
+	Query_Params_FullMethodName                           = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                        = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName                     = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                      = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName                   = "/inference.inference.Query/ParticipantAll"
+	Query_InferenceParticipant_FullMethodName             = "/inference.inference.Query/InferenceParticipant"
+	Query_GetRandomExecutor_FullMethodName                = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName                   = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName                = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName                     = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName                  = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName            = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName         = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName               = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName                  = "/inference.inference.Query/GetCurrentEpoch"
+	Query_TokenomicsData_FullMethodName                   = "/inference.inference.Query/TokenomicsData"
+	Query_GetUnitOfComputePriceProposal_FullMethodName    = "/inference.inference.Query/GetUnitOfComputePriceProposal"
+	Query_CurrentEpochGroupData_FullMethodName            = "/inference.inference.Query/CurrentEpochGroupData"
+	Query_ModelsAll_FullMethodName                        = "/inference.inference.Query/ModelsAll"
+	Query_TopMiner_FullMethodName                         = "/inference.inference.Query/TopMiner"
+	Query_TopMinerAll_FullMethodName                      = "/inference.inference.Query/TopMinerAll"
+	Query_InferenceTimeout_FullMethodName                 = "/inference.inference.Query/InferenceTimeout"
+	Query_InferenceTimeoutAll_FullMethodName              = "/inference.inference.Query/InferenceTimeoutAll"
+	Query_InferenceValidationDetails_FullMethodName       = "/inference.inference.Query/InferenceValidationDetails"
+	Query_InferenceValidationDetailsAll_FullMethodName    = "/inference.inference.Query/InferenceValidationDetailsAll"
+	Query_GetInferenceValidationParameters_FullMethodName = "/inference.inference.Query/GetInferenceValidationParameters"
+	Query_EpochPerformanceSummary_FullMethodName          = "/inference.inference.Query/EpochPerformanceSummary"
+	Query_EpochPerformanceSummaryAll_FullMethodName       = "/inference.inference.Query/EpochPerformanceSummaryAll"
+	Query_TrainingTask_FullMethodName                     = "/inference.inference.Query/TrainingTask"
+	Query_HardwareNodes_FullMethodName                    = "/inference.inference.Query/HardwareNodes"
+	Query_HardwareNodesAll_FullMethodName                 = "/inference.inference.Query/HardwareNodesAll"
+	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
+	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
+	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
 )
 
 // QueryClient is the client API for Query service.
@@ -60,8 +67,6 @@ type QueryClient interface {
 	// Queries a list of Participant items.
 	Participant(ctx context.Context, in *QueryGetParticipantRequest, opts ...grpc.CallOption) (*QueryGetParticipantResponse, error)
 	ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error)
-	// Queries a list of GetInferencesWithExecutors items.
-	GetInferencesWithExecutors(ctx context.Context, in *QueryGetInferencesWithExecutorsRequest, opts ...grpc.CallOption) (*QueryGetInferencesWithExecutorsResponse, error)
 	// Queries a list of InferenceParticipant items.
 	InferenceParticipant(ctx context.Context, in *QueryInferenceParticipantRequest, opts ...grpc.CallOption) (*QueryInferenceParticipantResponse, error)
 	// Queries a list of GetRandomExecutor items.
@@ -93,12 +98,26 @@ type QueryClient interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of InferenceValidationDetails items.
+	InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error)
+	InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error)
+	// Queries a list of GetInferenceValidationParameters items.
+	GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error)
+	// Queries a list of EpochPerformanceSummary items.
+	EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error)
+	EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of GetParticipantCurrentStats items.
+	GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error)
+	// Queries a list of GetAllParticipantCurrentStats items.
+	GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error)
+	// Queries a list of GetMinimumValidationAverage items.
+	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
 }
 
 type queryClient struct {
@@ -148,15 +167,6 @@ func (c *queryClient) Participant(ctx context.Context, in *QueryGetParticipantRe
 func (c *queryClient) ParticipantAll(ctx context.Context, in *QueryAllParticipantRequest, opts ...grpc.CallOption) (*QueryAllParticipantResponse, error) {
 	out := new(QueryAllParticipantResponse)
 	err := c.cc.Invoke(ctx, Query_ParticipantAll_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) GetInferencesWithExecutors(ctx context.Context, in *QueryGetInferencesWithExecutorsRequest, opts ...grpc.CallOption) (*QueryGetInferencesWithExecutorsResponse, error) {
-	out := new(QueryGetInferencesWithExecutorsResponse)
-	err := c.cc.Invoke(ctx, Query_GetInferencesWithExecutors_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +335,51 @@ func (c *queryClient) InferenceTimeoutAll(ctx context.Context, in *QueryAllInfer
 	return out, nil
 }
 
+func (c *queryClient) InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error) {
+	out := new(QueryGetInferenceValidationDetailsResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceValidationDetails_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error) {
+	out := new(QueryAllInferenceValidationDetailsResponse)
+	err := c.cc.Invoke(ctx, Query_InferenceValidationDetailsAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error) {
+	out := new(QueryGetInferenceValidationParametersResponse)
+	err := c.cc.Invoke(ctx, Query_GetInferenceValidationParameters_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error) {
+	out := new(QueryGetEpochPerformanceSummaryResponse)
+	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummary_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error) {
+	out := new(QueryAllEpochPerformanceSummaryResponse)
+	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummaryAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error) {
 	out := new(QueryTrainingTaskResponse)
 	err := c.cc.Invoke(ctx, Query_TrainingTask_FullMethodName, in, out, opts...)
@@ -352,6 +407,33 @@ func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNod
 	return out, nil
 }
 
+func (c *queryClient) GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error) {
+	out := new(QueryGetParticipantCurrentStatsResponse)
+	err := c.cc.Invoke(ctx, Query_GetParticipantCurrentStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error) {
+	out := new(QueryGetAllParticipantCurrentStatsResponse)
+	err := c.cc.Invoke(ctx, Query_GetAllParticipantCurrentStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error) {
+	out := new(QueryGetMinimumValidationAverageResponse)
+	err := c.cc.Invoke(ctx, Query_GetMinimumValidationAverage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -364,8 +446,6 @@ type QueryServer interface {
 	// Queries a list of Participant items.
 	Participant(context.Context, *QueryGetParticipantRequest) (*QueryGetParticipantResponse, error)
 	ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
-	// Queries a list of GetInferencesWithExecutors items.
-	GetInferencesWithExecutors(context.Context, *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error)
 	// Queries a list of InferenceParticipant items.
 	InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error)
 	// Queries a list of GetRandomExecutor items.
@@ -397,12 +477,26 @@ type QueryServer interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
+	// Queries a list of InferenceValidationDetails items.
+	InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error)
+	InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error)
+	// Queries a list of GetInferenceValidationParameters items.
+	GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error)
+	// Queries a list of EpochPerformanceSummary items.
+	EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error)
+	EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of GetParticipantCurrentStats items.
+	GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error)
+	// Queries a list of GetAllParticipantCurrentStats items.
+	GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error)
+	// Queries a list of GetMinimumValidationAverage items.
+	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -424,9 +518,6 @@ func (UnimplementedQueryServer) Participant(context.Context, *QueryGetParticipan
 }
 func (UnimplementedQueryServer) ParticipantAll(context.Context, *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAll not implemented")
-}
-func (UnimplementedQueryServer) GetInferencesWithExecutors(context.Context, *QueryGetInferencesWithExecutorsRequest) (*QueryGetInferencesWithExecutorsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetInferencesWithExecutors not implemented")
 }
 func (UnimplementedQueryServer) InferenceParticipant(context.Context, *QueryInferenceParticipantRequest) (*QueryInferenceParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceParticipant not implemented")
@@ -482,6 +573,21 @@ func (UnimplementedQueryServer) InferenceTimeout(context.Context, *QueryGetInfer
 func (UnimplementedQueryServer) InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferenceTimeoutAll not implemented")
 }
+func (UnimplementedQueryServer) InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceValidationDetails not implemented")
+}
+func (UnimplementedQueryServer) InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferenceValidationDetailsAll not implemented")
+}
+func (UnimplementedQueryServer) GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInferenceValidationParameters not implemented")
+}
+func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummary not implemented")
+}
+func (UnimplementedQueryServer) EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryAll not implemented")
+}
 func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
 }
@@ -490,6 +596,15 @@ func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNod
 }
 func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
+}
+func (UnimplementedQueryServer) GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetParticipantCurrentStats not implemented")
+}
+func (UnimplementedQueryServer) GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAllParticipantCurrentStats not implemented")
+}
+func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -590,24 +705,6 @@ func _Query_ParticipantAll_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).ParticipantAll(ctx, req.(*QueryAllParticipantRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_GetInferencesWithExecutors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryGetInferencesWithExecutorsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).GetInferencesWithExecutors(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_GetInferencesWithExecutors_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).GetInferencesWithExecutors(ctx, req.(*QueryGetInferencesWithExecutorsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -936,6 +1033,96 @@ func _Query_InferenceTimeoutAll_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferenceValidationDetails_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceValidationDetailsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceValidationDetails(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceValidationDetails_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceValidationDetails(ctx, req.(*QueryGetInferenceValidationDetailsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_InferenceValidationDetailsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllInferenceValidationDetailsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferenceValidationDetailsAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferenceValidationDetailsAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferenceValidationDetailsAll(ctx, req.(*QueryAllInferenceValidationDetailsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetInferenceValidationParameters_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetInferenceValidationParametersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetInferenceValidationParameters(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetInferenceValidationParameters_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetInferenceValidationParameters(ctx, req.(*QueryGetInferenceValidationParametersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochPerformanceSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetEpochPerformanceSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochPerformanceSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochPerformanceSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochPerformanceSummary(ctx, req.(*QueryGetEpochPerformanceSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochPerformanceSummaryAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllEpochPerformanceSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochPerformanceSummaryAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochPerformanceSummaryAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochPerformanceSummaryAll(ctx, req.(*QueryAllEpochPerformanceSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_TrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryTrainingTaskRequest)
 	if err := dec(in); err != nil {
@@ -990,6 +1177,60 @@ func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_GetParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetParticipantCurrentStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetParticipantCurrentStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetParticipantCurrentStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetParticipantCurrentStats(ctx, req.(*QueryGetParticipantCurrentStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetAllParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetAllParticipantCurrentStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetAllParticipantCurrentStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetAllParticipantCurrentStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetAllParticipantCurrentStats(ctx, req.(*QueryGetAllParticipantCurrentStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetMinimumValidationAverageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).GetMinimumValidationAverage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_GetMinimumValidationAverage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).GetMinimumValidationAverage(ctx, req.(*QueryGetMinimumValidationAverageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1016,10 +1257,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ParticipantAll",
 			Handler:    _Query_ParticipantAll_Handler,
-		},
-		{
-			MethodName: "GetInferencesWithExecutors",
-			Handler:    _Query_GetInferencesWithExecutors_Handler,
 		},
 		{
 			MethodName: "InferenceParticipant",
@@ -1094,6 +1331,26 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_InferenceTimeoutAll_Handler,
 		},
 		{
+			MethodName: "InferenceValidationDetails",
+			Handler:    _Query_InferenceValidationDetails_Handler,
+		},
+		{
+			MethodName: "InferenceValidationDetailsAll",
+			Handler:    _Query_InferenceValidationDetailsAll_Handler,
+		},
+		{
+			MethodName: "GetInferenceValidationParameters",
+			Handler:    _Query_GetInferenceValidationParameters_Handler,
+		},
+		{
+			MethodName: "EpochPerformanceSummary",
+			Handler:    _Query_EpochPerformanceSummary_Handler,
+		},
+		{
+			MethodName: "EpochPerformanceSummaryAll",
+			Handler:    _Query_EpochPerformanceSummaryAll_Handler,
+		},
+		{
 			MethodName: "TrainingTask",
 			Handler:    _Query_TrainingTask_Handler,
 		},
@@ -1104,6 +1361,18 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HardwareNodesAll",
 			Handler:    _Query_HardwareNodesAll_Handler,
+		},
+		{
+			MethodName: "GetParticipantCurrentStats",
+			Handler:    _Query_GetParticipantCurrentStats_Handler,
+		},
+		{
+			MethodName: "GetAllParticipantCurrentStats",
+			Handler:    _Query_GetAllParticipantCurrentStats_Handler,
+		},
+		{
+			MethodName: "GetMinimumValidationAverage",
+			Handler:    _Query_GetMinimumValidationAverage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

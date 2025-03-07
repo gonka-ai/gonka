@@ -27,7 +27,7 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 	actions := keeper.GetTopMinerActions(minerSet)
 	minerFound := false
 	for _, action := range actions {
-		am.LogInfo("top miner action", "address", action.MinerAddress(), "action", action.TopMinerActionName(), "object", action)
+		am.LogInfo("top miner action", types.Tokenomics, "address", action.MinerAddress(), "action", action.TopMinerActionName(), "object", action)
 		switch typedAction := action.(type) {
 		case keeper.DoNothing:
 			continue

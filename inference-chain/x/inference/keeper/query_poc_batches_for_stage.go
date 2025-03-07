@@ -19,7 +19,7 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 
 	pocBatches, err := k.GetPoCBatchesByStage(ctx, req.BlockHeight)
 	if err != nil {
-		k.LogError("failed to get PoC batches", "err", err)
+		k.LogError("failed to get PoC batches", types.PoC, "err", err)
 		return nil, status.Error(codes.Internal, "failed to get PoC batches")
 	}
 
@@ -27,19 +27,19 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 	for participantIndex, batches := range pocBatches {
 		addr, err := sdk.AccAddressFromBech32(participantIndex)
 		if err != nil {
-			k.LogError("PocBatchesForStage. Invalid address", "address", participantIndex, "err", err)
+			k.LogError("PocBatchesForStage. Invalid address", types.PoC, "address", participantIndex, "err", err)
 			continue
 		}
 
 		acc := k.AccountKeeper.GetAccount(ctx, addr)
 		if acc == nil {
-			k.LogError("PocBatchesForStage. Account not found", "address", participantIndex)
+			k.LogError("PocBatchesForStage. Account not found", types.PoC, "address", participantIndex)
 			continue
 		}
 
 		pubKey := acc.GetPubKey()
 		if pubKey == nil {
-			k.LogError("PocBatchesForStage. PubKey not found", "address", participantIndex)
+			k.LogError("PocBatchesForStage. PubKey not found", types.PoC, "address", participantIndex)
 			continue
 		}
 
