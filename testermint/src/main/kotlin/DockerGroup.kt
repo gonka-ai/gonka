@@ -98,7 +98,7 @@ data class DockerGroup(
             try {
                 prodLocal.deleteRecursively()
             } catch (e: FileSystemException) {
-                e.suppressed.forEach { Logger.error("Error deleting directory:{}", e.message) }
+                e.suppressed.forEach { Logger.error("Error deleting directory:{}", it.message) }
             }
         }
 

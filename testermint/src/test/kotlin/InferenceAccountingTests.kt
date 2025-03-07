@@ -66,6 +66,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun `test post settle amounts`() {
         val (_, genesis) = initCluster()
         val nextSettleBlock = genesis.getNextSettleBlock()
