@@ -289,6 +289,21 @@ func (b *Broker) syncNodes() {
 		chainNodesMap[node.LocalId] = node
 	}
 
+	diff := b.calculateNodesDiff(chainNodesMap)
+
+	logging.Info("[sync nodes] Hardware diff computed", types.Nodes, "diff", diff)
+
+	if (diff.Removed == nil || len(diff.Removed) == 0) && (diff.NewOrModified == nil || len(diff.NewOrModified) == 0) {
+		logging.Info("[sync nodes] No diff to submit", types.Nodes)
+	} else {
+		logging.Info("[sync nodes] Submitting diff", types.Nodes)
+		if _, err = b.client.SendTransaction(&diff); err != nil {
+			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
+		}
+	}
+}
+
+func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode) types.MsgSubmitHardwareDiff {
 	var diff types.MsgSubmitHardwareDiff
 	diff.Creator = b.client.GetAddress()
 
@@ -308,17 +323,7 @@ func (b *Broker) syncNodes() {
 			diff.Removed = append(diff.Removed, chainNode)
 		}
 	}
-
-	logging.Info("[sync nodes] Hardware diff computed", types.Nodes, "diff", diff)
-
-	if (diff.Removed == nil || len(diff.Removed) == 0) && (diff.NewOrModified == nil || len(diff.NewOrModified) == 0) {
-		logging.Info("[sync nodes] No diff to submit", types.Nodes)
-	} else {
-		logging.Info("[sync nodes] Submitting diff", types.Nodes)
-		if _, err = b.client.SendTransaction(&diff); err != nil {
-			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
-		}
-	}
+	return diff
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
