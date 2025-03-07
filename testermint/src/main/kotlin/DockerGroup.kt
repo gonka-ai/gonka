@@ -98,7 +98,25 @@ data class DockerGroup(
             try {
                 prodLocal.deleteRecursively()
             } catch (e: FileSystemException) {
-                e.suppressed.forEach { Logger.error("Error deleting directory:{}, {} ({})", it.message, it.javaClass.name, it.cause?.message) }
+                val rootCauses = mutableSetOf<Throwable>()
+                fun extractRootCause(throwable: Throwable) {
+                    throwable.cause?.let { cause ->
+                        if (!rootCauses.contains(cause)) {
+                            rootCauses.add(cause)
+                            extractRootCause(cause)
+                        }
+                    }
+                    throwable.suppressed.forEach { suppressed ->
+                        if (!rootCauses.contains(suppressed)) {
+                            rootCauses.add(suppressed)
+                            extractRootCause(suppressed)
+                        }
+                    }
+                }
+                extractRootCause(e)
+                rootCauses.forEach { cause ->
+                    Logger.error("Root cause error deleting directory: {} ({})", cause.message, cause.javaClass.name)
+                }
             }
         }
 
