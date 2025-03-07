@@ -130,7 +130,7 @@ func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 		// PRTODO: analyze response somehow?
 		_, err = o.sendInitGenerateRequest(n.Node, int64(totalNodes), blockHeight, blockHash)
 		if err != nil {
-			slog.Error("Failed to send init-generate request to node", "node", n.Node.Host, "error", err)
+			logging.Error("Failed to send init-generate request to node", types.Nodes, n.Node.Host, "error", err)
 			continue
 		}
 	}
@@ -208,7 +208,7 @@ func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Respo
 		return nil, err
 	}
 
-	slog.Info("Sending stop all request to node", "stopUrl", stopUrl)
+	logging.Info("Sending stop all request to node", types.Nodes, stopUrl)
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
@@ -236,7 +236,7 @@ func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http
 		return nil, err
 	}
 
-	slog.Info("Sending inference/down request to node", "inferenceDownUrl", inferenceDownUrl)
+	logging.Info("Sending inference/down request to node", types.Nodes, inferenceDownUrl)
 	return sendPostRequest(o.HTTPClient, inferenceDownUrl, nil)
 }
 

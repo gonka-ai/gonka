@@ -15,7 +15,6 @@ import (
 
 	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/sagikazarmark/slog-shim"
 )
 
 type PoCOrchestrator struct {

@@ -12,7 +12,7 @@ import (
 )
 
 func generateSeed(blockHeight int64, transactionRecorder *cosmosclient.InferenceCosmosClient, manager *apiconfig.ConfigManager) {
-	slog.Debug("Old Seed Signature", "seed", manager.GetCurrentSeed())
+	logging.Debug("Old Seed Signature", types.Claims, manager.GetCurrentSeed())
 	newSeed, err := createNewSeed(blockHeight, transactionRecorder)
 	if err != nil {
 		logging.Error("Failed to get next seed signature", types.Claims, "error", err)
