@@ -35,7 +35,7 @@ jobs:
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
-        run: make build-docker
+        run: sudo make build-docker
 
       - name: Run Tests
         run: sudo make run-tests
