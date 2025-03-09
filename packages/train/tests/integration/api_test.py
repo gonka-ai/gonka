@@ -43,7 +43,7 @@ def test_train_pipeline():
     client_ports = map_ports(servers, master_server_port)
     clients = [TrainClient(f"{scheme}://{server}:{port}") for server, port in zip(servers, client_ports)]
 
-    train_config_dict = toml.load("/app/packages/train/configs/1B_3090_1x1.toml")
+    train_config_dict = toml.load("/app/packages/train/resources/configs/1B_3090_1x1.toml")
     env_dicts = get_env_dictionaries(servers, master_server_host)
 
     for i, env_dict in enumerate(env_dicts):

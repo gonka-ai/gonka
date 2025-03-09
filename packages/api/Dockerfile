@@ -1,6 +1,32 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.5.0.post1 AS builder
+FROM gcr.io/decentralized-ai/vllm:0.5.0.post1 AS base
+
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    --mount=type=cache,target=/root/.cache/pip \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    python3-pip \
+    build-essential \
+    checkinstall \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --upgrade setuptools wheel pip \
+    && curl -fLO https://www.openssl.org/source/old/1.1.1/openssl-1.1.1u.tar.gz \
+    && tar -xzf openssl-1.1.1u.tar.gz \
+    && cd openssl-1.1.1u \
+    && ./config --prefix=/usr/local/openssl-1.1 \
+                --openssldir=/usr/local/openssl-1.1/ssl \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd .. \
+    && rm -rf openssl-1.1.1u.tar.gz openssl-1.1.1u
+
+ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
+
+################################################################################
+FROM base AS builder
 
 ENV POETRY_VERSION=2.0.1 \
     PYTHONUNBUFFERED=1 \
@@ -37,11 +63,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     poetry config virtualenvs.in-project true \
     && cd /app/packages/api \
     && poetry install --no-interaction \
-    && pip install flash-attn --no-build-isolation \
+    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
     && . /app/packages/api/.venv/bin/activate
 
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.5.0.post1 AS app
+FROM base AS app
 COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
 
 COPY packages/api/src /app/packages/api/src
@@ -52,7 +78,7 @@ COPY packages/pow/scripts /app/packages/pow/scripts
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
-COPY packages/train/configs /app/packages/train/configs
+COPY packages/train/resources /app/packages/train/resources
 
 COPY packages/common/src /app/packages/common/src
 COPY .git /app/.git
@@ -83,7 +109,7 @@ COPY packages/pow/scripts /app/packages/pow/scripts
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
-COPY packages/train/configs /app/packages/train/configs
+COPY packages/train/resources /app/packages/train/resources
 
 COPY packages/common/src /app/packages/common/src
 

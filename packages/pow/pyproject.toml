@@ -24,6 +24,7 @@ mlnode-common = { path = "../common", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
+pytest-timeout = "^2.3.1"
 ruff = "^0.6.9"
 wait-for-it = "^2.0.0"
 

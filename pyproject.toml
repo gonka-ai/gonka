@@ -17,6 +17,7 @@ mlnode-train = {path = "packages/train", develop = true}
 mlnode-api = {path = "packages/api", develop = true}
 
 pytest = "^7.4.3"
+pytest-timeout = "^2.3.1"
 pytest-asyncio = "^0.23.1"
 requests = "^2.31.0"
 

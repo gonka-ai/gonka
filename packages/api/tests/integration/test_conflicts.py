@@ -35,7 +35,7 @@ def public_key():
 
 @pytest.fixture(scope="session")
 def train_config_dict():
-    return toml.load("/app/packages/train/configs/1B_3090_1x1.toml")
+    return toml.load("/app/packages/train/resources/configs/1B_3090_1x1.toml")
 
 @pytest.fixture(scope="session")
 def model_name():

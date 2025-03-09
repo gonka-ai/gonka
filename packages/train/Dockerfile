@@ -11,12 +11,27 @@ ENV APP_PATH=/app/packages/train
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     python3-pip \
+    build-essential \
+    checkinstall \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade setuptools wheel pip
+    && pip install --upgrade setuptools wheel pip \
+    && curl -fLO https://www.openssl.org/source/old/1.1.1/openssl-1.1.1u.tar.gz \
+    && tar -xzf openssl-1.1.1u.tar.gz \
+    && cd openssl-1.1.1u \
+    && ./config --prefix=/usr/local/openssl-1.1 \
+                --openssldir=/usr/local/openssl-1.1/ssl \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd .. \
+    && rm -rf openssl-1.1.1u.tar.gz openssl-1.1.1u
+
+ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
 
 RUN pip install --upgrade pip && \
     pip install "poetry==$POETRY_VERSION"
@@ -42,13 +57,13 @@ COPY packages/train/third_party ${APP_PATH}/third_party
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
     poetry config virtualenvs.in-project true && \
-    cd ${APP_PATH} && \
-    poetry install --no-interaction \
-    && pip install flash-attn --no-build-isolation
+    cd ${APP_PATH} \
+    && poetry install --no-interaction \
+    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts
-COPY packages/train/configs /app/packages/train/configs
+COPY packages/train/resources /app/packages/train/resources
 COPY packages/common/src /app/packages/common/src
 
 # Just to provide metadata for the wandb project

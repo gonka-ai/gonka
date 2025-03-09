@@ -22,6 +22,11 @@ from zeroband.monitor.checkpoint import CkptManager, TrainingProgress
 from zeroband.monitor.metric_logger import WandbMetricLogger, DummyMetricLogger
 from zeroband.monitor.eval import evaluate
 
+from common.logger import create_logger
+
+logger = create_logger(__name__)
+
+
 
 def train(config: Config):
     world_info = get_world_info()
@@ -275,11 +280,8 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
     set_random_seed(42)
     world_info = get_world_info()
-    logger = get_logger()
     
-    print(torch.cuda.is_available())
     torch.cuda.init()
-    print(torch.cuda.device_count())
     
     torch.cuda.set_device(world_info.local_rank)
     config = Config(**parse_argv())

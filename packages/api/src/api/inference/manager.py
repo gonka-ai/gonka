@@ -29,7 +29,6 @@ class InferenceManager:
         self,
         init_request: InferenceInitRequest
     ):
-        print(f"init_vllm: {self.is_running()}")
         if self.is_running():
             raise Exception("VLLMRunner is already running. Stop it first.")
         
@@ -47,9 +46,11 @@ class InferenceManager:
             raise Exception("VLLMRunner is running")
 
         self.vllm_runner.start()
+        logger.info("VLLMRunner started")
 
     def stop(self):
         self.vllm_runner.stop()
+        logger.info("VLLMRunner stopped")
 
     def is_running(self) -> bool:
         return self.vllm_runner is not None and self.vllm_runner.is_running()
