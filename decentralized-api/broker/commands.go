@@ -115,3 +115,23 @@ func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 type StartPoC struct {
 	Response chan bool
 }
+
+type StartTrainingCommand struct {
+	masterNodeAddress string
+	worldSize         int
+	nodeRanks         map[string]int
+	Response          chan bool
+}
+
+func NewStartTrainingCommand(masterNodeAddress string, worldSize int, nodeRanks map[string]int) StartTrainingCommand {
+	return StartTrainingCommand{
+		masterNodeAddress: masterNodeAddress,
+		worldSize:         worldSize,
+		nodeRanks:         nodeRanks,
+		Response:          make(chan bool, 2),
+	}
+}
+
+func (c StartTrainingCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}

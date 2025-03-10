@@ -88,6 +88,8 @@ func (b *Broker) processCommands() {
 			b.syncNodes(command)
 		case LockNodesForTrainingCommand:
 			b.lockNodesForTraining(command)
+		case StartTrainingCommand:
+			b.startTraining(command)
 		default:
 			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
 		}
@@ -303,6 +305,33 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
 	// PRTODO: implement
+	command.Response <- true
+}
+
+func (b *Broker) startTraining(command StartTrainingCommand) {
+	for nodeId, rank := range command.nodeRanks {
+		node, nodeFound := b.nodes[nodeId]
+		if !nodeFound {
+			slog.Error("Node not found", "node_id", nodeId)
+			command.Response <- false
+			return
+		}
+
+		client, err := NewNodeClient(&node.Node)
+		if err != nil {
+			slog.Error("Error creating node client", "error", err)
+			command.Response <- false
+			return
+		}
+
+		err = client.StartTraining(command.masterNodeAddress, rank, command.worldSize)
+		if err != nil {
+			slog.Error("Error starting training", "error", err)
+			command.Response <- false
+			return
+		}
+	}
+
 	command.Response <- true
 }
 

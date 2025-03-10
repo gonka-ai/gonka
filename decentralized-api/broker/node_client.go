@@ -20,7 +20,7 @@ type InferenceNodeClient struct {
 	client http.Client
 }
 
-func NewNodeApi(node *apiconfig.InferenceNode) (*InferenceNodeClient, error) {
+func NewNodeClient(node *apiconfig.InferenceNode) (*InferenceNodeClient, error) {
 	if node == nil {
 		return nil, errors.New("node is nil")
 	}

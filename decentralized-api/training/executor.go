@@ -78,7 +78,25 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 	}
 
 	slog.Info(logTagExecutor+"The task is assigned to me", "taskId", taskId, "nodes", myNodes)
-	// PRTODO: send start training request
+
+	// PRTODO: FIXME: CHOOSE MASTER NODE AND STUFF!
+	command := broker.NewStartTrainingCommand(
+		"whatever",
+		len(myNodes),
+		map[string]int{},
+	)
+	err = e.broker.QueueMessage(command)
+	if err != nil {
+		slog.Error(logTagExecutor+"Error starting training", "taskId", taskId, "error", err)
+		return
+	}
+
+	success := <-command.Response
+	if success {
+		slog.Info(logTagExecutor+"Training started", "taskId", taskId)
+	} else {
+		slog.Error(logTagExecutor+"Error starting training", "taskId", taskId)
+	}
 }
 
 func (e *Executor) CheckStatusRoutine() {
