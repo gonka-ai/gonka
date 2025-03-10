@@ -89,13 +89,59 @@ type TrainEnv struct {
 	BasePort        int    `json:"BASE_PORT"`
 }
 
+var devTrainConfig = TrainConfig{
+	Project:     "1B-ft-xlam",
+	Name:        "refactor test 3090",
+	Description: "3090 micro bs2",
+	Group:       "base",
+	Tags:        []string{"1x1", "no-diloco"},
+	Train: TrainParams{
+		MicroBatchSize: 2,
+		EvalInterval:   50,
+	},
+	Data: DataConfig{
+		SeqLength: 1024,
+	},
+	Optim: OptimConfig{
+		SchedType:    "cosine",
+		BatchSize:    32,
+		WarmupSteps:  50,
+		TotalSteps:   6000,
+		AdamBetas1:   0.9,
+		AdamBetas2:   0.95,
+		WeightDecay:  0.1,
+		LearningRate: 5e-6,
+	},
+	Diloco: DilocoConfig{
+		InnerSteps: 50,
+	},
+	Ckpt: Checkpoint{
+		Interval: 1000,
+		TopK:     6,
+		Path:     "outputs/1B_4x1-lr",
+	},
+}
+
 func (api *InferenceNodeClient) StartTraining() error {
 	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, nil)
+	body := StartTraining{
+		TrainConfig: devTrainConfig,
+		// PRTODO: fix me!
+		TrainEnv: TrainEnv{
+			GlobalAddr:      "",
+			GlobalPort:      "",
+			GlobalRank:      0,
+			GlobalUniqueID:  0,
+			GlobalWorldSize: 1,
+			BasePort:        0,
+		},
+	}
+
+	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, body)
 	if err != nil {
 		return err
 	}
