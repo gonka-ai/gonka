@@ -53,6 +53,8 @@ func (a *Assigner) claimTasksForAssignment() {
 		case <-ticker.C:
 			if a.task == nil {
 				a.tryClaimingTaskToAssign()
+			} else {
+				a.checkTaskIsStillClaimed()
 			}
 
 			// Task could be assigned in the "if" above, thus we're rechecking here
@@ -97,6 +99,7 @@ func (a *Assigner) tryClaimingTaskToAssign() {
 	_, err = a.cosmosClient.ClaimTrainingTaskForAssignment(&msg)
 	if err != nil {
 		slog.Error(logTag+"Error claiming task for assignment", "err", err)
+		return
 	}
 
 	slog.Info(logTag+"Claimed task for assignment", "taskId", task.Id)
@@ -158,6 +161,7 @@ func (a *Assigner) assignTask(task types.TrainingTask) {
 		slog.Error(logTag+"Error picking task", "err", err)
 		return
 	}
+	slog.Info(logTag+"Selected participants", "participants", selectedParticipants)
 
 	httpClient := utils.NewHttpClient(120 * time.Second)
 	for _, p := range selectedParticipants {
@@ -176,6 +180,7 @@ func (a *Assigner) assignTask(task types.TrainingTask) {
 			return
 		}
 	}
+	slog.Info(logTag+"Confirmed availability for participants", "participants", selectedParticipants)
 
 	assignees := make([]*inference.TrainingTaskAssignee, 0, len(selectedParticipants))
 	for i, p := range selectedParticipants {
@@ -194,6 +199,28 @@ func (a *Assigner) assignTask(task types.TrainingTask) {
 		// TODO: what should we do? We need to know the reason, maybe someone else assigned it
 		//  Get back here once you implement msg processing and understand what can go wrong here
 	} else {
+		slog.Info(logTag+"Assigned task", "taskId", task.Id)
+		a.task = nil
+	}
+}
+
+func (a *Assigner) checkTaskIsStillClaimed() {
+	if a.task == nil {
+		return
+	}
+
+	queryClient := a.cosmosClient.NewInferenceQueryClient()
+	req := &types.QueryTrainingTaskRequest{
+		Id: a.task.task.Id,
+	}
+	resp, err := queryClient.TrainingTask(*a.cosmosClient.GetContext(), req)
+	if err != nil {
+		slog.Error(logTag+"Error querying for task", "taskId", a.task.task.Id, "err", err)
+		return
+	}
+
+	if resp.Task.Assigner != a.cosmosClient.GetAddress() {
+		slog.Info(logTag+"Task is no longer claimed by me", "taskId", a.task.task.Id)
 		a.task = nil
 	}
 }
