@@ -226,8 +226,8 @@ func handleMessage(
 		slog.Debug("New proposal submitted", "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
 		if isNodeSynced() {
-			// TODO:
-			slog.Debug("MsgAssignTrainingTask event", "event", event)
+			taskId := event.Result.Events["training_task_assigned.task_id"]
+			slog.Debug("MsgAssignTrainingTask event", "taskId", taskId, "event", event)
 		}
 	default:
 		slog.Debug("Unhandled action received", "action", action)
