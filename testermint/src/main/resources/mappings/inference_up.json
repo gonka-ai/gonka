@@ -1,6 +1,7 @@
 {
   "scenarioName": "ModelState",
   "requiredScenarioState": "STOPPED",
+  "newScenarioState": "INFERENCE",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/inference/up"
@@ -10,7 +11,6 @@
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": "",
-    "newScenarioState": "INFERENCE"
+    "body": ""
   }
 }
