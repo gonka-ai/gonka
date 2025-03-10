@@ -122,7 +122,12 @@ var devTrainConfig = TrainConfig{
 	},
 }
 
-func (api *InferenceNodeClient) StartTraining() error {
+const (
+	defaultGlobalTrainingPort = "5565"
+	defaultTrainingBasePort   = 10001
+)
+
+func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
 	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
 	if err != nil {
 		return err
@@ -130,14 +135,13 @@ func (api *InferenceNodeClient) StartTraining() error {
 
 	body := StartTraining{
 		TrainConfig: devTrainConfig,
-		// PRTODO: fix me!
 		TrainEnv: TrainEnv{
-			GlobalAddr:      "",
-			GlobalPort:      "",
-			GlobalRank:      0,
-			GlobalUniqueID:  0,
-			GlobalWorldSize: 1,
-			BasePort:        0,
+			GlobalAddr:      masterNodeAddr,
+			GlobalPort:      defaultGlobalTrainingPort,
+			GlobalRank:      rank,
+			GlobalUniqueID:  rank,
+			GlobalWorldSize: worldSize,
+			BasePort:        defaultTrainingBasePort,
 		},
 	}
 
