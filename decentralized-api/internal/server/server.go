@@ -10,6 +10,7 @@ import (
 	"decentralized-api/completionapi"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/merkleproof"
+	"decentralized-api/training"
 	"decentralized-api/utils"
 	"encoding/base64"
 	"encoding/json"
@@ -45,6 +46,7 @@ func StartInferenceServerWrapper(
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmos_client.CosmosMessageClient,
 	configManager *apiconfig.ConfigManager,
+	executor *training.Executor,
 ) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Debug("StartInferenceServerWrapper")
@@ -68,10 +70,10 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(transactionRecorder))
 	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
-	mux.HandleFunc("/v1/training/tasks", api.WrapTraining(transactionRecorder, nodeBroker))
-	mux.HandleFunc("/v1/training/tasks/", api.WrapTraining(transactionRecorder, nodeBroker))
+	mux.HandleFunc("/v1/training/tasks", api.WrapTraining(transactionRecorder, nodeBroker, executor))
+	mux.HandleFunc("/v1/training/tasks/", api.WrapTraining(transactionRecorder, nodeBroker, executor))
 	// FIXME: Needs some kind of a proof that the requester is the assigner
-	mux.HandleFunc("/v1/training/lock-nodes", api.WrapTraining(transactionRecorder, nodeBroker))
+	mux.HandleFunc("/v1/training/lock-nodes", api.WrapTraining(transactionRecorder, nodeBroker, executor))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")

@@ -4,6 +4,7 @@ import (
 	"decentralized-api/api/model"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/training"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
@@ -19,14 +20,14 @@ import (
 
 curl -X GET http://localhost:8080/v1/training-jobs/1
 */
-func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient, broker *broker.Broker) func(w http.ResponseWriter, request *http.Request) {
+func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient, broker *broker.Broker, executor *training.Executor) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodPost:
 			if request.URL.Path == "/v1/training/tasks" {
 				handleCreateTrainingJob(cosmosClient, w, request)
 			} else if request.URL.Path == "/v1/training/lock-nodes" {
-				handleLockTrainingNodes(cosmosClient, broker, w, request)
+				handleLockTrainingNodes(cosmosClient, executor, w, request)
 			} else {
 				http.NotFound(w, request)
 			}
@@ -112,25 +113,18 @@ func handleGetTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, id stri
 }
 
 // FIXME: Needs some kind of a proof that the requester is the assigner
-func handleLockTrainingNodes(cosmosClient cosmosclient.CosmosMessageClient, nodeBroker *broker.Broker, w http.ResponseWriter, r *http.Request) {
+func handleLockTrainingNodes(cosmosClient cosmosclient.CosmosMessageClient, executor *training.Executor, w http.ResponseWriter, r *http.Request) {
 	body, err := parseJsonBody[model.LockTrainingNodesDto](r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	command := broker.NewLockNodesForTrainingCommand(body.NodeIds)
-	err = nodeBroker.QueueMessage(command)
+	err = executor.PreassignTask(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	success := <-command.Response
-
-	if success {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		http.Error(w, "Failed to lock nodes", http.StatusInternalServerError)
-	}
+	w.WriteHeader(http.StatusOK)
 }

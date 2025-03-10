@@ -74,14 +74,15 @@ func main() {
 		ChainNodeUrl: config.GetConfig().ChainNode.Url,
 	}
 	// FIXME: What context to pass?
-	training.NewAssigner(recorder, &tendermintClient, context.Background())
-	trainingExecutor := training.NewExecutor(nodeBroker)
+	ctx := context.Background()
+	training.NewAssigner(recorder, &tendermintClient, ctx)
+	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	go func() {
 		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params, trainingExecutor)
 	}()
 
-	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
+	server.StartInferenceServerWrapper(nodeBroker, recorder, config, trainingExecutor)
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
