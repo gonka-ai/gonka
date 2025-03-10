@@ -226,8 +226,20 @@ func handleMessage(
 		slog.Debug("New proposal submitted", "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
 		if isNodeSynced() {
-			taskId := event.Result.Events["training_task_assigned.task_id"]
-			slog.Debug("MsgAssignTrainingTask event", "taskId", taskId, "event", event)
+			slog.Debug("MsgAssignTrainingTask event", "event", event)
+			taskIds := event.Result.Events["training_task_assigned.task_id"]
+			if taskIds == nil {
+				slog.Error("No task ID found in training task assigned event", "event", event)
+				return
+			}
+			for _, taskId := range taskIds {
+				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
+				if err != nil {
+					slog.Error("Failed to parse task ID", "error", err)
+					return
+				}
+				executor.ProcessTaskAssignedEvent(taskIdUint)
+			}
 		}
 	default:
 		slog.Debug("Unhandled action received", "action", action)
