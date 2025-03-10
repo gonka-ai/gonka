@@ -216,9 +216,11 @@ fun initCluster(
     try {
         initialize(cluster.allPairs)
     } catch (e: Exception) {
+        Logger.error(e, "Failed to initialize cluster")
         if (reboot) {
             throw e
         }
+        Logger.info("Rebooting cluster to try again after init error", "")
         return initCluster(joinCount, config, reboot = true)
     }
     return cluster to cluster.genesis
