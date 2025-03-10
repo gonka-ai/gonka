@@ -4,6 +4,7 @@ import (
 	"context"
 	cosmosstore "cosmossdk.io/store"
 	types2 "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k Keeper) GetCommitMultiStore(ctx context.Context) {
@@ -11,5 +12,5 @@ func (k Keeper) GetCommitMultiStore(ctx context.Context) {
 	multiStore := sdkContext.MultiStore()
 
 	commitMultiStore := multiStore.(cosmosstore.CommitMultiStore)
-	k.LogInfo("CommitMultiStore", "commitMultiStore", commitMultiStore)
+	k.LogInfo("CommitMultiStore", types.System, "commitMultiStore", commitMultiStore)
 }

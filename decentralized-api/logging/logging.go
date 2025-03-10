@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"os"
 )
@@ -22,4 +23,22 @@ func WithNoopLogger(action func() (any, error)) (any, error) {
 
 	setNoopLogger()
 	return action()
+}
+
+func Warn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
+	slog.Warn(msg, withSubsystem...)
+}
+
+func Info(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
+	slog.Info(msg, withSubsystem...)
+}
+func Error(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
+	slog.Error(msg, withSubsystem...)
+}
+func Debug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
+	slog.Debug(msg, withSubsystem...)
 }

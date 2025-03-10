@@ -3,9 +3,9 @@ package api
 import (
 	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,7 +78,7 @@ func handleCreateTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, w ht
 }
 
 func handleGetTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, id string, w http.ResponseWriter, r *http.Request) {
-	slog.Info("GetTrainingJob", "id", id)
+	logging.Info("GetTrainingJob", types.Training, "id", id)
 	uintId, err := strconv.ParseUint(id, 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid training job ID", http.StatusBadRequest)

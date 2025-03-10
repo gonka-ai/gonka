@@ -17,6 +17,8 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/shopspring/decimal"
 	"math/rand"
 
 	// this line is used by starport scaffolding # 1
@@ -169,16 +171,15 @@ func (am AppModule) expireInferences(ctx context.Context, timeouts []types.Infer
 func (am AppModule) handleExpiredInference(ctx context.Context, inference types.Inference) {
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
-		am.LogWarn("Unable to find participant for expired inference", "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
+		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
 		return
 	}
-	am.LogInfo("Inference expired, not finished. Issuing refund", "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
-	executor.Reputation -= 0.01
+	am.LogInfo("Inference expired, not finished. Issuing refund", types.Inferences, "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
 	err := am.keeper.IssueRefund(ctx, uint64(inference.EscrowAmount), inference.RequestedBy)
 	if err != nil {
-		am.LogError("Error issuing refund", "error", err)
+		am.LogError("Error issuing refund", types.Inferences, "error", err)
 	}
 	am.keeper.SetInference(ctx, inference)
 	am.keeper.SetParticipant(ctx, executor)
@@ -195,7 +196,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err := am.expireInferences(ctx, timeouts)
 	if err != nil {
-		am.LogError("Error expiring inferences")
+		am.LogError("Error expiring inferences", types.Inferences)
 	}
 	for _, t := range timeouts {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
@@ -206,15 +207,15 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
-		am.LogInfo("NewPocStart", "blockHeight", blockHeight)
+		am.LogInfo("NewPocStart", types.System, "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight))
 		if err != nil {
-			am.LogError("Unable to create epoch group", "error", err.Error())
+			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
 		err = newGroup.CreateGroup(ctx)
 		if err != nil {
-			am.LogError("Unable to create epoch group", "error", err.Error())
+			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
@@ -224,20 +225,20 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		am.LogError("Unable to get current epoch group", "error", err.Error())
+		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())
 		return nil
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
-		am.LogInfo("EpochGroupChanged", "blockHeight", blockHeight)
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight)
 		computeResult, err := currentEpochGroup.GetComputeResults(ctx)
 		if err != nil {
-			am.LogError("Unable to get compute results", "error", err.Error())
+			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
 		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
 		if err != nil {
-			am.LogError("Unable to update epoch group", "error", err.Error())
+			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
 		}
 		currentEpochGroup.MarkUnchanged(ctx)
 	}
@@ -246,32 +247,32 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
-	am.LogInfo("onSetNewValidatorsStage start", "blockHeight", blockHeight)
+	am.LogInfo("onSetNewValidatorsStage start", types.System, "blockHeight", blockHeight)
 	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
 	err := am.keeper.SettleAccounts(ctx, pocHeight)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
 
 	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup, "error", err.Error())
 		return
 	}
 
 	activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
 	if activeParticipants == nil {
-		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil")
+		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
 	}
 
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to register top miners", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.PoC, "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
@@ -280,12 +281,18 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
 		CreatedAtBlockHeight: blockHeight,
 	})
+	validationParams := am.keeper.GetParams(ctx).ValidationParams
 
 	for _, p := range activeParticipants {
 		// FIXME: add some centralized way that'd govern key enc/dec rules
-		err := upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature)
+		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
 		if err != nil {
-			am.LogError("onSetNewValidatorsStage: Unable to add member", "error", err.Error())
+			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
+			reputation = 0
+		}
+		err = upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature, reputation)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue
 		}
 	}
@@ -294,7 +301,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	if upcomingEg.GroupData.EpochGroupId != 1 {
 		currentEg, err := am.keeper.GetCurrentEpochGroup(ctx)
 		if err != nil {
-			am.LogError("onSetNewValidatorsStage: Unable to get current epoch group", "error", err.Error())
+			am.LogError("onSetNewValidatorsStage: Unable to get current epoch group", types.EpochGroup, "error", err.Error())
 			return
 		}
 		defaultPrice = currentEg.GroupData.UnitOfComputePrice
@@ -304,16 +311,16 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get all unit of compute price proposals", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: Unable to get all unit of compute price proposals", types.Pricing, "error", err.Error())
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", "len(proposals)", len(proposals))
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", types.Pricing, "len(proposals)", len(proposals))
 
 	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice)
-	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", "medianProposal", medianProposal)
+	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", types.Pricing, "medianProposal", medianProposal)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", "error", err.Error())
+		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", types.Pricing, "error", err.Error())
 		return
 	}
 
@@ -325,27 +332,58 @@ func (am AppModule) computePrice(ctx context.Context) {
 
 }
 
+func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (int64, error) {
+	summaries := am.keeper.GetEpochPerformanceSummariesByParticipant(ctx, p.Index)
+
+	reputationContext := calculations.ReputationContext{
+		EpochCount:           int64(len(summaries)),
+		EpochMissPercentages: make([]decimal.Decimal, len(summaries)),
+		ValidationParams:     params,
+	}
+
+	for i, summary := range summaries {
+		inferenceCount := decimal.NewFromInt(int64(summary.InferenceCount))
+		if inferenceCount.IsZero() {
+			reputationContext.EpochMissPercentages[i] = decimal.Zero
+			continue
+		}
+
+		missed := decimal.NewFromInt(int64(summary.MissedRequests))
+		reputationMetric := missed.Div(inferenceCount)
+		reputationContext.EpochMissPercentages[i] = reputationMetric
+	}
+
+	reputation := calculations.CalculateReputation(&reputationContext)
+
+	return reputation, nil
+}
+
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
 	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
 	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
 
-	am.LogInfo("NewEpochGroup", "blockHeight", blockHeight, "newGroupId", newGroupId)
+	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
 	am.keeper.SetEffectiveEpochGroupId(ctx, newGroupId)
 	am.keeper.SetPreviousEpochGroupId(ctx, previousGroupId)
 	am.keeper.SetUpcomingEpochGroupId(ctx, 0)
 	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId)
 	if !found {
-		am.LogWarn("NewEpochGroupDataNotFound", "blockHeight", blockHeight, "newGroupId", newGroupId)
+		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
 		return
 	}
 	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousGroupId)
 	if !found {
-		am.LogWarn("PreviousEpochGroupDataNotFound", "blockHeight", blockHeight, "previousGroupId", previousGroupId)
+		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousGroupId", previousGroupId)
 		return
 	}
+	params := am.keeper.GetParams(ctx)
 	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
 	newGroupData.UnitOfComputePrice = unitOfComputePrice
+	newGroupData.PreviousEpochRequests = previousGroupData.NumberOfRequests
+	newGroupData.ValidationParams = params.ValidationParams
+
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
+
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
 }
@@ -353,7 +391,7 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 func (am AppModule) setStubActiveParticipants(ctx context.Context, blockHeight int64) {
 	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
 	if err != nil {
-		am.LogError("setMockActiveParticipants: Unable to get upcoming epoch group", "error", err.Error())
+		am.LogError("setMockActiveParticipants: Unable to get upcoming epoch group", types.EpochGroup, "error", err.Error())
 		return
 	}
 
@@ -371,7 +409,7 @@ func (am AppModule) setStubActiveParticipants(ctx context.Context, blockHeight i
 		activeParticipants = append(activeParticipants, activeParticipant)
 	}
 
-	am.LogInfo("setMockActiveParticipants", "blockHeight", blockHeight, "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("setMockActiveParticipants", types.Participants, "blockHeight", blockHeight, "len(activeParticipants)", len(activeParticipants))
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
 		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
@@ -455,18 +493,22 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	}
 }
 
-func (am AppModule) LogInfo(msg string, keyvals ...interface{}) {
-	am.keeper.Logger().Info("INFO+ "+msg, keyvals...)
+func (am AppModule) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
+	am.keeper.Logger().Info(msg, kvWithSubsystem...)
 }
 
-func (am AppModule) LogError(msg string, keyvals ...interface{}) {
-	am.keeper.Logger().Error(msg, keyvals...)
+func (am AppModule) LogError(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
+	am.keeper.Logger().Error(msg, kvWithSubsystem...)
 }
 
-func (am AppModule) LogWarn(msg string, keyvals ...interface{}) {
-	am.keeper.Logger().Warn(msg, keyvals...)
+func (am AppModule) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
+	am.keeper.Logger().Warn(msg, kvWithSubsystem...)
 }
 
-func (am AppModule) LogDebug(msg string, keyvals ...interface{}) {
-	am.keeper.Logger().Debug(msg, keyvals...)
+func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
+	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
 }

@@ -3,15 +3,16 @@ package api
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/logging"
 	"encoding/json"
-	"log/slog"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	strings "strings"
 )
 
 func WrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
-		slog.Info("Request to nodes endpoint", "method", request.Method)
+		logging.Info("Request to nodes endpoint", types.Nodes, "method", request.Method)
 		switch {
 		case request.Method == http.MethodGet:
 			getNodesResponse(nodeBroker, w, request, configManager.GetConfig())
@@ -37,7 +38,7 @@ func WrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager
 func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, configManager *apiconfig.ConfigManager) {
 	// extract nodeid from url (not query params)
 	nodeId := strings.TrimPrefix(request.URL.Path, "/v1/nodes/")
-	slog.Info("Deleting node", "node", nodeId)
+	logging.Info("Deleting node", types.Nodes, "node", nodeId)
 	response := make(chan bool, 2)
 
 	err := nodeBroker.QueueMessage(broker.RemoveNode{
@@ -45,7 +46,7 @@ func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.
 		Response: response,
 	})
 	if err != nil {
-		slog.Error("Error deleting node", "error", err)
+		logging.Error("Error deleting node", types.Nodes, "error", err)
 		http.Error(w, "Error deleting node", http.StatusInternalServerError)
 		return
 	}
@@ -63,14 +64,14 @@ func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 	}
 	err = config.SetNodes(iNodes)
 	if err != nil {
-		slog.Error("Error writing config", "error", err)
+		logging.Error("Error writing config", types.Nodes, "error", err)
 	}
 }
 
 func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
 	var newNodes []apiconfig.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNodes); err != nil {
-		slog.Error("Error decoding request", "error", err)
+		logging.Error("Error decoding request", types.Nodes, "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
 		return
 	}
@@ -88,7 +89,7 @@ func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *h
 func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
 	var newNode apiconfig.InferenceNode
 	if err := json.NewDecoder(request.Body).Decode(&newNode); err != nil {
-		slog.Error("Error decoding request", "error", err)
+		logging.Error("Error decoding request", types.Nodes, "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
 		return
 	}
@@ -111,7 +112,7 @@ func addNode(
 		Response: response,
 	})
 	if err != nil {
-		slog.Error("Error creating new node", "error", err)
+		logging.Error("Error creating new node", types.Nodes, "error", err)
 		http.Error(w, "Error creating new node", http.StatusInternalServerError)
 		return apiconfig.InferenceNode{}, true
 	}
@@ -120,7 +121,7 @@ func addNode(
 	newNodes := append(config.Nodes, node)
 	err = configManager.SetNodes(newNodes)
 	if err != nil {
-		slog.Error("Error writing config", "error", err)
+		logging.Error("Error writing config", types.Config, "error", err)
 	}
 	return node, false
 }
@@ -128,7 +129,7 @@ func addNode(
 func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.Config) {
 	nodes, err := nodeBroker.GetNodes()
 	if err != nil {
-		slog.Error("Error getting nodes", "error", err)
+		logging.Error("Error getting nodes", types.Nodes, "error", err)
 		http.Error(w, "Error getting nodes", http.StatusInternalServerError)
 		return
 	}

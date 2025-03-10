@@ -50,6 +50,14 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	for _, elem := range genState.InferenceTimeoutList {
 		k.SetInferenceTimeout(ctx, elem)
 	}
+	// Set all the inferenceValidationDetails
+	for _, elem := range genState.InferenceValidationDetailsList {
+		k.SetInferenceValidationDetails(ctx, elem)
+	}
+	// Set all the epochPerformanceSummary
+	for _, elem := range genState.EpochPerformanceSummaryList {
+		k.SetEpochPerformanceSummary(ctx, elem)
+	}
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -129,6 +137,8 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.ModelList = getModels(&ctx, &k)
 	genesis.TopMinerList = k.GetAllTopMiner(ctx)
 	genesis.InferenceTimeoutList = k.GetAllInferenceTimeout(ctx)
+	genesis.InferenceValidationDetailsList = k.GetAllInferenceValidationDetails(ctx)
+	genesis.EpochPerformanceSummaryList = k.GetAllEpochPerformanceSummary(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

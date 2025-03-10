@@ -2,13 +2,13 @@ package api
 
 import (
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"decentralized-api/poc"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,7 +24,7 @@ func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.Resp
 		case http.MethodGet:
 			getPoCBatches(recorder, w, request)
 		default:
-			slog.Error("Invalid request method", "method", request.Method)
+			logging.Error("Invalid request method", types.Server, "method", request.Method)
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		}
 	}
@@ -32,7 +32,7 @@ func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.Resp
 
 func postPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	suffix := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	slog.Debug("postPoCBatches", "suffix", suffix)
+	logging.Debug("postPoCBatches", types.PoC, "suffix", suffix)
 
 	switch suffix {
 	case "generated":
@@ -46,12 +46,12 @@ func submitPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.Respons
 	var body poc.ProofBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body of type ProofBatch", "error", err)
+		logging.Error("Failed to decode request body of type ProofBatch", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	slog.Info("ProofBatch received", "body", body)
+	logging.Info("ProofBatch received", types.PoC, "body", body)
 
 	msg := &inference.MsgSubmitPocBatch{
 		PocStageStartBlockHeight: body.BlockHeight,
@@ -61,7 +61,7 @@ func submitPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.Respons
 	}
 	err := recorder.SubmitPocBatch(msg)
 	if err != nil {
-		slog.Error("Failed to submit MsgSubmitPocBatch", "error", err)
+		logging.Error("Failed to submit MsgSubmitPocBatch", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -73,16 +73,16 @@ func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w htt
 	var body poc.ValidatedBatch
 
 	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		slog.Error("Failed to decode request body of type ValidatedBatch", "error", err)
+		logging.Error("Failed to decode request body of type ValidatedBatch", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	slog.Info("ValidatedProofBatch received", "body", body)
+	logging.Info("ValidatedProofBatch received", types.PoC, "body", body)
 
 	address, err := cosmos_client.PubKeyToAddress(body.PublicKey)
 	if err != nil {
-		slog.Error("Failed to convert public key to address", "error", err)
+		logging.Error("Failed to convert public key to address", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -102,7 +102,7 @@ func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w htt
 
 	err = recorder.SubmitPoCValidation(msg)
 	if err != nil {
-		slog.Error("Failed to submit MsgSubmitValidatedPocBatch", "error", err)
+		logging.Error("Failed to submit MsgSubmitValidatedPocBatch", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -114,29 +114,29 @@ func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w htt
 func getPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	// Get what's after /v1/poc/batches/
 	epoch := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	slog.Debug("getPoCBatches", "epoch", epoch)
+	logging.Debug("getPoCBatches", types.PoC, "epoch", epoch)
 
 	// Parse int64 from epoch:
 	value, err := strconv.ParseInt(epoch, 10, 64)
 	if err != nil {
-		slog.Error("Failed to parse epoch", "error", err)
+		logging.Error("Failed to parse epoch", types.PoC, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	slog.Debug("Requesting PoC batches.", "epoch", value)
+	logging.Debug("Requesting PoC batches.", types.PoC, "epoch", value)
 
 	queryClient := recorder.NewInferenceQueryClient()
 	// ignite scaffold query pocBatchesForStage blockHeight:int
 	response, err := queryClient.PocBatchesForStage(*recorder.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: value})
 	if err != nil {
-		slog.Error("Failed to get PoC batches.", "epoch", value)
+		logging.Error("Failed to get PoC batches.", types.PoC, "epoch", value)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if response == nil {
-		slog.Error("PoC batches batches not found", "epoch", value)
+		logging.Error("PoC batches batches not found", types.PoC, "epoch", value)
 		msg := fmt.Sprintf("PoC batches batches not found. epoch = %d", value)
 		http.Error(w, msg, http.StatusNotFound)
 		return

@@ -3,9 +3,9 @@ package broker
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"reflect"
 	"sort"
 	"time"
@@ -62,16 +62,16 @@ func nodeSyncWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		slog.Debug("Syncing nodes")
+		logging.Debug("Syncing nodes", types.Nodes)
 		if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
-			slog.Error("Error syncing nodes", "error", err)
+			logging.Error("Error syncing nodes", types.Nodes, "error", err)
 		}
 	}
 }
 
 func (b *Broker) processCommands() {
 	for command := range b.commands {
-		slog.Debug("Processing command", "type", reflect.TypeOf(command).String())
+		logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
 		switch command := command.(type) {
 		case LockAvailableNode:
 			b.lockAvailableNode(command)
@@ -86,7 +86,7 @@ func (b *Broker) processCommands() {
 		case SyncNodesCommand:
 			b.syncNodes(command)
 		default:
-			slog.Error("Unregistered command type", "type", reflect.TypeOf(command).String())
+			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
 	}
 }
@@ -99,7 +99,7 @@ func (b *Broker) QueueMessage(command Command) error {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
-		slog.Error("Message queued with unbuffered channel", "command", reflect.TypeOf(command).String())
+		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
 	}
 	b.commands <- command
@@ -114,7 +114,7 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 			State: &node.State,
 		})
 	}
-	slog.Debug("Got nodes", "size", len(nodeResponses))
+	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
 	command.Response <- nodeResponses
 }
 
@@ -127,7 +127,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			FailureReason: "",
 		},
 	}
-	slog.Debug("Registered node", "node", command.Node)
+	logging.Debug("Registered node", types.Nodes, "node", command.Node)
 	command.Response <- command.Node
 }
 
@@ -137,7 +137,7 @@ func (b *Broker) removeNode(command RemoveNode) {
 		return
 	}
 	delete(b.nodes, command.NodeId)
-	slog.Debug("Removed node", "node_id", command.NodeId)
+	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)
 	command.Response <- true
 }
 
@@ -154,7 +154,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	if leastBusyNode != nil {
 		leastBusyNode.State.LockCount++
 	}
-	slog.Debug("Locked node", "node", leastBusyNode)
+	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
 		command.Response <- nil
 	} else {
@@ -182,12 +182,12 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	} else {
 		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
-			slog.Error("Node failed", "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
+			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 			node.State.Operational = false
 			node.State.FailureReason = "Inference failed"
 		}
 	}
-	slog.Debug("Released node", "node_id", command.NodeId)
+	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
 	command.Response <- true
 }
 
@@ -220,7 +220,7 @@ func LockNode[T any](
 		})
 
 		if queueError != nil {
-			slog.Error("Error releasing node", "error", queueError)
+			logging.Error("Error releasing node", types.Nodes, "error", queueError)
 		}
 	}()
 
@@ -240,7 +240,7 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 	if nodes == nil {
 		return nil, errors.New("Error getting nodes")
 	}
-	slog.Debug("Got nodes", "size", len(nodes))
+	logging.Debug("Got nodes", types.Nodes, "size", len(nodes))
 	return nodes, nil
 }
 
@@ -252,11 +252,11 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 	}
 	resp, err := queryClient.HardwareNodes(*b.client.GetContext(), req)
 	if err != nil {
-		slog.Error("[sync nodes]. Error getting nodes", "error", err)
+		logging.Error("[sync nodes]. Error getting nodes", types.Nodes, "error", err)
 		return
 	}
-	slog.Info("[sync nodes] Fetched chain nodes", "size", len(resp.Nodes.HardwareNodes))
-	slog.Info("[sync nodes] Local nodes", "size", len(b.nodes))
+	logging.Info("[sync nodes] Fetched chain nodes", types.Nodes, "size", len(resp.Nodes.HardwareNodes))
+	logging.Info("[sync nodes] Local nodes", types.Nodes, "size", len(b.nodes))
 
 	chainNodesMap := make(map[string]*types.HardwareNode)
 	for _, node := range resp.Nodes.HardwareNodes {
@@ -283,14 +283,14 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 		}
 	}
 
-	slog.Info("[sync nodes] Hardware diff computed", "diff", diff)
+	logging.Info("[sync nodes] Hardware diff computed", types.Nodes, "diff", diff)
 
 	if (diff.Removed == nil || len(diff.Removed) == 0) && (diff.NewOrModified == nil || len(diff.NewOrModified) == 0) {
-		slog.Info("[sync nodes] No diff to submit")
+		logging.Info("[sync nodes] No diff to submit", types.Nodes)
 	} else {
-		slog.Info("[sync nodes] Submitting diff")
+		logging.Info("[sync nodes] Submitting diff", types.Nodes)
 		if _, err = b.client.SendTransaction(&diff); err != nil {
-			slog.Error("[sync nodes] Error submitting diff", "error", err)
+			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
 		}
 	}
 }

@@ -40,13 +40,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
 				{
-					RpcMethod:      "GetInferencesWithExecutors",
-					Use:            "get-inferences-with-executors [ids]",
-					Short:          "Query get-inferences-with-executors",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}},
-				},
-
-				{
 					RpcMethod:      "GetRandomExecutor",
 					Use:            "get-random-executor",
 					Short:          "Query get-random-executor",
@@ -170,6 +163,56 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "HardwareNodesAll",
 					Use:            "hardware-nodes-all",
 					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod: "InferenceValidationDetailsAll",
+					Use:       "list-inference-validation-details",
+					Short:     "List all inference_validation_details",
+				},
+				{
+					RpcMethod:      "InferenceValidationDetails",
+					Use:            "show-inference-validation-details [id]",
+					Short:          "Shows a inference_validation_details",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochId"}, {ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "GetInferenceValidationParameters",
+					Use:            "get-inference-validation-parameters [ids] [requester]",
+					Short:          "Query GetInferenceValidationParameters",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}, {ProtoField: "requester"}},
+				},
+
+				{
+					RpcMethod: "EpochPerformanceSummaryAll",
+					Use:       "list-epoch-performance-summary",
+					Short:     "List all epoch_performance_summary",
+				},
+				{
+					RpcMethod:      "EpochPerformanceSummary",
+					Use:            "show-epoch-performance-summary [id]",
+					Short:          "Shows a epoch_performance_summary",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochStartHeight"}, {ProtoField: "participantId"}},
+				},
+				{
+					RpcMethod:      "GetParticipantCurrentStats",
+					Use:            "get-participant-current-stats [participant-id]",
+					Short:          "Query get_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participantId"}},
+				},
+
+				{
+					RpcMethod:      "GetAllParticipantCurrentStats",
+					Use:            "get-all-participant-current-stats",
+					Short:          "Query get_all_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "GetMinimumValidationAverage",
+					Use:            "get-minimum-validation-average",
+					Short:          "Query get_minimum_validation_average",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 

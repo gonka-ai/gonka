@@ -1,8 +1,8 @@
 package com.productscience.data
 
+import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
-import java.math.BigDecimal
 
 // We can add any internal state that we need to verify here,
 // but let's only add what we need
@@ -18,7 +18,7 @@ data class AppExport(
 data class AppState(
     val bank: BankState,
     val gov: GovState,
-    val inference: InferenceState
+    val inference: InferenceState,
 )
 
 data class InferenceState(
@@ -26,12 +26,14 @@ data class InferenceState(
     val genesisOnlyParams: GenesisOnlyParams,
     val tokenomicsData: TokenomicsData,
 )
+
 data class TokenomicsData(
     val totalFees: Long,
     val totalSubsidies: Long,
     val totalRefunded: Long,
     val totalBurned: Long,
 )
+
 data class GenesisOnlyParams(
     val totalSupply: Long,
     val originatorSupply: Long,
@@ -72,10 +74,15 @@ data class ValidationParams(
     val minValidationAverage: Double,
     val maxValidationAverage: Double,
     val expirationBlocks: Long,
+    val epochsToMax: Long,
+    val fullValidationTrafficCutoff: Long,
+    val minValidationHalfway: Double,
+    val minValidationTrafficCutoff: Long,
+    val missPercentageCutoff: Double,
 )
 
 data class PocParams(
-    val defaultDifficulty: Int
+    val defaultDifficulty: Int,
 )
 
 data class GovState(
@@ -109,7 +116,7 @@ data class BankState(
 
 data class BankBalance(
     val address: String,
-    val coins: List<Coin>
+    val coins: List<Coin>,
 )
 
 data class Coin(
@@ -123,7 +130,7 @@ data class DenomMetadata(
     val display: String,
     val name: String,
     val symbol: String,
-    val denomUnits: List<DenomUnit>
+    val denomUnits: List<DenomUnit>,
 ) {
     fun convertAmount(
         amount: Long,
@@ -145,5 +152,5 @@ data class DenomMetadata(
 
 data class DenomUnit(
     val denom: String,
-    val exponent: Int
+    val exponent: Int,
 )
