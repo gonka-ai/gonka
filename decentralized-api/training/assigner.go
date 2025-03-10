@@ -182,7 +182,7 @@ func (a *Assigner) assignTask(task types.TrainingTask) {
 	}
 	slog.Info(logTag+"Confirmed availability for participants", "participants", selectedParticipants)
 
-	assignees := make([]*inference.TrainingTaskAssignee, 0, len(selectedParticipants))
+	assignees := make([]*inference.TrainingTaskAssignee, len(selectedParticipants))
 	for i, p := range selectedParticipants {
 		assignees[i] = &inference.TrainingTaskAssignee{
 			Participant: p.participant,
