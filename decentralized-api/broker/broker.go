@@ -302,7 +302,8 @@ func (b *Broker) syncNodes(command SyncNodesCommand) {
 }
 
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
-	// TODO: implement
+	// PRTODO: implement
+	command.Response <- true
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.

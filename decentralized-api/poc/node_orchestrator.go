@@ -125,7 +125,7 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 			continue
 		}
 
-		// PRTODO: analyze response somehow?
+		// TODO: analyze response somehow?
 		_ = resp
 	}
 }
@@ -164,7 +164,7 @@ func (o *NodePoCOrchestrator) Stop() {
 
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		// PRTODO: log error
+		slog.Error("Failed to get nodes", "error", err)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	slog.Info("Starting PoC Validation on nodes")
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		// PRTODO: log error
+		slog.Error("Failed to get nodes", "error", err)
 		return
 	}
 
@@ -255,7 +255,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 			continue
 		}
 
-		// PRTODO: analyze response somehow?
+		// TODO: analyze response somehow?
 		_ = resp
 	}
 }

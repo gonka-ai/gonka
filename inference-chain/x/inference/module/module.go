@@ -17,8 +17,6 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
-	"math/rand"
-
 	// this line is used by starport scaffolding # 1
 
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
@@ -218,9 +216,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
-
-		// PRTODO: remove this stub!
-		// am.setStubActiveParticipants(ctx, blockHeight)
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
@@ -348,37 +343,6 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
-}
-
-func (am AppModule) setStubActiveParticipants(ctx context.Context, blockHeight int64) {
-	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
-	if err != nil {
-		am.LogError("setMockActiveParticipants: Unable to get upcoming epoch group", "error", err.Error())
-		return
-	}
-
-	var activeParticipants = make([]*types.ActiveParticipant, 0)
-
-	participants := am.keeper.GetAllParticipant(ctx)
-	for _, p := range participants {
-		activeParticipant := &types.ActiveParticipant{
-			Index:        p.Index,
-			ValidatorKey: p.ValidatorKey,
-			Weight:       rand.Int63(),
-			InferenceUrl: p.InferenceUrl,
-			Models:       p.Models,
-		}
-		activeParticipants = append(activeParticipants, activeParticipant)
-	}
-
-	am.LogInfo("setMockActiveParticipants", "blockHeight", blockHeight, "len(activeParticipants)", len(activeParticipants))
-	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:         activeParticipants,
-		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
-		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
-		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
-		CreatedAtBlockHeight: blockHeight,
-	})
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
