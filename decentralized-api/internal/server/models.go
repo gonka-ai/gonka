@@ -14,18 +14,16 @@ type InferenceTransaction struct {
 }
 
 type ChatRequest struct {
-	Body                 []byte
-	Request              *http.Request
-	OpenAiRequest        OpenAiRequest
-	AuthKey              string
-	PubKey               string
-	Seed                 string
-	InferenceId          string
-	RequesterAddress     string
-	FundedByTransferNode bool
+	Body             []byte
+	Request          *http.Request
+	OpenAiRequest    OpenAiRequest
+	AuthKey          string // signature signing inference request
+	PubKey           string // pubkey of participant, who signed inference request
+	Seed             string
+	InferenceId      string
+	RequesterAddress string // address of participant, who signed inference request
 }
 
-// Only extract info we need
 type OpenAiRequest struct {
 	Model     string `json:"model"`
 	Seed      int32  `json:"seed"`

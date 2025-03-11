@@ -73,3 +73,24 @@ func TestServer(t *testing.T) {
 		t.Fatalf("error making request: %v", err)
 	}
 }
+
+/*func TestValidate(t *testing.T) {
+	const payload = `{"message": "Hello!"}`
+	privKeyBytes, err := hex.DecodeString("92026dba822692f8f842a6d5a241ab6c6ef4e2e980cd7364ee206cbc3c3bf750")
+	assert.NoError(t, err)
+
+	privkey := secp256k1.PrivKey{Key: privKeyBytes}
+
+	signature, err := privkey.Sign([]byte(payload))
+	assert.NoError(t, err)
+
+	fmt.Printf("signature = %v \n", base64.StdEncoding.EncodeToString(signature))
+	fmt.Printf("signature = %v \n", hex.EncodeToString(signature))
+
+	pubkey := privkey.PubKey()
+	signature, err = base64.StdEncoding.DecodeString("rJyhH0n8haixo7hUVkY2MqDuchEihUqd5CPwAEHE5fYakLqIpY8fkEa1oVsMUoFNIYiqS/mc55lGYub8K3PFjg==")
+	assert.NoError(t, err)
+
+	assert.True(t, pubkey.VerifySignature([]byte(payload), signature))
+}
+*/
