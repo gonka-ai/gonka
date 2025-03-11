@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.AppState
@@ -23,7 +24,6 @@ import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.data.ValidationParams
 import com.productscience.data.spec
-import org.bouncycastle.dvcs.VPKCRequestBuilder
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -94,22 +94,26 @@ data class InferenceResult(
 }
 
 private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
-    highestFunded.waitForFirstPoC()
+    highestFunded.waitForFirstValidators()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
     val inferenceId = response.id
 
     val inference = generateSequence {
         highestFunded.node.waitForNextBlock()
-        highestFunded.api.getInference(inferenceId)
-    }.take(5).firstOrNull { it.status == 1 }
+        try {
+            highestFunded.api.getInference(inferenceId)
+        } catch(_: FuelError) {
+            InferencePayload.empty()
+        }
+    }.take(5).firstOrNull { it.status == 1 || it.status == 2 }
     check(inference != null) { "Inference never logged in chain" }
     return inference
 }
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
-        it.node.waitForMinimumBlock(10)
+        it.waitForFirstValidators()
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.getParams()
@@ -135,6 +139,15 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
 //    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock()
+    pairs.forEach { pair ->
+        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength*2).toInt()) {
+            val address = pair.node.getAddress()
+            val stats = pair.node.getParticipantCurrentStats()
+            val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
+            weight != 0L
+        }
+    }
+
     return highestFunded
 }
 
@@ -222,13 +235,17 @@ val inferenceConfig = ApplicationConfig(
         this[AppState::inference] = spec<InferenceState> {
             this[InferenceState::params] = spec<InferenceParams> {
                 this[InferenceParams::epochParams] = spec<EpochParams> {
-                    this[EpochParams::epochLength] = 20L
+                    this[EpochParams::epochLength] = 10L
+                    this[EpochParams::pocStageDuration] = 2L
+                    this[EpochParams::pocExchangeDuration] = 1L
+                    this[EpochParams::pocValidationDelay] = 1L
+                    this[EpochParams::pocValidationDuration] = 2L
                 }
                 this[InferenceParams::validationParams] = spec<ValidationParams> {
                     this[ValidationParams::minValidationAverage] = 0.01
                     this[ValidationParams::maxValidationAverage] = 1.0
                     this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
-                    this[ValidationParams::fullValidationTrafficCutoff] = 1000L
+                    this[ValidationParams::fullValidationTrafficCutoff] = 100L
                     this[ValidationParams::minValidationHalfway] = 0.05
                     this[ValidationParams::minValidationTrafficCutoff] = 10L
                 }
@@ -283,7 +300,7 @@ val validNode = InferenceNode(
     inferencePort = 19009,
     models = listOf(defaultModel),
     id = "wiremock2",
-    maxConcurrent = 10
+    maxConcurrent = 1000
 )
 
 val defaultInferenceResponse = """

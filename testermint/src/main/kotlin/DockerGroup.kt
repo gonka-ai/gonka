@@ -7,6 +7,7 @@ import com.productscience.data.UnfundedInferenceParticipant
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.time.Duration
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
@@ -167,7 +168,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     val allGroups = listOf(genesisGroup) + joinGroups
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
-    Thread.sleep(40000)
+    Thread.sleep(Duration.ofSeconds(10L))
     joinGroups.forEach { it.init() }
     return allGroups
 }

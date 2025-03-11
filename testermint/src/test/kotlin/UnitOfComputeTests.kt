@@ -3,13 +3,14 @@ import com.productscience.data.RegisterModelDto
 import com.productscience.data.UnitOfComputePriceProposalDto
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
+import com.productscience.initCluster
 import org.junit.jupiter.api.Test
 
 class UnitOfComputeTests : TestermintTest() {
     @Test
     fun `price proposal`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
+        val (cluster, instance) = initCluster()
+        val pairs = cluster.allPairs
 
         val priceProposalResponse = instance.api.getPriceProposal()
 

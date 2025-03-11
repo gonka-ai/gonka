@@ -152,7 +152,7 @@ data class ApplicationCLI(
         )
     }
 
-    fun getSelfBalance(denom: String): Long = wrapLog("getSelfBalance", false) {
+    fun getSelfBalance(denom: String = this.config.denom): Long = wrapLog("getSelfBalance", false) {
         val account = getAddress()
         val balance = getBalance(account, denom)
         balance.balance.amount

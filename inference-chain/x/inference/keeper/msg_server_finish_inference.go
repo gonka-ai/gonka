@@ -45,6 +45,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.CoinBalance += existingInference.ActualCost
+	k.LogInfo("Executor CoinBalance credited for inference", types.Payments, "executor", executor.Address, "coin_balance", executor.CoinBalance, "actual_cost", existingInference.ActualCost)
 	executor.CurrentEpochStats.InferenceCount++
 
 	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
@@ -63,7 +64,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			sdk.NewAttribute("inference_id", msg.InferenceId),
 		),
 	)
-	currentEpochGroup.GroupData.NumberOfRequests++
 	executorPower := uint64(0)
 	executorReputation := int32(0)
 	for _, weight := range currentEpochGroup.GroupData.ValidationWeights {

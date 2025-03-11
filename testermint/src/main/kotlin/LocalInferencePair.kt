@@ -142,8 +142,30 @@ data class LocalInferencePair(
         return node.getStatus().syncInfo.latestBlockHeight
     }
 
+    fun waitForNextSettle() {
+        this.node.waitForMinimumBlock(getNextSettleBlock())
+    }
+
+    fun waitForBlock(maxBlocks: Int, condition: (LocalInferencePair) -> Boolean) {
+        val startBlock = this.getCurrentBlockHeight()
+        var currentBlock = startBlock
+        val targetBlock = startBlock + maxBlocks
+        Logger.info("Waiting for block $targetBlock, current block $currentBlock to match condition")
+        while (currentBlock < targetBlock) {
+            if (condition(this)) {
+                return
+            }
+            this.node.waitForNextBlock()
+            currentBlock = this.getCurrentBlockHeight()
+        }
+        error("Block $targetBlock reached without condition passing")
+    }
+
     fun getNextSettleBlock(): Long {
-        val epochParams = this.mostRecentParams?.epochParams ?: return 0
+        if (this.mostRecentParams == null) {
+            this.getParams()
+        }
+        val epochParams = this.mostRecentParams?.epochParams!!
         val currentHeight = this.getCurrentBlockHeight()
         val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
         val nextSettle = currentHeight + blocksTillEpoch + epochParams.getSetNewValidatorsStage() + 1
@@ -153,8 +175,11 @@ data class LocalInferencePair(
             nextSettle
     }
 
-    fun waitForFirstPoC() {
-        val epochParams = this.mostRecentParams?.epochParams ?: return
+    fun waitForFirstValidators() {
+        if (this.mostRecentParams == null) {
+            this.getParams()
+        }
+        val epochParams = this.mostRecentParams?.epochParams!!
         val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished)

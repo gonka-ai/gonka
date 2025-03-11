@@ -65,6 +65,11 @@ data class EpochParams(
     val epochLength: Long,
     val epochMultiplier: Int,
     val epochShift: Int,
+    val defaultUnitOfComputePrice: Long,
+    val pocStageDuration: Long,
+    val pocExchangeDuration: Long,
+    val pocValidationDelay: Long,
+    val pocValidationDuration: Long,
 )
 
 data class ValidationParams(

@@ -203,11 +203,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
+		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
 	}
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
-		am.LogInfo("NewPocStart", types.System, "blockHeight", blockHeight)
+		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight))
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
@@ -247,7 +248,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
-	am.LogInfo("onSetNewValidatorsStage start", types.System, "blockHeight", blockHeight)
 	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
 	err := am.keeper.SettleAccounts(ctx, pocHeight)
 	if err != nil {
@@ -272,7 +272,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.PoC, "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages, "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,

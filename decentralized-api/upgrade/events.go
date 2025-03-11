@@ -17,7 +17,7 @@ func ProcessNewBlockEvent(
 	configManager *apiconfig.ConfigManager,
 ) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
-		logging.Error("Expected tendermint/event/NewBlock event", types.EventProcessing, "event", event.Result.Data.Type)
+		logging.Error("Expected tendermint/event/NewBlock event", types.Upgrades, "event", event.Result.Data.Type)
 		return
 	}
 

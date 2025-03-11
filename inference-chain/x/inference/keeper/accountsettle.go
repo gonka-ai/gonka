@@ -146,6 +146,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		}
 		participant.EpochsCompleted += 1
 		participant.CoinBalance = 0
+		k.LogInfo("Participant CoinBalance reset", types.Payments, "address", participant.Address)
 		k.SetEpochPerformanceSummary(ctx,
 			types.EpochPerformanceSummary{
 				EpochStartHeight:      pocBlockHeight,
