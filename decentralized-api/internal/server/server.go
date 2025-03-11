@@ -13,7 +13,6 @@ import (
 	"decentralized-api/merkleproof"
 	"decentralized-api/utils"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
@@ -169,14 +168,14 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 
 	logging.Debug("fundedByTransferNode", types.Inferences, "node", fundedByTransferNode)
 	return &ChatRequest{
-		Body:                 body,
-		Request:              request,
-		OpenAiRequest:        openAiRequest,
-		AuthKey:              request.Header.Get(utils.AuthorizationHeader),
-		PubKey:               request.Header.Get(utils.XPublicKeyHeader),
-		Seed:                 request.Header.Get(utils.XSeedHeader),
-		InferenceId:          request.Header.Get(utils.XInferenceIdHeader),
-		RequesterAddress:     request.Header.Get(utils.XRequesterAddressHeader),
+		Body:             body,
+		Request:          request,
+		OpenAiRequest:    openAiRequest,
+		AuthKey:          request.Header.Get(utils.AuthorizationHeader),
+		PubKey:           request.Header.Get(utils.XPublicKeyHeader),
+		Seed:             request.Header.Get(utils.XSeedHeader),
+		InferenceId:      request.Header.Get(utils.XInferenceIdHeader),
+		RequesterAddress: request.Header.Get(utils.XRequesterAddressHeader),
 	}, nil
 }
 
@@ -284,7 +283,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 	}
 	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
 	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(utils.XPublicKeyHeader, pubkey)
+	req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
 	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
