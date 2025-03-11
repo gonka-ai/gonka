@@ -127,7 +127,7 @@ func getParticipantWeight(batches []types.PoCBatch) int64 {
 	return int64(len(uniqueNonces))
 }
 
-func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) *map[string]int64 {
+func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) map[string]int64 {
 	if activeParticipants == nil {
 		return nil
 	}
@@ -136,16 +136,16 @@ func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) 
 	for _, ap := range activeParticipants.Participants {
 		weights[ap.Index] = ap.Weight
 	}
-	return &weights
+	return weights
 }
 
-func getTotalWeight(validatorWeights *map[string]int64) uint64 {
+func getTotalWeight(validatorWeights map[string]int64) uint64 {
 	if validatorWeights == nil {
 		return 0
 	}
 
 	totalWeight := uint64(0)
-	for participant, weight := range *validatorWeights {
+	for participant, weight := range validatorWeights {
 		if weight < 0 {
 			slog.Error("getTotalWeight: Negative weight found", "participant", participant, "weight", weight)
 			continue
@@ -161,11 +161,11 @@ type validationOutcome struct {
 	InvalidWeight int64
 }
 
-func getValidationOutcome(currentValidatorsSet *map[string]int64, validations []types.PoCValidation) validationOutcome {
+func getValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
 	validWeight := int64(0)
 	invalidWeight := int64(0)
 	for _, v := range validations {
-		if weight, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok {
+		if weight, ok := currentValidatorsSet[v.ValidatorParticipantAddress]; ok {
 			if v.FraudDetected {
 				invalidWeight += weight
 			} else {
