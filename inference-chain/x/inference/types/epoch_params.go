@@ -63,7 +63,7 @@ func (p *EpochParams) GetPoCExchangeDeadline() int64 {
 
 // TODO: may be longer period between
 func (p *EpochParams) GetStartOfPoCValidationStage() int64 {
-	return p.GetEndOfPoCStage() + 1 + (2 * p.EpochMultiplier)
+	return p.GetEndOfPoCStage() + (2 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetEndOfPoCValidationStage() int64 {
