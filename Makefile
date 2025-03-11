@@ -39,6 +39,6 @@ check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
 run-tests:
-	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable -DexcludeTags=exclude
+	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
 
 test-blockchain: check-docker run-blockchain-tests
