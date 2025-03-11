@@ -9,6 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"reflect"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,9 +23,10 @@ TRAINING = 3;
 */
 
 type Broker struct {
-	commands chan Command
-	nodes    map[string]*NodeWithState
-	client   cosmosclient.CosmosMessageClient
+	commands       chan Command
+	nodes          map[string]*NodeWithState
+	curMaxNodesNum atomic.Uint64
+	client         cosmosclient.CosmosMessageClient
 }
 
 type Node struct {
@@ -137,7 +139,8 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 }
 
 func (b *Broker) registerNode(command RegisterNode) {
-	curNodesAmount := len(b.nodes)
+	b.curMaxNodesNum.Add(1)
+	curNum := b.curMaxNodesNum.Load()
 
 	b.nodes[command.Node.Id] = &NodeWithState{
 		Node: Node{
@@ -147,7 +150,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			Models:        command.Node.Models,
 			Id:            command.Node.Id,
 			MaxConcurrent: command.Node.MaxConcurrent,
-			NodeNum:       uint64(curNodesAmount + 1),
+			NodeNum:       curNum,
 			Hardware:      command.Node.Hardware,
 		},
 		State: NodeState{Operational: true},
