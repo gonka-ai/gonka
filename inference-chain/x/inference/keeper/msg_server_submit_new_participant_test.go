@@ -22,7 +22,6 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 	require.Equal(t, types.Participant{
 		Index:             "creator",
 		Address:           "creator",
-		Reputation:        0,
 		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
@@ -30,13 +29,6 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
-		CompletionTokenCount: map[string]uint64{
-			"model1": 0,
-			"model2": 0,
-		},
-		PromptTokenCount: map[string]uint64{
-			"model1": 0,
-			"model2": 0,
-		},
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, savedParticipant)
 }

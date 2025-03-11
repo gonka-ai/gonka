@@ -3,9 +3,10 @@ package api
 import (
 	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
-	"log/slog"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 )
 
@@ -19,7 +20,7 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 		}
 
 		authority := cosmosclient.GetProposalMsgSigner()
-		slog.Info("RegisterModel", "authority", authority)
+		logging.Info("RegisterModel", types.Inferences, "authority", authority)
 		msg := &inference.MsgRegisterModel{
 			Authority:              authority,
 			ProposedBy:             cosmosClient.GetAddress(),
@@ -37,7 +38,7 @@ func WrapRegisterModel(cosmosClient cosmosclient.CosmosMessageClient) func(w htt
 		// TODO: make it a function of cosmosClient interface?
 		err = cosmosclient.SubmitProposal(cosmosClient, msg, proposalData)
 		if err != nil {
-			slog.Error("SubmitProposal failed", "err", err)
+			logging.Error("SubmitProposal failed", types.Inferences, "err", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

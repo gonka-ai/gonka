@@ -4,10 +4,10 @@ import (
 	"decentralized-api/api/model"
 	"decentralized-api/apiconfig"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"fmt"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 )
 
@@ -20,7 +20,7 @@ func WrapUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClie
 		case http.MethodGet:
 			getUnitOfComputePriceProposal(cosmosClient, w, request)
 		default:
-			slog.Error("Invalid request method", "method", request.Method, "path", request.URL.Path)
+			logging.Error("Invalid request method", types.Server, "method", request.Method, "path", request.URL.Path)
 			msg := fmt.Sprintf("Invalid request method. method = %s. path = %s", request.Method, request.URL.Path)
 			http.Error(w, msg, http.StatusMethodNotAllowed)
 		}
@@ -45,7 +45,7 @@ func postUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClie
 	}
 
 	if err := cosmosClient.SubmitUnitOfComputePriceProposal(msg); err != nil {
-		slog.Error("Failed to send a transaction: MsgSubmitUnitOfComputePriceProposal", "error", err)
+		logging.Error("Failed to send a transaction: MsgSubmitUnitOfComputePriceProposal", types.Pricing, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -77,7 +77,7 @@ func getUnitOfComputePriceProposal(cosmosClient cosmos_client.CosmosMessageClien
 
 	queryResponse, err := queryClient.GetUnitOfComputePriceProposal(*cosmosClient.GetContext(), queryRequest)
 	if err != nil {
-		slog.Error("Failed to query unit of compute price proposal", "error", err)
+		logging.Error("Failed to query unit of compute price proposal", types.Pricing, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

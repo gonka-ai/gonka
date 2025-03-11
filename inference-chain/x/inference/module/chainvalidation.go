@@ -10,7 +10,7 @@ import (
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
 	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
-	am.LogInfo("ComputeNewWeights: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
+	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
 
 	// FIXME: Figure out something here:
 	//  1. Either get current validators by using staking keeper or smth
@@ -20,7 +20,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {
-			am.LogError("ComputeNewWeights: No active participants found.")
+			am.LogError("ComputeNewWeights: No active participants found.", types.PoC)
 			return nil
 		}
 	}
@@ -30,18 +30,18 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 		return nil
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
+	am.LogInfo("ComputeNewWeights: Retrieved original batches", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
 
 	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
 
 	var activeParticipants []*types.ActiveParticipant
 
@@ -54,24 +54,24 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	for _, participantAddress := range sortedBatchKeys {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
-			am.LogError("ComputeNewWeights: Error getting participant", "address", participantAddress)
+			am.LogError("ComputeNewWeights: Error getting participant", types.PoC, "address", participantAddress)
 			continue
 		}
 
 		vals := validations[participantAddress]
 		if vals == nil || len(vals) == 0 {
-			am.LogError("ComputeNewWeights: No validations for participant found", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: No validations for participant found", types.PoC, "participant", participantAddress)
 			continue
 		}
 
 		claimedWeight := getParticipantWeight(originalBatches[participantAddress])
 		if claimedWeight < 1 {
-			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
+			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 			continue
 		}
 
 		if participant.ValidatorKey == "" {
-			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
 			continue
 		}
 
@@ -80,13 +80,13 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
 			if votedWeight < requiredValidWeight {
 				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
-					"participant", participantAddress,
+					types.PoC, "participant", participantAddress,
 					"votedWeight", votedWeight,
 					"requiredValidWeight", requiredValidWeight)
 			} else {
 				if uint64(valOutcome.ValidWeight) < requiredValidWeight {
 					am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations",
-						"participant", participantAddress,
+						types.PoC, "participant", participantAddress,
 						"validWeight", valOutcome.ValidWeight,
 						"requiredValidWeight", requiredValidWeight)
 					continue
@@ -96,7 +96,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
 		if !found {
-			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC, "blockHeight", epochStartBlockHeight, "participant", participantAddress)
 			continue
 		}
 
@@ -109,7 +109,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			Seed:         &seed,
 		}
 		activeParticipants = append(activeParticipants, activeParticipant)
-		am.LogInfo("ComputeNewWeights: Setting compute validator.", "activeParticipant", activeParticipant)
+		am.LogInfo("ComputeNewWeights: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
 	}
 
 	return activeParticipants

@@ -1,7 +1,19 @@
 package com.productscience.data
 
 data class ParticipantsResponse(
-    val participants: List<Participant>
+    val participants: List<Participant>,
+)
+
+data class ParticipantStatsResponse(
+    val participantCurrentStats: List<ParticipantStats>,
+    val blockHeight: Long,
+    val epochId: Long?,
+)
+
+data class ParticipantStats(
+    val participantId: String,
+    val weight: Long = 0,
+    val reputation: Int = 0,
 )
 
 data class Participant(
@@ -28,3 +40,4 @@ data class UnfundedInferenceParticipant(
     val pubKey: String,
     val address: String
 )
+
