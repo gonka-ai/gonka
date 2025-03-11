@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
-	strings "strings"
+	"strings"
 )
 
 func WrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager) func(http.ResponseWriter, *http.Request) {
@@ -15,7 +15,7 @@ func WrapNodes(nodeBroker *broker.Broker, configManager *apiconfig.ConfigManager
 		logging.Info("Request to nodes endpoint", types.Nodes, "method", request.Method)
 		switch {
 		case request.Method == http.MethodGet:
-			getNodesResponse(nodeBroker, w, request, configManager.GetConfig())
+			getNodesResponse(nodeBroker, w)
 			return
 		case request.Method == http.MethodPost:
 			if request.URL.Path == "/v1/nodes" {
@@ -51,16 +51,25 @@ func deleteNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.
 		return
 	}
 	node := <-response
-	SyncNodesWithConfig(nodeBroker, configManager)
+	syncNodesWithConfig(nodeBroker, configManager)
 
 	RespondWithJson(w, node)
 }
 
-func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
+func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
 	nodes, err := nodeBroker.GetNodes()
-	iNodes := make([]apiconfig.InferenceNode, len(nodes))
+	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
-		iNodes[i] = *n.Node
+		node := *n.Node
+		iNodes[i] = apiconfig.InferenceNodeConfig{
+			Host:          node.Host,
+			InferencePort: node.InferencePort,
+			PoCPort:       node.PoCPort,
+			Models:        node.Models,
+			Id:            node.Id,
+			MaxConcurrent: node.MaxConcurrent,
+			Hardware:      node.Hardware,
+		}
 	}
 	err = config.SetNodes(iNodes)
 	if err != nil {
@@ -69,13 +78,13 @@ func SyncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 }
 
 func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
-	var newNodes []apiconfig.InferenceNode
+	var newNodes []apiconfig.InferenceNodeConfig
 	if err := json.NewDecoder(request.Body).Decode(&newNodes); err != nil {
 		logging.Error("Error decoding request", types.Nodes, "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
 		return
 	}
-	var outputNodes []apiconfig.InferenceNode
+	var outputNodes []apiconfig.InferenceNodeConfig
 	for _, node := range newNodes {
 		newNode, done := addNode(nodeBroker, w, node, config)
 		if done {
@@ -87,7 +96,7 @@ func createNewNodes(nodeBroker *broker.Broker, w http.ResponseWriter, request *h
 }
 
 func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.ConfigManager) {
-	var newNode apiconfig.InferenceNode
+	var newNode apiconfig.InferenceNodeConfig
 	if err := json.NewDecoder(request.Body).Decode(&newNode); err != nil {
 		logging.Error("Error decoding request", types.Nodes, "error", err)
 		http.Error(w, "Error decoding request", http.StatusBadRequest)
@@ -103,10 +112,10 @@ func createNewNode(nodeBroker *broker.Broker, w http.ResponseWriter, request *ht
 func addNode(
 	nodeBroker *broker.Broker,
 	w http.ResponseWriter,
-	newNode apiconfig.InferenceNode,
+	newNode apiconfig.InferenceNodeConfig,
 	configManager *apiconfig.ConfigManager,
-) (apiconfig.InferenceNode, bool) {
-	response := make(chan apiconfig.InferenceNode, 2)
+) (apiconfig.InferenceNodeConfig, bool) {
+	response := make(chan apiconfig.InferenceNodeConfig, 2)
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     newNode,
 		Response: response,
@@ -114,7 +123,7 @@ func addNode(
 	if err != nil {
 		logging.Error("Error creating new node", types.Nodes, "error", err)
 		http.Error(w, "Error creating new node", http.StatusInternalServerError)
-		return apiconfig.InferenceNode{}, true
+		return apiconfig.InferenceNodeConfig{}, true
 	}
 	node := <-response
 	config := configManager.GetConfig()
@@ -126,7 +135,7 @@ func addNode(
 	return node, false
 }
 
-func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter, request *http.Request, config *apiconfig.Config) {
+func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter) {
 	nodes, err := nodeBroker.GetNodes()
 	if err != nil {
 		logging.Error("Error getting nodes", types.Nodes, "error", err)
