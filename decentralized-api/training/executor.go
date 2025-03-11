@@ -99,6 +99,37 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 	}
 }
 
+func rankNodes(e *Executor, task types.TrainingTask) ([]string, error) {
+	if task.Assignees == nil {
+		slog.Error(logTagExecutor+"No assignees found for task", "taskId", task.Id)
+		return nil, errors.New("no assignees found for task")
+	}
+
+	type node struct {
+		participant string
+		id          string
+	}
+
+	nodes := make([]node, 0)
+	for _, a := range task.Assignees {
+		for _, n := range a.NodeIds {
+			nodes = append(nodes, node{
+				participant: a.Participant, id: n,
+			})
+		}
+	}
+
+	// PRTODO: sort
+	// FIXME!!
+
+	result := make([]string, 0)
+	for _, n := range nodes {
+		result = append(result, n.id)
+	}
+
+	return result, nil
+}
+
 func (e *Executor) CheckStatusRoutine() {
 
 }
