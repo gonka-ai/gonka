@@ -8,6 +8,8 @@ type InitDto struct {
 	RTarget        float64 `json:"r_target"`
 	FraudThreshold float64 `json:"fraud_threshold"`
 	Params         *Params `json:"params"`
+	NodeNum        int64   `json:"node_id"`
+	TotalNodes     int64   `json:"node_count"`
 	URL            string  `json:"url"`
 }
 
