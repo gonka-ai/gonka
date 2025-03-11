@@ -3,7 +3,6 @@ package poc
 import (
 	"bytes"
 	"context"
-	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
@@ -17,11 +16,14 @@ import (
 )
 
 const (
+	StopAllPath       = "/api/v1/stop"
 	InitGeneratePath  = "/api/v1/pow/init/generate"
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
-	StopPath          = "/api/v1/pow/stop"
+	PoCStopPath       = "/api/v1/pow/stop"
 	InferenceUpPath   = "/api/v1/inference/up"
+	InferenceDownPath = "/api/v1/inference/down"
+	PoCBatchesPath    = "/v1/poc-batches"
 
 	DefaultRTarget        = 1.390051443
 	DefaultBatchSize      = 8000
@@ -50,9 +52,7 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 		callbackUrl:  callbackUrl,
 		chainNodeUrl: chainNodeUrl,
 		cosmosClient: cosmosClient,
-		noOp:         false,
 		parameters:   parameters,
-		sync:         sync.Mutex{},
 	}
 }
 
@@ -69,13 +69,13 @@ func (o *NodePoCOrchestrator) SetParams(params *types.Params) {
 }
 
 func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("%s/v1/poc-batches", o.callbackUrl)
+	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
 }
 
 func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
 	// For now the URl is the same, the node inference server appends "/validated" to the URL
 	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s/v1/poc-batches", o.callbackUrl)
+	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
 }
 
 var DefaultParams = Params{
@@ -106,7 +106,7 @@ var DevTestParams = Params{
 	SeqLen:           4,
 }
 
-func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
+func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 	if o.noOp {
 		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
 		return
@@ -119,20 +119,25 @@ func (o *NodePoCOrchestrator) Start(blockHeight int64, blockHash string) {
 		return
 	}
 
+	totalNodes := len(nodes)
 	for _, n := range nodes {
-		resp, err := o.sendInitGenerateRequest(n.Node, blockHeight, blockHash)
+		_, err := o.sendStopAllRequest(n.Node)
 		if err != nil {
 			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
 
 		// PRTODO: analyze response somehow?
-		_ = resp
+		_, err = o.sendInitGenerateRequest(n.Node, int64(totalNodes), blockHeight, blockHash)
+		if err != nil {
+			logging.Error("Failed to send init-generate request to node", types.Nodes, n.Node.Host, "error", err)
+			continue
+		}
 	}
 }
 
-func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *apiconfig.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
-	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocBatchesCallbackUrl())
+func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
+	initDto := o.buildInitDto(blockHeight, totalNodes, int64(node.NodeNum), blockHash, o.getPocBatchesCallbackUrl())
 
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitGeneratePath)
 	if err != nil {
@@ -144,7 +149,7 @@ func (o *NodePoCOrchestrator) sendInitGenerateRequest(node *apiconfig.InferenceN
 	return sendPostRequest(o.HTTPClient, initUrl, initDto)
 }
 
-func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, callbackUrl string) InitDto {
+func (o *NodePoCOrchestrator) buildInitDto(blockHeight, totalNodes, nodeNum int64, blockHash, callbackUrl string) InitDto {
 	return InitDto{
 		BlockHeight:    blockHeight,
 		BlockHash:      blockHash,
@@ -154,10 +159,12 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight int64, blockHash string, 
 		FraudThreshold: DefaultFraudThreshold,
 		Params:         &DevTestParams,
 		URL:            callbackUrl,
+		TotalNodes:     totalNodes,
+		NodeNum:        nodeNum,
 	}
 }
 
-func (o *NodePoCOrchestrator) Stop() {
+func (o *NodePoCOrchestrator) StopPoC() {
 	if o.noOp {
 		logging.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.", types.PoC)
 		return
@@ -170,24 +177,22 @@ func (o *NodePoCOrchestrator) Stop() {
 	}
 
 	for _, n := range nodes {
-		respStop, err := o.sendStopRequest(n.Node)
+		_, err := o.sendStopRequest(n.Node)
 		if err != nil {
 			logging.Error("Failed to send stop request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
-		_ = respStop
 
-		respUp, err := o.sendInferenceUpRequest(n.Node)
+		_, err = o.sendInferenceUpRequest(n.Node)
 		if err != nil {
 			logging.Error("Failed to send inference/up request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
-		_ = respUp
 	}
 }
 
-func (o *NodePoCOrchestrator) sendStopRequest(node *apiconfig.InferenceNode) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), StopPath)
+func (o *NodePoCOrchestrator) sendStopRequest(node *broker.Node) (*http.Response, error) {
+	stopUrl, err := url.JoinPath(node.PoCUrl(), PoCStopPath)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +202,17 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *apiconfig.InferenceNode) (*h
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
-func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *apiconfig.InferenceNode) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Response, error) {
+	stopUrl, err := url.JoinPath(node.PoCUrl(), StopAllPath)
+	if err != nil {
+		return nil, err
+	}
+
+	logging.Info("Sending stop all request to node", types.Nodes, stopUrl)
+	return sendPostRequest(o.HTTPClient, stopUrl, nil)
+}
+
+func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.Response, error) {
 	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
 	if err != nil {
 		return nil, err
@@ -215,9 +230,18 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *apiconfig.InferenceNo
 	return sendPostRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
 }
 
-func (o *NodePoCOrchestrator) sendInitValidateRequest(node *apiconfig.InferenceNode, blockHeight int64, blockHash string) (*http.Response, error) {
-	initDto := o.buildInitDto(blockHeight, blockHash, o.getPocValidateCallbackUrl())
+func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http.Response, error) {
+	inferenceDownUrl, err := url.JoinPath(node.PoCUrl(), InferenceDownPath)
+	if err != nil {
+		return nil, err
+	}
 
+	logging.Info("Sending inference/down request to node", types.Nodes, inferenceDownUrl)
+	return sendPostRequest(o.HTTPClient, inferenceDownUrl, nil)
+}
+
+func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
+	initDto := o.buildInitDto(blockHeight, totalNodes, int64(node.NodeNum), blockHash, o.getPocValidateCallbackUrl())
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
 	if err != nil {
 		return nil, err
@@ -272,15 +296,13 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 		return
 	}
 
+	totalNodes := int64(len(nodes))
 	for _, n := range nodes {
-		resp, err := o.sendInitValidateRequest(n.Node, startOfPoCBlockHeight, blockHash)
+		_, err := o.sendInitValidateRequest(n.Node, totalNodes, startOfPoCBlockHeight, blockHash)
 		if err != nil {
 			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
-
-		// PRTODO: analyze response somehow?
-		_ = resp
 	}
 }
 
@@ -320,42 +342,34 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 	}
 
 	for i, batch := range batches.PocBatch {
-		_ = batch
-
 		joinedBatch := ProofBatch{
 			PublicKey:   batch.HexPubKey,
 			BlockHash:   blockHash,
 			BlockHeight: startOfPoCBlockHeight,
-			Nonces:      nil,
-			Dist:        nil,
 		}
 
 		for _, b := range batch.PocBatch {
 			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
 			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
 		}
-
 		node := nodes[i%len(nodes)]
 
 		logging.Debug("ValidateReceivedBatches. pubKey", types.PoC, "pubKey", batch.HexPubKey)
 		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
-		resp, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
+		_, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
 		if err != nil {
 			logging.Error("Failed to send validate batch request to node", types.PoC, "node", node.Node.Host, "error", err)
 			continue
 		}
-
-		_ = resp
 	}
 }
 
 // FIXME: copying ;( doesn't look good for large PoCBatch structures
-func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *apiconfig.InferenceNode, batch ProofBatch) (*http.Response, error) {
+func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.Node, batch ProofBatch) (*http.Response, error) {
 	validateBatchUrl, err := url.JoinPath(node.PoCUrl(), ValidateBatchPath)
 	if err != nil {
 		return nil, err
 	}
-
 	return sendPostRequest(o.HTTPClient, validateBatchUrl, batch)
 }
 

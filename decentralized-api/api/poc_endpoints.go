@@ -2,8 +2,8 @@ package api
 
 import (
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
