@@ -8,6 +8,7 @@ import (
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
+	"sort"
 )
 
 const logTagExecutor = "[training-task-executor] "
@@ -79,11 +80,30 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	slog.Info(logTagExecutor+"The task is assigned to me", "taskId", taskId, "nodes", myNodes)
 
-	// PRTODO: FIXME: CHOOSE MASTER NODE AND STUFF!
+	rankedNodes, err := rankNodes(resp.Task)
+	if err != nil {
+		slog.Error(logTagExecutor+"Error ranking nodes", "taskId", taskId, "error", err)
+		return
+	}
+
+	masterNode, err := getMasterNode(e.ctx, rankedNodes, queryClient)
+	if err != nil {
+		slog.Error(logTagExecutor+"Error getting master node", "taskId", taskId, "error", err)
+		return
+	}
+
+	nodeRanks := make(map[string]int)
+	for i, n := range rankedNodes {
+		if n.participant == e.cosmosClient.GetAddress() {
+			nodeRanks[n.nodeId] = i
+		}
+	}
+
+	slog.Info(logTagExecutor+"Starting training", "taskId", taskId, "masterNode", masterNode.Host, "nodeRanks", nodeRanks, "worldSize", len(rankedNodes))
 	command := broker.NewStartTrainingCommand(
-		"whatever",
-		len(myNodes),
-		map[string]int{},
+		masterNode.Host,
+		len(rankedNodes),
+		nodeRanks,
 	)
 	err = e.broker.QueueMessage(command)
 	if err != nil {
@@ -99,35 +119,62 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 	}
 }
 
-func rankNodes(e *Executor, task types.TrainingTask) ([]string, error) {
+type nodeWithParticipant struct {
+	participant string
+	nodeId      string
+}
+
+func rankNodes(task *types.TrainingTask) ([]nodeWithParticipant, error) {
+	if task == nil {
+		slog.Error(logTagExecutor + "No task found")
+		return nil, errors.New("no task found")
+	}
+
 	if task.Assignees == nil {
 		slog.Error(logTagExecutor+"No assignees found for task", "taskId", task.Id)
 		return nil, errors.New("no assignees found for task")
 	}
 
-	type node struct {
-		participant string
-		id          string
-	}
-
-	nodes := make([]node, 0)
+	nodes := make([]nodeWithParticipant, 0)
 	for _, a := range task.Assignees {
 		for _, n := range a.NodeIds {
-			nodes = append(nodes, node{
-				participant: a.Participant, id: n,
+			nodes = append(nodes, nodeWithParticipant{
+				participant: a.Participant,
+				nodeId:      n,
 			})
 		}
 	}
 
-	// PRTODO: sort
-	// FIXME!!
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].participant == nodes[j].participant {
+			return nodes[i].nodeId < nodes[j].nodeId
+		}
+		return nodes[i].participant < nodes[j].participant
+	})
 
-	result := make([]string, 0)
-	for _, n := range nodes {
-		result = append(result, n.id)
+	return nodes, nil
+}
+
+func getMasterNode(ctx context.Context, rankedNodes []nodeWithParticipant, queryClient types.QueryClient) (*types.HardwareNode, error) {
+	if len(rankedNodes) == 0 {
+		slog.Error(logTagExecutor + "len(rankedNodes) is 0, can't pick master node")
+		return nil, errors.New("len(rankedNodes) is 0, can't pick master node")
 	}
 
-	return result, nil
+	resp, err := queryClient.HardwareNodes(ctx, &types.QueryHardwareNodesRequest{Participant: rankedNodes[0].participant})
+	if err != nil {
+		slog.Error(logTagExecutor+"Error fetching hardware nodes", "participant", rankedNodes[0].participant, "error", err)
+		return nil, err
+	}
+
+	for _, n := range resp.Nodes.HardwareNodes {
+		if n.LocalId == rankedNodes[0].nodeId {
+			return n, nil
+		}
+	}
+
+	slog.Error(logTagExecutor+"Master node not found", "participant", rankedNodes[0].participant, "nodeId", rankedNodes[0].nodeId, "response.Nodes", resp.Nodes)
+	return nil, errors.New("master node not found")
 }
 
 func (e *Executor) CheckStatusRoutine() {

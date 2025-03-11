@@ -319,6 +319,8 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 
 		client, err := NewNodeClient(&node.Node)
 		if err != nil {
+			// FIXME: think how this will be retried,
+			// 	because you might have started the training on some nodes by this moment
 			slog.Error("Error creating node client", "error", err)
 			command.Response <- false
 			return
