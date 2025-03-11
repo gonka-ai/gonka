@@ -1,41 +1,16 @@
 api:
-    poc_callback_url: http://localhost:8080
-    port: 8080
-    public_url: http://localhost:8080
-chain_node:
-    account_name: alice
-    is_genesis: false
-    keyring_backend: test
-    keyring_dir: ~/.inference
-    seed_api_url: ""
-    url: http://localhost:26657
-current_height: 0
-current_seed:
-    height: 0
-    seed: 0
-    signature: ""
-key_config:
-    worker_private: kNeX5dDa/IhWkgUM+wxVktwK5d0g4tJG5K8kpQk1gtF/Wkk3cT47f8wJVrZHKvk2UMtdtTa/eVHIfB4nQUlGug==
-    worker_public: f1pJN3E+O3/MCVa2Ryr5NlDLXbU2v3lRyHweJ0FJRro=
-merged_node_config: false
+  port: 8080
+  poc_callback_url: http://localhost:8080
+  public_url: http://localhost:8080
 nodes:
-    - hardware: []
-      host: 34.171.235.205:8080/
-      id: node1
-      inference_port: 0
-      max_concurrent: 500
-      models:
-        - unsloth/llama-3-8b-Instruct
-      poc_port: 0
-previous_seed:
-    height: 0
-    seed: 0
-    signature: ""
-upcoming_seed:
-    height: 0
-    seed: 0
-    signature: ""
-upgrade_plan:
-    binaries: {}
-    height: 0
-    name: ""
+  - id: node1
+    host:  34.171.235.205:8080/ # Deployed inference node
+    max_concurrent: 500
+    models:
+      - unsloth/llama-3-8b-Instruct
+chain_node:
+  url: http://localhost:26657
+  account_name: "alice"
+  keyring_backend: "test"
+  keyring_dir: "~/.inference" # We use a custom function to expand ~ to /root
+  is_genesis: false
