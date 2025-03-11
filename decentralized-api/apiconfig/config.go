@@ -1,18 +1,16 @@
 package apiconfig
 
-import "fmt"
-
 type Config struct {
-	Api                ApiConfig       `koanf:"api"`
-	Nodes              []InferenceNode `koanf:"nodes"`
-	NodeConfigIsMerged bool            `koanf:"merged_node_config"`
-	ChainNode          ChainNodeConfig `koanf:"chain_node"`
-	UpcomingSeed       SeedInfo        `koanf:"upcoming_seed"`
-	CurrentSeed        SeedInfo        `koanf:"current_seed"`
-	PreviousSeed       SeedInfo        `koanf:"previous_seed"`
-	CurrentHeight      int64           `koanf:"current_height"`
-	UpgradePlan        UpgradePlan     `koanf:"upgrade_plan"`
-	KeyConfig          KeyConfig       `koanf:"key_config"`
+	Api                ApiConfig             `koanf:"api"`
+	Nodes              []InferenceNodeConfig `koanf:"nodes"`
+	NodeConfigIsMerged bool                  `koanf:"merged_node_config"`
+	ChainNode          ChainNodeConfig       `koanf:"chain_node"`
+	UpcomingSeed       SeedInfo              `koanf:"upcoming_seed"`
+	CurrentSeed        SeedInfo              `koanf:"current_seed"`
+	PreviousSeed       SeedInfo              `koanf:"previous_seed"`
+	CurrentHeight      int64                 `koanf:"current_height"`
+	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
+	KeyConfig          KeyConfig             `koanf:"key_config"`
 }
 
 type UpgradePlan struct {
@@ -48,7 +46,7 @@ type KeyConfig struct {
 }
 
 // IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE HardwareNode proto in inference-chain!!!
-type InferenceNode struct {
+type InferenceNodeConfig struct {
 	Host          string     `koanf:"host" json:"host"`
 	InferencePort int        `koanf:"inference_port" json:"inference_port"`
 	PoCPort       int        `koanf:"poc_port" json:"poc_port"`
@@ -61,12 +59,4 @@ type InferenceNode struct {
 type Hardware struct {
 	Type  string `koanf:"type" json:"type"`
 	Count uint32 `koanf:"count" json:"count"`
-}
-
-func (n *InferenceNode) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d", n.Host, n.InferencePort)
-}
-
-func (n *InferenceNode) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d", n.Host, n.PoCPort)
 }

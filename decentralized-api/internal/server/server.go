@@ -13,6 +13,7 @@ import (
 	"decentralized-api/merkleproof"
 	"decentralized-api/utils"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
@@ -30,14 +31,6 @@ import (
 )
 
 const testModel = "unsloth/llama-3-8b-Instruct"
-
-const (
-	authorizationHeader     = "Authorization"
-	xPublicKeyHeader        = "X-Public-Key"
-	xSeedHeader             = "X-Seed"
-	xInferenceIdHeader      = "X-Inference-Id"
-	xRequesterAddressHeader = "X-Requester-Address"
-)
 
 func StartInferenceServerWrapper(
 	nodeBroker *broker.Broker,
@@ -130,10 +123,10 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 	}
 }
 
-func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNode) {
+func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNodeConfig) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
-		Response: make(chan apiconfig.InferenceNode, 2),
+		Response: make(chan apiconfig.InferenceNodeConfig, 2),
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
@@ -176,14 +169,14 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 
 	logging.Debug("fundedByTransferNode", types.Inferences, "node", fundedByTransferNode)
 	return &ChatRequest{
-		Body:             body,
-		Request:          request,
-		OpenAiRequest:    openAiRequest,
-		AuthKey:          request.Header.Get(authorizationHeader),
-		PubKey:           request.Header.Get(xPublicKeyHeader),
-		Seed:             request.Header.Get(xSeedHeader),
-		InferenceId:      request.Header.Get(xInferenceIdHeader),
-		RequesterAddress: request.Header.Get(xRequesterAddressHeader),
+		Body:                 body,
+		Request:              request,
+		OpenAiRequest:        openAiRequest,
+		AuthKey:              request.Header.Get(utils.AuthorizationHeader),
+		PubKey:               request.Header.Get(utils.XPublicKeyHeader),
+		Seed:                 request.Header.Get(utils.XSeedHeader),
+		InferenceId:          request.Header.Get(utils.XInferenceIdHeader),
+		RequesterAddress:     request.Header.Get(utils.XRequesterAddressHeader),
 	}, nil
 }
 
@@ -289,11 +282,10 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
-
-	req.Header.Set(xInferenceIdHeader, inferenceUUID)
-	req.Header.Set(xSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(xPublicKeyHeader, participant.Pubkey)
-	req.Header.Set(authorizationHeader, request.AuthKey)
+	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
+	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
+	req.Header.Set(utils.XPublicKeyHeader, pubkey)
+	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
 	resp, err := http.DefaultClient.Do(req)
@@ -459,7 +451,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -727,7 +719,7 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 			return
 		}
 
-		result, err := broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (ValidationResult, error) {
+		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (ValidationResult, error) {
 			return validateByInferenceId(validationRequest.Id, node, recorder)
 		})
 

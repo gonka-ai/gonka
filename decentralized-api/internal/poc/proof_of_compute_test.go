@@ -27,8 +27,6 @@ func TestNewPoCOrchestrator(t *testing.T) {
 
 		incrementBytes(nonce)
 
-		// println(hashAndNonce.Hash)
-
 		if time.Since(startTime) > 10*time.Minute {
 			t.Errorf("Proof of compute took too long to generate")
 			break

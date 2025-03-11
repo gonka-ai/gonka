@@ -8,12 +8,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/x/inference/proofofcompute"
-	"github.com/productscience/inference/x/inference/types"
 	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type PoCOrchestrator struct {
@@ -54,12 +55,10 @@ type ProofOfCompute struct {
 
 func NewPoCOrchestrator(pubKey string, difficulty int) *PoCOrchestrator {
 	orchestrator := &PoCOrchestrator{
-		results:       nil,
-		startChan:     make(chan StartPoCEvent),
-		stopChan:      make(chan StopPoCEvent),
-		pubKey:        pubKey,
-		difficulty:    difficulty,
-		runningAtomic: atomic.Bool{},
+		startChan:  make(chan StartPoCEvent),
+		stopChan:   make(chan StopPoCEvent),
+		pubKey:     pubKey,
+		difficulty: difficulty,
 	}
 	orchestrator.runningAtomic.Store(false)
 	return orchestrator
@@ -82,9 +81,9 @@ func (o *PoCOrchestrator) acceptHash(hash string) bool {
 func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 	o.mu.Lock()
 	o.clearResults(event.blockHeight, event.blockHash)
-	o.runningAtomic.Store(true)
 	o.mu.Unlock()
 
+	o.runningAtomic.Store(true)
 	go func() {
 		input := proofofcompute.GetInput(event.blockHash, o.pubKey)
 		nonce := make([]byte, len(input))
@@ -167,7 +166,6 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	}
 
 	params, err := transactionRecorder.NewInferenceQueryClient().Params(transactionRecorder.Context, &types.QueryParamsRequest{})
-
 	if err == nil {
 		nodePoCOrchestrator.SetParams(&params.Params)
 	}
@@ -181,19 +179,13 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 
 	}
 
-	//for key := range event.Result.Events {
-	//	for i, attr := range event.Result.Events[key] {
-	//		logging.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
-	//	}
-	//}
-
 	data := event.Result.Data.Value
-
 	blockHeight, err := getBlockHeight(data)
 	if err != nil {
 		logging.Error("Failed to get blockHeight from event data", types.EventProcessing, "error", err)
 		return
 	}
+
 	err = configManager.SetHeight(blockHeight)
 	if err != nil {
 		logging.Warn("Failed to write config", types.Config, "error", err)
@@ -213,10 +205,9 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
-		nodePoCOrchestrator.Start(blockHeight, blockHash)
+		nodePoCOrchestrator.StartPoC(blockHeight, blockHash)
 
-		GenerateSeed(blockHeight, &transactionRecorder, configManager)
-
+		generateSeed(blockHeight, &transactionRecorder, configManager)
 		return
 	}
 
@@ -225,7 +216,6 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
-
 		return
 	}
 
@@ -235,22 +225,21 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		go func() {
 			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
-
 		return
 	}
 
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
 		logging.Info("IsEndOfPoCValidationStage", types.PoC)
 
-		nodePoCOrchestrator.Stop()
+		nodePoCOrchestrator.StopPoC()
 
 		return
 	}
 
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		go func() {
-			ChangeCurrentSeed(configManager)
-			RequestMoney(&transactionRecorder, configManager)
+			changeCurrentSeed(configManager)
+			requestMoney(&transactionRecorder, configManager)
 		}()
 	}
 }
