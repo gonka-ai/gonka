@@ -28,7 +28,7 @@ jobs:
           git clone --branch release/v0.50.x https://github.com/product-science/cosmos-sdk.git ../../ps-fork/cosmos-sdk
 
       - name: Cache Go modules
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -81,7 +81,7 @@ jobs:
           go-version: '^1.22.2' # Replace with your Go version
 
       - name: Cache Go modules
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
