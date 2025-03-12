@@ -41,14 +41,20 @@ def model_setup(inference_client: InferenceClient, urls: tuple[str, str]) -> str
 
 def test_inference_completion(model_setup: str, urls: tuple[str, str]):
     _, vllm_url = urls
-    url = f"{vllm_url}/v1/completions"
+    url = f"{vllm_url}/v1/chat/completions"
     payload = {
         "model": model_setup,
-        "prompt": "How many R's in the word strawberry?",
-        "max_tokens": 100,
-        "temperature": 0
+        "messages": [
+            {"role": "user", "content": "Who won the world series in 2020? Generate a funny and original text."}
+        ],
+        "max_tokens": 80,
+        "temperature": 0.5,
+        "seed": 42,
+        "stream": False,
+        "logprobs": 1,
+        "top_logprobs": 3
     }
-    
+
     response = requests.post(url, json=payload)
     assert response.status_code == 200
     response_data = response.json()

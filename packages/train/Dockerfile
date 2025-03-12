@@ -1,11 +1,5 @@
 ################################################################################
-FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS app
-
-ENV POETRY_VERSION=2.0.1 \
-    PYTHONUNBUFFERED=1 \
-    POETRY_NO_INTERACTION=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    PYTHONPATH="/app"
+FROM gcr.io/decentralized-ai/vllm:0.7.3.post1 AS app
 
 ENV APP_PATH=/app/packages/train
 
@@ -33,6 +27,13 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
 ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
 
+
+ENV POETRY_VERSION=2.0.1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_NO_INTERACTION=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    APP_PATH=/app/packages/train
+
 RUN pip install --upgrade pip && \
     pip install "poetry==$POETRY_VERSION"
 
@@ -59,7 +60,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     poetry config virtualenvs.in-project true && \
     cd ${APP_PATH} \
     && poetry install --no-interaction \
-    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.2cxx11abiFALSE-cp312-cp312-linux_x86_64.whl \
+    && . ${APP_PATH}/.venv/bin/activate
+
 
 COPY packages/train/src /app/packages/train/src
 COPY packages/train/scripts /app/packages/train/scripts

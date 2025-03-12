@@ -82,7 +82,7 @@ def init_generation(client, server_urls, model_params, r_target, unique_identifi
         fraud_threshold=0.01,
         params=model_params,
     )
-    sleep(20)
+    sleep(60)
     return {"block_hash": block_hash, "public_key": public_key}
 
 
@@ -160,6 +160,7 @@ def test_validate_correct_batch(client, server_urls, latest_proof_batch):
     batch_receiver_url, _ = server_urls
     clear_batches(batch_receiver_url)
     client.start_generation()
+    sleep(20)
     correct_pb = create_correct_batch(latest_proof_batch, n=100)
     client.start_validation()
     client.validate(correct_pb)
@@ -178,6 +179,7 @@ def test_validate_incorrect_batch(client, server_urls, latest_proof_batch):
     batch_receiver_url, _ = server_urls
     clear_batches(batch_receiver_url)
     client.start_generation()
+    sleep(20)
     incorrect_pb = create_incorrect_batch(latest_proof_batch, n=100, n_invalid=30)
     client.start_validation()
     client.validate(incorrect_pb)

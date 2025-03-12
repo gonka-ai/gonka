@@ -20,7 +20,10 @@ services:
           devices:
             - capabilities: [gpu]
               device_ids: ["${GPU_DEVICE_ID:-0}"]
-  
+    ports:
+      - "5000:5000"
+      - "8080:8080"
+
   integration-tests:
     <<: *common-config
     build:
@@ -49,5 +52,3 @@ services:
       target: test
     working_dir: /app/packages/pow/tests
     command: python -m uvicorn batch_reciever:app --host 0.0.0.0 --port 8080
-
-
