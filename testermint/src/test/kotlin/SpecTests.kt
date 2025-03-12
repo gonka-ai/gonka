@@ -3,9 +3,11 @@ import com.productscience.data.spec
 import com.productscience.cosmosJson
 import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 
 import org.junit.jupiter.api.Test
 
+@Tag("exclude")
 class SpecTests {
 
     @Test

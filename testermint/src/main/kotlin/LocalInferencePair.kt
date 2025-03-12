@@ -14,13 +14,19 @@ import com.productscience.data.PubKey
 import com.productscience.data.Spec
 import org.tinylog.kotlin.Logger
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 val nameExtractor = "(.+)-node".toRegex()
 
 fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
+    Logger.info("Getting local inference pairs")
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
     val containers = dockerClient.listContainersCmd().exec()
+    Logger.info("Found ${containers.size} containers")
+    containers.forEach {
+        Logger.info("Container: ${it.names.first()} Status: ${it.state} Image: ${it.image} ID: ${it.id}")
+    }
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.wireMockImageName }
@@ -34,9 +40,10 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
         val matchingMock: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
-        attachLogs(dockerClient, name, "node", it.id)
-        attachLogs(dockerClient, name, "api", matchingApi.id)
+        attachDockerLogs(dockerClient, name, "node", it.id)
+        attachDockerLogs(dockerClient, name, "api", matchingApi.id)
 
+        Logger.info("Creating local inference pair for $name")
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
             ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
@@ -87,20 +94,25 @@ private fun DockerClient.executeCommand(
 //
 //}
 
-private fun attachLogs(
+
+private val attachedContainers = ConcurrentHashMap.newKeySet<String>()
+
+private fun attachDockerLogs(
     dockerClient: DockerClient,
     name: String,
     type: String,
     id: String,
 ) {
-    dockerClient.logContainerCmd(id)
-        .withSince(Instant.now().epochSecond.toInt())
-        .withStdErr(true)
-        .withStdOut(true)
-        .withFollowStream(true)
-        // Timestamps allow LogOutput to detect multi-line messages
-        .withTimestamps(true)
-        .exec(LogOutput(name, type))
+    if (attachedContainers.add(id)) {
+        dockerClient.logContainerCmd(id)
+            .withSince(Instant.now().epochSecond.toInt())
+            .withStdErr(true)
+            .withStdOut(true)
+            .withFollowStream(true)
+            // Timestamps allow LogOutput to detect multi-line messages
+            .withTimestamps(true)
+            .exec(LogOutput(name, type))
+    }
 }
 
 data class LocalInferencePair(
@@ -180,6 +192,9 @@ data class LocalInferencePair(
             this.getParams()
         }
         val epochParams = this.mostRecentParams?.epochParams!!
+        if (epochParams.epochLength > 500) {
+            error("Epoch length is too long testing")
+        }
         val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished)
@@ -198,6 +213,8 @@ data class ApplicationConfig(
     val pairName: String = "",
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
+    // execName accommodates upgraded chains.
+    val execName:String = "$stateDirName/cosmovisor/current/bin/$appName"
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

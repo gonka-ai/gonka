@@ -15,6 +15,7 @@ import com.productscience.inferenceRequest
 import com.productscience.initCluster
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
@@ -23,6 +24,7 @@ import kotlin.test.assertNotNull
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
+    @Tag("health")
     fun `test immediate pre settle amounts`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForNextSettle()
@@ -64,6 +66,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun `test post settle amounts`() {
         val (_, genesis) = initCluster()
         val nextSettleBlock = genesis.getNextSettleBlock()
@@ -112,6 +115,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun `test consumer only participant`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForNextSettle()
@@ -164,6 +168,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun payTopMiner() {
         val fastRewardSpec = spec {
             this[AppState::inference] = spec<InferenceState> {

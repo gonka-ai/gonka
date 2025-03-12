@@ -4,6 +4,8 @@ import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
 import com.productscience.data.UnfundedInferenceParticipant
+import org.tinylog.Logger
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -51,12 +53,17 @@ data class DockerGroup(
     fun init() {
         tearDownExisting()
         setupFiles()
-        val process = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
-            .start()
+        val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
+        val process = dockerProcess.start()
+        process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
+        process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
+        // Just register the log events
+        getLocalInferencePairs(config)
     }
 
     fun tearDownExisting() {
+        Logger.info("Tearing down existing docker group with keyName={}", keyName)
         dockerProcess("compose", "-p", keyName, "down").start().waitFor()
     }
 
@@ -88,7 +95,29 @@ data class DockerGroup(
         val baseDir = Path.of(workingDirectory)
         if (isGenesis) {
             val prodLocal = baseDir.resolve("prod-local")
-            prodLocal.deleteRecursively()
+            try {
+                prodLocal.deleteRecursively()
+            } catch (e: FileSystemException) {
+                val rootCauses = mutableSetOf<Throwable>()
+                fun extractRootCause(throwable: Throwable) {
+                    throwable.cause?.let { cause ->
+                        if (!rootCauses.contains(cause)) {
+                            rootCauses.add(cause)
+                            extractRootCause(cause)
+                        }
+                    }
+                    throwable.suppressed.forEach { suppressed ->
+                        if (!rootCauses.contains(suppressed)) {
+                            rootCauses.add(suppressed)
+                            extractRootCause(suppressed)
+                        }
+                    }
+                }
+                extractRootCause(e)
+                rootCauses.forEach { cause ->
+                    Logger.error("Root cause error deleting directory: {} ({})", cause.message, cause.javaClass.name)
+                }
+            }
         }
 
         val inferenceDir = baseDir.resolve("prod-local/$keyName")
@@ -101,9 +130,13 @@ data class DockerGroup(
         Files.createDirectories(filesDir)
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
-        publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
+
+        if (Files.exists(publicHtmlDir)) {
+            publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
+        }
         val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
+        Logger.info("Setup files for keyName={}", keyName)
     }
 
     val apiUrl = "http://$keyName-api:8080"
@@ -166,6 +199,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<Docke
     val joinGroups =
         (1..joinCount).map { createDockerGroup(it, GenesisUrls(genesisGroup.keyName.trimStart('/')), config) }
     val allGroups = listOf(genesisGroup) + joinGroups
+    Logger.info("Initializing cluster with {} nodes", allGroups.size)
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
     Thread.sleep(Duration.ofSeconds(10L))
@@ -179,7 +213,16 @@ fun initCluster(
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
     val cluster = setupLocalCluster(joinCount, config, reboot)
-    initialize(cluster.allPairs)
+    try {
+        initialize(cluster.allPairs)
+    } catch (e: Exception) {
+        Logger.error(e, "Failed to initialize cluster")
+        if (reboot) {
+            throw e
+        }
+        Logger.info("Rebooting cluster to try again after init error", "")
+        return initCluster(joinCount, config, reboot = true)
+    }
     return cluster to cluster.genesis
 }
 
@@ -207,6 +250,9 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
 fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
     val currentPairs = getLocalInferencePairs(config)
     val (genesis, join) = currentPairs.partition { it.name == "/${config.genesisName}" }
+    if (genesis.size != 1) {
+        Logger.error("Expected exactly one genesis pair, found ${genesis.size}", "")
+    }
     return genesis.singleOrNull()?.let {
         LocalCluster(it, join)
     }
