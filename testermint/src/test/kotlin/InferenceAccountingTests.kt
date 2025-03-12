@@ -115,6 +115,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun `test consumer only participant`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForNextSettle()
@@ -167,6 +168,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
+    @Tag("health")
     fun payTopMiner() {
         val fastRewardSpec = spec {
             this[AppState::inference] = spec<InferenceState> {

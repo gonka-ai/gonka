@@ -179,7 +179,7 @@ data class ApplicationCLI(
 
     // Reified type parameter to abstract out exec and then json to a particular type
     private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
-        val argsWithJson = listOf(config.appName) +
+        val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
@@ -188,12 +188,14 @@ data class ApplicationCLI(
         if (output.contains("inference is not ready; please wait for first block")) {
             throw NotReadyException()
         }
-        return cosmosJson.fromJson(output, T::class.java)
+        // Extract JSON payload if output contains gas estimate
+        val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
+        return cosmosJson.fromJson(jsonOutput, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
     private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>): T {
-        val argsWithJson = (listOf(config.appName) + args + "--output" + "json")
+        val argsWithJson = (listOf(config.execName) + args + "--output" + "json")
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
@@ -228,7 +230,7 @@ data class ApplicationCLI(
 
     fun signPayload(payload: String, accountAddress: String? = null): String {
         val parameters = listOfNotNull(
-            config.appName,
+            config.execName,
             "signature",
             "create",
             // Do we need single quotes here?
@@ -335,6 +337,10 @@ data class ApplicationCLI(
                 "--chain-id=${config.chainId}",
                 "--keyring-dir=/root/${config.stateDirName}",
                 "--yes",
+                "--gas",
+                "auto",
+                "--gas-adjustment",
+                "1.2",
                 "--broadcast-mode",
                 "sync"
             )
@@ -351,15 +357,30 @@ data class ApplicationCLI(
 
     }
 
-    private fun sendTransaction(finalArgs: List<String>): TxResponse {
-        var response = this.execAndParse<TxResponse>(finalArgs)
-        while (response.code == 32) {
-            Logger.warn("Transaction account sequence mismatch, retrying")
-            Thread.sleep(1000)
-            response = this.execAndParse(finalArgs)
+    private fun sendTransaction(finalArgs: List<String>, maxRetries: Int = 5): TxResponse {
+        var attempts = 0
+        while (attempts < maxRetries) {
+            try {
+                var response = this.execAndParse<TxResponse>(finalArgs)
+                if (response.code == 32) {
+                    Logger.warn("Transaction account sequence mismatch, retrying (attempt ${attempts + 1}/$maxRetries)")
+                    Thread.sleep(1000)
+                    attempts++
+                    continue
+                }
+                check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
+                return response
+            } catch (e: IllegalArgumentException) {
+                if (e.message?.contains("account sequence mismatch") == true) {
+                    Logger.warn("Account sequence mismatch exception, retrying (attempt ${attempts + 1}/$maxRetries)")
+                    Thread.sleep(1000)
+                    attempts++
+                    continue
+                }
+                throw e
+            }
         }
-        check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
-        return response
+        throw IllegalStateException("Failed to send transaction after $maxRetries retries")
     }
 
     fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {

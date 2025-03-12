@@ -203,6 +203,9 @@ data class LocalInferencePair(
             this.getParams()
         }
         val epochParams = this.mostRecentParams?.epochParams!!
+        if (epochParams.epochLength > 500) {
+            error("Epoch length is too long testing")
+        }
         val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished)
@@ -221,6 +224,8 @@ data class ApplicationConfig(
     val pairName: String = "",
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
+    // execName accommodates upgraded chains.
+    val execName:String = "$stateDirName/cosmovisor/current/bin/$appName"
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

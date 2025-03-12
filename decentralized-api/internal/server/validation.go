@@ -157,7 +157,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
-func validateByInferenceId(id string, node *apiconfig.InferenceNode, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
+func validateByInferenceId(id string, node *broker.Node, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
@@ -168,12 +168,12 @@ func validateByInferenceId(id string, node *apiconfig.InferenceNode, transaction
 }
 
 func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
-	return broker.LockNode(nodeBroker, testModel, func(node *apiconfig.InferenceNode) (ValidationResult, error) {
+	return broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (ValidationResult, error) {
 		return validate(inference, node)
 	})
 }
 
-func validate(inference types.Inference, inferenceNode *apiconfig.InferenceNode) (ValidationResult, error) {
+func validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {

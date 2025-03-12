@@ -7,6 +7,7 @@ services:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
       - KEY_NAME=${KEY_NAME}
+      - IS_GENESIS=true
     networks:
       - chain-public
     ports:
@@ -26,7 +27,7 @@ services:
       - NODE_HOST=${KEY_NAME}-node
       - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
-      - DAPI_CHAIN_NODE__IS_GENESIS=true
+      - IS_GENESIS=true
       - NODE_CONFIG_PATH=/root/node_config.json
     networks:
       - chain-public
