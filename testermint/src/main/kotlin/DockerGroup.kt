@@ -199,8 +199,10 @@ fun initCluster(
         initialize(cluster.allPairs)
     } catch (e: Exception) {
         if (reboot) {
+            Logger.error(e, "Failed to initialize cluster, rebooting")
             throw e
         }
+        Logger.error(e, "Error initializing cluser, retrying")
         return initCluster(joinCount, config, reboot = true)
     }
     return cluster to cluster.genesis
@@ -208,9 +210,12 @@ fun initCluster(
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
     val currentCluster = getLocalCluster(config)
-    if (clusterMatchesConfig(currentCluster, joinCount, config) && !reboot) {
+    if (!reboot && clusterMatchesConfig(currentCluster, joinCount, config)) {
         return currentCluster
     } else {
+        if (!reboot) {
+            Logger.info("Current cluster does not match config, rebooting", "")
+        }
         initializeCluster(joinCount, config)
         return getLocalCluster(config) ?: error("Local cluster not initialized")
     }

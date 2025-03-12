@@ -5,19 +5,20 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+// These top two values are uint64s because they are IDs, not numerical values.
 message EpochGroupData {
   uint64 poc_start_block_height = 1;
   uint64 epoch_group_id = 2;
   string epoch_policy = 3;
-  uint64 effective_block_height = 4;
-  uint64 last_block_height = 5;
+  int64 effective_block_height = 4;
+  int64 last_block_height = 5;
   repeated SeedSignature member_seed_signatures = 6;
   repeated ValidationWeight validation_weights = 8;
-  uint64 unit_of_compute_price = 9;
-  uint64 number_of_requests = 10;
-  uint64 previous_epoch_requests = 11;
+  int64 unit_of_compute_price = 9;
+  int64 number_of_requests = 10;
+  int64 previous_epoch_requests = 11;
   ValidationParams validation_params = 12;
-  uint64 total_weight = 13;
+  int64 total_weight = 13;
 }
 
 message ValidationWeight {

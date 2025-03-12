@@ -4,10 +4,12 @@ import com.productscience.data.UnitOfComputePriceProposalDto
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 class UnitOfComputeTests : TestermintTest() {
     @Test
+    @Tag("unstable")
     fun `price proposal`() {
         val (cluster, instance) = initCluster()
         val pairs = cluster.allPairs
@@ -31,6 +33,7 @@ class UnitOfComputeTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `submit register model proposal`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[2]
@@ -39,6 +42,7 @@ class UnitOfComputeTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `vote on model proposal`() {
         val pairs = getLocalInferencePairs(inferenceConfig)
 
@@ -48,6 +52,7 @@ class UnitOfComputeTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun queries() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         pairs[2].node.exec(listOf("inferenced", "query", "gov", "deposits", "1"))

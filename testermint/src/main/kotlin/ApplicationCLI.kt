@@ -6,6 +6,7 @@ import com.google.gson.reflect.TypeToken
 import com.productscience.data.AppExport
 import com.productscience.data.BalanceResponse
 import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceParamsWrapper
 import com.productscience.data.InferenceTimeoutsWrapper
 import com.productscience.data.InferencesWrapper
 import com.productscience.data.MinimumValidationAverage
@@ -162,11 +163,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
-    fun getInferenceParams(): InferenceParams = wrapLog("getInferenceParams", false) {
-        // At present, there is a bug in Cosmos that causes this to fail, but it gives us something we can parse anyhow
-        val response = exec(listOf(config.appName) + listOf("query", "inference", "params"))
-        val protoText = """\{.*\}""".toRegex().find(response.first())?.value
-        parseProto(protoText!!)
+    fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
+        execAndParse(listOf("query", "inference", "params"))
     }
 
     data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
@@ -187,6 +185,9 @@ data class ApplicationCLI(
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
+        if (output.contains("inference is not ready; please wait for first block")) {
+            throw NotReadyException()
+        }
         return cosmosJson.fromJson(output, T::class.java)
     }
 
@@ -386,3 +387,4 @@ data class ApplicationCLI(
 
 val maxBlockWaitTime = Duration.ofSeconds(15)
 
+class NotReadyException : Exception("Inference is not ready; please wait for first block")

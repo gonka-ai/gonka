@@ -83,7 +83,7 @@ func (am AppModule) GetTopMinerPayoutSettings(ctx context.Context) keeper.Payout
 		TopNumberOfMiners:  genesisOnlyParams.TopRewards,
 		MaxPayoutsTotal:    int32(genesisOnlyParams.TopRewardPayouts),
 		MaxPayoutsPerMiner: int32(genesisOnlyParams.TopRewardPayoutsPerMiner),
-		AllowedFailureRate: params.TokenomicsParams.TopRewardAllowedFailure,
+		AllowedFailureRate: *params.TokenomicsParams.TopRewardAllowedFailure,
 		MaximumTime:        genesisOnlyParams.TopRewardMaxDuration,
 		FirstQualifiedTime: tokenomicsData.TopRewardStart,
 	}

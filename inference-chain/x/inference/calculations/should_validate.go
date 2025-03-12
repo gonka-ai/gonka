@@ -18,7 +18,7 @@ func ShouldValidate(
 	validationParams *types.ValidationParams,
 ) (bool, string) {
 	executorReputation := decimal.NewFromInt32(inferenceDetails.ExecutorReputation).Div(decimal.NewFromInt32(100))
-	maxValidationAverage := decimal.NewFromFloat(validationParams.MaxValidationAverage)
+	maxValidationAverage := validationParams.MaxValidationAverage.ToDecimal()
 	minValidationAverage := CalculateMinimumValidationAverage(int64(inferenceDetails.TrafficBasis), validationParams)
 	rangeSize := maxValidationAverage.Sub(minValidationAverage)
 	executorAdjustment := rangeSize.Mul(one.Sub(executorReputation))

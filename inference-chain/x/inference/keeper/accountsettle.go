@@ -77,10 +77,11 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 	}
 	normalizedTotalSuply := sdk.NormalizeCoin(sdk.NewInt64Coin(genesisOnlyParams.SupplyDenom, genesisOnlyParams.StandardRewardAmount))
 	return &SettleParameters{
-		CurrentSubsidyPercentage: params.TokenomicsParams.CurrentSubsidyPercentage,
+		// TODO: Settle Parameters should just use (our) Decimal
+		CurrentSubsidyPercentage: params.TokenomicsParams.CurrentSubsidyPercentage.ToFloat32(),
 		TotalSubsidyPaid:         int64(tokenomicsData.TotalSubsidies),
-		StageCutoff:              params.TokenomicsParams.SubsidyReductionInterval,
-		StageDecrease:            params.TokenomicsParams.SubsidyReductionAmount,
+		StageCutoff:              params.TokenomicsParams.SubsidyReductionInterval.ToFloat(),
+		StageDecrease:            params.TokenomicsParams.SubsidyReductionAmount.ToFloat32(),
 		TotalSubsidySupply:       normalizedTotalSuply.Amount.Int64(),
 	}
 }
