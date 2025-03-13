@@ -210,7 +210,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 			// TODO X-Requester-Address header seems to be read only
 		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
 			logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
-			handleTransferRequest(request.Context(), w, chatRequest, recorder)
+			handleTransferRequest(request.Context(), w, chatRequest, recorder, configManager.GetConfig())
 			return
 		} else {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -233,7 +233,7 @@ func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMes
 	}, nil
 }
 
-func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.CosmosMessageClient) bool {
+func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.CosmosMessageClient, config *apiconfig.Config) bool {
 	var pubkey = ""
 	if !request.FundedByTransferNode {
 		queryClient := recorder.NewInferenceQueryClient()
@@ -261,7 +261,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 
 	seed := rand.Int31()
 	inferenceUUID := uuid.New().String()
-	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor)
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, config.CurrentNodeVersion)
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -387,7 +387,7 @@ func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	w.Write(bodyBytes) // TODO handle error??
 }
 
-func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
+func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string) (*inference.MsgStartInference, error) {
 	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
 		return nil, err
@@ -403,6 +403,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		RequestedBy:   request.RequesterAddress,
 		Model:         testModel,
 		AssignedTo:    executor.Address,
+		NodeVersion:   nodeVersion,
 	}
 	return transaction, nil
 }
@@ -456,7 +457,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, testModel, config.CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -754,8 +755,14 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 			return
 		}
 
-		result, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (ValidationResult, error) {
-			return validateByInferenceId(validationRequest.Id, node, recorder)
+		queryClient := recorder.NewInferenceQueryClient()
+		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: validationRequest.Id})
+		if err != nil {
+			logging.Error("Failed get inference by id query", types.Validation, "id", validationRequest.Id, "error", err)
+		}
+
+		result, err := broker.LockNode(nodeBroker, testModel, r.Inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+			return validate(r.Inference, node)
 		})
 
 		if err != nil {

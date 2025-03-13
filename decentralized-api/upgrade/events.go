@@ -51,6 +51,14 @@ func ProcessNewBlockEvent(
 			logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
 			return
 		}
+
+		if planInfo.NodeVersion != "" {
+			err = configManager.AddNodeVersion(upgradePlan.Plan.Height, planInfo.NodeVersion)
+			if err != nil {
+				logging.Error("Error adding node version", types.Upgrades, "error", err)
+				return
+			}
+		}
 	}
 
 }

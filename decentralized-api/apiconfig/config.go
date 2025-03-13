@@ -11,6 +11,67 @@ type Config struct {
 	CurrentHeight      int64                 `koanf:"current_height"`
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
 	KeyConfig          KeyConfig             `koanf:"key_config"`
+	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
+	CurrentNodeVersion string                `koanf:"current_node_version"`
+}
+
+type NodeVersionStack struct {
+	Versions []NodeVersion `koanf:"versions"`
+}
+
+func (nvs *NodeVersionStack) peek() *NodeVersion {
+	if len(nvs.Versions) == 0 {
+		return nil
+	}
+	return &nvs.Versions[len(nvs.Versions)-1]
+}
+
+func (nvs *NodeVersionStack) pop() *NodeVersion {
+	nv := nvs.peek()
+	nvs.Versions = nvs.Versions[:len(nvs.Versions)-1]
+	return nv
+}
+
+func (nvs *NodeVersionStack) PopIf(height int64) (string, bool) {
+	if len(nvs.Versions) == 0 {
+		return "", false
+	}
+	peek := nvs.peek()
+	var result *NodeVersion = &NodeVersion{}
+	for peek != nil && height >= peek.Height {
+		result = nvs.pop()
+		peek = nvs.peek()
+	}
+	return result.Version, result.Version != ""
+}
+
+func (nvs *NodeVersionStack) Insert(height int64, version string) {
+	newVersion := NodeVersion{Height: height, Version: version}
+	versionsWithInserts := make([]NodeVersion, 0, len(nvs.Versions)+1)
+	inserted := false
+
+	for _, v := range nvs.Versions {
+		if !inserted && v.Height < height {
+			versionsWithInserts = append(versionsWithInserts, newVersion)
+			inserted = true
+		}
+		if newVersion.Version == v.Version && newVersion.Height == v.Height {
+			continue
+		}
+		versionsWithInserts = append(versionsWithInserts, v)
+
+	}
+
+	if !inserted {
+		versionsWithInserts = append(versionsWithInserts, newVersion)
+	}
+
+	nvs.Versions = versionsWithInserts
+}
+
+type NodeVersion struct {
+	Height  int64  `koanf:"height"`
+	Version string `koanf:"version"`
 }
 
 type UpgradePlan struct {
@@ -54,6 +115,7 @@ type InferenceNodeConfig struct {
 	Id            string     `koanf:"id" json:"id"`
 	MaxConcurrent int        `koanf:"max_concurrent" json:"max_concurrent"`
 	Hardware      []Hardware `koanf:"hardware" json:"hardware"`
+	Version       string     `koanf:"version" json:"version"`
 }
 
 type Hardware struct {

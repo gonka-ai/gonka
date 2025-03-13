@@ -38,6 +38,7 @@ type Node struct {
 	MaxConcurrent int
 	NodeNum       uint64
 	Hardware      []apiconfig.Hardware
+	Version       string
 }
 
 func (n *Node) InferenceUrl() string {
@@ -152,6 +153,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			MaxConcurrent: command.Node.MaxConcurrent,
 			NodeNum:       curNum,
 			Hardware:      command.Node.Hardware,
+			Version:       command.Node.Version,
 		},
 		State: NodeState{Operational: true},
 	}
@@ -173,7 +175,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	var leastBusyNode *NodeWithState = nil
 
 	for _, node := range b.nodes {
-		if nodeAvailable(node, command.Model) {
+		if nodeAvailable(node, command.Model, command.Version) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -185,15 +187,28 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
-		command.Response <- nil
+		if command.AcceptEarlierVersion {
+			b.lockAvailableNode(
+				LockAvailableNode{
+					Model:                command.Model,
+					Response:             command.Response,
+					AcceptEarlierVersion: false,
+				},
+			)
+		} else {
+			command.Response <- nil
+		}
 	} else {
 		command.Response <- &leastBusyNode.Node
 	}
 }
 
-func nodeAvailable(node *NodeWithState, neededModel string) bool {
+func nodeAvailable(node *NodeWithState, neededModel string, version string) bool {
 	available := node.State.Operational && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
+		return false
+	}
+	if version != "" && node.Node.Version != version {
 		return false
 	}
 	for _, model := range node.Node.Models {
@@ -223,13 +238,16 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 func LockNode[T any](
 	b *Broker,
 	model string,
+	version string,
 	action func(node *Node) (T, error),
 ) (T, error) {
 	var zero T
 	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
-		Model:    model,
-		Response: nodeChan,
+		Model:                model,
+		Response:             nodeChan,
+		Version:              version,
+		AcceptEarlierVersion: true,
 	})
 	if err != nil {
 		return zero, err
