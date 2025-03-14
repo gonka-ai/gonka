@@ -19,7 +19,6 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/shopspring/decimal"
-	"math/rand"
 
 	// this line is used by starport scaffolding # 1
 

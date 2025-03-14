@@ -243,7 +243,7 @@ func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *in
 	transaction.Creator = icc.Address
 	result, err := icc.SendTransaction(transaction)
 	if err != nil {
-		slog.Error("Failed to send transaction", "error", err, "result", result)
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
 		return nil, err
 	}
 
@@ -256,7 +256,7 @@ func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgA
 	transaction.Creator = icc.Address
 	result, err := icc.SendTransaction(transaction)
 	if err != nil {
-		slog.Error("Failed to send transaction", "error", err, "result", result)
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
 		return nil, err
 	}
 
@@ -383,13 +383,13 @@ func ParseMsgFromTxResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex in
 func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) error {
 	var txMsgData sdk.TxMsgData
 	if err := proto.Unmarshal(data, &txMsgData); err != nil {
-		slog.Error("Failed to unmarshal TxMsgData", "error", err, "data", data)
+		logging.Error("Failed to unmarshal TxMsgData", types.Messages, "error", err, "data", data)
 		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
 	logging.Info("Found messages", types.Messages, "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
-		slog.Error("Message index out of range", "msgIndex", msgIndex, "len(messages)", len(txMsgData.MsgResponses))
+		logging.Error("Message index out of range", types.Messages, "msgIndex", msgIndex, "len(messages)", len(txMsgData.MsgResponses))
 		return fmt.Errorf(
 			"message index %d out of range: got %d responses",
 			msgIndex, len(txMsgData.MsgResponses),
@@ -399,7 +399,7 @@ func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) erro
 	anyResp := txMsgData.MsgResponses[msgIndex]
 
 	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
-		slog.Error("Failed to unmarshal response", "error", err, "msgIndex", msgIndex, "response", anyResp.Value)
+		logging.Error("Failed to unmarshal response", types.Messages, "error", err, "msgIndex", msgIndex, "response", anyResp.Value)
 		return fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
 	}
 
@@ -409,7 +409,7 @@ func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) erro
 func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.Client, txHash string, dstMsg T) error {
 	transactionAppliedResult, err := client.WaitForTx(ctx, txHash)
 	if err != nil {
-		slog.Error("Failed to wait for transaction", "error", err, "result", transactionAppliedResult)
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
 		return err
 	}
 

@@ -157,7 +157,7 @@ func (k Keeper) listIds(ctx sdk.Context, prefixKey []byte) ([]uint64, error) {
 
 		taskId, err := strconv.ParseUint(key, 10, 64)
 		if err != nil {
-			k.LogError("Error parsing task ID", "key", key, "err", err)
+			k.LogError("Error parsing task ID", types.Training, "key", key, "err", err)
 			return nil, err
 		}
 		taskIDs = append(taskIDs, taskId)

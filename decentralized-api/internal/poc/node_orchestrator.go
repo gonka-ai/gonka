@@ -6,7 +6,6 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
-	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
@@ -172,7 +171,7 @@ func (o *NodePoCOrchestrator) StopPoC() {
 
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		slog.Error("Failed to get nodes", "error", err)
+		logging.Error("Failed to get nodes", types.PoC, "error", err)
 		return
 	}
 
@@ -199,7 +198,7 @@ func (o *NodePoCOrchestrator) sendStopRequest(node *broker.Node) (*http.Response
 
 	logging.Info("Sending stop request to node", types.PoC, "stopUrl", stopUrl)
 
-	return sendPostRequest(o.HTTPClient, stopUrl, nil)
+	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
 }
 
 func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Response, error) {
@@ -237,7 +236,7 @@ func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http
 	}
 
 	logging.Info("Sending inference/down request to node", types.Nodes, inferenceDownUrl)
-	return sendPostRequest(o.HTTPClient, inferenceDownUrl, nil)
+	return utils.SendPostJsonRequest(o.HTTPClient, inferenceDownUrl, nil)
 }
 
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
@@ -269,7 +268,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	logging.Info("Starting PoC Validation on nodes", types.PoC)
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		slog.Error("Failed to get nodes", "error", err)
+		logging.Error("Failed to get nodes", types.PoC, "error", err)
 		return
 	}
 
@@ -280,9 +279,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
 			continue
 		}
-
 		// TODO: analyze response somehow?
-		_ = resp
 	}
 }
 

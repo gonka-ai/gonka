@@ -9,7 +9,6 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
 	"decentralized-api/logging"
-	"decentralized-api/poc"
 	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -144,7 +143,7 @@ func StartEventListener(
 				continue
 			}
 
-			processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+			processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator, trainingExecutor)
 		}
 	}()
 
@@ -247,13 +246,13 @@ func handleMessage(
 			logging.Debug("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
 			taskIds := event.Result.Events["training_task_assigned.task_id"]
 			if taskIds == nil {
-				slog.Error("No task ID found in training task assigned event", "event", event)
+				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
 				return
 			}
 			for _, taskId := range taskIds {
 				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
 				if err != nil {
-					slog.Error("Failed to parse task ID", "error", err)
+					logging.Error("Failed to parse task ID", types.Training, "error", err)
 					return
 				}
 				executor.ProcessTaskAssignedEvent(taskIdUint)

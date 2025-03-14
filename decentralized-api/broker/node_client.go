@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"decentralized-api/apiconfig"
 	"decentralized-api/utils"
 	"errors"
 	"net/http"
@@ -16,11 +15,11 @@ const (
 )
 
 type InferenceNodeClient struct {
-	node   *apiconfig.InferenceNode
+	node   *Node
 	client http.Client
 }
 
-func NewNodeClient(node *apiconfig.InferenceNode) (*InferenceNodeClient, error) {
+func NewNodeClient(node *Node) (*InferenceNodeClient, error) {
 	if node == nil {
 		return nil, errors.New("node is nil")
 	}

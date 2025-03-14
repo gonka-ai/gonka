@@ -105,7 +105,7 @@ func (b *Broker) processCommands() {
 		case GetNodesCommand:
 			b.getNodes(command)
 		case SyncNodesCommand:
-			b.syncNodes(command)
+			b.syncNodes()
 		case LockNodesForTrainingCommand:
 			b.lockNodesForTraining(command)
 		case StartTrainingCommand:
@@ -159,7 +159,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			Hardware:      command.Node.Hardware,
 		},
 		State: NodeState{
-			LockCount:     0,
+			LockCount: 0,
 			// PRTODO: !!! remove operational? now you have statuses!
 			Operational:   true,
 			FailureReason: "",
@@ -351,7 +351,7 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 	for nodeId, rank := range command.nodeRanks {
 		node, nodeFound := b.nodes[nodeId]
 		if !nodeFound {
-			slog.Error("Node not found", "node_id", nodeId)
+			logging.Error("Node not found", types.Nodes, "node_id", nodeId)
 			command.Response <- false
 			return
 		}
@@ -360,14 +360,14 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 		if err != nil {
 			// FIXME: think how this will be retried,
 			// 	because you might have started the training on some nodes by this moment
-			slog.Error("Error creating node client", "error", err)
+			logging.Error("Error creating node client", types.Nodes, "error", err)
 			command.Response <- false
 			return
 		}
 
 		err = client.StartTraining(command.masterNodeAddress, rank, command.worldSize)
 		if err != nil {
-			slog.Error("Error starting training", "error", err)
+			logging.Error("Error starting training", types.Nodes, "error", err)
 			command.Response <- false
 			return
 		}

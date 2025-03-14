@@ -50,6 +50,8 @@ const (
 	Query_TrainingTask_FullMethodName                     = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                    = "/inference.inference.Query/HardwareNodes"
 	Query_HardwareNodesAll_FullMethodName                 = "/inference.inference.Query/HardwareNodesAll"
+	Query_QueuedTrainingTasks_FullMethodName              = "/inference.inference.Query/QueuedTrainingTasks"
+	Query_TrainingTaskAll_FullMethodName                  = "/inference.inference.Query/TrainingTaskAll"
 	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
 	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
 	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
@@ -112,6 +114,10 @@ type QueryClient interface {
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of QueuedTrainingTasks items.
+	QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error)
+	// Queries a list of TrainingTaskAll items.
+	TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error)
 	// Queries a list of GetParticipantCurrentStats items.
 	GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error)
 	// Queries a list of GetAllParticipantCurrentStats items.
@@ -407,6 +413,24 @@ func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNod
 	return out, nil
 }
 
+func (c *queryClient) QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error) {
+	out := new(QueryQueuedTrainingTasksResponse)
+	err := c.cc.Invoke(ctx, Query_QueuedTrainingTasks_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error) {
+	out := new(QueryTrainingTaskAllResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingTaskAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error) {
 	out := new(QueryGetParticipantCurrentStatsResponse)
 	err := c.cc.Invoke(ctx, Query_GetParticipantCurrentStats_FullMethodName, in, out, opts...)
@@ -491,6 +515,10 @@ type QueryServer interface {
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of QueuedTrainingTasks items.
+	QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error)
+	// Queries a list of TrainingTaskAll items.
+	TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error)
 	// Queries a list of GetParticipantCurrentStats items.
 	GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error)
 	// Queries a list of GetAllParticipantCurrentStats items.
@@ -596,6 +624,12 @@ func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNod
 }
 func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
+}
+func (UnimplementedQueryServer) QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method QueuedTrainingTasks not implemented")
+}
+func (UnimplementedQueryServer) TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingTaskAll not implemented")
 }
 func (UnimplementedQueryServer) GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetParticipantCurrentStats not implemented")
@@ -1177,6 +1211,42 @@ func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_QueuedTrainingTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryQueuedTrainingTasksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).QueuedTrainingTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_QueuedTrainingTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).QueuedTrainingTasks(ctx, req.(*QueryQueuedTrainingTasksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainingTaskAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingTaskAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingTaskAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingTaskAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingTaskAll(ctx, req.(*QueryTrainingTaskAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_GetParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetParticipantCurrentStatsRequest)
 	if err := dec(in); err != nil {
@@ -1361,6 +1431,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HardwareNodesAll",
 			Handler:    _Query_HardwareNodesAll_Handler,
+		},
+		{
+			MethodName: "QueuedTrainingTasks",
+			Handler:    _Query_QueuedTrainingTasks_Handler,
+		},
+		{
+			MethodName: "TrainingTaskAll",
+			Handler:    _Query_TrainingTaskAll_Handler,
 		},
 		{
 			MethodName: "GetParticipantCurrentStats",
