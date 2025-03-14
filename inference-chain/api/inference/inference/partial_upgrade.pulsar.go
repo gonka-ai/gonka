@@ -13,18 +13,20 @@ import (
 )
 
 var (
-	md_PartialUpgrade                 protoreflect.MessageDescriptor
-	fd_PartialUpgrade_height          protoreflect.FieldDescriptor
-	fd_PartialUpgrade_nodeVersion     protoreflect.FieldDescriptor
-	fd_PartialUpgrade_apiBinariesJson protoreflect.FieldDescriptor
+	md_PartialUpgrade                   protoreflect.MessageDescriptor
+	fd_PartialUpgrade_height            protoreflect.FieldDescriptor
+	fd_PartialUpgrade_node_version      protoreflect.FieldDescriptor
+	fd_PartialUpgrade_api_binaries_json protoreflect.FieldDescriptor
+	fd_PartialUpgrade_name              protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_partial_upgrade_proto_init()
 	md_PartialUpgrade = File_inference_inference_partial_upgrade_proto.Messages().ByName("PartialUpgrade")
 	fd_PartialUpgrade_height = md_PartialUpgrade.Fields().ByName("height")
-	fd_PartialUpgrade_nodeVersion = md_PartialUpgrade.Fields().ByName("nodeVersion")
-	fd_PartialUpgrade_apiBinariesJson = md_PartialUpgrade.Fields().ByName("apiBinariesJson")
+	fd_PartialUpgrade_node_version = md_PartialUpgrade.Fields().ByName("node_version")
+	fd_PartialUpgrade_api_binaries_json = md_PartialUpgrade.Fields().ByName("api_binaries_json")
+	fd_PartialUpgrade_name = md_PartialUpgrade.Fields().ByName("name")
 }
 
 var _ protoreflect.Message = (*fastReflection_PartialUpgrade)(nil)
@@ -100,13 +102,19 @@ func (x *fastReflection_PartialUpgrade) Range(f func(protoreflect.FieldDescripto
 	}
 	if x.NodeVersion != "" {
 		value := protoreflect.ValueOfString(x.NodeVersion)
-		if !f(fd_PartialUpgrade_nodeVersion, value) {
+		if !f(fd_PartialUpgrade_node_version, value) {
 			return
 		}
 	}
 	if x.ApiBinariesJson != "" {
 		value := protoreflect.ValueOfString(x.ApiBinariesJson)
-		if !f(fd_PartialUpgrade_apiBinariesJson, value) {
+		if !f(fd_PartialUpgrade_api_binaries_json, value) {
+			return
+		}
+	}
+	if x.Name != "" {
+		value := protoreflect.ValueOfString(x.Name)
+		if !f(fd_PartialUpgrade_name, value) {
 			return
 		}
 	}
@@ -127,10 +135,12 @@ func (x *fastReflection_PartialUpgrade) Has(fd protoreflect.FieldDescriptor) boo
 	switch fd.FullName() {
 	case "inference.inference.PartialUpgrade.height":
 		return x.Height != uint64(0)
-	case "inference.inference.PartialUpgrade.nodeVersion":
+	case "inference.inference.PartialUpgrade.node_version":
 		return x.NodeVersion != ""
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
+	case "inference.inference.PartialUpgrade.api_binaries_json":
 		return x.ApiBinariesJson != ""
+	case "inference.inference.PartialUpgrade.name":
+		return x.Name != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PartialUpgrade"))
@@ -149,10 +159,12 @@ func (x *fastReflection_PartialUpgrade) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.PartialUpgrade.height":
 		x.Height = uint64(0)
-	case "inference.inference.PartialUpgrade.nodeVersion":
+	case "inference.inference.PartialUpgrade.node_version":
 		x.NodeVersion = ""
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
+	case "inference.inference.PartialUpgrade.api_binaries_json":
 		x.ApiBinariesJson = ""
+	case "inference.inference.PartialUpgrade.name":
+		x.Name = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PartialUpgrade"))
@@ -172,11 +184,14 @@ func (x *fastReflection_PartialUpgrade) Get(descriptor protoreflect.FieldDescrip
 	case "inference.inference.PartialUpgrade.height":
 		value := x.Height
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.PartialUpgrade.nodeVersion":
+	case "inference.inference.PartialUpgrade.node_version":
 		value := x.NodeVersion
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
+	case "inference.inference.PartialUpgrade.api_binaries_json":
 		value := x.ApiBinariesJson
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.PartialUpgrade.name":
+		value := x.Name
 		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
@@ -200,10 +215,12 @@ func (x *fastReflection_PartialUpgrade) Set(fd protoreflect.FieldDescriptor, val
 	switch fd.FullName() {
 	case "inference.inference.PartialUpgrade.height":
 		x.Height = value.Uint()
-	case "inference.inference.PartialUpgrade.nodeVersion":
+	case "inference.inference.PartialUpgrade.node_version":
 		x.NodeVersion = value.Interface().(string)
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
+	case "inference.inference.PartialUpgrade.api_binaries_json":
 		x.ApiBinariesJson = value.Interface().(string)
+	case "inference.inference.PartialUpgrade.name":
+		x.Name = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PartialUpgrade"))
@@ -226,10 +243,12 @@ func (x *fastReflection_PartialUpgrade) Mutable(fd protoreflect.FieldDescriptor)
 	switch fd.FullName() {
 	case "inference.inference.PartialUpgrade.height":
 		panic(fmt.Errorf("field height of message inference.inference.PartialUpgrade is not mutable"))
-	case "inference.inference.PartialUpgrade.nodeVersion":
-		panic(fmt.Errorf("field nodeVersion of message inference.inference.PartialUpgrade is not mutable"))
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
-		panic(fmt.Errorf("field apiBinariesJson of message inference.inference.PartialUpgrade is not mutable"))
+	case "inference.inference.PartialUpgrade.node_version":
+		panic(fmt.Errorf("field node_version of message inference.inference.PartialUpgrade is not mutable"))
+	case "inference.inference.PartialUpgrade.api_binaries_json":
+		panic(fmt.Errorf("field api_binaries_json of message inference.inference.PartialUpgrade is not mutable"))
+	case "inference.inference.PartialUpgrade.name":
+		panic(fmt.Errorf("field name of message inference.inference.PartialUpgrade is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PartialUpgrade"))
@@ -245,9 +264,11 @@ func (x *fastReflection_PartialUpgrade) NewField(fd protoreflect.FieldDescriptor
 	switch fd.FullName() {
 	case "inference.inference.PartialUpgrade.height":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.PartialUpgrade.nodeVersion":
+	case "inference.inference.PartialUpgrade.node_version":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.PartialUpgrade.apiBinariesJson":
+	case "inference.inference.PartialUpgrade.api_binaries_json":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.PartialUpgrade.name":
 		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
@@ -329,6 +350,10 @@ func (x *fastReflection_PartialUpgrade) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		l = len(x.Name)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -357,6 +382,13 @@ func (x *fastReflection_PartialUpgrade) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Name) > 0 {
+			i -= len(x.Name)
+			copy(dAtA[i:], x.Name)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Name)))
+			i--
+			dAtA[i] = 0x22
 		}
 		if len(x.ApiBinariesJson) > 0 {
 			i -= len(x.ApiBinariesJson)
@@ -509,6 +541,38 @@ func (x *fastReflection_PartialUpgrade) ProtoMethods() *protoiface.Methods {
 				}
 				x.ApiBinariesJson = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Name = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -563,8 +627,9 @@ type PartialUpgrade struct {
 	unknownFields protoimpl.UnknownFields
 
 	Height          uint64 `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`
-	NodeVersion     string `protobuf:"bytes,2,opt,name=nodeVersion,proto3" json:"nodeVersion,omitempty"`
-	ApiBinariesJson string `protobuf:"bytes,3,opt,name=apiBinariesJson,proto3" json:"apiBinariesJson,omitempty"`
+	NodeVersion     string `protobuf:"bytes,2,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`
+	ApiBinariesJson string `protobuf:"bytes,3,opt,name=api_binaries_json,json=apiBinariesJson,proto3" json:"api_binaries_json,omitempty"`
+	Name            string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 }
 
 func (x *PartialUpgrade) Reset() {
@@ -608,6 +673,13 @@ func (x *PartialUpgrade) GetApiBinariesJson() string {
 	return ""
 }
 
+func (x *PartialUpgrade) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 var File_inference_inference_partial_upgrade_proto protoreflect.FileDescriptor
 
 var file_inference_inference_partial_upgrade_proto_rawDesc = []byte{
@@ -615,27 +687,28 @@ var file_inference_inference_partial_upgrade_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x5f, 0x75, 0x70,
 	0x67, 0x72, 0x61, 0x64, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x22, 0x74, 0x0a, 0x0e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61,
-	0x64, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x04, 0x52, 0x06, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x20, 0x0a, 0x0b, 0x6e, 0x6f,
-	0x64, 0x65, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52,
-	0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x28, 0x0a, 0x0f,
-	0x61, 0x70, 0x69, 0x42, 0x69, 0x6e, 0x61, 0x72, 0x69, 0x65, 0x73, 0x4a, 0x73, 0x6f, 0x6e, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x61, 0x70, 0x69, 0x42, 0x69, 0x6e, 0x61, 0x72, 0x69,
-	0x65, 0x73, 0x4a, 0x73, 0x6f, 0x6e, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x42, 0x13, 0x50, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61,
-	0x64, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
-	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2,
-	0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
-	0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
-	0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x22, 0x8b, 0x01, 0x0a, 0x0e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72,
+	0x61, 0x64, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x06, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x6e,
+	0x6f, 0x64, 0x65, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x2a,
+	0x0a, 0x11, 0x61, 0x70, 0x69, 0x5f, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x69, 0x65, 0x73, 0x5f, 0x6a,
+	0x73, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x61, 0x70, 0x69, 0x42, 0x69,
+	0x6e, 0x61, 0x72, 0x69, 0x65, 0x73, 0x4a, 0x73, 0x6f, 0x6e, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61,
+	0x6d, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x42, 0xc1,
+	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x50, 0x61, 0x72, 0x74,
+	0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
