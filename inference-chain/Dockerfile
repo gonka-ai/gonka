@@ -54,6 +54,7 @@ ENV DAEMON_RESTART_AFTER_UPGRADE=true
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/prod/init-docker.sh /root/init-docker.sh
+COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json

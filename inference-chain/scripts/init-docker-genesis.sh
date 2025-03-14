@@ -101,7 +101,32 @@ cosmovisor init /usr/bin/inferenced || {
 }
 
 echo "Starting cosmovisor and the chain"
-cosmovisor run start || {
-  echo "Cosmovisor failed, idling the container..."
-  tail -f /dev/null
-}
+#cosmovisor run start || {
+#  echo "Cosmovisor failed, idling the container..."
+#  tail -f /dev/null
+#}
+
+cosmovisor run start &
+COSMOVISOR_PID=$!
+sleep 20 # wait for the first block
+
+# import private key for tgbot and sign tx to make tgbot public key registered n the network
+if [ "$INIT_TGBOT" = "true" ]; then
+    echo "Initializing tgbot account..."
+
+    if [ -z "$TGBOT_PRIVATE_KEY_PASS" ]; then
+        echo "Error: TGBOT_PRIVATE_KEY_PASS is empty. Aborting initialization."
+        exit 1
+    fi
+
+    echo "$TGBOT_PRIVATE_KEY_PASS" | inferenced keys import tgbot tgbot_private_key.json
+
+    inferenced tx bank send cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk \
+        cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk 100nicoin --from tgbot --yes
+
+    echo "✅ tgbot account successfully initialized!"
+else
+    echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."
+fi
+
+wait $COSMOVISOR_PID
