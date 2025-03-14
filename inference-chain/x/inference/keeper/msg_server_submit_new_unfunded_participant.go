@@ -35,7 +35,6 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 
 	k.AccountKeeper.SetAccount(ctx, newAccount)
 	// TODO: Handling the message
-	_ = ctx
 	newParticipant := createNewParticipant(ctx,
 		&types.MsgSubmitNewParticipant{
 			Creator:      msg.GetAddress(),

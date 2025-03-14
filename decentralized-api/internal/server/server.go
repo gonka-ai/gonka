@@ -276,7 +276,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 	// the same process to create the same final request body
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 
-	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
+	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
@@ -748,9 +748,9 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 func wrapSubmitNewParticipant(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Debug("SubmitNewParticipant received", types.Participants, "method", request.Method)
-		if request.Method == "POST" {
+		if request.Method == http.MethodPost {
 			submitNewParticipant(recorder, w, request)
-		} else if request.Method == "GET" {
+		} else if request.Method == http.MethodGet {
 			getParticipants(recorder, w, request)
 		} else {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
