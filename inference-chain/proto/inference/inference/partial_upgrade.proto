@@ -5,8 +5,8 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 
 message PartialUpgrade {
   uint64 height = 1; 
-  string nodeVersion = 2; 
-  string apiBinariesJson = 3; 
-  
+  string node_version = 2;
+  string api_binaries_json = 3;
+  string name = 4;
 }
 

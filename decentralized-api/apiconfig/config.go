@@ -45,7 +45,7 @@ func (nvs *NodeVersionStack) PopIf(height int64) (string, bool) {
 	return result.Version, result.Version != ""
 }
 
-func (nvs *NodeVersionStack) Insert(height int64, version string) {
+func (nvs *NodeVersionStack) Insert(height int64, version string) bool {
 	newVersion := NodeVersion{Height: height, Version: version}
 	versionsWithInserts := make([]NodeVersion, 0, len(nvs.Versions)+1)
 	inserted := false
@@ -56,10 +56,9 @@ func (nvs *NodeVersionStack) Insert(height int64, version string) {
 			inserted = true
 		}
 		if newVersion.Version == v.Version && newVersion.Height == v.Height {
-			continue
+			return false
 		}
 		versionsWithInserts = append(versionsWithInserts, v)
-
 	}
 
 	if !inserted {
@@ -67,6 +66,7 @@ func (nvs *NodeVersionStack) Insert(height int64, version string) {
 	}
 
 	nvs.Versions = versionsWithInserts
+	return true
 }
 
 type NodeVersion struct {

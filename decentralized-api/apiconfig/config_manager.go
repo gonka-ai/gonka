@@ -89,7 +89,9 @@ func (cm *ConfigManager) GetCurrentNodeVersion() string {
 }
 
 func (cm *ConfigManager) AddNodeVersion(height int64, version string) error {
-	cm.currentConfig.NodeVersions.Insert(height, version)
+	if !cm.currentConfig.NodeVersions.Insert(height, version) {
+		return nil
+	}
 	logging.Info("Adding node version", types.Config, "height", height, "version", version)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
