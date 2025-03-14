@@ -53,28 +53,28 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	)
 	err := groupMsg.SetDecisionPolicy(policy)
 	if err != nil {
-		eg.Logger.LogError("Error setting decision policy", "error", err)
+		eg.Logger.LogError("Error setting decision policy", types.EpochGroup, "error", err)
 		return err
 	}
 
 	result, err := eg.GroupKeeper.CreateGroupWithPolicy(ctx, groupMsg)
 	if err != nil {
-		eg.Logger.LogError("Error creating group", "error", err)
+		eg.Logger.LogError("Error creating group", types.EpochGroup, "error", err)
 		return err
 	}
 	eg.GroupData.EpochGroupId = result.GroupId
 	eg.GroupData.EpochPolicy = result.GroupPolicyAddress
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 
-	eg.Logger.LogInfo("Created group", "groupID", result.GroupId, "policyAddress", result.GroupPolicyAddress)
+	eg.Logger.LogInfo("Created group", types.EpochGroup, "groupID", result.GroupId, "policyAddress", result.GroupPolicyAddress)
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string) error {
-	eg.Logger.LogInfo("Adding member", "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
+func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string, reputation int64) error {
+	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
 	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
 	if !found {
-		eg.Logger.LogError("Epoch group not found", "blockHeight", eg.GroupData.PocStartBlockHeight)
+		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight)
 		return types.ErrCurrentEpochGroupNotFound
 	}
 	eg.GroupData = &val
@@ -88,7 +88,9 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress: address,
 		Weight:        int64(weight),
+		Reputation:    int32(reputation),
 	})
+	eg.GroupData.TotalWeight += weight
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 	return eg.updateMember(ctx, address, weight, pubkey)
 }
@@ -129,7 +131,7 @@ func (eg *EpochGroup) IsChanged(ctx context.Context) bool {
 		GroupId: eg.GroupData.EpochGroupId,
 	})
 	if err != nil {
-		eg.Logger.LogError("Error getting group info", "error", err)
+		eg.Logger.LogError("Error getting group info", types.EpochGroup, "error", err)
 		return false
 	}
 	return info.Info.Metadata == "changed"
@@ -183,7 +185,7 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 	for _, member := range members {
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(member.Member.Metadata)
 		if err != nil {
-			eg.Logger.LogError("Error decoding pubkey", "error", err)
+			eg.Logger.LogError("Error decoding pubkey", types.EpochGroup, "error", err)
 			continue
 		}
 		// The VALIDATOR key, never to be confused with the account key (which is a sekp256k1 key)
@@ -204,7 +206,7 @@ func (eg *EpochGroup) getGroupMembers(ctx context.Context) ([]*group.GroupMember
 		GroupId: eg.GroupData.EpochGroupId,
 	})
 	if err != nil {
-		eg.Logger.LogError("Error getting group members", "error", err)
+		eg.Logger.LogError("Error getting group members", types.EpochGroup, "error", err)
 		return nil, err
 	}
 	return members.Members, nil

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,7 +13,6 @@ import (
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
-	"log/slog"
 	"net/http"
 	"net/url"
 )
@@ -28,7 +28,7 @@ func WrapVerifyProof() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var proofVerificationRequest ProofVerificationRequest
 		if err := json.NewDecoder(r.Body).Decode(&proofVerificationRequest); err != nil {
-			slog.Error("Error decoding request", "error", err)
+			logging.Error("Error decoding request", types.Participants, "error", err)
 			http.Error(w, "Error decoding request", http.StatusBadRequest)
 			return
 		}
@@ -38,22 +38,22 @@ func WrapVerifyProof() http.HandlerFunc {
 
 		appHash, err := hex.DecodeString(proofVerificationRequest.AppHash)
 		if err != nil {
-			slog.Error("Error decoding app hash", "error", err)
+			logging.Error("Error decoding app hash", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		value, err := hex.DecodeString(proofVerificationRequest.Value)
 		if err != nil {
-			slog.Error("Error decoding value", "error", err)
+			logging.Error("Error decoding value", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		slog.Info("Attempting verification", "verKey", verKey, "appHash", appHash, "value", proofVerificationRequest.Value)
+		logging.Info("Attempting verification", types.Participants, "verKey", verKey, "appHash", appHash, "value", proofVerificationRequest.Value)
 		err = merkleproof.VerifyUsingProofRt(&proofVerificationRequest.ProofOps, appHash, verKey, value)
 		if err != nil {
-			slog.Info("VerifyUsingProofRt failed", "error", err)
+			logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
@@ -75,7 +75,7 @@ func WrapVerifyBlock(config *apiconfig.ConfigManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var blockVerificationRequest VerifyBlockRequest
 		if err := json.NewDecoder(r.Body).Decode(&blockVerificationRequest); err != nil {
-			slog.Error("Error decoding request", "error", err)
+			logging.Error("Error decoding request", types.Participants, "error", err)
 			http.Error(w, "Error decoding request", http.StatusBadRequest)
 			return
 		}
@@ -86,7 +86,7 @@ func WrapVerifyBlock(config *apiconfig.ConfigManager) http.HandlerFunc {
 		for i, validator := range blockVerificationRequest.Validators {
 			pubKeyBytes, err := base64.StdEncoding.DecodeString(validator.PubKey)
 			if err != nil {
-				slog.Error("Error decoding public key", "error", err)
+				logging.Error("Error decoding public key", types.Participants, "error", err)
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -97,16 +97,16 @@ func WrapVerifyBlock(config *apiconfig.ConfigManager) http.HandlerFunc {
 
 		err := debug(config.GetConfig().ChainNode.Url, block)
 		if err != nil {
-			slog.Error("Debug block verification failed!", "error", err)
+			logging.Error("Debug block verification failed!", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		slog.Info("Received validators", "height", block.Height, "valSet", valSet)
+		logging.Info("Received validators", types.Participants, "height", block.Height, "valSet", valSet)
 
 		err = merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
 		if err != nil {
-			slog.Error("Block signature verification failed", "error", err)
+			logging.Error("Block signature verification failed", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -127,7 +127,7 @@ func debug(address string, block *comettypes.Block) error {
 	}
 	valSet := valSetRes.Validators
 
-	slog.Info("Ground truth validators", "height", block.Height, "valSet", valSet)
+	logging.Info("Ground truth validators", types.Participants, "height", block.Height, "valSet", valSet)
 
 	return merkleproof.VerifyCommit(block.Header.ChainID, block.LastCommit, &block.Header, valSet)
 }

@@ -4,16 +4,17 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/x/inference/proofofcompute"
-	"github.com/productscience/inference/x/inference/types"
-	"github.com/sagikazarmark/slog-shim"
 	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/productscience/inference/x/inference/proofofcompute"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type PoCOrchestrator struct {
@@ -54,12 +55,10 @@ type ProofOfCompute struct {
 
 func NewPoCOrchestrator(pubKey string, difficulty int) *PoCOrchestrator {
 	orchestrator := &PoCOrchestrator{
-		results:       nil,
-		startChan:     make(chan StartPoCEvent),
-		stopChan:      make(chan StopPoCEvent),
-		pubKey:        pubKey,
-		difficulty:    difficulty,
-		runningAtomic: atomic.Bool{},
+		startChan:  make(chan StartPoCEvent),
+		stopChan:   make(chan StopPoCEvent),
+		pubKey:     pubKey,
+		difficulty: difficulty,
 	}
 	orchestrator.runningAtomic.Store(false)
 	return orchestrator
@@ -82,9 +81,9 @@ func (o *PoCOrchestrator) acceptHash(hash string) bool {
 func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
 	o.mu.Lock()
 	o.clearResults(event.blockHeight, event.blockHash)
-	o.runningAtomic.Store(true)
 	o.mu.Unlock()
 
+	o.runningAtomic.Store(true)
 	go func() {
 		input := proofofcompute.GetInput(event.blockHash, o.pubKey)
 		nonce := make([]byte, len(input))
@@ -167,90 +166,81 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 	}
 
 	params, err := transactionRecorder.NewInferenceQueryClient().Params(transactionRecorder.Context, &types.QueryParamsRequest{})
-
 	if err == nil {
 		nodePoCOrchestrator.SetParams(&params.Params)
 	}
 
-	// Check for any upcoming upgrade plan
-	plan, err := transactionRecorder.GetUpgradePlan()
-	if err != nil {
-		slog.Error("Unable to get upgrade plan", "error", err)
-	} else {
-		slog.Info("Upgrade plan", "plan", plan.Plan)
-
-	}
-
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
-	//		slog.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
+	//		logging.Debug("\t NewBlockEventValue", "key", key, "attr", attr, "index", i)
 	//	}
 	//}
 
 	data := event.Result.Data.Value
-
 	blockHeight, err := getBlockHeight(data)
 	if err != nil {
-		slog.Error("Failed to get blockHeight from event data", "error", err)
+		logging.Error("Failed to get blockHeight from event data", types.Stages, "error", err)
 		return
 	}
+
 	err = configManager.SetHeight(blockHeight)
 	if err != nil {
-		slog.Warn("Failed to write config", "error", err)
+		logging.Warn("Failed to write config", types.Config, "error", err)
 	}
 
 	blockHash, err := getBlockHash(data)
 	if err != nil {
-		slog.Error("Failed to get blockHash from event data", "error", err)
+		logging.Error("Failed to get blockHash from event data", types.Stages, "error", err)
 		return
 	}
 
 	epochParams := nodePoCOrchestrator.GetParams().EpochParams
-	slog.Debug("New block event received", "blockHeight", blockHeight, "blockHash", blockHash)
+	logging.Debug("New block event received", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
-		slog.Info("IsStartOfPocStagre: sending StartPoCEvent to the PoC orchestrator")
+		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
 		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
 		//orchestrator.StartProcessing(pocEvent)
 
-		nodePoCOrchestrator.Start(blockHeight, blockHash)
-
-		GenerateSeed(blockHeight, &transactionRecorder, configManager)
-
+		nodePoCOrchestrator.StartPoC(blockHeight, blockHash)
+		generateSeed(blockHeight, &transactionRecorder, configManager)
 		return
 	}
 
 	if epochParams.IsEndOfPoCStage(blockHeight) {
-		slog.Info("IsEndOfPoCStage. Calling MoveToValidationStage")
+		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages)
 		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
-
-		return
 	}
 
 	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
-		slog.Info("IsStartOfPoCValidationStage")
+		logging.Info("IsStartOfPoCValidationStage", types.Stages)
 
 		go func() {
 			nodePoCOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
-
-		return
 	}
 
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
-		slog.Info("IsEndOfPoCValidationStage")
+		logging.Info("IsEndOfPoCValidationStage", types.Stages)
 
-		nodePoCOrchestrator.Stop()
+		nodePoCOrchestrator.StopPoC()
 
 		return
 	}
 
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
+		logging.Info("IsSetNewValidatorsStage", types.Stages)
 		go func() {
-			ChangeCurrentSeed(configManager)
-			RequestMoney(&transactionRecorder, configManager)
+			changeCurrentSeed(configManager)
+		}()
+	}
+
+	if epochParams.IsClaimMoneyStage(blockHeight) {
+		logging.Info("IsClaimMoneyStage", types.Stages)
+		go func() {
+			requestMoney(&transactionRecorder, configManager)
 		}()
 	}
 }

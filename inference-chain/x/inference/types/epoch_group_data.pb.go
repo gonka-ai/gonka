@@ -4,7 +4,6 @@
 package types
 
 import (
-	encoding_binary "encoding/binary"
 	fmt "fmt"
 	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
@@ -24,15 +23,18 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type EpochGroupData struct {
-	PocStartBlockHeight  uint64              `protobuf:"varint,1,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
-	EpochGroupId         uint64              `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
-	EpochPolicy          string              `protobuf:"bytes,3,opt,name=epoch_policy,json=epochPolicy,proto3" json:"epoch_policy,omitempty"`
-	EffectiveBlockHeight uint64              `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
-	LastBlockHeight      uint64              `protobuf:"varint,5,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
-	MemberSeedSignatures []*SeedSignature    `protobuf:"bytes,6,rep,name=member_seed_signatures,json=memberSeedSignatures,proto3" json:"member_seed_signatures,omitempty"`
-	FinishedInferences   []*InferenceDetail  `protobuf:"bytes,7,rep,name=finished_inferences,json=finishedInferences,proto3" json:"finished_inferences,omitempty"`
-	ValidationWeights    []*ValidationWeight `protobuf:"bytes,8,rep,name=validation_weights,json=validationWeights,proto3" json:"validation_weights,omitempty"`
-	UnitOfComputePrice   uint64              `protobuf:"varint,9,opt,name=unit_of_compute_price,json=unitOfComputePrice,proto3" json:"unit_of_compute_price,omitempty"`
+	PocStartBlockHeight   uint64              `protobuf:"varint,1,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
+	EpochGroupId          uint64              `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
+	EpochPolicy           string              `protobuf:"bytes,3,opt,name=epoch_policy,json=epochPolicy,proto3" json:"epoch_policy,omitempty"`
+	EffectiveBlockHeight  uint64              `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
+	LastBlockHeight       uint64              `protobuf:"varint,5,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
+	MemberSeedSignatures  []*SeedSignature    `protobuf:"bytes,6,rep,name=member_seed_signatures,json=memberSeedSignatures,proto3" json:"member_seed_signatures,omitempty"`
+	ValidationWeights     []*ValidationWeight `protobuf:"bytes,8,rep,name=validation_weights,json=validationWeights,proto3" json:"validation_weights,omitempty"`
+	UnitOfComputePrice    uint64              `protobuf:"varint,9,opt,name=unit_of_compute_price,json=unitOfComputePrice,proto3" json:"unit_of_compute_price,omitempty"`
+	NumberOfRequests      uint64              `protobuf:"varint,10,opt,name=number_of_requests,json=numberOfRequests,proto3" json:"number_of_requests,omitempty"`
+	PreviousEpochRequests uint64              `protobuf:"varint,11,opt,name=previous_epoch_requests,json=previousEpochRequests,proto3" json:"previous_epoch_requests,omitempty"`
+	ValidationParams      *ValidationParams   `protobuf:"bytes,12,opt,name=validation_params,json=validationParams,proto3" json:"validation_params,omitempty"`
+	TotalWeight           uint64              `protobuf:"varint,13,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
 }
 
 func (m *EpochGroupData) Reset()         { *m = EpochGroupData{} }
@@ -110,13 +112,6 @@ func (m *EpochGroupData) GetMemberSeedSignatures() []*SeedSignature {
 	return nil
 }
 
-func (m *EpochGroupData) GetFinishedInferences() []*InferenceDetail {
-	if m != nil {
-		return m.FinishedInferences
-	}
-	return nil
-}
-
 func (m *EpochGroupData) GetValidationWeights() []*ValidationWeight {
 	if m != nil {
 		return m.ValidationWeights
@@ -131,62 +126,30 @@ func (m *EpochGroupData) GetUnitOfComputePrice() uint64 {
 	return 0
 }
 
-type InferenceDetail struct {
-	InferenceId        string  `protobuf:"bytes,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Executor           string  `protobuf:"bytes,2,opt,name=executor,proto3" json:"executor,omitempty"`
-	ExecutorReputation float32 `protobuf:"fixed32,3,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
-}
-
-func (m *InferenceDetail) Reset()         { *m = InferenceDetail{} }
-func (m *InferenceDetail) String() string { return proto.CompactTextString(m) }
-func (*InferenceDetail) ProtoMessage()    {}
-func (*InferenceDetail) Descriptor() ([]byte, []int) {
-	return fileDescriptor_47040406f6377eb3, []int{1}
-}
-func (m *InferenceDetail) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *InferenceDetail) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_InferenceDetail.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *InferenceDetail) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_InferenceDetail.Merge(m, src)
-}
-func (m *InferenceDetail) XXX_Size() int {
-	return m.Size()
-}
-func (m *InferenceDetail) XXX_DiscardUnknown() {
-	xxx_messageInfo_InferenceDetail.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_InferenceDetail proto.InternalMessageInfo
-
-func (m *InferenceDetail) GetInferenceId() string {
+func (m *EpochGroupData) GetNumberOfRequests() uint64 {
 	if m != nil {
-		return m.InferenceId
+		return m.NumberOfRequests
 	}
-	return ""
+	return 0
 }
 
-func (m *InferenceDetail) GetExecutor() string {
+func (m *EpochGroupData) GetPreviousEpochRequests() uint64 {
 	if m != nil {
-		return m.Executor
+		return m.PreviousEpochRequests
 	}
-	return ""
+	return 0
 }
 
-func (m *InferenceDetail) GetExecutorReputation() float32 {
+func (m *EpochGroupData) GetValidationParams() *ValidationParams {
 	if m != nil {
-		return m.ExecutorReputation
+		return m.ValidationParams
+	}
+	return nil
+}
+
+func (m *EpochGroupData) GetTotalWeight() uint64 {
+	if m != nil {
+		return m.TotalWeight
 	}
 	return 0
 }
@@ -194,13 +157,14 @@ func (m *InferenceDetail) GetExecutorReputation() float32 {
 type ValidationWeight struct {
 	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
 	Weight        int64  `protobuf:"varint,2,opt,name=weight,proto3" json:"weight,omitempty"`
+	Reputation    int32  `protobuf:"varint,3,opt,name=reputation,proto3" json:"reputation,omitempty"`
 }
 
 func (m *ValidationWeight) Reset()         { *m = ValidationWeight{} }
 func (m *ValidationWeight) String() string { return proto.CompactTextString(m) }
 func (*ValidationWeight) ProtoMessage()    {}
 func (*ValidationWeight) Descriptor() ([]byte, []int) {
-	return fileDescriptor_47040406f6377eb3, []int{2}
+	return fileDescriptor_47040406f6377eb3, []int{1}
 }
 func (m *ValidationWeight) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -243,6 +207,13 @@ func (m *ValidationWeight) GetWeight() int64 {
 	return 0
 }
 
+func (m *ValidationWeight) GetReputation() int32 {
+	if m != nil {
+		return m.Reputation
+	}
+	return 0
+}
+
 type SeedSignature struct {
 	MemberAddress string `protobuf:"bytes,1,opt,name=member_address,json=memberAddress,proto3" json:"member_address,omitempty"`
 	Signature     string `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
@@ -252,7 +223,7 @@ func (m *SeedSignature) Reset()         { *m = SeedSignature{} }
 func (m *SeedSignature) String() string { return proto.CompactTextString(m) }
 func (*SeedSignature) ProtoMessage()    {}
 func (*SeedSignature) Descriptor() ([]byte, []int) {
-	return fileDescriptor_47040406f6377eb3, []int{3}
+	return fileDescriptor_47040406f6377eb3, []int{2}
 }
 func (m *SeedSignature) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -297,7 +268,6 @@ func (m *SeedSignature) GetSignature() string {
 
 func init() {
 	proto.RegisterType((*EpochGroupData)(nil), "inference.inference.EpochGroupData")
-	proto.RegisterType((*InferenceDetail)(nil), "inference.inference.InferenceDetail")
 	proto.RegisterType((*ValidationWeight)(nil), "inference.inference.ValidationWeight")
 	proto.RegisterType((*SeedSignature)(nil), "inference.inference.SeedSignature")
 }
@@ -307,41 +277,43 @@ func init() {
 }
 
 var fileDescriptor_47040406f6377eb3 = []byte{
-	// 529 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0xcf, 0x6e, 0x13, 0x3f,
-	0x10, 0xee, 0xb6, 0xf9, 0xe5, 0xd7, 0xb8, 0x34, 0xa5, 0x4e, 0x89, 0x56, 0x08, 0xad, 0x42, 0xd4,
-	0x4a, 0x51, 0x0f, 0x89, 0xa0, 0xf0, 0x00, 0x94, 0x22, 0xc8, 0xa9, 0x65, 0x53, 0xfe, 0x88, 0x8b,
-	0xe5, 0xd8, 0xb3, 0x89, 0x45, 0xb2, 0xb6, 0x6c, 0x6f, 0x68, 0x8f, 0xbc, 0x01, 0xcf, 0xc1, 0x93,
-	0x70, 0xec, 0x91, 0x23, 0x4a, 0x5e, 0x04, 0xad, 0x37, 0x71, 0x93, 0x28, 0x07, 0x6e, 0xe3, 0xef,
-	0xfb, 0xfc, 0xcd, 0x78, 0x66, 0x8c, 0x4e, 0x45, 0x9a, 0x80, 0x86, 0x94, 0x41, 0xe7, 0x3e, 0x02,
-	0x25, 0xd9, 0x90, 0x0c, 0xb4, 0xcc, 0x14, 0xe1, 0xd4, 0xd2, 0xb6, 0xd2, 0xd2, 0x4a, 0x5c, 0xf3,
-	0x8a, 0xb6, 0x8f, 0x9a, 0x3f, 0x4b, 0xa8, 0xfa, 0x26, 0xd7, 0xbf, 0xcd, 0xe5, 0x17, 0xd4, 0x52,
-	0x7c, 0x86, 0xea, 0x4a, 0x32, 0x62, 0x2c, 0xd5, 0x96, 0xf4, 0x47, 0x92, 0x7d, 0x25, 0x43, 0x10,
-	0x83, 0xa1, 0x0d, 0x83, 0x46, 0xd0, 0x2a, 0xc5, 0x35, 0x25, 0x59, 0x2f, 0x27, 0xcf, 0x73, 0xee,
-	0x9d, 0xa3, 0xf0, 0x31, 0xaa, 0x2e, 0xa7, 0x15, 0x3c, 0xdc, 0x76, 0xe2, 0x07, 0xe0, 0xcd, 0xbb,
-	0x1c, 0x3f, 0x45, 0xc5, 0x99, 0x28, 0x39, 0x12, 0xec, 0x36, 0xdc, 0x69, 0x04, 0xad, 0x4a, 0xbc,
-	0xe7, 0xb0, 0x2b, 0x07, 0xe1, 0x17, 0xa8, 0x0e, 0x49, 0x02, 0xcc, 0x8a, 0x09, 0xac, 0x66, 0x2f,
-	0x39, 0xc3, 0x23, 0xcf, 0x2e, 0xa7, 0x3f, 0x45, 0x87, 0x23, 0x6a, 0xd6, 0xca, 0xfd, 0xcf, 0x5d,
-	0x38, 0xc8, 0x89, 0x65, 0xed, 0x67, 0x54, 0x1f, 0xc3, 0xb8, 0x0f, 0x9a, 0x18, 0x00, 0x4e, 0x8c,
-	0x18, 0xa4, 0xd4, 0x66, 0x1a, 0x4c, 0x58, 0x6e, 0xec, 0xb4, 0xf6, 0x9e, 0x37, 0xdb, 0x1b, 0x1a,
-	0xd5, 0xee, 0x01, 0xf0, 0xde, 0x42, 0x1a, 0x1f, 0x15, 0x0e, 0x2b, 0xa0, 0xc1, 0x1f, 0x50, 0x2d,
-	0x11, 0xa9, 0x30, 0x43, 0xe0, 0xc4, 0xdf, 0x34, 0xe1, 0xff, 0xce, 0xf6, 0x78, 0xa3, 0x6d, 0x77,
-	0x11, 0x5d, 0x80, 0xa5, 0x62, 0x14, 0xe3, 0x85, 0x81, 0x27, 0x0c, 0xbe, 0x46, 0x78, 0x42, 0x47,
-	0x82, 0x53, 0x2b, 0x64, 0x4a, 0xbe, 0xb9, 0x57, 0x98, 0x70, 0xd7, 0xb9, 0x9e, 0x6c, 0x74, 0xfd,
-	0xe8, 0xe5, 0x9f, 0x9c, 0x3a, 0x3e, 0x9c, 0xac, 0x21, 0x06, 0x3f, 0x43, 0x8f, 0xb2, 0x54, 0x58,
-	0x22, 0x13, 0xc2, 0xe4, 0x58, 0x65, 0x16, 0x88, 0xd2, 0x82, 0x41, 0x58, 0x71, 0x6d, 0xc3, 0x39,
-	0x79, 0x99, 0xbc, 0x2e, 0xa8, 0xab, 0x9c, 0x69, 0x7e, 0x0f, 0xd0, 0xc1, 0x5a, 0xc1, 0xf9, 0x48,
-	0x7d, 0xde, 0x7c, 0xec, 0x41, 0x31, 0x52, 0x8f, 0x75, 0x39, 0x7e, 0x8c, 0x76, 0xe1, 0x06, 0x58,
-	0x66, 0xa5, 0x76, 0x5b, 0x51, 0x89, 0xfd, 0x19, 0x77, 0x50, 0x6d, 0x11, 0x13, 0x0d, 0x2a, 0xb3,
-	0xae, 0x46, 0xb7, 0x18, 0xdb, 0x31, 0x5e, 0x50, 0xb1, 0x67, 0x9a, 0xef, 0xd1, 0xc3, 0xf5, 0xd7,
-	0xe1, 0x13, 0x54, 0x9d, 0x4f, 0x94, 0x72, 0xae, 0xc1, 0x98, 0x79, 0x15, 0xfb, 0x05, 0xfa, 0xaa,
-	0x00, 0x71, 0x1d, 0x95, 0x8b, 0xe6, 0xb9, 0x2a, 0x76, 0xe2, 0xf9, 0xa9, 0x79, 0x8d, 0xf6, 0x57,
-	0x06, 0xf9, 0xaf, 0x7e, 0x4f, 0x50, 0xc5, 0x2f, 0xcf, 0xfc, 0x61, 0xf7, 0xc0, 0xf9, 0xe5, 0xaf,
-	0x69, 0x14, 0xdc, 0x4d, 0xa3, 0xe0, 0xcf, 0x34, 0x0a, 0x7e, 0xcc, 0xa2, 0xad, 0xbb, 0x59, 0xb4,
-	0xf5, 0x7b, 0x16, 0x6d, 0x7d, 0x79, 0x39, 0x10, 0x76, 0x98, 0xf5, 0xdb, 0x4c, 0x8e, 0x3b, 0x4a,
-	0x4b, 0x9e, 0x31, 0x6b, 0x98, 0x58, 0xfb, 0xc4, 0x37, 0x4b, 0xb1, 0xbd, 0x55, 0x60, 0xfa, 0x65,
-	0xf7, 0x8d, 0xcf, 0xfe, 0x06, 0x00, 0x00, 0xff, 0xff, 0x9a, 0xbb, 0x34, 0x54, 0xf4, 0x03, 0x00,
-	0x00,
+	// 562 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0xd1, 0x6e, 0xd3, 0x30,
+	0x14, 0x5d, 0xd8, 0x56, 0x51, 0x77, 0x2d, 0x9d, 0xb7, 0x95, 0x68, 0x42, 0x51, 0xa9, 0xa8, 0x54,
+	0x4d, 0xa8, 0x13, 0x0c, 0x78, 0x67, 0x80, 0x80, 0xa7, 0x56, 0xe9, 0x04, 0x88, 0x17, 0xcb, 0x75,
+	0x6e, 0x5a, 0x8b, 0x36, 0xf6, 0x6c, 0xa7, 0xb0, 0xbf, 0xe0, 0x53, 0xf8, 0x0c, 0x1e, 0xf7, 0xc8,
+	0x23, 0x6a, 0x7f, 0x04, 0xc5, 0xee, 0xb2, 0xb4, 0x2a, 0xd2, 0xde, 0x9c, 0x73, 0xce, 0x3d, 0xf7,
+	0xfa, 0xfa, 0x04, 0x9d, 0xf0, 0x24, 0x06, 0x05, 0x09, 0x83, 0xd3, 0xdb, 0x13, 0x48, 0xc1, 0xc6,
+	0x64, 0xa4, 0x44, 0x2a, 0x49, 0x44, 0x0d, 0xed, 0x4a, 0x25, 0x8c, 0xc0, 0x07, 0xb9, 0xa2, 0x9b,
+	0x9f, 0x8e, 0xdb, 0x9b, 0x0c, 0x24, 0x55, 0x86, 0x33, 0x2e, 0x69, 0x62, 0x5c, 0xed, 0x71, 0xf3,
+	0x3f, 0x32, 0x3a, 0xd5, 0x4e, 0xd1, 0xfa, 0xb5, 0x8b, 0x6a, 0xef, 0xb2, 0xc6, 0xef, 0xb3, 0xbe,
+	0x6f, 0xa9, 0xa1, 0xf8, 0x0c, 0x35, 0xa4, 0x60, 0x44, 0x1b, 0xaa, 0x0c, 0x19, 0x4e, 0x04, 0xfb,
+	0x46, 0xc6, 0xc0, 0x47, 0x63, 0xe3, 0x7b, 0x4d, 0xaf, 0xb3, 0x13, 0x1e, 0x48, 0xc1, 0x06, 0x19,
+	0x79, 0x9e, 0x71, 0x1f, 0x2c, 0x85, 0x9f, 0xa0, 0x5a, 0x71, 0x7e, 0x1e, 0xf9, 0xf7, 0xac, 0x78,
+	0x0f, 0x72, 0xf3, 0x8f, 0x11, 0x7e, 0x8c, 0xdc, 0x37, 0x91, 0x62, 0xc2, 0xd9, 0x95, 0xbf, 0xdd,
+	0xf4, 0x3a, 0xe5, 0xb0, 0x62, 0xb1, 0xbe, 0x85, 0xf0, 0x0b, 0xd4, 0x80, 0x38, 0x06, 0x66, 0xf8,
+	0x0c, 0x56, 0xbb, 0xef, 0x58, 0xc3, 0xc3, 0x9c, 0x2d, 0xb6, 0x3f, 0x41, 0xfb, 0x13, 0xaa, 0xd7,
+	0xc6, 0xdd, 0xb5, 0x05, 0x0f, 0x32, 0xa2, 0xa8, 0xfd, 0x82, 0x1a, 0x53, 0x98, 0x0e, 0x41, 0x11,
+	0x0d, 0x10, 0x11, 0xcd, 0x47, 0x09, 0x35, 0xa9, 0x02, 0xed, 0x97, 0x9a, 0xdb, 0x9d, 0xca, 0xf3,
+	0x56, 0x77, 0xc3, 0xc6, 0xbb, 0x03, 0x80, 0x68, 0x70, 0x23, 0x0d, 0x0f, 0x9d, 0xc3, 0x0a, 0xa8,
+	0xf1, 0x05, 0xc2, 0x33, 0x3a, 0xe1, 0x11, 0x35, 0x5c, 0x24, 0xe4, 0xbb, 0x6d, 0xa7, 0xfd, 0xfb,
+	0xd6, 0xb5, 0xbd, 0xd1, 0xf5, 0x53, 0x2e, 0xff, 0x6c, 0xd5, 0xe1, 0xfe, 0x6c, 0x0d, 0xd1, 0xf8,
+	0x19, 0x3a, 0x4a, 0x13, 0x6e, 0x88, 0x88, 0x09, 0x13, 0x53, 0x99, 0x1a, 0x20, 0x52, 0x71, 0x06,
+	0x7e, 0xd9, 0xde, 0x0f, 0x67, 0x64, 0x2f, 0x7e, 0xe3, 0xa8, 0x7e, 0xc6, 0xe0, 0xa7, 0x08, 0x27,
+	0xa9, 0xbd, 0xa2, 0x88, 0x89, 0x82, 0xcb, 0x14, 0xb4, 0xd1, 0x3e, 0xb2, 0xfa, 0xba, 0x63, 0x7a,
+	0x71, 0xb8, 0xc4, 0xf1, 0x2b, 0xf4, 0x50, 0x2a, 0x98, 0x71, 0x91, 0x6a, 0xe2, 0x9e, 0x27, 0x2f,
+	0xa9, 0xd8, 0x92, 0xa3, 0x1b, 0xda, 0x26, 0x25, 0xaf, 0x0b, 0x51, 0x61, 0x5a, 0xe2, 0x62, 0xe5,
+	0xef, 0x35, 0xbd, 0x3b, 0xdc, 0xb6, 0x6f, 0xc5, 0x61, 0x7d, 0xb6, 0x86, 0x64, 0x09, 0x31, 0xc2,
+	0xd0, 0xc9, 0x72, 0x7b, 0x7e, 0xd5, 0x0e, 0x50, 0xb1, 0x98, 0x5b, 0x48, 0xeb, 0x12, 0xd5, 0xd7,
+	0xd7, 0x86, 0xdb, 0xa8, 0xb6, 0x7c, 0x53, 0x1a, 0x45, 0x0a, 0xb4, 0xb6, 0x59, 0x2d, 0x87, 0x55,
+	0x87, 0xbe, 0x76, 0x20, 0x6e, 0xa0, 0xd2, 0xd2, 0x37, 0x4b, 0xe7, 0x76, 0xb8, 0xfc, 0xc2, 0x01,
+	0x42, 0x0a, 0x64, 0x6a, 0xac, 0xa5, 0x4d, 0xe5, 0x6e, 0x58, 0x40, 0x5a, 0x17, 0xa8, 0xba, 0xf2,
+	0xd4, 0x77, 0xed, 0xf7, 0x08, 0x95, 0xf3, 0x78, 0xd9, 0x96, 0xe5, 0xf0, 0x16, 0x38, 0xef, 0xfd,
+	0x9e, 0x07, 0xde, 0xf5, 0x3c, 0xf0, 0xfe, 0xce, 0x03, 0xef, 0xe7, 0x22, 0xd8, 0xba, 0x5e, 0x04,
+	0x5b, 0x7f, 0x16, 0xc1, 0xd6, 0xd7, 0x97, 0x23, 0x6e, 0xc6, 0xe9, 0xb0, 0xcb, 0xc4, 0xf4, 0x54,
+	0x2a, 0x11, 0xa5, 0xcc, 0x68, 0xc6, 0xd7, 0xfe, 0xe3, 0x1f, 0x85, 0xb3, 0xb9, 0x92, 0xa0, 0x87,
+	0x25, 0xfb, 0x4f, 0x9f, 0xfd, 0x0b, 0x00, 0x00, 0xff, 0xff, 0x40, 0x9b, 0x93, 0x01, 0x5f, 0x04,
+	0x00, 0x00,
 }
 
 func (m *EpochGroupData) Marshal() (dAtA []byte, err error) {
@@ -364,6 +336,33 @@ func (m *EpochGroupData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.TotalWeight != 0 {
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.TotalWeight))
+		i--
+		dAtA[i] = 0x68
+	}
+	if m.ValidationParams != nil {
+		{
+			size, err := m.ValidationParams.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintEpochGroupData(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x62
+	}
+	if m.PreviousEpochRequests != 0 {
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.PreviousEpochRequests))
+		i--
+		dAtA[i] = 0x58
+	}
+	if m.NumberOfRequests != 0 {
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.NumberOfRequests))
+		i--
+		dAtA[i] = 0x50
+	}
 	if m.UnitOfComputePrice != 0 {
 		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.UnitOfComputePrice))
 		i--
@@ -381,20 +380,6 @@ func (m *EpochGroupData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			}
 			i--
 			dAtA[i] = 0x42
-		}
-	}
-	if len(m.FinishedInferences) > 0 {
-		for iNdEx := len(m.FinishedInferences) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.FinishedInferences[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintEpochGroupData(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x3a
 		}
 	}
 	if len(m.MemberSeedSignatures) > 0 {
@@ -441,49 +426,6 @@ func (m *EpochGroupData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *InferenceDetail) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *InferenceDetail) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *InferenceDetail) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.ExecutorReputation != 0 {
-		i -= 4
-		encoding_binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(m.ExecutorReputation))))
-		i--
-		dAtA[i] = 0x1d
-	}
-	if len(m.Executor) > 0 {
-		i -= len(m.Executor)
-		copy(dAtA[i:], m.Executor)
-		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.Executor)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.InferenceId) > 0 {
-		i -= len(m.InferenceId)
-		copy(dAtA[i:], m.InferenceId)
-		i = encodeVarintEpochGroupData(dAtA, i, uint64(len(m.InferenceId)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
 func (m *ValidationWeight) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -504,6 +446,11 @@ func (m *ValidationWeight) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Reputation != 0 {
+		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.Reputation))
+		i--
+		dAtA[i] = 0x18
+	}
 	if m.Weight != 0 {
 		i = encodeVarintEpochGroupData(dAtA, i, uint64(m.Weight))
 		i--
@@ -595,12 +542,6 @@ func (m *EpochGroupData) Size() (n int) {
 			n += 1 + l + sovEpochGroupData(uint64(l))
 		}
 	}
-	if len(m.FinishedInferences) > 0 {
-		for _, e := range m.FinishedInferences {
-			l = e.Size()
-			n += 1 + l + sovEpochGroupData(uint64(l))
-		}
-	}
 	if len(m.ValidationWeights) > 0 {
 		for _, e := range m.ValidationWeights {
 			l = e.Size()
@@ -610,25 +551,18 @@ func (m *EpochGroupData) Size() (n int) {
 	if m.UnitOfComputePrice != 0 {
 		n += 1 + sovEpochGroupData(uint64(m.UnitOfComputePrice))
 	}
-	return n
-}
-
-func (m *InferenceDetail) Size() (n int) {
-	if m == nil {
-		return 0
+	if m.NumberOfRequests != 0 {
+		n += 1 + sovEpochGroupData(uint64(m.NumberOfRequests))
 	}
-	var l int
-	_ = l
-	l = len(m.InferenceId)
-	if l > 0 {
+	if m.PreviousEpochRequests != 0 {
+		n += 1 + sovEpochGroupData(uint64(m.PreviousEpochRequests))
+	}
+	if m.ValidationParams != nil {
+		l = m.ValidationParams.Size()
 		n += 1 + l + sovEpochGroupData(uint64(l))
 	}
-	l = len(m.Executor)
-	if l > 0 {
-		n += 1 + l + sovEpochGroupData(uint64(l))
-	}
-	if m.ExecutorReputation != 0 {
-		n += 5
+	if m.TotalWeight != 0 {
+		n += 1 + sovEpochGroupData(uint64(m.TotalWeight))
 	}
 	return n
 }
@@ -645,6 +579,9 @@ func (m *ValidationWeight) Size() (n int) {
 	}
 	if m.Weight != 0 {
 		n += 1 + sovEpochGroupData(uint64(m.Weight))
+	}
+	if m.Reputation != 0 {
+		n += 1 + sovEpochGroupData(uint64(m.Reputation))
 	}
 	return n
 }
@@ -843,40 +780,6 @@ func (m *EpochGroupData) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
-		case 7:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FinishedInferences", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowEpochGroupData
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.FinishedInferences = append(m.FinishedInferences, &InferenceDetail{})
-			if err := m.FinishedInferences[len(m.FinishedInferences)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ValidationWeights", wireType)
@@ -930,61 +833,85 @@ func (m *EpochGroupData) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipEpochGroupData(dAtA[iNdEx:])
-			if err != nil {
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NumberOfRequests", wireType)
+			}
+			m.NumberOfRequests = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.NumberOfRequests |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PreviousEpochRequests", wireType)
+			}
+			m.PreviousEpochRequests = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.PreviousEpochRequests |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 12:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ValidationParams", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEpochGroupData
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.ValidationParams == nil {
+				m.ValidationParams = &ValidationParams{}
+			}
+			if err := m.ValidationParams.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthEpochGroupData
+			iNdEx = postIndex
+		case 13:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TotalWeight", wireType)
 			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *InferenceDetail) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowEpochGroupData
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: InferenceDetail: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: InferenceDetail: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field InferenceId", wireType)
-			}
-			var stringLen uint64
+			m.TotalWeight = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowEpochGroupData
@@ -994,67 +921,11 @@ func (m *InferenceDetail) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				m.TotalWeight |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.InferenceId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Executor", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowEpochGroupData
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthEpochGroupData
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Executor = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 5 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ExecutorReputation", wireType)
-			}
-			var v uint32
-			if (iNdEx + 4) > l {
-				return io.ErrUnexpectedEOF
-			}
-			v = uint32(encoding_binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-			iNdEx += 4
-			m.ExecutorReputation = float32(math.Float32frombits(v))
 		default:
 			iNdEx = preIndex
 			skippy, err := skipEpochGroupData(dAtA[iNdEx:])
@@ -1152,6 +1023,25 @@ func (m *ValidationWeight) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.Weight |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Reputation", wireType)
+			}
+			m.Reputation = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEpochGroupData
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Reputation |= int32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

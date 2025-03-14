@@ -1,0 +1,53 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+      - name: Make Docker Images
+        env:
+          GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
+        run: sudo make build-docker
+
+      - name: Run Tests
+        run: sudo make run-tests
+
+      - name: Archive Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: ./testermint/logs
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Integration Tests
+          path: ./testermint/build/test-results/**/*.xml
+          reporter: java-junit

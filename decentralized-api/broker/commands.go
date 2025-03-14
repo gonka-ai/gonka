@@ -8,7 +8,7 @@ type Command interface {
 
 type LockAvailableNode struct {
 	Model    string
-	Response chan *apiconfig.InferenceNode
+	Response chan *Node
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {
@@ -26,8 +26,8 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 }
 
 type RegisterNode struct {
-	Node     apiconfig.InferenceNode
-	Response chan apiconfig.InferenceNode
+	Node     apiconfig.InferenceNodeConfig
+	Response chan apiconfig.InferenceNodeConfig
 }
 
 func (r RegisterNode) GetResponseChannelCapacity() int {

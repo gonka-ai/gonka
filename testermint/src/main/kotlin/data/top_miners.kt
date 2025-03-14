@@ -2,7 +2,7 @@ package com.productscience.data
 
 
 data class TopMinersResponse(
-    val topMiner: List<TopMiner>,
+    val topMiner: List<TopMiner> = listOf(),
     val pagination: Pagination
 )
 

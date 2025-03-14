@@ -66,7 +66,7 @@ modify_genesis_file() {
   which jq
   jq ". * input" "$json_file" "$override_file" > "${json_file}.tmp"
   mv "${json_file}.tmp" "$json_file"
-  echo "Modified $json_file with file: $jq_filter"
+  echo "Modified $json_file with file: $override_file"
   cat "$json_file"
 }
 

@@ -16,13 +16,13 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	epochParams := k.Keeper.GetParams(goCtx).EpochParams
 
 	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height must be divisible by EpochLength", "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
+		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
 		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
 	if !epochParams.IsPoCExchangeWindow(startBlockHeight, currentBlockHeight) {
-		k.LogError(PocFailureTag+"PoC exchange window is closed.", "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
+		k.LogError(PocFailureTag+"PoC exchange window is closed.", types.PoC, "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}

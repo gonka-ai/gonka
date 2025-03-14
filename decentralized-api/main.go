@@ -12,8 +12,8 @@ import (
 	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/types"
 	"log"
-	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -61,12 +61,12 @@ func main() {
 
 	params, err := event_listener.GetParams(context.Background(), *recorder)
 	if err != nil {
-		slog.Error("Failed to get params", "error", err)
+		logging.Error("Failed to get params", types.System, "error", err)
 		return
 	}
 
 	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
-		slog.Error("Failed to register participant", "error", err)
+		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
 

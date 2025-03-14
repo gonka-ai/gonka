@@ -52,3 +52,9 @@ public data class PubKey(
     val type: String,
     val value: String
 )
+
+data class MinimumValidationAverage(
+    val trafficBasis: Long = 0,
+    val minimumValidationAverage: Double,
+    val blockHeight: Long,
+)

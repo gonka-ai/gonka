@@ -2,13 +2,15 @@ package inference
 
 import (
 	"context"
-	"github.com/productscience/inference/x/inference/types"
+	"log/slog"
 	"sort"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
 	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
-	am.LogInfo("ComputeNewWeights: computing new weights", "epochStartBlockHeight", epochStartBlockHeight)
+	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
 
 	// FIXME: Figure out something here:
 	//  1. Either get current validators by using staking keeper or smth
@@ -18,26 +20,28 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {
-			am.LogError("ComputeNewWeights: No active participants found.")
+			am.LogError("ComputeNewWeights: No active participants found.", types.PoC)
 			return nil
 		}
 	}
-	currentValidatorsAddressSet := getActiveAddressSet(currentActiveParticipants)
+	currentValidatorWeights := getActiveParticipantsWeights(currentActiveParticipants)
+	totalWeight := getTotalWeight(currentValidatorWeights)
+	requiredValidWeight := (totalWeight * 2) / 3
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 		return nil
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved original batches", "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
+	am.LogInfo("ComputeNewWeights: Retrieved original batches", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
 
 	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
 
 	var activeParticipants []*types.ActiveParticipant
 
@@ -50,42 +54,41 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	for _, participantAddress := range sortedBatchKeys {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
-			am.LogError("ComputeNewWeights: Error getting participant", "address", participantAddress)
+			am.LogError("ComputeNewWeights: Error getting participant", types.PoC, "address", participantAddress)
 			continue
 		}
 
 		vals := validations[participantAddress]
 		if vals == nil || len(vals) == 0 {
-			am.LogError("ComputeNewWeights: No validations for participant found", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: No validations for participant found", types.PoC, "participant", participantAddress)
 			continue
 		}
 
 		claimedWeight := getParticipantWeight(originalBatches[participantAddress])
 		if claimedWeight < 1 {
-			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", "participant", participantAddress, "claimedWeight", claimedWeight)
+			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 			continue
 		}
 
 		if participant.ValidatorKey == "" {
-			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
 			continue
 		}
 
 		if currentActiveParticipants != nil {
-			requiredValidators := (len(currentActiveParticipants.Participants) * 2) / 3
-			if len(vals) < requiredValidators {
+			valOutcome := getValidationOutcome(currentValidatorWeights, vals)
+			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
+			if votedWeight < requiredValidWeight {
 				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
-					"participant", participantAddress,
-					"validations", len(vals),
-					"required", requiredValidators)
+					types.PoC, "participant", participantAddress,
+					"votedWeight", votedWeight,
+					"requiredValidWeight", requiredValidWeight)
 			} else {
-				validatorCount := getValidatorIntersectionCount(currentValidatorsAddressSet, vals)
-
-				if validatorCount < requiredValidators {
+				if uint64(valOutcome.ValidWeight) < requiredValidWeight {
 					am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations",
-						"participant", participantAddress,
-						"validations", validatorCount,
-						"required", requiredValidators)
+						types.PoC, "participant", participantAddress,
+						"validWeight", valOutcome.ValidWeight,
+						"requiredValidWeight", requiredValidWeight)
 					continue
 				}
 			}
@@ -93,7 +96,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
 		if !found {
-			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC, "blockHeight", epochStartBlockHeight, "participant", participantAddress)
 			continue
 		}
 
@@ -106,38 +109,72 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			Seed:         &seed,
 		}
 		activeParticipants = append(activeParticipants, activeParticipant)
-		am.LogInfo("ComputeNewWeights: Setting compute validator.", "activeParticipant", activeParticipant)
+		am.LogInfo("ComputeNewWeights: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
 	}
 
 	return activeParticipants
 }
 
 func getParticipantWeight(batches []types.PoCBatch) int64 {
-	var weight int64
+	uniqueNonces := make(map[int64]struct{})
+
 	for _, b := range batches {
-		weight += int64(len(b.Nonces))
+		for _, nonce := range b.Nonces {
+			uniqueNonces[nonce] = struct{}{}
+		}
 	}
-	return weight
+
+	return int64(len(uniqueNonces))
 }
 
-func getActiveAddressSet(activeParticipants *types.ActiveParticipants) *map[string]struct{} {
+func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) map[string]int64 {
 	if activeParticipants == nil {
 		return nil
 	}
 
-	set := make(map[string]struct{})
+	weights := make(map[string]int64)
 	for _, ap := range activeParticipants.Participants {
-		set[ap.Index] = struct{}{}
+		weights[ap.Index] = ap.Weight
 	}
-	return &set
+	return weights
 }
 
-func getValidatorIntersectionCount(currentValidatorsSet *map[string]struct{}, validations []types.PoCValidation) int {
-	count := 0
+func getTotalWeight(validatorWeights map[string]int64) uint64 {
+	if validatorWeights == nil {
+		return 0
+	}
+
+	totalWeight := uint64(0)
+	for participant, weight := range validatorWeights {
+		if weight < 0 {
+			slog.Error("getTotalWeight: Negative weight found", "participant", participant, "weight", weight)
+			continue
+		}
+		totalWeight += uint64(weight)
+	}
+
+	return totalWeight
+}
+
+type validationOutcome struct {
+	ValidWeight   int64
+	InvalidWeight int64
+}
+
+func getValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
+	validWeight := int64(0)
+	invalidWeight := int64(0)
 	for _, v := range validations {
-		if _, ok := (*currentValidatorsSet)[v.ValidatorParticipantAddress]; ok && !v.FraudDetected {
-			count++
+		if weight, ok := currentValidatorsSet[v.ValidatorParticipantAddress]; ok {
+			if v.FraudDetected {
+				invalidWeight += weight
+			} else {
+				validWeight += weight
+			}
 		}
 	}
-	return count
+	return validationOutcome{
+		ValidWeight:   validWeight,
+		InvalidWeight: invalidWeight,
+	}
 }

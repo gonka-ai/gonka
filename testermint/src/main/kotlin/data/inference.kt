@@ -21,7 +21,35 @@ data class InferencePayload(
     val actualCost: Long?,
     val escrowAmount: Long?,
     val assignedTo: String?,
-)
+    val validatedBy: List<String> = listOf(),
+) {
+    companion object {
+        fun empty() = InferencePayload(
+            index = "",
+            inferenceId = "",
+            promptHash = "",
+            promptPayload = "",
+            responseHash = null,
+            responsePayload = null,
+            promptTokenCount = null,
+            completionTokenCount = null,
+            requestedBy = "",
+            executedBy = null,
+            status = InferenceStatus.STARTED.value,
+            startBlockHeight = 0L,
+            endBlockHeight = null,
+            startBlockTimestamp = 0L,
+            endBlockTimestamp = null,
+            model = "",
+            maxTokens = 0,
+            actualCost = null,
+            escrowAmount = null,
+            assignedTo = null,
+            validatedBy = listOf()
+        )
+
+    }
+}
 
 enum class InferenceStatus(val value: Int) {
     STARTED(0),

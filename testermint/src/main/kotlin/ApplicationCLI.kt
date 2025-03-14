@@ -8,7 +8,9 @@ import com.productscience.data.BalanceResponse
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferenceTimeoutsWrapper
 import com.productscience.data.InferencesWrapper
+import com.productscience.data.MinimumValidationAverage
 import com.productscience.data.NodeInfoResponse
+import com.productscience.data.ParticipantStatsResponse
 import com.productscience.data.TokenomicsData
 import com.productscience.data.TopMinersResponse
 import com.productscience.data.TxResponse
@@ -136,6 +138,14 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
     }
 
+    fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
+        execAndParse(listOf("query", "inference", "get-all-participant-current-stats"))
+    }
+
+    fun getMinimumValidationAverage(): MinimumValidationAverage = wrapLog("getMinimumValidationAverage", false) {
+        execAndParse(listOf("query", "inference", "get-minimum-validation-average"))
+    }
+
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
     var addresss: String? = null
@@ -165,7 +175,7 @@ data class ApplicationCLI(
         )
     }
 
-    fun getSelfBalance(denom: String): Long = wrapLog("getSelfBalance", false) {
+    fun getSelfBalance(denom: String = this.config.denom): Long = wrapLog("getSelfBalance", false) {
         val account = getAddress()
         val balance = getBalance(account, denom)
         balance.balance.amount
@@ -177,7 +187,7 @@ data class ApplicationCLI(
 
     fun getInferenceParams(): InferenceParams = wrapLog("getInferenceParams", false) {
         // At present, there is a bug in Cosmos that causes this to fail, but it gives us something we can parse anyhow
-        val response = exec(listOf(config.appName) + listOf("query", "inference", "params"))
+        val response = exec(listOf(config.execName) + listOf("query", "inference", "params"))
         val protoText = """\{.*\}""".toRegex().find(response.first())?.value
         parseProto(protoText!!)
     }
@@ -194,18 +204,21 @@ data class ApplicationCLI(
 
     // Reified type parameter to abstract out exec and then json to a particular type
     inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
-        val argsWithJson = listOf(config.appName) +
+        val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
-        return cosmosJson.fromJson(output, T::class.java)
+        val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
+
+        // Extract JSON payload if output contains gas estimate
+        return cosmosJson.fromJson(jsonOutput, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
     private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>): T {
-        val argsWithJson = (listOf(config.appName) + args + "--output" + "json")
+        val argsWithJson = (listOf(config.execName) + args + "--output" + "json")
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
@@ -240,7 +253,7 @@ data class ApplicationCLI(
 
     fun signPayload(payload: String, accountAddress: String? = null): String {
         val parameters = listOfNotNull(
-            config.appName,
+            config.execName,
             "signature",
             "create",
             // Do we need single quotes here?
@@ -347,6 +360,10 @@ data class ApplicationCLI(
                 "--chain-id=${config.chainId}",
                 "--keyring-dir=/root/${config.stateDirName}",
                 "--yes",
+                "--gas",
+                "auto",
+                "--gas-adjustment",
+                "1.2",
                 "--broadcast-mode",
                 "sync"
             )
@@ -363,15 +380,30 @@ data class ApplicationCLI(
 
     }
 
-    private fun sendTransaction(finalArgs: List<String>): TxResponse {
-        var response = this.execAndParse<TxResponse>(finalArgs)
-        while (response.code == 32) {
-            Logger.warn("Transaction account sequence mismatch, retrying")
-            Thread.sleep(1000)
-            response = this.execAndParse(finalArgs)
+    private fun sendTransaction(finalArgs: List<String>, maxRetries: Int = 5): TxResponse {
+        var attempts = 0
+        while (attempts < maxRetries) {
+            try {
+                var response = this.execAndParse<TxResponse>(finalArgs)
+                if (response.code == 32) {
+                    Logger.warn("Transaction account sequence mismatch, retrying (attempt ${attempts + 1}/$maxRetries)")
+                    Thread.sleep(1000)
+                    attempts++
+                    continue
+                }
+                check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
+                return response
+            } catch (e: IllegalArgumentException) {
+                if (e.message?.contains("account sequence mismatch") == true) {
+                    Logger.warn("Account sequence mismatch exception, retrying (attempt ${attempts + 1}/$maxRetries)")
+                    Thread.sleep(1000)
+                    attempts++
+                    continue
+                }
+                throw e
+            }
         }
-        check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
-        return response
+        throw IllegalStateException("Failed to send transaction after $maxRetries retries")
     }
 
     fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {

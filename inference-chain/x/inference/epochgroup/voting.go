@@ -11,7 +11,7 @@ func (eg *EpochGroup) StartValidationVote(ctx sdk.Context, inference *types.Infe
 	if err != nil {
 		return nil, err
 	}
-	eg.Logger.LogInfo("Validation: Invalidation Proposals submitted.", "proposalDetails", proposalDetails, "inference", inference.InferenceId, "invalidator", invalidator)
+	eg.Logger.LogInfo("Invalidation Proposals submitted.", types.Validation, "proposalDetails", proposalDetails, "inference", inference.InferenceId, "invalidator", invalidator)
 	return proposalDetails, nil
 }
 
@@ -84,16 +84,16 @@ func (eg *EpochGroup) Revalidate(passed bool, inference types.Inference, msg *ty
 }
 
 func (eg *EpochGroup) vote(ctx sdk.Context, vote *group.MsgVote) error {
-	eg.Logger.LogInfo("Validation: Voting", "vote", vote)
+	eg.Logger.LogInfo("Voting", types.Validation, "vote", vote)
 	_, err := eg.GroupKeeper.Vote(ctx, vote)
 	if err != nil {
 		if err.Error() == "proposal not open for voting: invalid value" {
-			eg.Logger.LogInfo("Validation: Proposal already decided", "vote", vote)
+			eg.Logger.LogInfo("Proposal already decided", types.Validation, "vote", vote)
 			return nil
 		}
-		eg.Logger.LogError("Validation: Error voting", "error", err, "vote", vote)
+		eg.Logger.LogError("Error voting", types.Validation, "error", err, "vote", vote)
 		return err
 	}
-	eg.Logger.LogInfo("Validation: Voted on validation", "vote", vote)
+	eg.Logger.LogInfo("Voted on validation", types.Validation, "vote", vote)
 	return nil
 }

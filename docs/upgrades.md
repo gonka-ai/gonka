@@ -40,7 +40,7 @@ Since our system includes two binaries (chain app and decentralized API), we nee
 
 1. **Chain-Specific Upgrade Handlers**:
     - Add the actual upgrade handler to the chain to manage data migrations or other state updates.
-    - Look in the `inference-chain/app/upgrades` folder and the `inference-chain/app/upgrades.go` file for an example
+    - Look in the `inference-chain/app/upgrades` folder and the `inference-chain/app/upgrades.go` file for examples
     - Key elements include:
         - Constants defining the upgrade name (in `constants.go`).
         - A `CreateUpgradeHandler` function.
@@ -83,7 +83,19 @@ Testing is semi-automated, with plans for further automation.
     - Run tests to ensure successful version upgrades.
 
 ---
-
+## Testing the Upgrade Mechanism (for specific upgrades)
+Testing is similar to above, but with several additional steps:
+1. You will need TWO branches synced to your local machine: One for the new version you are migrating to, one for the commit to upgrade FROM.
+2. Make the changes in the new branch and write the upgrade handler per instructions above.
+3. Make sure the new binaries will pass the tests in the new branch
+3. Build the new binaries using `build-for-upgrade`. (both in decentralized-api and inference-chain)
+4. Copy the new binaries (zip files) to the OLD binares directory (public-html/v2/dapi and public-html/v2/inferenced)
+4. In the OLD branch open the `submit upgrade` Testermint test, make sure the parameters and SHA match the NEW branch values.
+5. Launch the chain in the OLD branch
+6. Run the submit upgrade test.
+7. If it passes, run `make build-docker` in the NEW branch, to ensure the image matches the new binaries.
+8. Run tests needed to verify the upgrade went well (will depend on the upgrade). Be careful not to run tests that will reboot the chain.
+9. 
 ## Key Notes
 - **Upgrade Handlers**: Each upgrade requires a tailored handler for any necessary migrations.
 - **Documentation**: Ensure clear communication of changes and steps for stakeholders.

@@ -22,7 +22,7 @@ func TestEpochParamsStages(t *testing.T) {
 	if !params.IsEndOfPoCStage(pocEnd) {
 		t.Errorf("Expected %d to be the end of PoC stage", pocEnd)
 	}
-	if pocEnd != pocStart+params.EpochMultiplier*10 {
+	if pocEnd != pocStart+params.EpochMultiplier*params.PocExchangeDuration {
 		t.Errorf("Expected %d to be the end of PoC stage", pocEnd)
 	}
 
@@ -41,7 +41,7 @@ func TestEpochParamsStages(t *testing.T) {
 	}
 
 	pocValStart := pocStart + params.GetStartOfPoCValidationStage()
-	if pocValStart != pocEnd+(2*params.EpochMultiplier) {
+	if pocValStart != pocEnd+(params.PocExchangeDuration*params.EpochMultiplier) {
 		t.Errorf("Expected %d to be the start of PoC Validation stage", pocValStart)
 	}
 	if !params.IsStartOfPoCValidationStage(pocValStart) {

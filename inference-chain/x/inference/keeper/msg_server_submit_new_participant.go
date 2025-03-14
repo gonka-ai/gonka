@@ -16,25 +16,19 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 
 func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) types.Participant {
 	newParticipant := types.Participant{
-		Index:                msg.GetCreator(),
-		Address:              msg.GetCreator(),
-		Reputation:           0,
-		Weight:               -1,
-		JoinTime:             ctx.BlockTime().UnixMilli(),
-		JoinHeight:           ctx.BlockHeight(),
-		LastInferenceTime:    0,
-		InferenceUrl:         msg.GetUrl(),
-		Models:               msg.GetModels(),
-		Status:               types.ParticipantStatus_ACTIVE,
-		PromptTokenCount:     make(map[string]uint64),
-		CompletionTokenCount: make(map[string]uint64),
-		ValidatorKey:         msg.GetValidatorKey(),
-		WorkerPublicKey:      msg.GetWorkerKey(),
+		Index:             msg.GetCreator(),
+		Address:           msg.GetCreator(),
+		Weight:            -1,
+		JoinTime:          ctx.BlockTime().UnixMilli(),
+		JoinHeight:        ctx.BlockHeight(),
+		LastInferenceTime: 0,
+		InferenceUrl:      msg.GetUrl(),
+		Models:            msg.GetModels(),
+		Status:            types.ParticipantStatus_ACTIVE,
+		ValidatorKey:      msg.GetValidatorKey(),
+		WorkerPublicKey:   msg.GetWorkerKey(),
+		CurrentEpochStats: &types.CurrentEpochStats{},
 	}
 
-	for _, model := range msg.GetModels() {
-		newParticipant.PromptTokenCount[model] = 0
-		newParticipant.CompletionTokenCount[model] = 0
-	}
 	return newParticipant
 }

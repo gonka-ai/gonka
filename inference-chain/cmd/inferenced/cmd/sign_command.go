@@ -35,7 +35,6 @@ func SignatureCommands() *cobra.Command {
 		GetPayloadVerifyCommand(),
 		PostSignedRequest(),
 	)
-
 	return cmd
 }
 
@@ -175,16 +174,12 @@ func getInputBytes(cmd *cobra.Command, args []string) ([]byte, error) {
 		return nil, err
 	}
 	if filename != "" {
-		// Read the file
 		if filename == "-" {
-			// Read from stdin
 			bytes, err = io.ReadAll(os.Stdin)
 		} else {
-			// Read from file
 			bytes, err = os.ReadFile(filename)
 		}
 	} else {
-		// Read from args
 		if len(args) == 0 {
 			return nil, errors.New("no text provided")
 		}
@@ -240,22 +235,20 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) error {
 	url := nodeAddress + "/v1/chat/completions"
 
-	// Create a new request
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return err
 	}
 
-	// Set the required headers
 	cmd.Printf("Sending POST request to %s\n", url)
 	cmd.Printf("Authorization: %s\n", signature)
 	cmd.Printf("X-Requester-Address: %s\n", requesterAddress.String())
 
+	// TODO use constants from decentralized-api/utils here
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", signature)
 	req.Header.Set("X-Requester-Address", requesterAddress.String())
 
-	// Send the request
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -284,6 +277,5 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 
 		cmd.Println(string(bodyBytes))
 	}
-
 	return nil
 }
