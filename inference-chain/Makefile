@@ -6,6 +6,11 @@ COMMIT := $(shell git log -1 --format='%H')
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+SET_SNAPSHOT ?= 0
+SET_SNAPSHOT := $(shell if [ "$(SET_SNAPSHOT)" = "1" ]; then echo 1; else echo 0; fi)
+
+CONTAINER_GCR = gcr.io/decentralized-ai/inferenced
+CONTAINER_GCRH = ghcr.io/product-science/inferenced
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
@@ -74,19 +79,30 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced:$(VERSION))
+	$(eval DOCKER_TAG=$(CONTAINER_GCR):$(VERSION))
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
+
+	@if [ "$(SET_SNAPSHOT)" = "1" ]; then \
+		echo "Setting snapshot tag..."; \
+		docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCR); \
+	fi
 
 clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
+	docker push $(CONTAINER_GCR):$(VERSION)
+
+	@docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCRH):$(VERSION)
+	@docker push $(CONTAINER_GCRH):$(VERSION)
+
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
-		@docker push gcr.io/decentralized-ai/inferenced:latest; \
+		@docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCR):latest; \
+		@docker push $(CONTAINER_GCR):latest; \
+		@docker tag $(CONTAINER_GCRH):$(VERSION) $(CONTAINER_GCRH):latest; \
+		@docker push $(CONTAINER_GCRH):latest; \
 	fi
 
 build-for-upgrade:

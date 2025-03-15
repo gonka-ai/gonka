@@ -6,6 +6,11 @@ COMMIT := $(shell git log -1 --format='%H')
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+SET_SNAPSHOT ?= 0
+SET_SNAPSHOT := $(shell if [ "$(SET_SNAPSHOT)" = "1" ]; then echo 1; else echo 0; fi)
+
+CONTAINER_GCR = gcr.io/decentralized-ai/api
+CONTAINER_GCRH = ghcr.io/product-science/api
 
 ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 	-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api \
@@ -74,13 +79,24 @@ build-docker:
 	$(eval DOCKER_TAG=gcr.io/decentralized-ai/api:$(VERSION))
 	$(DOCKER_BUILD)
 
+	@if [ "$(SET_SNAPSHOT)" = "1" ]; then \
+		echo "Setting snapshot tag..."; \
+		docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCR); \
+	fi
+
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
-	@docker push gcr.io/decentralized-ai/api:$(VERSION)
+	@docker push $(CONTAINER_GCR):$(VERSION)
+
+	@docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCRH):$(VERSION)
+	@docker push $(CONTAINER_GCRH):$(VERSION)
+
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
-		@docker push gcr.io/decentralized-ai/api:latest; \
+		@docker tag $(CONTAINER_GCR):$(VERSION) $(CONTAINER_GCR):latest; \
+		@docker push $(CONTAINER_GCR):latest; \
+		@docker tag $(CONTAINER_GCRH):$(VERSION) $(CONTAINER_GCRH):latest; \
+		@docker push $(CONTAINER_GCRH):latest; \
 	fi
 
 build-for-upgrade:

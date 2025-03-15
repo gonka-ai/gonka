@@ -5,13 +5,13 @@ TAG_NAME := "release/v$(VERSION)"
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker
+build-docker-snapshot: api-build-docker-snapshot node-build-docker-snapshot
 
-api-build-docker:
-	@make -C decentralized-api build-docker
+api-build-docker-snapshot:
+	@SET_SNAPSHOT=1 make -C decentralized-api build-docker
 
-node-build-docker:
-	@make -C inference-chain build-docker
+node-build-docker-snapshot:
+	@SET_SNAPSHOT=1 make -C inference-chain build-docker
 
 release: decentralized-api-release inference-chain-release
 	@git tag $(TAG_NAME)
@@ -36,7 +36,7 @@ stop-test-chain:
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
-run-tests:
-	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
+run-tests: build-docker-snapshot
+	@cd testermint && ./gradlew clean build test --tests "*" -DexcludeTags=unstable,exclude --info
 
 test-blockchain: check-docker run-blockchain-tests

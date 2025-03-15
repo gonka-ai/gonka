@@ -4,7 +4,7 @@ docker compose -p join2 down
 
 set -e
 
-make build-docker
+make build-docker-snapshot
 
 export PORT=8080
 export KEY_NAME=genesis
