@@ -3,9 +3,12 @@
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
-VERSION ?= $(shell git describe --always)
-SET_LATEST ?= 0
-SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
+ifeq (,$(VERSION))
+  VERSION := $(shell git describe --exact-match 2>/dev/null)
+  ifeq (,$(VERSION))
+    VERSION := $(BRANCH)-$(COMMIT)
+  endif
+endif
 
 ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Name=inference-chain \
@@ -74,7 +77,7 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced:$(VERSION))
+	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced)
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 
@@ -82,12 +85,7 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
-	@if [ "$(SET_LATEST)" = "1" ]; then \
-		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
-		@docker push gcr.io/decentralized-ai/inferenced:latest; \
-	fi
+	docker push gcr.io/decentralized-ai/inferenced
 
 build-for-upgrade:
 	$(eval PLATFORM=linux/amd64)
@@ -112,7 +110,7 @@ build-for-upgrade:
 PLATFORMS := linux darwin windows
 ARCHS := amd64 arm64
 
-release: build-all package build-docker
+release: build-all package
 
 build-all:
 	@echo "Building all platforms/architectures..."
