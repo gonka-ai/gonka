@@ -25,7 +25,7 @@ func (k Keeper) GetMinimumValidationAverage(goCtx context.Context, req *types.Qu
 	trafficBasis := math.Max(currentEpochData.GroupData.NumberOfRequests, currentEpochData.GroupData.PreviousEpochRequests)
 
 	return &types.QueryGetMinimumValidationAverageResponse{
-		TrafficBasis:             trafficBasis,
+		TrafficBasis:             uint64(trafficBasis),
 		BlockHeight:              uint64(ctx.BlockHeight()),
 		MinimumValidationAverage: calculations.CalculateMinimumValidationAverage(int64(trafficBasis), currentEpochData.GroupData.ValidationParams).String(),
 	}, nil

@@ -22,6 +22,7 @@ func (k Keeper) GetUnitOfComputePriceProposal(goCtx context.Context, req *types.
 
 	return &types.QueryGetUnitOfComputePriceProposalResponse{
 		Proposal: proposal,
-		Default:  params.EpochParams.DefaultUnitOfComputePrice,
+		// TODO: Default should be int64
+		Default: uint64(params.EpochParams.DefaultUnitOfComputePrice),
 	}, nil
 }

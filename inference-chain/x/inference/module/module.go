@@ -74,7 +74,7 @@ func (AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
 	return cdc.MustMarshalJSON(types.DefaultGenesis())
 }
 
-// ValidateGenesis used to validate the GenesisState, given in its json.RawMessage form.
+// ValidateGenesis used to validateo the GenesisState, given in its json.RawMessage form.
 func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, config client.TxEncodingConfig, bz json.RawMessage) error {
 	var genState types.GenesisState
 	if err := cdc.UnmarshalJSON(bz, &genState); err != nil {
@@ -147,7 +147,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
 // To avoid wrong/empty versions, the initial version should be set to 1.
-func (AppModule) ConsensusVersion() uint64 { return 1 }
+func (AppModule) ConsensusVersion() uint64 { return 2 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
@@ -290,14 +290,14 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
 		}
-		err = upcomingEg.AddMember(ctx, p.Index, uint64(p.Weight), p.ValidatorKey, p.Seed.Signature, reputation)
+		err = upcomingEg.AddMember(ctx, p.Index, p.Weight, p.ValidatorKey, p.Seed.Signature, reputation)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue
 		}
 	}
 
-	var defaultPrice uint64
+	var defaultPrice int64
 	if upcomingEg.GroupData.EpochGroupId != 1 {
 		currentEg, err := am.keeper.GetCurrentEpochGroup(ctx)
 		if err != nil {
@@ -317,7 +317,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", types.Pricing, "len(proposals)", len(proposals))
 
-	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, defaultPrice)
+	medianProposal, err := upcomingEg.ComputeUnitOfComputePrice(ctx, proposals, uint64(defaultPrice))
 	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", types.Pricing, "medianProposal", medianProposal)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", types.Pricing, "error", err.Error())
@@ -377,12 +377,12 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 		return
 	}
 	params := am.keeper.GetParams(ctx)
-	newGroupData.EffectiveBlockHeight = uint64(blockHeight)
-	newGroupData.UnitOfComputePrice = unitOfComputePrice
+	newGroupData.EffectiveBlockHeight = blockHeight
+	newGroupData.UnitOfComputePrice = int64(unitOfComputePrice)
 	newGroupData.PreviousEpochRequests = previousGroupData.NumberOfRequests
 	newGroupData.ValidationParams = params.ValidationParams
 
-	previousGroupData.LastBlockHeight = uint64(blockHeight - 1)
+	previousGroupData.LastBlockHeight = blockHeight - 1
 
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)

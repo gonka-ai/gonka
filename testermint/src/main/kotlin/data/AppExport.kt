@@ -48,6 +48,10 @@ data class GenesisOnlyParams(
     val topRewardMaxDuration: Long,
 )
 
+data class InferenceParamsWrapper(
+    val params: InferenceParams,
+)
+
 data class InferenceParams(
     val epochParams: EpochParams,
     val validationParams: ValidationParams,
@@ -56,9 +60,9 @@ data class InferenceParams(
 )
 
 data class TokenomicsParams(
-    val subsidyReductionInterval: Double,
-    val subsidyReductionAmount: Double,
-    val currentSubsidyPercentage: Double,
+    val subsidyReductionInterval: Decimal,
+    val subsidyReductionAmount: Decimal,
+    val currentSubsidyPercentage: Decimal,
 )
 
 data class EpochParams(
@@ -72,18 +76,46 @@ data class EpochParams(
     val pocValidationDuration: Long,
 )
 
+data class Decimal(
+    val value: Long,
+    val exponent: Int,
+) {
+    fun toDouble(): Double {
+        return value * Math.pow(10.0, exponent.toDouble())
+    }
+
+    override fun equals(other: Any?): Boolean {
+        return this.toDouble() == (other as? Decimal)?.toDouble()
+    }
+
+    companion object {
+        private fun fromNumber(number: Number): Decimal {
+            val strValue = number.toString().replace(".0$".toRegex(), "")
+            val decimalPos = strValue.indexOf('.')
+            val exponent = if (decimalPos != -1) strValue.length - decimalPos - 1 else 0
+            val scaleFactor = Math.pow(10.0, exponent.toDouble())
+            val longValue = (number.toDouble() * scaleFactor).toLong()
+            return Decimal(longValue, -exponent)
+        }
+
+        fun fromFloat(float: Float): Decimal = fromNumber(float)
+
+        fun fromDouble(double: Double): Decimal = fromNumber(double)
+    }
+}
+
 data class ValidationParams(
-    val falsePositiveRate: Double,
+    val falsePositiveRate: Decimal,
     val minRampUpMeasurements: Int,
-    val passValue: Double,
-    val minValidationAverage: Double,
-    val maxValidationAverage: Double,
+    val passValue: Decimal,
+    val minValidationAverage: Decimal,
+    val maxValidationAverage: Decimal,
     val expirationBlocks: Long,
     val epochsToMax: Long,
     val fullValidationTrafficCutoff: Long,
-    val minValidationHalfway: Double,
+    val minValidationHalfway: Decimal,
     val minValidationTrafficCutoff: Long,
-    val missPercentageCutoff: Double,
+    val missPercentageCutoff: Decimal,
 )
 
 data class PocParams(

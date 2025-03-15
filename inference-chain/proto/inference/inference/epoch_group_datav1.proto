@@ -1,0 +1,23 @@
+syntax = "proto3";
+import "inference/inference/participant.proto";
+import "inference/inference/paramsv1.proto";
+import "inference/inference/epoch_group_data.proto";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message EpochGroupDataV1 {
+  uint64 poc_start_block_height = 1;
+  uint64 epoch_group_id = 2;
+  string epoch_policy = 3;
+  uint64 effective_block_height = 4;
+  uint64 last_block_height = 5;
+  repeated SeedSignature member_seed_signatures = 6;
+  repeated ValidationWeight validation_weights = 8;
+  uint64 unit_of_compute_price = 9;
+  uint64 number_of_requests = 10;
+  uint64 previous_epoch_requests = 11;
+  ValidationParamsV1 validation_params = 12;
+  uint64 total_weight = 13;
+}
+

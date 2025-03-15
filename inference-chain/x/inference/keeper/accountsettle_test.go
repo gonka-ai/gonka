@@ -30,32 +30,32 @@ func calcExpectedRewards(participants []types.Participant) int64 {
 
 func TestReduceSubsidy(t *testing.T) {
 	oParams := types.TokenomicsParams{
-		SubsidyReductionAmount:   0.20,
-		SubsidyReductionInterval: 0.05,
-		CurrentSubsidyPercentage: 0.90,
+		SubsidyReductionAmount:   types.DecimalFromFloat(0.20),
+		SubsidyReductionInterval: types.DecimalFromFloat(0.05),
+		CurrentSubsidyPercentage: types.DecimalFromFloat(0.90),
 	}
 	params := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.72), params.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.72), params.CurrentSubsidyPercentage.ToFloat32())
 	params2 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.576), params2.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.576), params2.CurrentSubsidyPercentage.ToFloat32())
 	params3 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.4608), params3.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.4608), params3.CurrentSubsidyPercentage.ToFloat32())
 	params4 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.3686), params4.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.3686), params4.CurrentSubsidyPercentage.ToFloat32())
 	params5 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.2949), params5.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.2949), params5.CurrentSubsidyPercentage.ToFloat32())
 	params6 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.2359), params6.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.2359), params6.CurrentSubsidyPercentage.ToFloat32())
 	params7 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.1887), params7.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.1887), params7.CurrentSubsidyPercentage.ToFloat32())
 	params8 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.1510), params8.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.1510), params8.CurrentSubsidyPercentage.ToFloat32())
 	params9 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.1208), params9.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.1208), params9.CurrentSubsidyPercentage.ToFloat32())
 	params10 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.0966), params10.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.0966), params10.CurrentSubsidyPercentage.ToFloat32())
 	params11 := oParams.ReduceSubsidyPercentage()
-	require.Equal(t, float32(0.0773), params11.CurrentSubsidyPercentage)
+	require.Equal(t, float32(0.0773), params11.CurrentSubsidyPercentage.ToFloat32())
 }
 
 func TestRewardsNoCrossover(t *testing.T) {

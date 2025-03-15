@@ -38,8 +38,8 @@ func CalculateReputation(ctx *ReputationContext) int64 {
 		EpochMissPercentages: ctx.EpochMissPercentages,
 		ValidationParams: &validationParamsDecimal{
 			EpochsToMax:          decimal.NewFromInt(ctx.ValidationParams.EpochsToMax),
-			MissPercentageCutoff: decimal.NewFromFloat(ctx.ValidationParams.MissPercentageCutoff),
-			MissRequestsPenalty:  decimal.NewFromFloat(ctx.ValidationParams.MissRequestsPenalty),
+			MissPercentageCutoff: ctx.ValidationParams.MissPercentageCutoff.ToDecimal(),
+			MissRequestsPenalty:  ctx.ValidationParams.MissRequestsPenalty.ToDecimal(),
 		},
 	}
 	return calculateReputation(&decimalCtx).IntPart()

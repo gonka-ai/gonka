@@ -70,7 +70,7 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight uint64, pubkey string, seedSignature string, reputation int64) error {
+func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight int64, pubkey string, seedSignature string, reputation int64) error {
 	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature)
 	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
 	if !found {
@@ -146,14 +146,14 @@ func (eg *EpochGroup) updateMetadata(ctx context.Context, metadata string) error
 	return err
 }
 
-func (eg *EpochGroup) updateMember(ctx context.Context, address string, weight uint64, pubkey string) error {
+func (eg *EpochGroup) updateMember(ctx context.Context, address string, weight int64, pubkey string) error {
 	_, err := eg.GroupKeeper.UpdateGroupMembers(ctx, &group.MsgUpdateGroupMembers{
 		Admin:   eg.Authority,
 		GroupId: eg.GroupData.EpochGroupId,
 		MemberUpdates: []group.MemberRequest{
 			{
 				Address:  address,
-				Weight:   strconv.FormatUint(weight, 10),
+				Weight:   strconv.FormatInt(weight, 10),
 				Metadata: pubkey,
 			},
 		},

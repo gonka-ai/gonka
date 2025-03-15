@@ -15,7 +15,7 @@ import (
 func (eg *EpochGroup) GetRandomMember(goCtx context.Context) (*types.Participant, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: eg.GroupData.EpochGroupId})
+	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(eg.GroupData.EpochGroupId)})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

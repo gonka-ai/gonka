@@ -201,11 +201,11 @@ func TestShouldValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testParams := &types.ValidationParams{
-				MinValidationAverage:        tt.minValidationAverage,
-				MaxValidationAverage:        tt.maxValidationAverage,
+				MinValidationAverage:        types.DecimalFromFloat(tt.minValidationAverage),
+				MaxValidationAverage:        types.DecimalFromFloat(tt.maxValidationAverage),
 				FullValidationTrafficCutoff: defaultTrafficCutoff,
 				MinValidationTrafficCutoff:  100,
-				MinValidationHalfway:        0.05,
+				MinValidationHalfway:        types.DecimalFromFloat(0.05),
 				EpochsToMax:                 defaultEpochsToMax,
 			}
 			_ = testParams
