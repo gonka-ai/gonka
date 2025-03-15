@@ -45,6 +45,7 @@ Since our system includes two binaries (chain app and decentralized API), we nee
         - Constants defining the upgrade name (in `constants.go`).
         - A `CreateUpgradeHandler` function.
         - Invocation in `setupUpgradeHandlers` (found in `upgrades.go`).
+        - If the upgrade changes the data in the state, increment `ConsensusVersion` in `module.go`
 
 2. **Build the Binaries**:
     - Generate and publish binaries with the `build-for-upgrade` Makefile target.

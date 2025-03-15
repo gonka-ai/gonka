@@ -54,6 +54,18 @@ class TxMessageSerializationTests {
 @Tag("exclude")
 class SpecTests {
     @Test
+    fun `test decimal fromFloat with multiple decimal places`() {
+        val decimal = Decimal.fromFloat(12.345f)
+        assertThat(decimal.value).isEqualTo(12345)
+        assertThat(decimal.exponent).isEqualTo(-3)
+    }
+
+
+}
+
+@Tag("exclude")
+class SpecTests {
+    @Test
     fun `test simple spec`() {
         val actual = Person("John", 25, "male", camelCasedValue = "test")
         val failingSpec = spec<Person>{
