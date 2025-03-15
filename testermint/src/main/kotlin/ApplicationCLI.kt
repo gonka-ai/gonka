@@ -3,20 +3,7 @@ package com.productscience
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
-import com.productscience.data.AppExport
-import com.productscience.data.BalanceResponse
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParamsWrapper
-import com.productscience.data.InferenceTimeoutsWrapper
-import com.productscience.data.InferencesWrapper
-import com.productscience.data.MinimumValidationAverage
-import com.productscience.data.NodeInfoResponse
-import com.productscience.data.ParticipantStatsResponse
-import com.productscience.data.TokenomicsData
-import com.productscience.data.TopMinersResponse
-import com.productscience.data.TxResponse
-import com.productscience.data.Validator
-import com.productscience.data.parseProto
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
@@ -107,7 +94,7 @@ data class ApplicationCLI(
             waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
         }
     }
-    
+
     fun getInferences(): InferencesWrapper = wrapLog("getInferences", false) {
         execAndParse(listOf("query", "inference", "list-inference"))
     }
@@ -217,7 +204,7 @@ data class ApplicationCLI(
         val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
-        if (output.output.first().startsWith("Usage:")) {
+        if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
             val error = output.output.last().lines().last()
             Logger.error(
                 "Invalid usage of command: command='{}' error='{}'",
@@ -269,16 +256,59 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
+    private fun writeFileToContainer(content: String, fileName: String) {
+        try {
+            // Write content using echo command
+            val writeCommand = listOf(
+                "sh", "-c",
+                "echo '$content' > $fileName"
+            )
+            val result = exec(writeCommand)
+
+            // Verify file exists
+            val checkCommand = listOf("test", "-f", fileName)
+            exec(checkCommand)
+
+        } catch (e: Exception) {
+            throw IllegalStateException("Failed to write file to container: ${e.message}", e)
+        }
+    }
+
+    fun getModuleAccount(accountName: String): AccountWrapper = wrapLog("getAccount", false) {
+        execAndParse(listOf("query", "auth", "module-account", accountName))
+    }
+
+    fun submitGovernanceProposal(proposal: GovernanceProposal): TxResponse =
+        wrapLog("submitGovProposal", infoLevel = false) {
+            val finalProposal = proposal.copy(
+                messages = proposal.messages.map {
+                    it.withAuthority(this.getModuleAccount("gov").account.value.address)
+                },
+            )
+            val governanceJson = gsonCamelCase.toJson(finalProposal)
+            val jsonFileName = "governance-proposal.json"
+            writeFileToContainer(governanceJson, jsonFileName)
+
+            this.submitTransaction(
+                listOf(
+                    "gov",
+                    "submit-proposal",
+                    jsonFileName
+                )
+            )
+        }
+
     fun submitUpgradeProposal(
         title: String,
         description: String,
         binaryPath: String,
         apiBinaryPath: String,
         height: Long,
+        nodeVersion: String,
     ): TxResponse = wrapLog("submitUpgradeProposal", true) {
         val proposer = this.getKeys()[0].address
         val binariesJson =
-            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}}"""
+            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}, "node_version": "$nodeVersion"}"""
         this.submitTransaction(
             listOf(
                 "upgrade",
@@ -342,7 +372,9 @@ data class ApplicationCLI(
                 "--gas-adjustment",
                 "1.2",
                 "--broadcast-mode",
-                "sync"
+                "sync",
+                "--from",
+                this.getAddress()
             )
         val response = sendTransaction(finalArgs)
         if (response.height == 0L) {

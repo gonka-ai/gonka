@@ -1,6 +1,8 @@
-import com.productscience.getLocalInferencePairs
-import com.productscience.inferenceConfig
-import com.productscience.initialize
+import com.productscience.*
+import com.productscience.data.CreatePartialUpgrade
+import com.productscience.data.GovernanceProposal
+import com.productscience.data.InferenceNode
+import com.productscience.data.TxResponse
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -26,7 +28,8 @@ class UpgradeTests : TestermintTest() {
             description = "For testing",
             binaryPath = path,
             apiBinaryPath = apiPath,
-            height = upgradeBlock
+            height = upgradeBlock,
+            nodeVersion = "",
         )
         val proposalId = response.getProposalId()
         if (proposalId == null) {
@@ -41,6 +44,53 @@ class UpgradeTests : TestermintTest() {
             println("VOTE:\n" + response2)
         }
         genesis.node.waitForMinimumBlock(upgradeBlock)
+    }
+
+    @Test
+    fun partialUpgrade() {
+        val (cluster, genesis) = initCluster()
+        val effectiveHeight = genesis.getCurrentBlockHeight() + 40
+        val newResponse = "Only a short response"
+        val newSegment = "/newVersion"
+        val newVersion = "v1"
+        cluster.allPairs.forEach {
+            it.mock?.setInferenceResponse(
+                defaultInferenceResponseObject.withResponse(newResponse),
+                segment = newSegment
+            )
+            it.api.addNode(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
+                 inferenceSegment = newSegment, version = newVersion, id = "v1Node"
+            ))
+        }
+        val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
+        val result: TxResponse = genesis.node.submitGovernanceProposal(
+            GovernanceProposal(
+                metadata = "https://www.yahoo.com",
+                deposit = "${minDeposit}${inferenceConfig.denom}",
+                title = "Test Proposal",
+                summary = "Test Proposal Summary",
+                expedited = false,
+                listOf(
+                    CreatePartialUpgrade(
+                        height = effectiveHeight.toString(),
+                        nodeVersion = newVersion,
+                        apiBinariesJson = ""
+                    )
+                )
+            )
+        )
+        val proposalId = result.getProposalId()!!
+        val depositResponse = genesis.node.makeGovernanceDeposit(proposalId, minDeposit)
+        Logger.info("DEPOSIT:\n{}", depositResponse)
+        cluster.joinPairs.forEach {
+            val response2 = it.node.voteOnProposal(proposalId, "yes")
+            assertThat(response2).isNotNull()
+            println("VOTE:\n" + response2)
+        }
+        genesis.node.waitForMinimumBlock(effectiveHeight + 10)
+        val newResult = genesis.makeInferenceRequest(inferenceRequest)
+        assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
 
     fun getBinaryPath(path: String, sha: String): String {

@@ -230,8 +230,8 @@ message MsgSubmitHardwareDiff {
 message MsgSubmitHardwareDiffResponse {}
 
 message MsgCreatePartialUpgrade {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator         = 1;
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority         = 1;
   uint64 height          = 2;
   string nodeVersion     = 3;
   string apiBinariesJson = 4;

@@ -30,23 +30,25 @@ type Broker struct {
 }
 
 type Node struct {
-	Host          string
-	InferencePort int
-	PoCPort       int
-	Models        []string
-	Id            string
-	MaxConcurrent int
-	NodeNum       uint64
-	Hardware      []apiconfig.Hardware
-	Version       string
+	Host             string               `json:"host"`
+	InferenceSegment string               `json:"inference_segment"`
+	InferencePort    int                  `json:"inference_port"`
+	PoCSegment       string               `json:"poc_segment"`
+	PoCPort          int                  `json:"poc_port"`
+	Models           []string             `json:"models"`
+	Id               string               `json:"id"`
+	MaxConcurrent    int                  `json:"max_concurrent"`
+	NodeNum          uint64               `json:"node_num"`
+	Hardware         []apiconfig.Hardware `json:"hardware"`
+	Version          string               `json:"version"`
 }
 
 func (n *Node) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d", n.Host, n.InferencePort)
+	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
 }
 
 func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d", n.Host, n.PoCPort)
+	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
 }
 
 type NodeWithState struct {
@@ -145,19 +147,21 @@ func (b *Broker) registerNode(command RegisterNode) {
 
 	b.nodes[command.Node.Id] = &NodeWithState{
 		Node: Node{
-			Host:          command.Node.Host,
-			InferencePort: command.Node.InferencePort,
-			PoCPort:       command.Node.PoCPort,
-			Models:        command.Node.Models,
-			Id:            command.Node.Id,
-			MaxConcurrent: command.Node.MaxConcurrent,
-			NodeNum:       curNum,
-			Hardware:      command.Node.Hardware,
-			Version:       command.Node.Version,
+			Host:             command.Node.Host,
+			InferenceSegment: command.Node.InferenceSegment,
+			InferencePort:    command.Node.InferencePort,
+			PoCSegment:       command.Node.PoCSegment,
+			PoCPort:          command.Node.PoCPort,
+			Models:           command.Node.Models,
+			Id:               command.Node.Id,
+			MaxConcurrent:    command.Node.MaxConcurrent,
+			NodeNum:          curNum,
+			Hardware:         command.Node.Hardware,
+			Version:          command.Node.Version,
 		},
 		State: NodeState{Operational: true},
 	}
-	logging.Debug("Registered node", types.Nodes, "node", command.Node)
+	logging.Debug("Registered node", types.Nodes, "node", b.nodes[command.Node.Id])
 	command.Response <- command.Node
 }
 

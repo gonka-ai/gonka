@@ -3,6 +3,7 @@ package broker
 import (
 	"decentralized-api/apiconfig"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slog"
 	"testing"
 )
 
@@ -217,6 +218,34 @@ func TestReleaseNode(t *testing.T) {
 		t.Fatalf("expected node1, got nil")
 	}
 
+}
+
+func TestRoundTripSegment(t *testing.T) {
+	broker := NewBroker(nil)
+	node := apiconfig.InferenceNodeConfig{
+		Host:             "localhost",
+		InferenceSegment: "/is",
+		InferencePort:    8080,
+		PoCSegment:       "/is",
+		PoCPort:          5000,
+		Models:           []string{"model1"},
+		Id:               "node1",
+		MaxConcurrent:    1,
+	}
+	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	availableNode := make(chan *Node, 2)
+	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
+	runningNode := <-availableNode
+	if runningNode == nil {
+		t.Fatalf("expected node1, got nil")
+	}
+	if runningNode.Id != node.Id {
+		t.Fatalf("expected node1, got: " + runningNode.Id)
+	}
+	if runningNode.InferenceSegment != node.InferenceSegment {
+		slog.Warn("Inference segment not matching", "expected", node, "got", runningNode)
+		t.Fatalf("expected inference segment /is, got: " + runningNode.InferenceSegment)
+	}
 }
 
 func TestCapacityCheck(t *testing.T) {

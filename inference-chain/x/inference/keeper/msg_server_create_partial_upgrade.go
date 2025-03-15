@@ -9,11 +9,12 @@ import (
 )
 
 func (k msgServer) CreatePartialUpgrade(goCtx context.Context, msg *types.MsgCreatePartialUpgrade) (*types.MsgCreatePartialUpgradeResponse, error) {
-	if k.GetAuthority() != msg.Creator {
-		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), msg.Creator)
+	if k.GetAuthority() != msg.Authority {
+		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), msg.Authority)
 	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	k.LogInfo("CreatePartialUpgrade", types.Upgrades, "height", msg.Height, "node_version", msg.NodeVersion, "api_binaries_json", msg.ApiBinariesJson)
 	k.SetPartialUpgrade(ctx, types.PartialUpgrade{
 		Height:          msg.Height,
 		NodeVersion:     msg.NodeVersion,

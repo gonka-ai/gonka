@@ -10,7 +10,7 @@ var _ sdk.Msg = &MsgCreatePartialUpgrade{}
 
 func NewMsgCreatePartialUpgrade(creator string, height uint64, nodeVersion string, apiBinariesJson string) *MsgCreatePartialUpgrade {
 	return &MsgCreatePartialUpgrade{
-		Creator:         creator,
+		Authority:       creator,
 		Height:          height,
 		NodeVersion:     nodeVersion,
 		ApiBinariesJson: apiBinariesJson,
@@ -18,7 +18,7 @@ func NewMsgCreatePartialUpgrade(creator string, height uint64, nodeVersion strin
 }
 
 func (msg *MsgCreatePartialUpgrade) ValidateBasic() error {
-	_, err := sdk.AccAddressFromBech32(msg.Creator)
+	_, err := sdk.AccAddressFromBech32(msg.Authority)
 	if err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}

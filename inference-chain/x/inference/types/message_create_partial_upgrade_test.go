@@ -17,13 +17,13 @@ func TestMsgCreatePartialUpgrade_ValidateBasic(t *testing.T) {
 		{
 			name: "invalid address",
 			msg: MsgCreatePartialUpgrade{
-				Creator: "invalid_address",
+				Authority: "invalid_address",
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
 			name: "valid address",
 			msg: MsgCreatePartialUpgrade{
-				Creator: sample.AccAddress(),
+				Authority: sample.AccAddress(),
 			},
 		},
 	}

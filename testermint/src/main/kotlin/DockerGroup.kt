@@ -213,6 +213,7 @@ fun initCluster(
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
     val cluster = setupLocalCluster(joinCount, config, reboot)
+    Thread.sleep(50000)
     try {
         initialize(cluster.allPairs)
     } catch (e: Exception) {

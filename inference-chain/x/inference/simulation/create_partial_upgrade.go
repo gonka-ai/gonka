@@ -19,7 +19,7 @@ func SimulateMsgCreatePartialUpgrade(
 	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
 		simAccount, _ := simtypes.RandomAcc(r, accs)
 		msg := &types.MsgCreatePartialUpgrade{
-			Creator: simAccount.Address.String(),
+			Authority: simAccount.Address.String(),
 		}
 
 		// TODO: Handling the CreatePartialUpgrade simulation
