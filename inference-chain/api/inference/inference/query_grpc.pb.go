@@ -55,6 +55,7 @@ const (
 	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
 	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
 	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
+	Query_InProgressTrainingTasks_FullMethodName          = "/inference.inference.Query/InProgressTrainingTasks"
 )
 
 // QueryClient is the client API for Query service.
@@ -124,6 +125,8 @@ type QueryClient interface {
 	GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of InProgressTrainingTasks items.
+	InProgressTrainingTasks(ctx context.Context, in *QueryInProgressTrainingTasksRequest, opts ...grpc.CallOption) (*QueryInProgressTrainingTasksResponse, error)
 }
 
 type queryClient struct {
@@ -458,6 +461,15 @@ func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *Query
 	return out, nil
 }
 
+func (c *queryClient) InProgressTrainingTasks(ctx context.Context, in *QueryInProgressTrainingTasksRequest, opts ...grpc.CallOption) (*QueryInProgressTrainingTasksResponse, error) {
+	out := new(QueryInProgressTrainingTasksResponse)
+	err := c.cc.Invoke(ctx, Query_InProgressTrainingTasks_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -525,6 +537,8 @@ type QueryServer interface {
 	GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of InProgressTrainingTasks items.
+	InProgressTrainingTasks(context.Context, *QueryInProgressTrainingTasksRequest) (*QueryInProgressTrainingTasksResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -639,6 +653,9 @@ func (UnimplementedQueryServer) GetAllParticipantCurrentStats(context.Context, *
 }
 func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
+}
+func (UnimplementedQueryServer) InProgressTrainingTasks(context.Context, *QueryInProgressTrainingTasksRequest) (*QueryInProgressTrainingTasksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InProgressTrainingTasks not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1301,6 +1318,24 @@ func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InProgressTrainingTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryInProgressTrainingTasksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InProgressTrainingTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InProgressTrainingTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InProgressTrainingTasks(ctx, req.(*QueryInProgressTrainingTasksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1451,6 +1486,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMinimumValidationAverage",
 			Handler:    _Query_GetMinimumValidationAverage_Handler,
+		},
+		{
+			MethodName: "InProgressTrainingTasks",
+			Handler:    _Query_InProgressTrainingTasks_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
