@@ -365,6 +365,14 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 			return
 		}
 
+		// TODO: check node status before hand. Maybe it's already doing the training??
+		err = client.Stop()
+		if err != nil {
+			logging.Error("Error stopping training", types.Nodes, "error", err)
+			command.Response <- false
+			return
+		}
+
 		err = client.StartTraining(command.masterNodeAddress, rank, command.worldSize)
 		if err != nil {
 			logging.Error("Error starting training", types.Nodes, "error", err)
