@@ -27,7 +27,7 @@ type PayoutSettings struct {
 	TopNumberOfMiners  int32
 	MaxPayoutsTotal    int32
 	MaxPayoutsPerMiner int32
-	AllowedFailureRate float32
+	AllowedFailureRate types.Decimal
 	MaximumTime        int64
 	FirstQualifiedTime int64
 }
@@ -37,7 +37,7 @@ func (p PayoutSettings) GetPayoutAmount() int64 {
 }
 
 func (p PayoutSettings) GetDisqualificationThreshold() int64 {
-	return decimal.NewFromInt(p.PayoutPeriod).Mul(decimal.NewFromFloat32(p.AllowedFailureRate)).IntPart()
+	return decimal.NewFromInt(p.PayoutPeriod).Mul(p.AllowedFailureRate.ToDecimal()).IntPart()
 }
 
 type TopMinerAction interface {

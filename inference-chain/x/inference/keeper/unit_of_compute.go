@@ -25,5 +25,6 @@ func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*uint64, erro
 		return nil, err
 	}
 
-	return &epochGroup.GroupData.UnitOfComputePrice, nil
+	price := uint64(epochGroup.GroupData.UnitOfComputePrice)
+	return &price, nil
 }

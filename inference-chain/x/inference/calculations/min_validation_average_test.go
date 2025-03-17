@@ -103,9 +103,9 @@ func TestMinimumValidationAverage(t *testing.T) {
 		t.Run(tt.testName, func(t *testing.T) {
 			testParams := &types.ValidationParams{
 				FullValidationTrafficCutoff: tt.fullValidationCutoff,
-				MinValidationHalfway:        tt.halfwayValidationAverage,
-				MinValidationAverage:        tt.minimumValidationAverage,
-				MaxValidationAverage:        tt.maxValidationAverage,
+				MinValidationHalfway:        types.DecimalFromFloat(tt.halfwayValidationAverage),
+				MinValidationAverage:        types.DecimalFromFloat(tt.minimumValidationAverage),
+				MaxValidationAverage:        types.DecimalFromFloat(tt.maxValidationAverage),
 				MinValidationTrafficCutoff:  tt.minimumValidationCutoff,
 			}
 			result := CalculateMinimumValidationAverage(tt.recentRequestCount, testParams)

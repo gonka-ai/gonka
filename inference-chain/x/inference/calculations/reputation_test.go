@@ -129,8 +129,8 @@ func TestCalculateReputation(t *testing.T) {
 				EpochCount: tt.epochCount,
 				ValidationParams: &types.ValidationParams{
 					EpochsToMax:          tt.epochsToMax,
-					MissPercentageCutoff: 0.1,
-					MissRequestsPenalty:  tt.multiplier,
+					MissPercentageCutoff: types.DecimalFromFloat(0.1),
+					MissRequestsPenalty:  types.DecimalFromFloat(tt.multiplier),
 				},
 				EpochMissPercentages: missPercentagesDecimal,
 			})

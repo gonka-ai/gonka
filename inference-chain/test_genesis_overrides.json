@@ -14,18 +14,31 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "30",
+          "epoch_length": "10",
           "epoch_multiplier": "1",
           "epoch_shift": "1",
-          "default_unit_of_compute_price": "100"
+          "default_unit_of_compute_price": "100",
+          "poc_stage_duration": "2",
+          "poc_exchange_duration": "1",
+          "poc_validation_delay": "1",
+          "poc_validation_duration": "2"
         },
         "validation_params": {
-          "expiration_blocks": "10",
-          "min_validation_average": "0.01",
-          "max_validation_average": "1.0",
+          "expiration_blocks": "3",
+          "min_validation_average": {
+            "value": "1",
+            "exponent": -2
+          },
+          "max_validation_average": {
+            "value": "1",
+            "exponent": 0
+          },
           "epochs_to_max": "100",
-          "full_validation_traffic_cutoff": "1000",
-          "min_validation_halfway": "0.05",
+          "full_validation_traffic_cutoff": "100",
+          "min_validation_halfway": {
+            "value": "5",
+            "exponent": -2
+          },
           "min_validation_traffic_cutoff": "10"
         }
       },

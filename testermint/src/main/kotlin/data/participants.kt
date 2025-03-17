@@ -5,7 +5,7 @@ data class ParticipantsResponse(
 )
 
 data class ParticipantStatsResponse(
-    val participantCurrentStats: List<ParticipantStats>,
+    val participantCurrentStats: List<ParticipantStats> = listOf(),
     val blockHeight: Long,
     val epochId: Long?,
 )

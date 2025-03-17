@@ -19,7 +19,7 @@ var defaultPayoutSettings = PayoutSettings{
 	TopNumberOfMiners:  3,
 	MaxPayoutsTotal:    12,
 	MaxPayoutsPerMiner: 4,
-	AllowedFailureRate: 0.01,
+	AllowedFailureRate: *types.DecimalFromFloat(0.01),
 	MaximumTime:        days(365 * 4),
 	FirstQualifiedTime: now,
 }
@@ -121,7 +121,7 @@ func TestUpdatedMinerUnqualifiedOnce(t *testing.T) {
 func TestMinerDisqualifiedForPeriod(t *testing.T) {
 	action := GetTopMinerAction(startingFactors)
 	newMiner := action.(AddMiner).Miner
-	disqualificationThreshold := decimal.NewFromInt(defaultPayoutSettings.PayoutPeriod).Mul(decimal.NewFromFloat32(defaultPayoutSettings.AllowedFailureRate))
+	disqualificationThreshold := decimal.NewFromInt(defaultPayoutSettings.PayoutPeriod).Mul(defaultPayoutSettings.AllowedFailureRate.ToDecimal())
 	// Simulate many periods
 	newMiner.QualifiedPeriods = 100
 	newMiner.QualifiedTime = 10_000

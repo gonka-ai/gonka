@@ -25,10 +25,10 @@ RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
 
 COPY inference-chain/. .
 
-# ARG LDFLAGS
+ARG LDFLAGS
 RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
-    go build -mod=readonly -ldflags "$LDFLAGS" \
+    go build -mod=readonly -ldflags "${LDFLAGS}" \
     -o ./build/inferenced \
     ./cmd/inferenced/main.go
 

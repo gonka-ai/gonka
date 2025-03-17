@@ -8,6 +8,4 @@ make build-docker
 
 make launch-test-chain
 
-if [ "$(whoami)" = "johnlong" ]; then
-  curl -X POST "https://maker.ifttt.com/trigger/pushover_alert/with/key/bSVa981BFD2BtZZhn3DnTe?value1=TestRead&value2=Inference-ignite"
-fi
+echo "Local chain ready"

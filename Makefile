@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release
+.PHONY: release decentralized-api-release inference-chain-release check-docker build-testermint run-blockchain-tests test-blockchain
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -33,3 +33,10 @@ launch-test-chain:
 stop-test-chain:
 	./stop-test-local-chain.sh
 
+check-docker:
+	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
+
+run-tests:
+	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
+
+test-blockchain: check-docker run-blockchain-tests

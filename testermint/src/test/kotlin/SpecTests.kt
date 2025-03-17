@@ -1,13 +1,47 @@
 import com.productscience.data.TopMinersResponse
 import com.productscience.data.spec
 import com.productscience.cosmosJson
+import com.productscience.data.Decimal
 import com.productscience.inferenceConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 
 import org.junit.jupiter.api.Test
 
-class SpecTests {
+@Tag("exclude")
+class DecimalTests {
+    @Test
+    fun `test decimal toDouble conversion`() {
+        val decimal = Decimal(1234, -2)
+        assertThat(decimal.toDouble()).isEqualTo(12.34)
+    }
 
+    @Test
+    fun `test decimal fromFloat whole number`() {
+        val decimal = Decimal.fromFloat(12f)
+        assertThat(decimal.value).isEqualTo(12)
+        assertThat(decimal.exponent).isEqualTo(0)
+    }
+
+    @Test
+    fun `test decimal fromFloat with one decimal place`() {
+        val decimal = Decimal.fromFloat(12.5f)
+        assertThat(decimal.value).isEqualTo(125)
+        assertThat(decimal.exponent).isEqualTo(-1)
+    }
+
+    @Test
+    fun `test decimal fromFloat with multiple decimal places`() {
+        val decimal = Decimal.fromFloat(12.345f)
+        assertThat(decimal.value).isEqualTo(12345)
+        assertThat(decimal.exponent).isEqualTo(-3)
+    }
+
+
+}
+
+@Tag("exclude")
+class SpecTests {
     @Test
     fun `test simple spec`() {
         val actual = Person("John", 25, "male", camelCasedValue = "test")

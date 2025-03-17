@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 	"math"
 	"strconv"
@@ -43,7 +44,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passed := msg.Value > float64(params.ValidationParams.PassValue)
+	passed := msg.Value > params.ValidationParams.PassValue.ToFloat()
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
@@ -56,6 +57,27 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
+		originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
+		adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
+		inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
+		for _, adjustment := range adjustments {
+			if adjustment.ParticipantId == executor.Address {
+				executor.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting executor CoinBalance for validation", types.Payments, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
+			} else {
+				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
+				if !found {
+					k.LogError("Participant not found for redistribution", types.Validation, "participantId", adjustment.ParticipantId)
+					continue
+				}
+				worker.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting worker CoinBalance for validation", types.Payments, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
+				k.SetParticipant(ctx, worker)
+			}
+		}
+
 		executor.ConsecutiveInvalidInferences = 0
 		executor.CurrentEpochStats.ValidatedInferences++
 	} else {
@@ -103,7 +125,7 @@ func calculateStatus(validationParameters *types.ValidationParams, participant t
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
-	falsePositiveRate := float64(validationParameters.FalsePositiveRate)
+	falsePositiveRate := validationParameters.FalsePositiveRate.ToFloat()
 	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
 		return types.ParticipantStatus_INVALID
 	}

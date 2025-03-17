@@ -26,7 +26,17 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        val includeTags = System.getProperty("includeTags")
+        val excludeTags = System.getProperty("excludeTags")
+        if (includeTags != null) {
+            includeTags(*includeTags.split(",").toTypedArray())
+        }
+        if (excludeTags != null) {
+            excludeTags(*excludeTags.split(",").toTypedArray())
+        }
+    }
+
 }
 kotlin {
     jvmToolchain(19)

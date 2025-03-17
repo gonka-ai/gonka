@@ -68,3 +68,19 @@ func (k Keeper) GetAllEpochGroupData(ctx context.Context) (list []types.EpochGro
 
 	return
 }
+
+func (k Keeper) GetAllEpochGroupDataV1(ctx context.Context) (list []types.EpochGroupDataV1) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupDataKeyPrefix))
+	iterator := storetypes.KVStorePrefixIterator(store, []byte{})
+
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var val types.EpochGroupDataV1
+		k.cdc.MustUnmarshal(iterator.Value(), &val)
+		list = append(list, val)
+	}
+
+	return
+}

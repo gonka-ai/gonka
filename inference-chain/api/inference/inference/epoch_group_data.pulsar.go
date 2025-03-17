@@ -230,14 +230,14 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
-	if x.EffectiveBlockHeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EffectiveBlockHeight)
+	if x.EffectiveBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EffectiveBlockHeight)
 		if !f(fd_EpochGroupData_effective_block_height, value) {
 			return
 		}
 	}
-	if x.LastBlockHeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.LastBlockHeight)
+	if x.LastBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.LastBlockHeight)
 		if !f(fd_EpochGroupData_last_block_height, value) {
 			return
 		}
@@ -254,20 +254,20 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
-	if x.UnitOfComputePrice != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.UnitOfComputePrice)
+	if x.UnitOfComputePrice != int64(0) {
+		value := protoreflect.ValueOfInt64(x.UnitOfComputePrice)
 		if !f(fd_EpochGroupData_unit_of_compute_price, value) {
 			return
 		}
 	}
-	if x.NumberOfRequests != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.NumberOfRequests)
+	if x.NumberOfRequests != int64(0) {
+		value := protoreflect.ValueOfInt64(x.NumberOfRequests)
 		if !f(fd_EpochGroupData_number_of_requests, value) {
 			return
 		}
 	}
-	if x.PreviousEpochRequests != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.PreviousEpochRequests)
+	if x.PreviousEpochRequests != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PreviousEpochRequests)
 		if !f(fd_EpochGroupData_previous_epoch_requests, value) {
 			return
 		}
@@ -278,8 +278,8 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
-	if x.TotalWeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.TotalWeight)
+	if x.TotalWeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TotalWeight)
 		if !f(fd_EpochGroupData_total_weight, value) {
 			return
 		}
@@ -306,23 +306,23 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 	case "inference.inference.EpochGroupData.epoch_policy":
 		return x.EpochPolicy != ""
 	case "inference.inference.EpochGroupData.effective_block_height":
-		return x.EffectiveBlockHeight != uint64(0)
+		return x.EffectiveBlockHeight != int64(0)
 	case "inference.inference.EpochGroupData.last_block_height":
-		return x.LastBlockHeight != uint64(0)
+		return x.LastBlockHeight != int64(0)
 	case "inference.inference.EpochGroupData.member_seed_signatures":
 		return len(x.MemberSeedSignatures) != 0
 	case "inference.inference.EpochGroupData.validation_weights":
 		return len(x.ValidationWeights) != 0
 	case "inference.inference.EpochGroupData.unit_of_compute_price":
-		return x.UnitOfComputePrice != uint64(0)
+		return x.UnitOfComputePrice != int64(0)
 	case "inference.inference.EpochGroupData.number_of_requests":
-		return x.NumberOfRequests != uint64(0)
+		return x.NumberOfRequests != int64(0)
 	case "inference.inference.EpochGroupData.previous_epoch_requests":
-		return x.PreviousEpochRequests != uint64(0)
+		return x.PreviousEpochRequests != int64(0)
 	case "inference.inference.EpochGroupData.validation_params":
 		return x.ValidationParams != nil
 	case "inference.inference.EpochGroupData.total_weight":
-		return x.TotalWeight != uint64(0)
+		return x.TotalWeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -346,23 +346,23 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 	case "inference.inference.EpochGroupData.epoch_policy":
 		x.EpochPolicy = ""
 	case "inference.inference.EpochGroupData.effective_block_height":
-		x.EffectiveBlockHeight = uint64(0)
+		x.EffectiveBlockHeight = int64(0)
 	case "inference.inference.EpochGroupData.last_block_height":
-		x.LastBlockHeight = uint64(0)
+		x.LastBlockHeight = int64(0)
 	case "inference.inference.EpochGroupData.member_seed_signatures":
 		x.MemberSeedSignatures = nil
 	case "inference.inference.EpochGroupData.validation_weights":
 		x.ValidationWeights = nil
 	case "inference.inference.EpochGroupData.unit_of_compute_price":
-		x.UnitOfComputePrice = uint64(0)
+		x.UnitOfComputePrice = int64(0)
 	case "inference.inference.EpochGroupData.number_of_requests":
-		x.NumberOfRequests = uint64(0)
+		x.NumberOfRequests = int64(0)
 	case "inference.inference.EpochGroupData.previous_epoch_requests":
-		x.PreviousEpochRequests = uint64(0)
+		x.PreviousEpochRequests = int64(0)
 	case "inference.inference.EpochGroupData.validation_params":
 		x.ValidationParams = nil
 	case "inference.inference.EpochGroupData.total_weight":
-		x.TotalWeight = uint64(0)
+		x.TotalWeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -390,10 +390,10 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.EpochGroupData.effective_block_height":
 		value := x.EffectiveBlockHeight
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochGroupData.last_block_height":
 		value := x.LastBlockHeight
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochGroupData.member_seed_signatures":
 		if len(x.MemberSeedSignatures) == 0 {
 			return protoreflect.ValueOfList(&_EpochGroupData_6_list{})
@@ -408,19 +408,19 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.EpochGroupData.unit_of_compute_price":
 		value := x.UnitOfComputePrice
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochGroupData.number_of_requests":
 		value := x.NumberOfRequests
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochGroupData.previous_epoch_requests":
 		value := x.PreviousEpochRequests
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochGroupData.validation_params":
 		value := x.ValidationParams
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.EpochGroupData.total_weight":
 		value := x.TotalWeight
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -448,9 +448,9 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 	case "inference.inference.EpochGroupData.epoch_policy":
 		x.EpochPolicy = value.Interface().(string)
 	case "inference.inference.EpochGroupData.effective_block_height":
-		x.EffectiveBlockHeight = value.Uint()
+		x.EffectiveBlockHeight = value.Int()
 	case "inference.inference.EpochGroupData.last_block_height":
-		x.LastBlockHeight = value.Uint()
+		x.LastBlockHeight = value.Int()
 	case "inference.inference.EpochGroupData.member_seed_signatures":
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_6_list)
@@ -460,15 +460,15 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		clv := lv.(*_EpochGroupData_8_list)
 		x.ValidationWeights = *clv.list
 	case "inference.inference.EpochGroupData.unit_of_compute_price":
-		x.UnitOfComputePrice = value.Uint()
+		x.UnitOfComputePrice = value.Int()
 	case "inference.inference.EpochGroupData.number_of_requests":
-		x.NumberOfRequests = value.Uint()
+		x.NumberOfRequests = value.Int()
 	case "inference.inference.EpochGroupData.previous_epoch_requests":
-		x.PreviousEpochRequests = value.Uint()
+		x.PreviousEpochRequests = value.Int()
 	case "inference.inference.EpochGroupData.validation_params":
 		x.ValidationParams = value.Message().Interface().(*ValidationParams)
 	case "inference.inference.EpochGroupData.total_weight":
-		x.TotalWeight = value.Uint()
+		x.TotalWeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -544,9 +544,9 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 	case "inference.inference.EpochGroupData.epoch_policy":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.EpochGroupData.effective_block_height":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochGroupData.last_block_height":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochGroupData.member_seed_signatures":
 		list := []*SeedSignature{}
 		return protoreflect.ValueOfList(&_EpochGroupData_6_list{list: &list})
@@ -554,16 +554,16 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 		list := []*ValidationWeight{}
 		return protoreflect.ValueOfList(&_EpochGroupData_8_list{list: &list})
 	case "inference.inference.EpochGroupData.unit_of_compute_price":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochGroupData.number_of_requests":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochGroupData.previous_epoch_requests":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochGroupData.validation_params":
 		m := new(ValidationParams)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.EpochGroupData.total_weight":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -932,7 +932,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EffectiveBlockHeight |= uint64(b&0x7F) << shift
+					x.EffectiveBlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -951,7 +951,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.LastBlockHeight |= uint64(b&0x7F) << shift
+					x.LastBlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1038,7 +1038,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.UnitOfComputePrice |= uint64(b&0x7F) << shift
+					x.UnitOfComputePrice |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1057,7 +1057,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.NumberOfRequests |= uint64(b&0x7F) << shift
+					x.NumberOfRequests |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1076,7 +1076,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.PreviousEpochRequests |= uint64(b&0x7F) << shift
+					x.PreviousEpochRequests |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -1131,7 +1131,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.TotalWeight |= uint64(b&0x7F) << shift
+					x.TotalWeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -2184,6 +2184,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// These top two values are uint64s because they are IDs, not numerical values.
 type EpochGroupData struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -2192,15 +2193,15 @@ type EpochGroupData struct {
 	PocStartBlockHeight   uint64              `protobuf:"varint,1,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
 	EpochGroupId          uint64              `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
 	EpochPolicy           string              `protobuf:"bytes,3,opt,name=epoch_policy,json=epochPolicy,proto3" json:"epoch_policy,omitempty"`
-	EffectiveBlockHeight  uint64              `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
-	LastBlockHeight       uint64              `protobuf:"varint,5,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
+	EffectiveBlockHeight  int64               `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
+	LastBlockHeight       int64               `protobuf:"varint,5,opt,name=last_block_height,json=lastBlockHeight,proto3" json:"last_block_height,omitempty"`
 	MemberSeedSignatures  []*SeedSignature    `protobuf:"bytes,6,rep,name=member_seed_signatures,json=memberSeedSignatures,proto3" json:"member_seed_signatures,omitempty"`
 	ValidationWeights     []*ValidationWeight `protobuf:"bytes,8,rep,name=validation_weights,json=validationWeights,proto3" json:"validation_weights,omitempty"`
-	UnitOfComputePrice    uint64              `protobuf:"varint,9,opt,name=unit_of_compute_price,json=unitOfComputePrice,proto3" json:"unit_of_compute_price,omitempty"`
-	NumberOfRequests      uint64              `protobuf:"varint,10,opt,name=number_of_requests,json=numberOfRequests,proto3" json:"number_of_requests,omitempty"`
-	PreviousEpochRequests uint64              `protobuf:"varint,11,opt,name=previous_epoch_requests,json=previousEpochRequests,proto3" json:"previous_epoch_requests,omitempty"`
+	UnitOfComputePrice    int64               `protobuf:"varint,9,opt,name=unit_of_compute_price,json=unitOfComputePrice,proto3" json:"unit_of_compute_price,omitempty"`
+	NumberOfRequests      int64               `protobuf:"varint,10,opt,name=number_of_requests,json=numberOfRequests,proto3" json:"number_of_requests,omitempty"`
+	PreviousEpochRequests int64               `protobuf:"varint,11,opt,name=previous_epoch_requests,json=previousEpochRequests,proto3" json:"previous_epoch_requests,omitempty"`
 	ValidationParams      *ValidationParams   `protobuf:"bytes,12,opt,name=validation_params,json=validationParams,proto3" json:"validation_params,omitempty"`
-	TotalWeight           uint64              `protobuf:"varint,13,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
+	TotalWeight           int64               `protobuf:"varint,13,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -2244,14 +2245,14 @@ func (x *EpochGroupData) GetEpochPolicy() string {
 	return ""
 }
 
-func (x *EpochGroupData) GetEffectiveBlockHeight() uint64 {
+func (x *EpochGroupData) GetEffectiveBlockHeight() int64 {
 	if x != nil {
 		return x.EffectiveBlockHeight
 	}
 	return 0
 }
 
-func (x *EpochGroupData) GetLastBlockHeight() uint64 {
+func (x *EpochGroupData) GetLastBlockHeight() int64 {
 	if x != nil {
 		return x.LastBlockHeight
 	}
@@ -2272,21 +2273,21 @@ func (x *EpochGroupData) GetValidationWeights() []*ValidationWeight {
 	return nil
 }
 
-func (x *EpochGroupData) GetUnitOfComputePrice() uint64 {
+func (x *EpochGroupData) GetUnitOfComputePrice() int64 {
 	if x != nil {
 		return x.UnitOfComputePrice
 	}
 	return 0
 }
 
-func (x *EpochGroupData) GetNumberOfRequests() uint64 {
+func (x *EpochGroupData) GetNumberOfRequests() int64 {
 	if x != nil {
 		return x.NumberOfRequests
 	}
 	return 0
 }
 
-func (x *EpochGroupData) GetPreviousEpochRequests() uint64 {
+func (x *EpochGroupData) GetPreviousEpochRequests() int64 {
 	if x != nil {
 		return x.PreviousEpochRequests
 	}
@@ -2300,7 +2301,7 @@ func (x *EpochGroupData) GetValidationParams() *ValidationParams {
 	return nil
 }
 
-func (x *EpochGroupData) GetTotalWeight() uint64 {
+func (x *EpochGroupData) GetTotalWeight() int64 {
 	if x != nil {
 		return x.TotalWeight
 	}
@@ -2423,10 +2424,10 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x68, 0x5f, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b,
 	0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x34, 0x0a, 0x16, 0x65,
 	0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68,
-	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x65, 0x66, 0x66,
+	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x65, 0x66, 0x66,
 	0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
 	0x74, 0x12, 0x2a, 0x0a, 0x11, 0x6c, 0x61, 0x73, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f,
-	0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0f, 0x6c, 0x61,
+	0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x6c, 0x61,
 	0x73, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x58, 0x0a,
 	0x16, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x73, 0x65, 0x65, 0x64, 0x5f, 0x73, 0x69, 0x67,
 	0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x22, 0x2e,
@@ -2440,13 +2441,13 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x52, 0x11, 0x76, 0x61, 0x6c, 0x69,
 	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x73, 0x12, 0x31, 0x0a,
 	0x15, 0x75, 0x6e, 0x69, 0x74, 0x5f, 0x6f, 0x66, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65,
-	0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x75, 0x6e,
+	0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x12, 0x75, 0x6e,
 	0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65,
 	0x12, 0x2c, 0x0a, 0x12, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x6f, 0x66, 0x5f, 0x72, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x6e, 0x75,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x6e, 0x75,
 	0x6d, 0x62, 0x65, 0x72, 0x4f, 0x66, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x12, 0x36,
 	0x0a, 0x17, 0x70, 0x72, 0x65, 0x76, 0x69, 0x6f, 0x75, 0x73, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52,
 	0x15, 0x70, 0x72, 0x65, 0x76, 0x69, 0x6f, 0x75, 0x73, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x12, 0x52, 0x0a, 0x11, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
 	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x0c, 0x20, 0x01, 0x28,
@@ -2454,7 +2455,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
 	0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x10, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
 	0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x74, 0x6f,
-	0x74, 0x61, 0x6c, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x04,
+	0x74, 0x61, 0x6c, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03,
 	0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0x71, 0x0a,
 	0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68,
 	0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72,

@@ -2,14 +2,18 @@
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
+import com.productscience.initCluster
 import com.productscience.initialize
 import com.productscience.initializeCluster
 import com.productscience.setupLocalCluster
 import org.junit.jupiter.api.Test
 import kotlin.test.assertNotNull
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 
-class InitializationTests {
+// These are for testing the infrastructure, not features
+@Tag("exclude")
+class InitializationTests : TestermintTest() {
 
     @Test
     fun init3() {
@@ -27,6 +31,11 @@ class InitializationTests {
         val localCluster = setupLocalCluster(2, inferenceConfig)
         val newCluster = localCluster.withAdditionalJoin()
         assertThat(localCluster.allPairs.size + 1).isEqualTo(newCluster.allPairs.size)
+    }
+
+    @Test
+    fun reboot() {
+        initCluster(reboot = true)
     }
 
     @Test

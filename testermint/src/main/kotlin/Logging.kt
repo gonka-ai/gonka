@@ -95,7 +95,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
                 }
             }
         }
-
+        val warn = "WRN\u001B"
         if (logEntry.contains("INFO+")) {
             Logger.info(logEntry)
         } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
@@ -105,7 +105,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
             Logger.error(logEntry)
         } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
             Logger.debug(logEntry)
-        } else if (logEntry.contains("WRN ") || logEntry.contains(" WARN ")) {
+        } else if (logEntry.contains(warn) || logEntry.contains(" WARN ")) {
             Logger.warn(logEntry)
         } else {
             Logger.trace(logEntry)
