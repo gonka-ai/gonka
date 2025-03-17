@@ -87,8 +87,10 @@ $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
 $APP_NAME genesis collect-gentxs
 
 # tgbot
-echo "Adding the tgbot account"
-$APP_NAME genesis add-genesis-account cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+if [ "$INIT_TGBOT" = "true" ]; then
+  echo "Adding the tgbot account"
+  $APP_NAME genesis add-genesis-account cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"

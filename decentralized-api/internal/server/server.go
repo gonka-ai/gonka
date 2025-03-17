@@ -200,7 +200,7 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 			return
 		}
 		// Is this a Transfer request or an Executor call?
-		if (chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "") || chatRequest.InferenceId != "" && chatRequest.Seed != "" {
+		if chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "" {
 			logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed, "pubKey", chatRequest.PubKey)
 			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, configManager.GetConfig())
 			return
