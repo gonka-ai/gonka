@@ -5,10 +5,12 @@ import (
 	"decentralized-api/api/model"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"sort"
+	"time"
 )
 
 const logTagExecutor = "[training-task-executor] "
@@ -21,12 +23,16 @@ type Executor struct {
 }
 
 func NewExecutor(ctx context.Context, nodeBroker *broker.Broker, cosmosClient cosmosclient.CosmosMessageClient) *Executor {
-	return &Executor{
+	e := &Executor{
 		broker:       nodeBroker,
 		cosmosClient: cosmosClient,
 		tasks:        make(map[uint64]struct{}),
 		ctx:          ctx,
 	}
+
+	go e.checkStatusRoutine()
+
+	return e
 }
 
 func (e Executor) PreassignTask(nodes model.LockTrainingNodesDto) error {
@@ -177,6 +183,58 @@ func getMasterNode(ctx context.Context, rankedNodes []nodeWithParticipant, query
 	return nil, errors.New("master node not found")
 }
 
-func (e *Executor) CheckStatusRoutine() {
+func (e *Executor) checkStatusRoutine() {
+	timer := time.NewTimer(60 * time.Second)
+	for {
+		select {
+		case <-e.ctx.Done():
+			return
+		case <-timer.C:
+			e.checkInProgressTasksOnChain()
+			e.checkStatus()
+		}
+	}
+}
 
+func (e *Executor) checkInProgressTasksOnChain() {
+	// 1. Get in progress tasks
+	queryClient := e.cosmosClient.NewInferenceQueryClient()
+	resp, err := queryClient.InProgressTrainingTasks(e.ctx, &types.QueryInProgressTrainingTasksRequest{})
+	if err != nil {
+		logging.Error(logTagExecutor+"Error fetching in progress tasks", types.Training, "error", err)
+		return
+	}
+
+	// 2. Filter tasks that are assigned to me
+	tasks := make([]*types.TrainingTask, 0)
+	for _, t := range resp.Tasks {
+		if t.Assignees == nil {
+			continue
+		}
+		for _, a := range t.Assignees {
+			if a.Participant == e.cosmosClient.GetAddress() {
+				tasks = append(tasks, t)
+				break
+			}
+		}
+	}
+
+	// 3. For each task, check if it's already in the map
+	for _, t := range tasks {
+		if _, ok := e.tasks[t.Id]; !ok {
+			// TODO: add a task to the map
+			// e.tasks[t.Id] = struct{}{}
+		}
+	}
+
+	// TODO: So here's the question:
+	//  If task is absent in the map do we trigger it
+	// 		or
+	//	 do we have a separate routine that reads through the map each X seconds
+	//	 and just sends some check nodes are doing training command to the server
+	// I kind of like the option#2 more, because it's more resilient to failures
+}
+
+func (e *Executor) checkStatus() {
+	// TODO: the routine that goes over each task in the map and makes sure nodes are actually busy wit it
 }
