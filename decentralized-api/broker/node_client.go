@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"errors"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -133,18 +135,20 @@ func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, w
 		return err
 	}
 
+	trainEnv := TrainEnv{
+		GlobalAddr:      masterNodeAddr,
+		GlobalPort:      defaultGlobalTrainingPort,
+		GlobalRank:      strconv.Itoa(rank),
+		GlobalUniqueID:  strconv.Itoa(rank),
+		GlobalWorldSize: strconv.Itoa(worldSize),
+		BasePort:        defaultTrainingBasePort,
+	}
 	body := StartTraining{
 		TrainConfig: devTrainConfig,
-		TrainEnv: TrainEnv{
-			GlobalAddr:      masterNodeAddr,
-			GlobalPort:      defaultGlobalTrainingPort,
-			GlobalRank:      strconv.Itoa(rank),
-			GlobalUniqueID:  strconv.Itoa(rank),
-			GlobalWorldSize: strconv.Itoa(worldSize),
-			BasePort:        defaultTrainingBasePort,
-		},
+		TrainEnv:    trainEnv,
 	}
 
+	logging.Info("Starting training with", types.Training, "trainEnv", trainEnv)
 	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, body)
 	if err != nil {
 		return err
