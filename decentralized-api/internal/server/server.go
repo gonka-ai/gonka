@@ -161,12 +161,6 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		return nil, err
 	}
 
-	fundedByTransferNode, err := strconv.ParseBool(request.Header.Get("X-Funded-By-Transfer-Node"))
-	if err != nil {
-		fundedByTransferNode = false
-	}
-
-	logging.Debug("fundedByTransferNode", types.Inferences, "node", fundedByTransferNode)
 	return &ChatRequest{
 		Body:             body,
 		Request:          request,
