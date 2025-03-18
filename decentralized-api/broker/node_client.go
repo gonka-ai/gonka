@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -82,10 +83,10 @@ type Checkpoint struct {
 type TrainEnv struct {
 	GlobalAddr      string `json:"GLOBAL_ADDR"`
 	GlobalPort      string `json:"GLOBAL_PORT"`
-	GlobalRank      int    `json:"GLOBAL_RANK"`
-	GlobalUniqueID  int    `json:"GLOBAL_UNIQUE_ID"`
-	GlobalWorldSize int    `json:"GLOBAL_WORLD_SIZE"`
-	BasePort        int    `json:"BASE_PORT"`
+	GlobalRank      string `json:"GLOBAL_RANK"`
+	GlobalUniqueID  string `json:"GLOBAL_UNIQUE_ID"`
+	GlobalWorldSize string `json:"GLOBAL_WORLD_SIZE"`
+	BasePort        string `json:"BASE_PORT"`
 }
 
 var devTrainConfig = TrainConfig{
@@ -123,7 +124,7 @@ var devTrainConfig = TrainConfig{
 
 const (
 	defaultGlobalTrainingPort = "5565"
-	defaultTrainingBasePort   = 10001
+	defaultTrainingBasePort   = "10001"
 )
 
 func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
@@ -137,9 +138,9 @@ func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, w
 		TrainEnv: TrainEnv{
 			GlobalAddr:      masterNodeAddr,
 			GlobalPort:      defaultGlobalTrainingPort,
-			GlobalRank:      rank,
-			GlobalUniqueID:  rank,
-			GlobalWorldSize: worldSize,
+			GlobalRank:      strconv.Itoa(rank),
+			GlobalUniqueID:  strconv.Itoa(rank),
+			GlobalWorldSize: strconv.Itoa(worldSize),
 			BasePort:        defaultTrainingBasePort,
 		},
 	}
