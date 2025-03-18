@@ -1,4 +1,4 @@
-VERSION="0.0.1-training-1"
+VERSION="0.0.1-training-2"
 
 docker pull gcr.io/decentralized-ai/api:"$VERSION"
 docker tag gcr.io/decentralized-ai/api:"$VERSION" 172.18.114.101:5556/decentralized-ai/api:"$VERSION"
