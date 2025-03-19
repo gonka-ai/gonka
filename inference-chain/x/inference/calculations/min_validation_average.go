@@ -38,9 +38,9 @@ func betweenFullAndHalf(recentRequestCount decimal.Decimal, validationParams val
 func CalculateMinimumValidationAverage(recentRequestCount int64, validationParams *types.ValidationParams) decimal.Decimal {
 	return calculateMinimumValidationAverage(decimal.NewFromInt(recentRequestCount), validationParamsDecimal{
 		FullValidationTrafficCutoff: decimal.NewFromInt(validationParams.FullValidationTrafficCutoff),
-		MinValidationAverage:        decimal.NewFromFloat(validationParams.MinValidationAverage),
-		MinValidationHalfway:        decimal.NewFromFloat(validationParams.MinValidationHalfway),
+		MinValidationAverage:        validationParams.MinValidationAverage.ToDecimal(),
+		MinValidationHalfway:        validationParams.MinValidationHalfway.ToDecimal(),
 		MinValidationTrafficCutoff:  decimal.NewFromInt(validationParams.MinValidationTrafficCutoff),
-		MaxValidationAverage:        decimal.NewFromFloat(validationParams.MaxValidationAverage),
+		MaxValidationAverage:        validationParams.MaxValidationAverage.ToDecimal(),
 	})
 }

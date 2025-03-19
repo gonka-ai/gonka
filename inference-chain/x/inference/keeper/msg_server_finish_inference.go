@@ -78,7 +78,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		InferenceId:        existingInference.InferenceId,
 		ExecutorId:         existingInference.ExecutedBy,
 		ExecutorReputation: executorReputation,
-		TrafficBasis:       math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests),
+		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 	}

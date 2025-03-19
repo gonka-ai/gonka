@@ -50,27 +50,27 @@ func DefaultParams() Params {
 			PocValidationDuration:     6,
 		},
 		ValidationParams: &ValidationParams{
-			FalsePositiveRate:           0.05,
+			FalsePositiveRate:           DecimalFromFloat(0.05),
 			MinRampUpMeasurements:       10,
-			PassValue:                   0.99,
-			MinValidationAverage:        0.01,
-			MaxValidationAverage:        1.0,
+			PassValue:                   DecimalFromFloat(0.99),
+			MinValidationAverage:        DecimalFromFloat(0.01),
+			MaxValidationAverage:        DecimalFromFloat(1.0),
 			ExpirationBlocks:            20,
 			EpochsToMax:                 30,
 			FullValidationTrafficCutoff: 10000,
-			MinValidationHalfway:        0.05,
+			MinValidationHalfway:        DecimalFromFloat(0.05),
 			MinValidationTrafficCutoff:  100,
-			MissPercentageCutoff:        0.01,
-			MissRequestsPenalty:         1.0,
+			MissPercentageCutoff:        DecimalFromFloat(0.01),
+			MissRequestsPenalty:         DecimalFromFloat(1.0),
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,
 		},
 		TokenomicsParams: &TokenomicsParams{
-			SubsidyReductionInterval: 0.05,
-			SubsidyReductionAmount:   0.20,
-			CurrentSubsidyPercentage: 0.90,
-			TopRewardAllowedFailure:  0.10,
+			SubsidyReductionInterval: DecimalFromFloat(0.05),
+			SubsidyReductionAmount:   DecimalFromFloat(0.20),
+			CurrentSubsidyPercentage: DecimalFromFloat(0.90),
+			TopRewardAllowedFailure:  DecimalFromFloat(0.10),
 			TopMinerPocQualification: 10,
 		},
 	}
@@ -92,10 +92,31 @@ func (p Params) Validate() error {
 // ReduceSubsidyPercentage This produces the exact table we expect, as outlined in the whitepaper
 // We round to 4 decimal places, and we use decimal to avoid floating point errors
 func (p *TokenomicsParams) ReduceSubsidyPercentage() *TokenomicsParams {
-	csp := decimal.NewFromFloat32(p.CurrentSubsidyPercentage)
-	sra := decimal.NewFromFloat32(p.SubsidyReductionAmount)
-	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra))
-	f, _ := newCSP.Round(4).Float64()
-	p.CurrentSubsidyPercentage = float32(f)
+	csp := p.CurrentSubsidyPercentage.ToDecimal()
+	sra := p.SubsidyReductionAmount.ToDecimal()
+	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra)).Round(4)
+	p.CurrentSubsidyPercentage = &Decimal{Value: newCSP.CoefficientInt64(), Exponent: newCSP.Exponent()}
 	return p
+}
+
+func (d *Decimal) ToDecimal() decimal.Decimal {
+	return decimal.New(d.Value, d.Exponent)
+}
+
+func (d *Decimal) ToFloat() float64 {
+	return d.ToDecimal().InexactFloat64()
+}
+
+func (d *Decimal) ToFloat32() float32 {
+	return float32(d.ToDecimal().InexactFloat64())
+}
+
+func DecimalFromFloat(f float64) *Decimal {
+	d := decimal.NewFromFloat(f)
+	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
+}
+
+func DecimalFromFloat32(f float32) *Decimal {
+	d := decimal.NewFromFloat32(f)
+	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }

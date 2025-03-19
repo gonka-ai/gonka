@@ -44,7 +44,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passed := msg.Value > float64(params.ValidationParams.PassValue)
+	passed := msg.Value > params.ValidationParams.PassValue.ToFloat()
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
@@ -125,7 +125,7 @@ func calculateStatus(validationParameters *types.ValidationParams, participant t
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
-	falsePositiveRate := float64(validationParameters.FalsePositiveRate)
+	falsePositiveRate := validationParameters.FalsePositiveRate.ToFloat()
 	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
 		return types.ParticipantStatus_INVALID
 	}

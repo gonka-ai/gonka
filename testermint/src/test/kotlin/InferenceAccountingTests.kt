@@ -98,7 +98,7 @@ class InferenceAccountingTests : TestermintTest() {
             Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
         }
         val afterSettleInferences = allInferences.map { highestFunded.api.getInference(it.inference.inferenceId) }
-        val params = highestFunded.node.getInferenceParams()
+        val params = highestFunded.node.getInferenceParams().params
         val payouts = calculateBalanceChanges(afterSettleInferences, params)
         val actualChanges = beforeParticipants.associate {
             it.id to afterSettleParticipants.first { participant -> participant.id == it.id }.balance - it.balance
@@ -266,7 +266,7 @@ class InferenceAccountingTests : TestermintTest() {
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()
         assertThat(timeouts.inferenceTimeout).hasSize(1)
-        val expirationBlocks = genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
+        val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
         val nextSettleBlock = genesis.getNextSettleBlock()
         genesis.node.waitForMinimumBlock(expirationBlock)
@@ -292,7 +292,7 @@ class InferenceAccountingTests : TestermintTest() {
             localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
             val failingAddress = localCluster.joinPairs.first().node.getAddress()
             val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
-            val expirationBlocks = genesis.node.getInferenceParams().validationParams.expirationBlocks + 1
+            val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
             val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
             genesis.node.waitForMinimumBlock(expirationBlock)
             val finishedInferences = inferences.map {
@@ -398,7 +398,7 @@ class InferenceAccountingTests : TestermintTest() {
 
     private fun calculateRewards(params: InferenceParams, earned: Long): Long {
         val bonusPercentage = params.tokenomicsParams.currentSubsidyPercentage
-        val coinsForParticipant = (earned / (1 - bonusPercentage)).toLong()
+        val coinsForParticipant = (earned / (1 - bonusPercentage.toDouble())).toLong()
         Logger.info(
             "Owed: $earned, Bonus: $bonusPercentage, RewardCoins: $coinsForParticipant"
         )

@@ -1,0 +1,60 @@
+syntax = "proto3";
+package inference.inference;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// Params defines the parameters for the module.
+message ParamsV1 {
+  option (amino.name) = "inference/x/inference/Params";
+  option (gogoproto.equal) = true;
+  EpochParamsV1 epoch_params = 1;
+  ValidationParamsV1 validation_params = 2;
+  PocParamsV1 poc_params = 3;
+  TokenomicsParamsV1 tokenomics_params = 4;
+}
+
+message TokenomicsParamsV1 {
+  option (gogoproto.equal) = true;
+  double subsidy_reduction_interval = 1;
+  float subsidy_reduction_amount = 2;
+  float current_subsidy_percentage = 3;
+  float top_reward_allowed_failure = 4;
+  int64 top_miner_poc_qualification = 5;
+}
+
+message EpochParamsV1 {
+  option (gogoproto.equal) = true;
+  int64 epoch_length = 1;
+  int64 epoch_multiplier = 2;
+  int64 epoch_shift = 3;
+  uint64 default_unit_of_compute_price = 4;
+  int64 poc_stage_duration = 5;
+  int64 poc_exchange_duration = 6;
+  int64 poc_validation_delay = 7;
+  int64 poc_validation_duration = 8;
+}
+
+message ValidationParamsV1 {
+  option (gogoproto.equal) = true;
+  double false_positive_rate = 1;
+  uint32 min_ramp_up_measurements = 2;
+  double pass_value = 3;
+  double min_validation_average = 4;
+  double max_validation_average = 5;
+  int64  expiration_blocks = 6;
+  int64  epochs_to_max = 7;
+  int64  full_validation_traffic_cutoff = 8;
+  double  min_validation_halfway = 9;
+  int64  min_validation_traffic_cutoff = 10;
+  double miss_percentage_cutoff = 11;
+  double miss_requests_penalty = 12;
+}
+
+message PocParamsV1 {
+  option (gogoproto.equal) = true;
+  uint32 default_difficulty = 1;
+}

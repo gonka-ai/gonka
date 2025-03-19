@@ -4,6 +4,7 @@ import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.AppState
+import com.productscience.data.Decimal
 import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
 import com.productscience.data.EpochParams
@@ -113,6 +114,7 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
+        it.waitForFirstBlock()
         it.waitForFirstValidators()
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
@@ -242,11 +244,11 @@ val inferenceConfig = ApplicationConfig(
                     this[EpochParams::pocValidationDuration] = 2L
                 }
                 this[InferenceParams::validationParams] = spec<ValidationParams> {
-                    this[ValidationParams::minValidationAverage] = 0.01
-                    this[ValidationParams::maxValidationAverage] = 1.0
+                    this[ValidationParams::minValidationAverage] = Decimal.fromDouble(0.01)
+                    this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(1.0)
                     this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
                     this[ValidationParams::fullValidationTrafficCutoff] = 100L
-                    this[ValidationParams::minValidationHalfway] = 0.05
+                    this[ValidationParams::minValidationHalfway] = Decimal.fromDouble(0.05)
                     this[ValidationParams::minValidationTrafficCutoff] = 10L
                 }
             }

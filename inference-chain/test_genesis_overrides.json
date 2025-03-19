@@ -25,11 +25,20 @@
         },
         "validation_params": {
           "expiration_blocks": "3",
-          "min_validation_average": "0.01",
-          "max_validation_average": "1.0",
+          "min_validation_average": {
+            "value": "1",
+            "exponent": -2
+          },
+          "max_validation_average": {
+            "value": "1",
+            "exponent": 0
+          },
           "epochs_to_max": "100",
           "full_validation_traffic_cutoff": "100",
-          "min_validation_halfway": "0.05",
+          "min_validation_halfway": {
+            "value": "5",
+            "exponent": -2
+          },
           "min_validation_traffic_cutoff": "10"
         }
       },

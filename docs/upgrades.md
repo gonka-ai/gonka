@@ -45,6 +45,7 @@ Since our system includes two binaries (chain app and decentralized API), we nee
         - Constants defining the upgrade name (in `constants.go`).
         - A `CreateUpgradeHandler` function.
         - Invocation in `setupUpgradeHandlers` (found in `upgrades.go`).
+        - If the upgrade changes the data in the state, increment `ConsensusVersion` in `module.go`
 
 2. **Build the Binaries**:
     - Generate and publish binaries with the `build-for-upgrade` Makefile target.
@@ -67,7 +68,22 @@ Since our system includes two binaries (chain app and decentralized API), we nee
     - Monitor the network disruption during rollout as nodes update simultaneously and download the binaries.
 
 ---
+## Upgrading Data in the Chain
+The recommended approach for upgrading data is illustrated in PR 84:
 
+https://github.com/product-science/inference-ignite/pull/84
+
+#### Summary:
+1. Copy the unmodified .proto files for the data you are changing. Rename them with a V1 in front (or V2 if there is already a V1)
+2. Change the original proto files to whatever new format we want
+3. Write a custom getter for the OLD values (V1)
+4. Register a change handler that gets the old values and then writes the new ones. This may involve:
+   1. Converting values from one type to another
+   2. Dropping fields
+   3. Adding new fields and coming up with a decent default value
+   4. Any other necessary change, as long as the new values can be derived from old ones.
+
+---
 ## Testing the Upgrade Mechanism (not specific upgrades)
 Testing is semi-automated, with plans for further automation.
 
@@ -95,7 +111,6 @@ Testing is similar to above, but with several additional steps:
 6. Run the submit upgrade test.
 7. If it passes, run `make build-docker` in the NEW branch, to ensure the image matches the new binaries.
 8. Run tests needed to verify the upgrade went well (will depend on the upgrade). Be careful not to run tests that will reboot the chain.
-9. 
 ## Key Notes
 - **Upgrade Handlers**: Each upgrade requires a tailored handler for any necessary migrations.
 - **Documentation**: Ensure clear communication of changes and steps for stakeholders.

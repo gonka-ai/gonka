@@ -75,14 +75,22 @@ modify_genesis_file 'denom.json'
 MILLION_BASE="000000$COIN_DENOM"
 NATIVE="000000000$COIN_DENOM"
 MILLION_NATIVE="000000$NATIVE"
-echo "Adding the key to the genesis account"
+
+echo "Adding the keys to the genesis account"
 $APP_NAME genesis add-genesis-account "$KEY_NAME" "2$NATIVE" --keyring-backend $KEYRING_BACKEND
 $APP_NAME genesis add-genesis-account "POOL_product_science_inc" "160$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+
 $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }
 $APP_NAME genesis collect-gentxs
+
+# tgbot
+if [ "$INIT_TGBOT" = "true" ]; then
+  echo "Adding the tgbot account"
+  $APP_NAME genesis add-genesis-account cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
@@ -95,7 +103,32 @@ cosmovisor init /usr/bin/inferenced || {
 }
 
 echo "Starting cosmovisor and the chain"
-cosmovisor run start || {
-  echo "Cosmovisor failed, idling the container..."
-  tail -f /dev/null
-}
+#cosmovisor run start || {
+#  echo "Cosmovisor failed, idling the container..."
+#  tail -f /dev/null
+#}
+
+cosmovisor run start &
+COSMOVISOR_PID=$!
+sleep 20 # wait for the first block
+
+# import private key for tgbot and sign tx to make tgbot public key registered n the network
+if [ "$INIT_TGBOT" = "true" ]; then
+    echo "Initializing tgbot account..."
+
+    if [ -z "$TGBOT_PRIVATE_KEY_PASS" ]; then
+        echo "Error: TGBOT_PRIVATE_KEY_PASS is empty. Aborting initialization."
+        exit 1
+    fi
+
+    echo "$TGBOT_PRIVATE_KEY_PASS" | inferenced keys import tgbot tgbot_private_key.json
+
+    inferenced tx bank send cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk \
+        cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk 100nicoin --from tgbot --yes
+
+    echo "✅ tgbot account successfully initialized!"
+else
+    echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."
+fi
+
+wait $COSMOVISOR_PID

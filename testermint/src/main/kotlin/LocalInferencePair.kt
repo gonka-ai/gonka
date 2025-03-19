@@ -140,7 +140,7 @@ data class LocalInferencePair(
     }
 
     fun getParams(): InferenceParams {
-        this.mostRecentParams = this.node.getInferenceParams()
+        this.mostRecentParams = this.node.getInferenceParams().params
         return this.mostRecentParams!!
     }
 
@@ -185,6 +185,17 @@ data class LocalInferencePair(
             nextSettle - epochParams.epochLength
         else
             nextSettle
+    }
+
+    fun waitForFirstBlock() {
+        while (this.mostRecentParams == null) {
+            try {
+                this.getParams()
+            } catch (_: NotReadyException) {
+                Logger.info("Node is not ready yet, waiting...")
+                Thread.sleep(1000)
+            }
+        }
     }
 
     fun waitForFirstValidators() {
