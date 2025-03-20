@@ -9,7 +9,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const FaucetRequests = 50
+const FaucetRequests = 1000
 
 func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *types.MsgSubmitNewUnfundedParticipant) (*types.MsgSubmitNewUnfundedParticipantResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)

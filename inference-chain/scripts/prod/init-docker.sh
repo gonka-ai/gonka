@@ -1,5 +1,4 @@
 #!/bin/sh
-set -e
 
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
@@ -33,62 +32,79 @@ CHAIN_ID="prod-sim"
 COIN_DENOM="icoin"
 STATE_DIR="/root/.inference"
 
-echo "Current directory: $(pwd)"
+ACCOUNT_EXISTS=false
+echo "🔍 Checking if account $KEY_NAME exists in keyring ($KEYRING_BACKEND)..."
+ACCOUNT_CHECK=$($APP_NAME keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR" 2>&1)
 
-# Init the chain:
-# I'm using prod-sim as the chain name (production simulation)
-#   and icoin (intelligence coin) as the default denomination
-#   and my-node as a node moniker (it doesn't have to be unique)
-$APP_NAME init \
-  --overwrite \
-  --chain-id "$CHAIN_ID" \
-  --default-denom $COIN_DENOM \
-  my-node
+echo "DEBUG LOG ACCOUNT_CHECK: $ACCOUNT_CHECK"
 
-$APP_NAME config set client chain-id $CHAIN_ID
-$APP_NAME config set client keyring-backend $KEYRING_BACKEND
-$APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
+if echo "$ACCOUNT_CHECK" | grep -iE "is not a valid name or address|not found"; then
+   echo "❌ Account $KEY_NAME does not exist!"
+else
+   echo "✅ Account $KEY_NAME found. Using existing account."
+   ACCOUNT_EXISTS=true
+fi
 
-# create snapshots every N blocks and keep last M snapshots
-SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-10}
-SNAPSHOT_KEEP_RECENT=${SNAPSHOT_KEEP_RECENT:-5}
+if [ "$ACCOUNT_EXISTS" = true ]; then
+    echo "Node is already configured, skip configuration"
+else
+    echo "Configure node"
+    echo "Current directory: $(pwd)"
 
-$APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
-$APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
+    # Init the chain:
+    # I'm using prod-sim as the chain name (production simulation)
+    #   and icoin (intelligence coin) as the default denomination
+    #   and my-node as a node moniker (it doesn't have to be unique)
+    $APP_NAME init \
+      --overwrite \
+      --chain-id "$CHAIN_ID" \
+      --default-denom $COIN_DENOM \
+      my-node
 
-sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
-  $STATE_DIR/config/config.toml
+    $APP_NAME config set client chain-id $CHAIN_ID
+    $APP_NAME config set client keyring-backend $KEYRING_BACKEND
+    $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
 
-$APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
-echo "Grepping seeds =:"
-grep "seeds =" $STATE_DIR/config/config.toml
+    # create snapshots every N blocks and keep last M snapshots
+    SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-10}
+    SNAPSHOT_KEEP_RECENT=${SNAPSHOT_KEEP_RECENT:-5}
 
-# sync with snapshots?
- if [ "$SYNC_WITH_SNAPSHOTS" = "true" ]; then
-     echo "Node must sync using snapshots"
-TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
+    $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
+    $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 
- $APP_NAME set-statesync "$STATE_DIR/config/config.toml" true
- $APP_NAME set-statesync-rpc-servers "$STATE_DIR/config/config.toml"  "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
- $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
- else
-     echo "Node will sync WITHOUT snapshots"
- fi
+    sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
+      $STATE_DIR/config/config.toml
 
-# Create a key
-$APP_NAME keys \
-    --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR" \
-    add "$KEY_NAME"
+    $APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
+    echo "Grepping seeds =:"
+    grep "seeds =" $STATE_DIR/config/config.toml
 
-# Need to join network? Or is that solely from the compose file?
-GENESIS_FILE="./.inference/genesis.json"
-$APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
+    # sync with snapshots?
+     if [ "$SYNC_WITH_SNAPSHOTS" = "true" ]; then
+         echo "Node must sync using snapshots"
+    TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
 
-cat $GENESIS_FILE
+     $APP_NAME set-statesync "$STATE_DIR/config/config.toml" true
+     $APP_NAME set-statesync-rpc-servers "$STATE_DIR/config/config.toml"  "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
+     $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
+     else
+         echo "Node will sync WITHOUT snapshots"
+     fi
 
-echo "Using genesis file: $GENESIS_FILE"
-cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
+    echo "Creating account for $KEY_NAME"
+    $APP_NAME keys add "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR"
 
+    # Need to join network? Or is that solely from the compose file?
+    GENESIS_FILE="./.inference/genesis.json"
+    $APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
+
+    cat $GENESIS_FILE
+
+    echo "Using genesis file: $GENESIS_FILE"
+    cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
+fi
+
+echo "Running node..."
 cosmovisor init /usr/bin/inferenced
 
 # Idle the container in the event that cosmovisor fails

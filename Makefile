@@ -5,7 +5,7 @@ TAG_NAME := "release/v$(VERSION)"
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker
+build-docker: node-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
