@@ -391,7 +391,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
 		RequestedBy:   request.RequesterAddress,
-		Model:         testModel,
+		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
 	}
 	return transaction, nil
@@ -444,7 +444,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, request.OpenAiRequest.Model, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
