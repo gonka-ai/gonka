@@ -19,6 +19,7 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	k.GetAllHardwareNodes(goCtx)
 	allParticipants := k.GetAllParticipant(goCtx)
 	participantsById := make(map[string]*types.Participant)
 	for _, participant := range allParticipants {
