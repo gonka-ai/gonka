@@ -51,4 +51,22 @@ func TestSetAndGetHardwareNodes(t *testing.T) {
 	if !reflect.DeepEqual(nodes, retrievedNodes) {
 		t.Errorf("Mismatch:\nexpected: %#v\ngot: %#v", nodes, retrievedNodes)
 	}
+
+	nodesForParticipants, err := keeper.GetHardwareNodesForParticipants(ctx, []string{participantId})
+	if err != nil {
+		t.Fatal("Failed to get hardware nodes for participants", err)
+	}
+
+	if !reflect.DeepEqual(nodesForParticipants, []*types.HardwareNodes{retrievedNodes}) {
+		t.Errorf("Mismatch:\nexpected: %#v\ngot: %#v", nodes, retrievedNodes)
+	}
+
+	allNodes, err := keeper.GetAllHardwareNodes(ctx)
+	if err != nil {
+		t.Fatal("Failed to get all hardware nodes", err)
+	}
+
+	if !reflect.DeepEqual(allNodes, nodesForParticipants) {
+		t.Errorf("Mismatch:\nexpected: %#v\ngot: %#v", []*types.HardwareNodes{nodes}, allNodes)
+	}
 }
