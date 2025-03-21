@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -58,7 +59,7 @@ func main() {
 		server.LoadNodeToBroker(nodeBroker, &node)
 	}
 
-	params, err := event_listener.GetParams(context.Background(), *recorder)
+	params, err := getParams(context.Background(), *recorder)
 	if err != nil {
 		logging.Error("Failed to get params", types.System, "error", err)
 		return
@@ -89,4 +90,26 @@ func returnStatus(config *apiconfig.ConfigManager) {
 	}
 	fmt.Println(string(jsonData))
 	os.Exit(0)
+}
+
+func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
+	var params *types.QueryParamsResponse
+	var err error
+	for i := 0; i < 10; i++ {
+		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
+		if err == nil {
+			return params, nil
+		}
+
+		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
+			logging.Info("Inference not ready, retrying...", types.System, "attempt", i+1, "error", err)
+			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
+			continue
+		}
+		// If not an RPC error, log and return early
+		logging.Error("Failed to get chain params", types.System, "error", err)
+		return nil, err
+	}
+	logging.Error("Exhausted all retries to get chain params", types.System, "error", err)
+	return nil, err
 }

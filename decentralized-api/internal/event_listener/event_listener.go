@@ -19,7 +19,6 @@ import (
 	"log"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -57,7 +56,7 @@ func NewEventListener(
 	}
 }
 
-func (el *EventListener) openWsConn() {
+func (el *EventListener) openWsConnAndSubscribe() {
 	websocketUrl := getWebsocketUrl(el.configManager.GetConfig())
 	logging.Info("Connecting to websocket at", types.EventProcessing, "url", websocketUrl)
 
@@ -67,10 +66,15 @@ func (el *EventListener) openWsConn() {
 		log.Fatal("dial:", err)
 	}
 	el.ws = ws
+
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
-	el.openWsConn()
+	el.openWsConnAndSubscribe()
 
 	go el.startSyncStatusChecker()
 	pubKey, err := el.transactionRecorder.Account.Record.GetPubKey()
@@ -172,7 +176,7 @@ func (el *EventListener) listen(blockEventChan, eventChan chan *chainevents.JSON
 				logging.Warn("Reopen websocket", types.EventProcessing)
 
 				time.Sleep(10 * time.Second) // TODO add increasing delay here and num of tries
-				el.openWsConn()
+				el.openWsConnAndSubscribe()
 			}
 			continue
 		}
@@ -313,28 +317,6 @@ func getWebsocketUrl(config *apiconfig.Config) string {
 
 	// Construct the new URL
 	return u.String()
-}
-
-func GetParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
-	var params *types.QueryParamsResponse
-	var err error
-	for i := 0; i < 10; i++ {
-		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
-		if err == nil {
-			return params, nil
-		}
-
-		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
-			logging.Info("Inference not ready, retrying...", types.System, "attempt", i+1, "error", err)
-			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
-			continue
-		}
-		// If not an RPC error, log and return early
-		logging.Error("Failed to get chain params", types.System, "error", err)
-		return nil, err
-	}
-	logging.Error("Exhausted all retries to get chain params", types.System, "error", err)
-	return nil, err
 }
 
 func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
