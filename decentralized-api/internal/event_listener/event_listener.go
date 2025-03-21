@@ -142,13 +142,15 @@ func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan c
 						panic("Upgrade required")
 					}
 
-					el.ws.Close()
-
-					logging.Warn("Reopen websocket", types.EventProcessing)
-					time.Sleep(10 * time.Second)
-
-					el.openWsConnAndSubscribe()
 				}
+
+				logging.Warn("Close websocket connection", types.EventProcessing)
+				el.ws.Close()
+
+				logging.Warn("Reopen websocket", types.EventProcessing)
+				time.Sleep(10 * time.Second)
+
+				el.openWsConnAndSubscribe()
 				continue
 			}
 
