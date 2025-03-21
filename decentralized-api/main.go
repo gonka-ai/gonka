@@ -69,10 +69,10 @@ func main() {
 		return
 	}
 
+	listener := event_listener.NewEventListener(config, &params.Params, nodeBroker, *recorder)
 	go func() {
-		event_listener.StartEventListener(nodeBroker, *recorder, config, &params.Params)
+		listener.Start(context.Background())
 	}()
-
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
 

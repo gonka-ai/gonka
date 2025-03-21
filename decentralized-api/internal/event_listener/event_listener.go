@@ -20,42 +20,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 )
-
-// TODO idea for refactoring: create EventListener struct, which will contain this global vars and all params passed to StartEventListener as fields fields
-var (
-	syncStatusMu sync.RWMutex
-	nodeCaughtUp bool
-)
-
-func isNodeSynced() bool {
-	syncStatusMu.RLock()
-	defer syncStatusMu.RUnlock()
-	return nodeCaughtUp
-}
-
-func updateNodeSyncStatus(status bool) {
-	syncStatusMu.Lock()
-	defer syncStatusMu.Unlock()
-	nodeCaughtUp = status
-}
-
-func startSyncStatusChecker(chainNodeUrl string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		status, err := getStatus(chainNodeUrl)
-		if err != nil {
-			logging.Error("Error getting node status", types.EventProcessing, "error", err)
-			continue
-		}
-		// The node is "synced" if it's NOT catching up.
-		updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
-		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
-	}
-}
 
 const (
 	finishInferenceAction   = "/inference.inference.MsgFinishInference"
@@ -66,30 +33,47 @@ const (
 	txEventType       = "tendermint/event/Tx"
 )
 
-func StartEventListener(
-	nodeBroker *broker.Broker,
-	transactionRecorder cosmosclient.InferenceCosmosClient,
+type EventListener struct {
+	nodeBroker          *broker.Broker
+	transactionRecorder cosmosclient.InferenceCosmosClient
+	configManager       *apiconfig.ConfigManager
+	params              *types.Params
+	nodeCaughtUp        atomic.Bool
+
+	nodePocOrchestrator *poc.NodePoCOrchestrator
+	ws                  *websocket.Conn
+}
+
+func NewEventListener(
 	configManager *apiconfig.ConfigManager,
 	params *types.Params,
-) {
-	websocketUrl := getWebsocketUrl(configManager.GetConfig())
+	nodeBroker *broker.Broker,
+	transactionRecorder cosmosclient.InferenceCosmosClient) *EventListener {
+	return &EventListener{
+		nodeBroker:          nodeBroker,
+		transactionRecorder: transactionRecorder,
+		configManager:       configManager,
+		params:              params,
+	}
+}
+
+func (el *EventListener) openWsConn() {
+	websocketUrl := getWebsocketUrl(el.configManager.GetConfig())
 	logging.Info("Connecting to websocket at", types.EventProcessing, "url", websocketUrl)
+
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
 	if err != nil {
 		logging.Error("Failed to connect to websocket", types.EventProcessing, "error", err)
 		log.Fatal("dial:", err)
 	}
-	defer ws.Close()
+	el.ws = ws
+}
 
-	// Subscribe to custom events
-	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
-	subscribeToEvents(ws, "tm.event='NewBlock'")
-	subscribeToEvents(ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+func (el *EventListener) Start(ctx context.Context) {
+	el.openWsConn()
 
-	go startSyncStatusChecker(configManager.GetConfig().ChainNode.Url)
-
-	pubKey, err := transactionRecorder.Account.Record.GetPubKey()
+	go el.startSyncStatusChecker()
+	pubKey, err := el.transactionRecorder.Account.Record.GetPubKey()
 	if err != nil {
 		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
 		return
@@ -97,61 +81,98 @@ func StartEventListener(
 	pubKeyString := utils.PubKeyToHexString(pubKey)
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", transactionRecorder.Account.Name,
-		"address", transactionRecorder.Address,
+		types.PoC, "name", el.transactionRecorder.Account.Name,
+		"address", el.transactionRecorder.Address,
 		"pubkey", pubKeyString)
 
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.PocParams.DefaultDifficulty))
+	// TODO init pocOrchestrator somewhere else and apss as ready object?
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(el.params.PocParams.DefaultDifficulty))
+
 	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
-		nodeBroker,
-		configManager.GetConfig().Api.PoCCallbackUrl,
-		configManager.GetConfig().ChainNode.Url,
-		&transactionRecorder,
-		params,
+		el.nodeBroker,
+		el.configManager.GetConfig().Api.PoCCallbackUrl,
+		el.configManager.GetConfig().ChainNode.Url,
+		&el.transactionRecorder,
+		el.params,
 	)
+	el.nodePocOrchestrator = nodePocOrchestrator
+
 	logging.Info("PoC orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 	go pocOrchestrator.Run()
 
 	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	defer close(eventChan)
+	el.processEvents(ctx, eventChan)
+
+	blockEventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	defer close(blockEventChan)
+	el.processBlockEvents(ctx, blockEventChan)
+
+	el.listen(blockEventChan, eventChan)
+}
+
+func (el *EventListener) processEvents(ctx context.Context, eventChan chan *chainevents.JSONRPCResponse) {
 	numWorkers := 10
 	for i := 0; i < numWorkers; i++ {
 		go func() {
-			for event := range eventChan {
-				if event == nil {
-					logging.Error("Go worker received nil chain event", types.System)
-					continue
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-eventChan:
+				if !ok {
+					logging.Warn("Event channel is closed", types.System)
+					return
 				}
-				processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+				if event == nil {
+					logging.Error("processEvents Go worker received nil chain event", types.System)
+				} else {
+					el.processEvent(event)
+				}
 			}
 		}()
 	}
-	// TODO: We should probably extract out the channels and handlers into a class
-	blockEventChan := make(chan *chainevents.JSONRPCResponse, 100)
+}
+
+func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan chan *chainevents.JSONRPCResponse) {
 	go func() {
-		for event := range blockEventChan {
-			if event == nil {
-				logging.Error("Go worker received nil chain event", types.System)
-				continue
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-blockEventChan:
+			if !ok {
+				logging.Warn("blockEvent channel is closed", types.System)
+				return
 			}
 
-			processEvent(event, nodeBroker, transactionRecorder, configManager, nodePocOrchestrator)
+			if event == nil {
+				logging.Error("processBlockEvents Go worker received nil chain event", types.System)
+			} else {
+				el.processEvent(event)
+			}
 		}
 	}()
+}
 
+func (el *EventListener) listen(blockEventChan, eventChan chan *chainevents.JSONRPCResponse) {
 	for {
-		_, message, err := ws.ReadMessage()
+		_, message, err := el.ws.ReadMessage()
 		if err != nil {
 			logging.Warn("Failed to read a websocket message", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
 
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
-				if upgrade.CheckForUpgrade(configManager) {
+				if upgrade.CheckForUpgrade(el.configManager) {
 					logging.Error("Upgrade required! Exiting...", types.Upgrades)
 					panic("Upgrade required")
 				}
-				continue
+
+				el.ws.Close()
+				logging.Warn("Reopen websocket", types.EventProcessing)
+
+				time.Sleep(10 * time.Second) // TODO add increasing delay here and num of tries
+				el.openWsConn()
 			}
 			continue
 		}
@@ -166,40 +187,58 @@ func StartEventListener(
 			blockEventChan <- &event
 			continue
 		}
+
 		logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type)
-		// Push the event into the channel for processing.
 		eventChan <- &event
+	}
+
+	el.ws.Close()
+}
+
+func (el *EventListener) startSyncStatusChecker() {
+	chainNodeUrl := el.configManager.GetConfig().ChainNode.Url
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		status, err := getStatus(chainNodeUrl)
+		if err != nil {
+			logging.Error("Error getting node status", types.EventProcessing, "error", err)
+			continue
+		}
+		// The node is "synced" if it's NOT catching up.
+		el.updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
+		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
 	}
 }
 
+func (el *EventListener) isNodeSynced() bool {
+	return el.nodeCaughtUp.Load()
+}
+
+func (el *EventListener) updateNodeSyncStatus(status bool) {
+	el.nodeCaughtUp.Store(status)
+}
+
 // processEvent is the worker function that processes a JSONRPCResponse event.
-func processEvent(
-	event *chainevents.JSONRPCResponse,
-	nodeBroker *broker.Broker,
-	transactionRecorder cosmosclient.InferenceCosmosClient,
-	configManager *apiconfig.ConfigManager,
-	nodePocOrchestrator *poc.NodePoCOrchestrator,
-) {
+func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse) {
 	switch event.Result.Data.Type {
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type)
-		if isNodeSynced() {
-			poc.ProcessNewBlockEvent(nodePocOrchestrator, event, transactionRecorder, configManager)
+		if el.isNodeSynced() {
+			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
 		}
-		upgrade.ProcessNewBlockEvent(event, transactionRecorder, configManager)
+		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
-		handleMessage(nodeBroker, transactionRecorder, event, configManager.GetConfig())
+		el.handleMessage(event)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
 	}
 }
 
-func handleMessage(
-	nodeBroker *broker.Broker,
-	transactionRecorder cosmosclient.InferenceCosmosClient,
-	event *chainevents.JSONRPCResponse,
-	currentConfig *apiconfig.Config,
-) {
+func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
+	currentConfig := el.configManager.GetConfig()
 	if waitForEventHeight(event, currentConfig) {
 		return
 	}
@@ -222,12 +261,12 @@ func handleMessage(
 	//}
 	switch action {
 	case finishInferenceAction:
-		if isNodeSynced() {
-			server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], transactionRecorder, nodeBroker, currentConfig)
+		if el.isNodeSynced() {
+			server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder, el.nodeBroker, currentConfig)
 		}
 	case validationAction:
-		if isNodeSynced() {
-			server.VerifyInvalidation(event.Result.Events, transactionRecorder, nodeBroker)
+		if el.isNodeSynced() {
+			server.VerifyInvalidation(event.Result.Events, el.transactionRecorder, el.nodeBroker)
 		}
 	case submitGovProposalAction:
 		proposalIdOrNil := event.Result.Events["proposal_id"]
