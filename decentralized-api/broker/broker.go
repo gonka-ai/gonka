@@ -343,6 +343,7 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		LocalId:  node.Id,
 		Status:   in.State.Status,
 		Hardware: hardware,
+		Models:   node.Models,
 	}
 }
 

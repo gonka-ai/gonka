@@ -12,7 +12,8 @@ message HardwareNodes {
 message HardwareNode {
   string local_id = 1;
   HardwareNodeStatus status = 2;
-  repeated Hardware hardware = 3;
+  repeated string models = 3;
+  repeated Hardware hardware = 4;
 }
 
 enum HardwareNodeStatus {
