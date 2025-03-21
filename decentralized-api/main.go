@@ -6,12 +6,14 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"os"
 	"strconv"
@@ -32,7 +34,6 @@ func main() {
 
 		return
 	}
-
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
@@ -70,10 +71,36 @@ func main() {
 		return
 	}
 
-	listener := event_listener.NewEventListener(config, &params.Params, nodeBroker, *recorder)
-	go func() {
-		listener.Start(context.Background())
-	}()
+	pubKey, err := recorder.Account.Record.GetPubKey()
+	if err != nil {
+		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
+		return
+	}
+	pubKeyString := utils.PubKeyToHexString(pubKey)
+
+	logging.Debug("Initializing PoC orchestrator",
+		types.PoC, "name", recorder.Account.Name,
+		"address", recorder.Address,
+		"pubkey", pubKeyString)
+
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
+
+	logging.Info("PoC orchestrator initialized", types.PoC, "pocOrchestrator", pocOrchestrator)
+	go pocOrchestrator.Run()
+
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
+		pubKeyString,
+		nodeBroker,
+		config.GetConfig().Api.PoCCallbackUrl,
+		config.GetConfig().ChainNode.Url,
+		recorder,
+		&params.Params,
+	)
+	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
+
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, *recorder)
+	go listener.Start(context.Background())
+
 	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
 }
 

@@ -12,12 +12,9 @@ import (
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
-	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 	"log"
-	"net/url"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -32,27 +29,27 @@ const (
 	txEventType       = "tendermint/event/Tx"
 )
 
+// TODO: write tests properly
 type EventListener struct {
 	nodeBroker          *broker.Broker
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	configManager       *apiconfig.ConfigManager
-	params              *types.Params
+	nodePocOrchestrator *poc.NodePoCOrchestrator
 	nodeCaughtUp        atomic.Bool
 
-	nodePocOrchestrator *poc.NodePoCOrchestrator
-	ws                  *websocket.Conn
+	ws *websocket.Conn
 }
 
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	params *types.Params,
+	nodePocOrchestrator *poc.NodePoCOrchestrator,
 	nodeBroker *broker.Broker,
 	transactionRecorder cosmosclient.InferenceCosmosClient) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
 		configManager:       configManager,
-		params:              params,
+		nodePocOrchestrator: nodePocOrchestrator,
 	}
 }
 
@@ -75,36 +72,9 @@ func (el *EventListener) openWsConnAndSubscribe() {
 
 func (el *EventListener) Start(ctx context.Context) {
 	el.openWsConnAndSubscribe()
+	defer el.ws.Close()
 
 	go el.startSyncStatusChecker()
-	pubKey, err := el.transactionRecorder.Account.Record.GetPubKey()
-	if err != nil {
-		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
-		return
-	}
-	pubKeyString := utils.PubKeyToHexString(pubKey)
-
-	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", el.transactionRecorder.Account.Name,
-		"address", el.transactionRecorder.Address,
-		"pubkey", pubKeyString)
-
-	// TODO init pocOrchestrator somewhere else and apss as ready object?
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(el.params.PocParams.DefaultDifficulty))
-
-	// PRTODO: decide if host is just host or host+port????? or url. Think what better name and stuff
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
-		pubKeyString,
-		el.nodeBroker,
-		el.configManager.GetConfig().Api.PoCCallbackUrl,
-		el.configManager.GetConfig().ChainNode.Url,
-		&el.transactionRecorder,
-		el.params,
-	)
-	el.nodePocOrchestrator = nodePocOrchestrator
-
-	logging.Info("PoC orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
-	go pocOrchestrator.Run()
 
 	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
 	defer close(eventChan)
@@ -114,89 +84,89 @@ func (el *EventListener) Start(ctx context.Context) {
 	defer close(blockEventChan)
 	el.processBlockEvents(ctx, blockEventChan)
 
-	el.listen(blockEventChan, eventChan)
+	el.listen(ctx, blockEventChan, eventChan)
 }
 
-func (el *EventListener) processEvents(ctx context.Context, eventChan chan *chainevents.JSONRPCResponse) {
-	numWorkers := 10
-	for i := 0; i < numWorkers; i++ {
-		go func() {
+func worker(
+	ctx context.Context,
+	eventChan chan *chainevents.JSONRPCResponse,
+	processEvent func(event *chainevents.JSONRPCResponse),
+	workerName string) {
+	go func() {
+		for {
 			select {
 			case <-ctx.Done():
 				return
 			case event, ok := <-eventChan:
 				if !ok {
-					logging.Warn("Event channel is closed", types.System)
+					logging.Warn(workerName+": event channel is closed", types.System)
 					return
 				}
 				if event == nil {
-					logging.Error("processEvents Go worker received nil chain event", types.System)
+					logging.Error(workerName+": received nil chain event", types.System)
 				} else {
-					el.processEvent(event)
+					processEvent(event)
 				}
-			}
-		}()
-	}
-}
-
-func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan chan *chainevents.JSONRPCResponse) {
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-blockEventChan:
-			if !ok {
-				logging.Warn("blockEvent channel is closed", types.System)
-				return
-			}
-
-			if event == nil {
-				logging.Error("processBlockEvents Go worker received nil chain event", types.System)
-			} else {
-				el.processEvent(event)
 			}
 		}
 	}()
 }
 
-func (el *EventListener) listen(blockEventChan, eventChan chan *chainevents.JSONRPCResponse) {
-	for {
-		_, message, err := el.ws.ReadMessage()
-		if err != nil {
-			logging.Warn("Failed to read a websocket message", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
-
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
-				if upgrade.CheckForUpgrade(el.configManager) {
-					logging.Error("Upgrade required! Exiting...", types.Upgrades)
-					panic("Upgrade required")
-				}
-
-				el.ws.Close()
-				logging.Warn("Reopen websocket", types.EventProcessing)
-
-				time.Sleep(10 * time.Second) // TODO add increasing delay here and num of tries
-				el.openWsConnAndSubscribe()
-			}
-			continue
-		}
-
-		var event chainevents.JSONRPCResponse
-		if err = json.Unmarshal(message, &event); err != nil {
-			logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "message", message)
-			continue // no sense to check event, if it wasn't unmarshalled correctly
-		}
-
-		if event.Result.Data.Type == newBlockEventType {
-			blockEventChan <- &event
-			continue
-		}
-
-		logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type)
-		eventChan <- &event
+func (el *EventListener) processEvents(ctx context.Context, eventChan chan *chainevents.JSONRPCResponse) {
+	const numWorkers = 10
+	for i := 0; i < numWorkers; i++ {
+		worker(ctx, eventChan, el.processEvent, "process_events_"+strconv.Itoa(i))
 	}
+}
 
-	el.ws.Close()
+func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan chan *chainevents.JSONRPCResponse) {
+	worker(ctx, blockEventChan, el.processEvent, "process_block_events")
+}
+
+func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan chan *chainevents.JSONRPCResponse) {
+	for {
+		select {
+		case <-ctx.Done():
+			logging.Info("Close ws connection", types.EventProcessing)
+			return
+		default:
+			_, message, err := el.ws.ReadMessage()
+			if err != nil {
+				logging.Warn("Failed to read a websocket message", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
+
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
+
+					if upgrade.CheckForUpgrade(el.configManager) {
+						logging.Error("Upgrade required! Exiting...", types.Upgrades)
+						panic("Upgrade required")
+					}
+
+					el.ws.Close()
+
+					logging.Warn("Reopen websocket", types.EventProcessing)
+					time.Sleep(10 * time.Second)
+
+					el.openWsConnAndSubscribe()
+				}
+				continue
+			}
+
+			var event chainevents.JSONRPCResponse
+			if err = json.Unmarshal(message, &event); err != nil {
+				logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "message", message)
+				continue
+			}
+
+			if event.Result.Data.Type == newBlockEventType {
+				blockEventChan <- &event
+				continue
+			}
+
+			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type)
+			eventChan <- &event
+		}
+	}
 }
 
 func (el *EventListener) startSyncStatusChecker() {
@@ -280,7 +250,6 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	}
 }
 
-// currentConfig must be a pointer, or it won't update
 func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
@@ -293,42 +262,4 @@ func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apico
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
-}
-
-func subscribeToEvents(ws *websocket.Conn, query string) {
-	subscribeMsg := fmt.Sprintf(`{"jsonrpc": "2.0", "method": "subscribe", "id": "1", "params": ["%s"]}`, query)
-	if err := ws.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
-		logging.Error("Failed to subscribe to a websocket", types.EventProcessing, "error", err)
-		log.Fatalf("Failed to subscribe to a websocket. %v", err)
-	}
-}
-
-func getWebsocketUrl(config *apiconfig.Config) string {
-	// Parse the input URL
-	u, err := url.Parse(config.ChainNode.Url)
-	if err != nil {
-		logging.Error("Error parsing URL", types.EventProcessing, "error", err)
-		return ""
-	}
-
-	// Modify the scheme to "ws" and append the "/websocket" path
-	u.Scheme = "ws"
-	u.Path = "/websocket"
-
-	// Construct the new URL
-	return u.String()
-}
-
-func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
-	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	status, err := client.Status(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	return status, nil
 }
