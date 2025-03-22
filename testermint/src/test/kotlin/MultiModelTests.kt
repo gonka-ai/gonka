@@ -13,4 +13,12 @@ class MultiModelTests : TestermintTest() {
         val response3 = pairs[0].makeInferenceRequest(inferenceRequest)
         println("RESPONSE3 = $response3")
     }
+
+    @Test
+    fun test2() {
+        val pairs = getLocalInferencePairs(inferenceConfig)
+        val instance = pairs[0]
+        val result = instance.node.exec(listOf("inferenced", "query", "inference", "get-random-executor", "--model=unsloth/llama-3-8b-Instruct"))
+        println(result)
+    }
 }
