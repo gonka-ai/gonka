@@ -11,16 +11,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
@@ -382,12 +384,12 @@ func (DifferentTokensValidationResult) IsSuccessful() bool {
 	return false
 }
 
-type CosineSimilarityValidationResult struct {
+type SimilarityValidationResult struct {
 	BaseValidationResult
 	Value float64
 }
 
-func (r CosineSimilarityValidationResult) IsSuccessful() bool {
+func (r SimilarityValidationResult) IsSuccessful() bool {
 	return r.Value > 0.99
 }
 
@@ -400,32 +402,100 @@ func compareLogits(
 		return &DifferentLengthValidationResult{baseComparisonResult}
 	}
 
-	var originalLogprobs, validationLogprobs []float64
 	for i := range originalLogits {
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
-
-		originalLogprobs = append(originalLogprobs, o.Logprob)
-		validationLogprobs = append(validationLogprobs, v.Logprob)
 	}
+	similarity := customSimilarity(originalLogits, validationLogits)
 
-	cosSimValue := cosineSimilarity(originalLogprobs, validationLogprobs)
-
-	return &CosineSimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: cosSimValue}
+	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
 }
 
-func cosineSimilarity(a, b []float64) float64 {
-	// TODO: handle division by zero case
-	var dotProduct, magnitudeA, magnitudeB float64
-	for i := range a {
-		dotProduct += a[i] * b[i]
-		magnitudeA += a[i] * a[i]
-		magnitudeB += b[i] * b[i]
+func customSimilarity(
+	originalLogprobs []completionapi.Logprob,
+	validationLogprobs []completionapi.Logprob,
+) float64 {
+	distance, err := customDistance(originalLogprobs, validationLogprobs)
+	if err != nil {
+		logging.Error("Error calculating custom distance", types.Validation, "error", err)
+		return 0
 	}
-	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
+	similarity := 1 - distance
+	if similarity < 0 {
+		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
+		return 0
+	}
+	return similarity
+}
+
+func customDistance(
+	originalLogprobs []completionapi.Logprob,
+	validationLogprobs []completionapi.Logprob,
+) (float64, error) {
+	distance := 0.0
+	for i := range originalLogprobs {
+		o := originalLogprobs[i]
+		v := validationLogprobs[i]
+		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
+		if err != nil {
+			logging.Error("Error calculating position distance", types.Validation, "error", err)
+			return math.Inf(1), err
+		}
+		distance += posDistance
+	}
+	totalLogprobs := len(originalLogprobs) * len(originalLogprobs[0].TopLogprobs)
+
+	return distance / float64(totalLogprobs), nil
+}
+
+func positionDistance(
+	originalLogprobs []completionapi.TopLogprobs,
+	validationLogprobs []completionapi.TopLogprobs,
+) (float64, error) {
+	if len(originalLogprobs) == 0 || len(validationLogprobs) == 0 {
+		return 0.0, fmt.Errorf("empty logprobs provided")
+	}
+	distance := 0.0
+
+	originalLogprobMap := make(map[string]float64)
+	for _, o := range originalLogprobs {
+		originalLogprobMap[o.Token] = o.Logprob
+	}
+	sortedLogprobs := make([]float64, 0, len(originalLogprobMap))
+	for _, logprob := range originalLogprobMap {
+		sortedLogprobs = append(sortedLogprobs, logprob)
+	}
+
+	sort.Float64s(sortedLogprobs)
+
+	var minOriginalLogprob1, minOriginalLogprob2 float64
+	if len(sortedLogprobs) >= 2 {
+		minOriginalLogprob1 = sortedLogprobs[0]
+		minOriginalLogprob2 = sortedLogprobs[1]
+	} else if len(sortedLogprobs) == 1 {
+		minOriginalLogprob1 = sortedLogprobs[0]
+		minOriginalLogprob2 = minOriginalLogprob1 - 100.0
+	}
+
+	// Estimate the next logprob value (2 as fine)
+	nextOriginalLogprob := minOriginalLogprob1 - 2*(minOriginalLogprob2-minOriginalLogprob1)
+
+	for _, v := range validationLogprobs {
+		var originalLogprob float64
+		if origProb, exists := originalLogprobMap[v.Token]; exists {
+			originalLogprob = origProb
+		} else {
+			originalLogprob = nextOriginalLogprob
+		}
+
+		denom := 1e-10 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
+	}
+
+	return distance, nil
 }
 
 type ModelNotSupportedValidationResult struct {
@@ -446,19 +516,19 @@ func (ModelNotSupportedValidationResult) IsSuccessful() bool {
 
 func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
-	var cosineSimVal float64
+	var simVal float64
 	switch result.(type) {
 	case *DifferentLengthValidationResult:
 		log.Printf("Different length validation result")
-		cosineSimVal = -1
+		simVal = -1
 	case *DifferentTokensValidationResult:
 		log.Printf("Different tokens validation result")
-		cosineSimVal = -1
-	case *CosineSimilarityValidationResult:
-		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
-		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", cosineSimVal)
+		simVal = -1
+	case *SimilarityValidationResult:
+		simVal = result.(*SimilarityValidationResult).Value
+		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
 	case ModelNotSupportedValidationResult:
-		cosineSimVal = 1
+		simVal = 1
 		logging.Info("Model not supported validation result. Assuming is valid", types.Validation, "inference_id", result.GetInferenceId())
 	default:
 		logging.Error("Unknown validation result type", types.Validation, "type", fmt.Sprintf("%T", result), "result", result)
@@ -475,6 +545,6 @@ func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		InferenceId:     result.GetInferenceId(),
 		ResponsePayload: string(result.GetValidationResponseBytes()),
 		ResponseHash:    responseHash,
-		Value:           cosineSimVal,
+		Value:           simVal,
 	}, nil
 }
