@@ -8,11 +8,12 @@ import (
 	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -222,7 +223,7 @@ func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.R
 	inferenceUpDto := InferenceUpDto{
 		Model: model,
 		Dtype: "float16",
-		Args:  []string{"--enforce-eager"},
+		Args:  []string{"--quantization", "fp8"},
 	}
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
