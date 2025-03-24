@@ -481,7 +481,7 @@ func positionDistance(
 	}
 
 	// Estimate the next logprob value (2 as fine)
-	nextOriginalLogprob := minOriginalLogprob1 - 2*(minOriginalLogprob2-minOriginalLogprob1)
+	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
 
 	for _, v := range validationLogprobs {
 		var originalLogprob float64
@@ -491,7 +491,7 @@ func positionDistance(
 			originalLogprob = nextOriginalLogprob
 		}
 
-		denom := 1e-10 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
 		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
 	}
 
