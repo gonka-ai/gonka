@@ -1,5 +1,4 @@
 #!/bin/sh
-set -e
 
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
