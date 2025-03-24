@@ -140,12 +140,12 @@ func logInferencesToValidate(toValidate []string) {
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
 	valResult, err := lockNodeAndValidate(inf, nodeBroker)
 	if err != nil && errors.Is(err, broker.ErrNoNodesAvailable) {
-		logging.Error("Failed to validate inf. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
+		logging.Error("Failed to validate inference. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
 		valResult = ModelNotSupportedValidationResult{
 			InferenceId: inf.InferenceId,
 		}
 	} else if err != nil {
-		logging.Error("Failed to validate inf.", types.Validation, "id", inf.InferenceId, "error", err)
+		logging.Error("Failed to validate inference.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
 	}
 
