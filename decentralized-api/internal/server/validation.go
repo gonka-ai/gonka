@@ -514,22 +514,6 @@ func (ModelNotSupportedValidationResult) IsSuccessful() bool {
 	return false
 }
 
-type ModelNotSupportedValidationResult struct {
-	InferenceId string
-}
-
-func (r ModelNotSupportedValidationResult) GetInferenceId() string {
-	return r.InferenceId
-}
-
-func (r ModelNotSupportedValidationResult) GetValidationResponseBytes() []byte {
-	return nil
-}
-
-func (ModelNotSupportedValidationResult) IsSuccessful() bool {
-	return false
-}
-
 func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
 	var simVal float64
