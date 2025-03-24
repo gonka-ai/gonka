@@ -2,9 +2,10 @@ package keeper
 
 import (
 	"context"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"golang.org/x/exp/slices"
+	"strings"
 )
 
 func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmitHardwareDiff) (*types.MsgSubmitHardwareDiffResponse, error) {
@@ -37,6 +38,9 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 	for _, node := range nodeMap {
 		updatedNodes.HardwareNodes = append(updatedNodes.HardwareNodes, node)
 	}
+	slices.SortFunc(updatedNodes.HardwareNodes, func(a, b *types.HardwareNode) int {
+		return strings.Compare(a.LocalId, b.LocalId)
+	})
 
 	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", types.Nodes, "err", err)
