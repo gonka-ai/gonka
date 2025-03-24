@@ -10,5 +10,6 @@ message InferenceValidationDetails {
   int32 executor_reputation = 4;
   uint64 traffic_basis = 5;
   uint64 executor_power = 6;
+  string model = 7;
 }
 

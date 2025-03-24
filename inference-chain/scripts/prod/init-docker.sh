@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
@@ -81,6 +82,13 @@ $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
 $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
+if [ -n "$P2P_EXTERNAL_ADDRESS" ]; then
+  echo "Setting the external address for P2P to $P2P_EXTERNAL_ADDRESS"
+  $APP_NAME config set config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
+else
+  echo "P2P_EXTERNAL_ADDRESS is not set, skipping"
+fi
+
 $APP_NAME set-seeds "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$SEED_NODE_P2P_URL"
 echo "Grepping seeds =:"
 grep "seeds =" $STATE_DIR/config/config.toml

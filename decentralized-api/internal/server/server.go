@@ -209,9 +209,11 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 	}
 }
 
-func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient) (*ExecutorDestination, error) {
+func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient, model string) (*ExecutorDestination, error) {
 	queryClient := recorder.NewInferenceQueryClient()
-	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{})
+	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{
+		Model: model,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +242,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		return true
 	}
 
-	executor, err := getExecutorForRequest(ctx, recorder)
+	executor, err := getExecutorForRequest(ctx, recorder, request.OpenAiRequest.Model)
 	if err != nil {
 		logging.Error("Failed to get executor", types.Inferences, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -391,7 +393,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
 		RequestedBy:   request.RequesterAddress,
-		Model:         testModel,
+		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
 	}
 	return transaction, nil
@@ -444,7 +446,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, request.OpenAiRequest.Model, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err

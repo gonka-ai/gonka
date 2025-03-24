@@ -276,6 +276,40 @@ val inferenceRequest = """
     }
 """.trimIndent()
 
+val inferenceRequestModel2 = """
+    {
+      "model" : "my-secret-model",
+      "temperature" : 0.8,
+      "messages": [{
+          "role": "system",
+          "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state"
+        }
+      ],
+      "seed" : -25
+    }
+""".trimIndent()
+
+val inferenceRequestNoSuchModel = """
+    {
+      "model" : "theres-no-model",
+      "temperature" : 0.8,
+      "messages": [{
+          "role": "system",
+          "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state"
+        }
+      ],
+      "seed" : -25
+    }
+""".trimIndent()
+
 val inferenceRequestStream = """
     {
       "model" : "unsloth/llama-3-8b-Instruct",

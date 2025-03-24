@@ -198,9 +198,11 @@ func nodeAvailable(node *NodeWithState, neededModel string) bool {
 	}
 	for _, model := range node.Node.Models {
 		if model == neededModel {
+			logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
 			return true
 		}
 	}
+	logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
 	return false
 }
 
@@ -220,6 +222,8 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	command.Response <- true
 }
 
+var ErrNoNodesAvailable = errors.New("no nodes available")
+
 func LockNode[T any](
 	b *Broker,
 	model string,
@@ -236,7 +240,7 @@ func LockNode[T any](
 	}
 	node := <-nodeChan
 	if node == nil {
-		return zero, errors.New("No nodes available")
+		return zero, ErrNoNodesAvailable
 	}
 
 	defer func() {
@@ -343,6 +347,7 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		LocalId:  node.Id,
 		Status:   in.State.Status,
 		Hardware: hardware,
+		Models:   node.Models,
 	}
 }
 

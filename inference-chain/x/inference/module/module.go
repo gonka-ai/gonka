@@ -237,6 +237,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
+
 		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
 		if err != nil {
 			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())

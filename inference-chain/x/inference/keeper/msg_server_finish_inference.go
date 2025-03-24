@@ -81,6 +81,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
+		Model:              existingInference.Model,
 	}
 	k.LogDebug(
 		"Adding Inference Validation Details",

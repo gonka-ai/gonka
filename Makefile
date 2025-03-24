@@ -25,7 +25,7 @@ decentralized-api-release:
 inference-chain-release:
 	@echo "Releasing inference-chain..."
 	@make -C inference-chain release
-	@make -C decentralized-api docker-push
+	@make -C inference-chain docker-push
 
 launch-test-chain:
 	./launch-local-test-chain.sh

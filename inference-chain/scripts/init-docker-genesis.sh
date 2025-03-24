@@ -37,6 +37,13 @@ $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
 $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 
 echo "Setting the node configuration (config.toml)"
+if [ -n "$P2P_EXTERNAL_ADDRESS" ]; then
+  echo "Setting the external address for P2P to $P2P_EXTERNAL_ADDRESS"
+  $APP_NAME config set config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
+else
+  echo "P2P_EXTERNAL_ADDRESS is not set, skipping"
+fi
+
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 # no seeds for genesis node
