@@ -2,16 +2,23 @@ package keeper
 
 import (
 	"context"
+	"errors"
+	"math"
+	"strconv"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
-	"math"
-	"strconv"
 )
 
 const (
 	TokenCost = 1_000
 )
+
+var ModelToPassValue = map[string]float64{
+	"Qwen/Qwen2.5-7B-Instruct": 0.978,
+	"Qwen/QwQ-32B":             0.980792,
+}
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -44,7 +51,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passed := msg.Value > params.ValidationParams.PassValue.ToFloat()
+	passValue, ok := ModelToPassValue[inference.Model]
+	if !ok {
+		k.LogError("Model not supported", types.Validation, "model", inference.Model)
+		return nil, errors.New("Model " + inference.Model + " not supported")
+	}
+
+	passed := msg.Value > passValue
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
