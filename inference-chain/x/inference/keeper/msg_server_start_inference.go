@@ -7,7 +7,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const DefaultMaxTokens = 2048
+const DefaultMaxTokens = 5000
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
