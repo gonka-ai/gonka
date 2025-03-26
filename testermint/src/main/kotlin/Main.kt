@@ -161,7 +161,7 @@ private fun fundUnfunded(
     highestFunded: LocalInferencePair,
 ) {
     for (pair in unfunded) {
-        highestFunded.node.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
+        highestFunded.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
         highestFunded.node.waitForNextBlock()
     }
     val fundingHeight = highestFunded.node.getStatus().syncInfo.latestBlockHeight

@@ -6,7 +6,9 @@ import com.productscience.data.TxResponse
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
+import java.util.concurrent.TimeUnit
 
 val minDeposit = 10000000L
 
@@ -23,7 +25,7 @@ class UpgradeTests : TestermintTest() {
         val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
         val upgradeBlock = height + 15
         Logger.info("Upgrade block: $upgradeBlock", "")
-        val response = genesis.node.submitUpgradeProposal(
+        val response = genesis.submitUpgradeProposal(
             title = "v0.0.2",
             description = "For testing",
             binaryPath = path,
@@ -36,10 +38,10 @@ class UpgradeTests : TestermintTest() {
             assert(false)
             return
         }
-        val depositResponse = genesis.node.makeGovernanceDeposit(proposalId, minDeposit)
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
         println("DEPOSIT:\n" + depositResponse)
         pairs.forEach {
-            val response2 = it.node.voteOnProposal(proposalId, "yes")
+            val response2 = it.voteOnProposal(proposalId, "yes")
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
@@ -47,8 +49,9 @@ class UpgradeTests : TestermintTest() {
     }
 
     @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
     fun partialUpgrade() {
-        val (cluster, genesis) = initCluster()
+        val (cluster, genesis) = initCluster(reboot = true)
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
         val newSegment = "/newVersion"
@@ -64,7 +67,7 @@ class UpgradeTests : TestermintTest() {
         }
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
-        val result: TxResponse = genesis.node.submitGovernanceProposal(
+        val result: TxResponse = genesis.submitGovernanceProposal(
             GovernanceProposal(
                 metadata = "https://www.yahoo.com",
                 deposit = "${minDeposit}${inferenceConfig.denom}",
@@ -81,10 +84,10 @@ class UpgradeTests : TestermintTest() {
             )
         )
         val proposalId = result.getProposalId()!!
-        val depositResponse = genesis.node.makeGovernanceDeposit(proposalId, minDeposit)
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
         Logger.info("DEPOSIT:\n{}", depositResponse)
         cluster.joinPairs.forEach {
-            val response2 = it.node.voteOnProposal(proposalId, "yes")
+            val response2 = it.voteOnProposal(proposalId, "yes")
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }

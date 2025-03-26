@@ -296,7 +296,7 @@ data class LocalCluster(
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
     companion object {
         fun create(localCluster: LocalCluster, name: String): Consumer {
-            val cli = ApplicationCLI(name, localCluster.genesis.config)
+            val cli = ApplicationCLI(name, localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName))
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)
             localCluster.genesis.api.addUnfundedInferenceParticipant(

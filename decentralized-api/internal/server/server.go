@@ -16,9 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/app"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
@@ -43,6 +48,7 @@ func StartInferenceServerWrapper(
 	logging.Debug("StartInferenceServerWrapper", types.Server)
 
 	mux := http.NewServeMux()
+	cdc := getCodec()
 
 	// Create an HTTP server
 	// TODO: some of handlers defined here and some in api package. Suggest to put it in 1 place
@@ -63,6 +69,7 @@ func StartInferenceServerWrapper(
 	mux.HandleFunc("/v1/models", api.WrapModels(transactionRecorder))
 	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(transactionRecorder))
 	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(transactionRecorder))
+	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(transactionRecorder, cdc))
 	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
@@ -105,6 +112,21 @@ func StartInferenceServerWrapper(
 	loggedMux := loggingMiddleware(mux)
 	// Start the server
 	log.Fatal(http.ListenAndServe(addr, loggedMux))
+}
+
+func getCodec() *codec.ProtoCodec {
+	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	app.RegisterIBC(interfaceRegistry)
+
+	// Register interfaces used in your types
+	types.RegisterInterfaces(interfaceRegistry)
+	banktypes.RegisterInterfaces(interfaceRegistry)
+	//v1beta1.RegisterInterfaces(interfaceRegistry)
+	v1.RegisterInterfaces(interfaceRegistry)
+
+	// Create the codec
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+	return cdc
 }
 
 func logUnknownRequest() func(http.ResponseWriter, *http.Request) {
