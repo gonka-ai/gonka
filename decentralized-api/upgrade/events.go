@@ -2,8 +2,8 @@ package upgrade
 
 import (
 	"decentralized-api/apiconfig"
-	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
 	"encoding/json"
 	"github.com/productscience/inference/x/inference/types"

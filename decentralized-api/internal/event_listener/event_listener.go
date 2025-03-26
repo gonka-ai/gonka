@@ -4,10 +4,10 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/chainevents"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
-	"decentralized-api/internal/server"
+	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -32,9 +32,10 @@ const (
 // TODO: write tests properly
 type EventListener struct {
 	nodeBroker          *broker.Broker
-	transactionRecorder cosmosclient.InferenceCosmosClient
 	configManager       *apiconfig.ConfigManager
 	nodePocOrchestrator *poc.NodePoCOrchestrator
+	validator           *validation.InferenceValidator
+	transactionRecorder cosmosclient.InferenceCosmosClient
 	nodeCaughtUp        atomic.Bool
 
 	ws *websocket.Conn
@@ -44,12 +45,14 @@ func NewEventListener(
 	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
 	nodeBroker *broker.Broker,
+	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
 		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
+		validator:           validator,
 	}
 }
 
@@ -238,11 +241,11 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	switch action {
 	case finishInferenceAction:
 		if el.isNodeSynced() {
-			server.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder, el.nodeBroker, currentConfig)
+			el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
 		}
 	case validationAction:
 		if el.isNodeSynced() {
-			server.VerifyInvalidation(event.Result.Events, el.transactionRecorder, el.nodeBroker)
+			el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
 		}
 	case submitGovProposalAction:
 		proposalIdOrNil := event.Result.Events["proposal_id"]
