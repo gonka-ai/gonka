@@ -1,6 +1,8 @@
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
+import com.productscience.initCluster
 import com.productscience.initialize
+import com.productscience.validNode
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -41,6 +43,19 @@ class UpgradeTests : TestermintTest() {
             println("VOTE:\n" + response2)
         }
         genesis.node.waitForMinimumBlock(upgradeBlock)
+    }
+
+    @Test
+    fun `test add node`() {
+        val (pairs, genesis) = initCluster()
+
+        pairs.allPairs.forEach {
+            it.api.addNode(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
+                id = "v1Node"
+            ))
+        }
+
+        genesis.node.waitForNextBlock(50)
     }
 
     fun getBinaryPath(path: String, sha: String): String {
