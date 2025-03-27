@@ -12,13 +12,10 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
 	"decentralized-api/utils"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/google/uuid"
@@ -252,22 +249,20 @@ func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMes
 
 func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *ChatRequest, recorder cosmos_client.CosmosMessageClient, config *apiconfig.Config) bool {
 	var pubkey = ""
-	if !request.FundedByTransferNode {
-		queryClient := recorder.NewInferenceQueryClient()
-		logging.Debug("GET inference participant for transfer", types.Inferences, "address", request.RequesterAddress)
-		client, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
-		if err != nil {
-			logging.Error("Failed to get inference participant", types.Inferences, "address", request.RequesterAddress, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return true
-		}
-		// Response is filled out with validate? Probably want to standardize
-		hadError := validateClient(w, request, client)
-		if hadError {
-			return true
-		}
-		pubkey = client.Pubkey
+	queryClient := recorder.NewInferenceQueryClient()
+	logging.Debug("GET inference participant for transfer", types.Inferences, "address", request.RequesterAddress)
+	client, err := queryClient.InferenceParticipant(ctx, &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	if err != nil {
+		logging.Error("Failed to get inference participant", types.Inferences, "address", request.RequesterAddress, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return true
 	}
+	// Response is filled out with validate? Probably want to standardize
+	hadError := validateClient(w, request, client)
+	if hadError {
+		return true
+	}
+	pubkey = client.Pubkey
 
 	executor, err := getExecutorForRequest(ctx, recorder, request.OpenAiRequest.Model)
 	if err != nil {
@@ -306,7 +301,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 	}
 	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
 	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
+	req.Header.Set(utils.XPublicKeyHeader, pubkey)
 	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
@@ -454,12 +449,10 @@ func validateClient(w http.ResponseWriter, request *ChatRequest, client *types.Q
 }
 
 func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, config *apiconfig.Config) bool {
-	if !request.FundedByTransferNode {
-		err := validateRequestAgainstPubKey(request, request.PubKey)
-		if err != nil {
-			http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
-			return true
-		}
+	err := validateRequestAgainstPubKey(request, request.PubKey)
+	if err != nil {
+		http.Error(w, "Unable to validate request against PubKey:"+err.Error(), http.StatusUnauthorized)
+		return true
 	}
 
 	seed, err := strconv.Atoi(request.Seed)
