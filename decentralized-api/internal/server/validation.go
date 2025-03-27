@@ -136,7 +136,12 @@ func logInferencesToValidate(toValidate []string) {
 
 func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
 	valResult, err := lockNodeAndValidate(inf, nodeBroker)
-	if err != nil {
+	if err != nil && errors.Is(err, broker.ErrNoNodesAvailable) {
+		logging.Error("Failed to validate inf. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
+		valResult = ModelNotSupportedValidationResult{
+			InferenceId: inf.InferenceId,
+		}
+	} else if err != nil {
 		logging.Error("Failed to validate inf.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
 	}
@@ -157,7 +162,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 }
 
 func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
-	return broker.LockNode(nodeBroker, testModel, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+	return broker.LockNode(nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
 		return validate(inference, node)
 	})
 }
@@ -412,6 +417,22 @@ func cosineSimilarity(a, b []float64) float64 {
 	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
 }
 
+type ModelNotSupportedValidationResult struct {
+	InferenceId string
+}
+
+func (r ModelNotSupportedValidationResult) GetInferenceId() string {
+	return r.InferenceId
+}
+
+func (r ModelNotSupportedValidationResult) GetValidationResponseBytes() []byte {
+	return nil
+}
+
+func (ModelNotSupportedValidationResult) IsSuccessful() bool {
+	return false
+}
+
 func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
 	var cosineSimVal float64
@@ -424,7 +445,10 @@ func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		cosineSimVal = -1
 	case *CosineSimilarityValidationResult:
 		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
-		log.Printf("Cosine similarity validation result. value = %v", cosineSimVal)
+		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", cosineSimVal)
+	case ModelNotSupportedValidationResult:
+		cosineSimVal = 1
+		logging.Info("Model not supported validation result. Assuming is valid", types.Validation, "inference_id", result.GetInferenceId())
 	default:
 		logging.Error("Unknown validation result type", types.Validation, "type", fmt.Sprintf("%T", result), "result", result)
 		return nil, errors.New("unknown validation result type")

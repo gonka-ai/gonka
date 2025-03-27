@@ -174,7 +174,7 @@ func wrapGetCompletion(recorder cosmos_client.CosmosMessageClient) func(w http.R
 }
 
 func readRequest(request *http.Request) (*ChatRequest, error) {
-	body, err := ReadRequestBody(request)
+	body, err := readRequestBody(request)
 	if err != nil {
 		logging.Error("Unable to read request body", types.Server, "error", err)
 		return nil, err
@@ -186,51 +186,44 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		return nil, err
 	}
 
-	fundedByTransferNode, err := strconv.ParseBool(request.Header.Get("X-Funded-By-Transfer-Node"))
-	if err != nil {
-		fundedByTransferNode = false
-	}
-
-	logging.Debug("fundedByTransferNode", types.Inferences, "node", fundedByTransferNode)
 	return &ChatRequest{
-		Body:                 body,
-		Request:              request,
-		OpenAiRequest:        openAiRequest,
-		AuthKey:              request.Header.Get(utils.AuthorizationHeader),
-		PubKey:               request.Header.Get(utils.XPublicKeyHeader),
-		Seed:                 request.Header.Get(utils.XSeedHeader),
-		InferenceId:          request.Header.Get(utils.XInferenceIdHeader),
-		RequesterAddress:     request.Header.Get(utils.XRequesterAddressHeader),
-		FundedByTransferNode: fundedByTransferNode,
+		Body:             body,
+		Request:          request,
+		OpenAiRequest:    openAiRequest,
+		AuthKey:          request.Header.Get(utils.AuthorizationHeader),
+		PubKey:           request.Header.Get(utils.XPublicKeyHeader),
+		Seed:             request.Header.Get(utils.XSeedHeader),
+		InferenceId:      request.Header.Get(utils.XInferenceIdHeader),
+		RequesterAddress: request.Header.Get(utils.XRequesterAddressHeader),
 	}, nil
 }
 
 func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageClient, configManager *apiconfig.ConfigManager) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Debug("wrapChat. Received request", types.Inferences, "method", request.Method, "path", request.URL.Path)
-		chatRequest, err := readRequest(request)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		if request.Method != http.MethodPost {
 			logging.Warn("Invalid method", types.Server, "method", request.Method)
 			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
 			return
 		}
-		// TODO remove FundedByTransferNode
-		if chatRequest.AuthKey == "" && !chatRequest.FundedByTransferNode {
+
+		chatRequest, err := readRequest(request)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if chatRequest.AuthKey == "" {
 			logging.Warn("Request without authorization", types.Server, "path", request.URL.Path)
 			http.Error(w, "Authorization is required", http.StatusUnauthorized)
 			return
 		}
 		// Is this a Transfer request or an Executor call?
-		if (chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "") || (chatRequest.FundedByTransferNode && chatRequest.InferenceId != "" && chatRequest.Seed != "") {
+		if chatRequest.PubKey != "" && chatRequest.InferenceId != "" && chatRequest.Seed != "" {
 			logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed, "pubKey", chatRequest.PubKey)
 			handleExecutorRequest(w, chatRequest, nodeBroker, recorder, configManager.GetConfig())
 			return
-			// TODO X-Requester-Address header seems to be read only
-		} else if request.Header.Get("X-Requester-Address") != "" || chatRequest.FundedByTransferNode {
+		} else if chatRequest.RequesterAddress != "" {
 			logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
 			handleTransferRequest(request.Context(), w, chatRequest, recorder, configManager.GetConfig())
 			return
@@ -241,9 +234,11 @@ func wrapChat(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMessageCli
 	}
 }
 
-func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient) (*ExecutorDestination, error) {
+func getExecutorForRequest(ctx context.Context, recorder cosmos_client.CosmosMessageClient, model string) (*ExecutorDestination, error) {
 	queryClient := recorder.NewInferenceQueryClient()
-	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{})
+	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{
+		Model: model,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +269,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		pubkey = client.Pubkey
 	}
 
-	executor, err := getExecutorForRequest(ctx, recorder)
+	executor, err := getExecutorForRequest(ctx, recorder, request.OpenAiRequest.Model)
 	if err != nil {
 		logging.Error("Failed to get executor", types.Inferences, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -289,6 +284,7 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
+
 	go func() {
 		logging.Debug("Starting inference", types.Inferences, "id", inferenceRequest.InferenceId)
 		err := recorder.StartInference(inferenceRequest)
@@ -298,20 +294,21 @@ func handleTransferRequest(ctx context.Context, w http.ResponseWriter, request *
 			logging.Debug("Submitted MsgStartInference", types.Inferences, "id", inferenceRequest.InferenceId)
 		}
 	}()
+
 	// It's important here to send the ORIGINAL body, not the finalRequest body. The executor will AGAIN go through
 	// the same process to create the same final request body
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
-	req, err := http.NewRequest("POST", executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
+
+	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true
 	}
 	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
 	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(utils.XPublicKeyHeader, pubkey)
+	req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
 	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
-	req.Header.Set("X-Funded-By-Transfer-Node", strconv.FormatBool(request.FundedByTransferNode))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -423,7 +420,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		PromptHash:    promptHash,
 		PromptPayload: promptPayload,
 		RequestedBy:   request.RequesterAddress,
-		Model:         testModel,
+		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
 		NodeVersion:   nodeVersion,
 	}
@@ -479,7 +476,7 @@ func handleExecutorRequest(w http.ResponseWriter, request *ChatRequest, nodeBrok
 		return true
 	}
 
-	resp, err := broker.LockNode(nodeBroker, testModel, config.CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(nodeBroker, request.OpenAiRequest.Model, config.CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -531,25 +528,6 @@ func getInferenceErrorMessage(resp *http.Response) string {
 	} else {
 		return msg
 	}
-}
-
-func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
-	logging.Debug("Checking key for request", types.Inferences, "pubkey", pubKey)
-
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
-	if err != nil {
-		return err
-	}
-	actualKey := secp256k1.PubKey{Key: pubKeyBytes}
-	// Not sure about decoding/encoding the actual key bytes
-	keyBytes, err := base64.StdEncoding.DecodeString(request.AuthKey)
-
-	valid := actualKey.VerifySignature(request.Body, keyBytes)
-	if !valid {
-		logging.Warn("Signature did not match pubkey", types.Inferences)
-		return errors.New("invalid signature")
-	}
-	return nil
 }
 
 func processGetInferenceParticipantByAddress(w http.ResponseWriter, request *http.Request, recorder cosmos_client.CosmosMessageClient) {
@@ -707,17 +685,6 @@ func addIdToBodyBytes(bodyBytes []byte, id string) ([]byte, error) {
 	return updatedBodyBytes, nil
 }
 
-func ReadRequestBody(r *http.Request) ([]byte, error) {
-	// Read the request body into a buffer
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r.Body); err != nil {
-		return nil, err
-	}
-	defer r.Body.Close()
-
-	return buf.Bytes(), nil
-}
-
 func createInferenceFinishedTransaction(id string, recorder cosmos_client.CosmosMessageClient, transaction InferenceTransaction, accountName string) {
 	message := &inference.MsgFinishInference{
 		Creator:              accountName,
@@ -729,7 +696,7 @@ func createInferenceFinishedTransaction(id string, recorder cosmos_client.Cosmos
 		ExecutedBy:           accountName,
 	}
 
-	// Submit to the block chain effectively AFTER we've served the request. Speed before certainty.
+	// Submit to the blockchain effectively AFTER we've served the request. Speed before certainty.
 	go func() {
 		// PRTODO: delete me and probably introduce retries if FinishInference returns not found
 		time.Sleep(10 * time.Second)
@@ -813,9 +780,9 @@ func wrapValidation(nodeBroker *broker.Broker, recorder cosmos_client.CosmosMess
 func wrapSubmitNewParticipant(recorder cosmos_client.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Debug("SubmitNewParticipant received", types.Participants, "method", request.Method)
-		if request.Method == "POST" {
+		if request.Method == http.MethodPost {
 			submitNewParticipant(recorder, w, request)
-		} else if request.Method == "GET" {
+		} else if request.Method == http.MethodGet {
 			getParticipants(recorder, w, request)
 		} else {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)

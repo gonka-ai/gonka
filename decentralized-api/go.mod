@@ -22,7 +22,6 @@ require (
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.25.0
-	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
 )
 
 require (
@@ -31,12 +30,14 @@ require (
 	cloud.google.com/go/iam v1.1.6 // indirect
 	cloud.google.com/go/storage v1.38.0 // indirect
 	cosmossdk.io/api v0.7.5 // indirect
+	cosmossdk.io/client/v2 v2.0.0-beta.1 // indirect
 	cosmossdk.io/collections v0.4.0 // indirect
 	cosmossdk.io/core v0.11.1 // indirect
 	cosmossdk.io/depinject v1.0.0 // indirect
 	cosmossdk.io/errors v1.0.1 // indirect
 	cosmossdk.io/log v1.4.1 // indirect
 	cosmossdk.io/math v1.3.0 // indirect
+	cosmossdk.io/tools/confix v0.1.1 // indirect
 	cosmossdk.io/x/circuit v0.1.0 // indirect
 	cosmossdk.io/x/evidence v0.1.0 // indirect
 	cosmossdk.io/x/feegrant v0.1.0 // indirect
@@ -75,6 +76,8 @@ require (
 	github.com/cosmos/ibc-go/modules/capability v1.0.0 // indirect
 	github.com/cosmos/ics23/go v0.10.0 // indirect
 	github.com/cosmos/ledger-cosmos-go v0.13.3 // indirect
+	github.com/creachadair/atomicfile v0.3.1 // indirect
+	github.com/creachadair/tomledit v0.0.24 // indirect
 	github.com/danieljoos/wincred v1.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
@@ -189,6 +192,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/oauth2 v0.20.0 // indirect
