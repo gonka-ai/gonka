@@ -5,9 +5,14 @@
     "inference_port": 8080,
     "poc_port": 8080,
     "max_concurrent": 10,
-    "models": [
-      "my-secret-model"
-    ],
+    "models": {
+      "my-secret-model": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
     "hardware": [
       {
         "type": "A600",

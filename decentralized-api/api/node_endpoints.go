@@ -61,11 +61,17 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
 		node := *n.Node
+
+		models := make(map[string]apiconfig.ModelConfig)
+		for model, cfg := range node.Models {
+			models[model] = apiconfig.ModelConfig{Args: cfg.Args}
+		}
+
 		iNodes[i] = apiconfig.InferenceNodeConfig{
 			Host:          node.Host,
 			InferencePort: node.InferencePort,
 			PoCPort:       node.PoCPort,
-			Models:        node.Models,
+			Models:        models,
 			Id:            node.Id,
 			MaxConcurrent: node.MaxConcurrent,
 			Hardware:      node.Hardware,

@@ -47,13 +47,17 @@ type KeyConfig struct {
 
 // IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE HardwareNode proto in inference-chain!!!
 type InferenceNodeConfig struct {
-	Host          string     `koanf:"host" json:"host"`
-	InferencePort int        `koanf:"inference_port" json:"inference_port"`
-	PoCPort       int        `koanf:"poc_port" json:"poc_port"`
-	Models        []string   `koanf:"models" json:"models"`
-	Id            string     `koanf:"id" json:"id"`
-	MaxConcurrent int        `koanf:"max_concurrent" json:"max_concurrent"`
-	Hardware      []Hardware `koanf:"hardware" json:"hardware"`
+	Host          string                 `koanf:"host" json:"host"`
+	InferencePort int                    `koanf:"inference_port" json:"inference_port"`
+	PoCPort       int                    `koanf:"poc_port" json:"poc_port"`
+	Models        map[string]ModelConfig `koanf:"models" json:"models"`
+	Id            string                 `koanf:"id" json:"id"`
+	MaxConcurrent int                    `koanf:"max_concurrent" json:"max_concurrent"`
+	Hardware      []Hardware             `koanf:"hardware" json:"hardware"`
+}
+
+type ModelConfig struct {
+	Args []string `json:"args"`
 }
 
 type Hardware struct {
