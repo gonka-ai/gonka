@@ -3,6 +3,7 @@ package com.productscience.data
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
+import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
 import java.lang.reflect.Type
 import java.time.Duration
@@ -62,5 +63,26 @@ class FloatSerializer: JsonSerializer<java.lang.Float> {
         context: com.google.gson.JsonSerializationContext,
     ): JsonElement {
         return com.google.gson.JsonPrimitive( src?.toDouble()?.toBigDecimal()?.toPlainString())
+    }
+}
+
+class MessageSerializer : JsonSerializer<GovernanceMessage> {
+    override fun serialize(
+        src: GovernanceMessage,
+        typeOfSrc: Type,
+        context: JsonSerializationContext
+    ): JsonElement? {
+        val jsonObject = com.google.gson.JsonObject()
+        jsonObject.addProperty("@type", src.type)
+
+        src::class.java.declaredFields.forEach { field ->
+            field.isAccessible = true
+            if (field.name != "type") {
+                val value = field.get(src)
+                jsonObject.add(field.name, context.serialize(value))
+            }
+        }
+
+        return jsonObject
     }
 }

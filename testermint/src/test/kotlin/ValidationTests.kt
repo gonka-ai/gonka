@@ -10,8 +10,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.util.concurrent.TimeUnit
 
+@Timeout(value = 10, unit = TimeUnit.MINUTES)
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
@@ -22,8 +25,10 @@ class ValidationTests : TestermintTest() {
         Logger.info("Statuses: $statuses")
 
         // Some will be validated, some will not.
-        assertThat(statuses).allMatch {
-            it == InferenceStatus.VALIDATED.value || it == InferenceStatus.FINISHED.value
+        assertThat(statuses.map { status ->
+            InferenceStatus.entries.first { it.value == status }
+        }).allMatch {
+            it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
 
         Thread.sleep(10000)
@@ -39,8 +44,8 @@ class ValidationTests : TestermintTest() {
         var newState: InferencePayload
         do {
             newState = getInferenceValidationState(genesis, oddPair)
-        } while (newState.status != InferenceStatus.INVALIDATED.value && tries-- > 0)
-        assertThat(newState.status).isEqualTo(InferenceStatus.INVALIDATED.value)
+        } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
+        assertThat(newState.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
     }
 
     private fun getInferenceValidationState(
@@ -49,10 +54,14 @@ class ValidationTests : TestermintTest() {
     ): InferencePayload {
         val invalidResult =
             generateSequence { getInferenceResult(highestFunded) }
-                .first {
+                .take(10)
+                .firstOrNull {
                     Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
                     it.executorBefore.id == oddPair.node.addresss
                 }
+        if (invalidResult == null) {
+            error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
+        }
 
         Logger.warn(
             "Got invalid result, waiting for invalidation. " +
@@ -65,6 +74,7 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
+    @Timeout(15, unit = TimeUnit.MINUTES)
     fun `test invalid gets removed`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
@@ -82,7 +92,8 @@ class ValidationTests : TestermintTest() {
         genesis.node.waitForNextBlock(10)
         val participants = genesis.api.getParticipants()
         participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
-
+        // reset the chain, so this doesn';t cause other problems
+        initCluster(reboot = true)
     }
 
     @Test
@@ -98,7 +109,8 @@ class ValidationTests : TestermintTest() {
         Logger.warn("Got invalid result, waiting for validation.")
         genesis.node.waitForNextBlock(10)
         val newState = genesis.api.getInference(invalidResult.inference.inferenceId)
-        assertThat(newState.status).isEqualTo(InferenceStatus.VALIDATED.value)
+
+        assertThat(newState.statusEnum).isEqualTo(InferenceStatus.VALIDATED)
 
     }
 }
@@ -128,3 +140,5 @@ fun runParallelInferences(
     }
 }
 
+val InferencePayload.statusEnum: InferenceStatus
+    get() = InferenceStatus.entries.first { it.value == status }

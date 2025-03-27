@@ -76,7 +76,24 @@ func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
 
 func (cm *ConfigManager) SetHeight(height int64) error {
 	cm.currentConfig.CurrentHeight = height
+	newVersion, found := cm.currentConfig.NodeVersions.PopIf(height)
+	if found {
+		logging.Info("New Node Version!", types.Upgrades, "version", newVersion, "oldVersion", cm.currentConfig.CurrentNodeVersion)
+		cm.currentConfig.CurrentNodeVersion = newVersion
+	}
 	logging.Info("Setting height", types.Config, "height", height)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+func (cm *ConfigManager) GetCurrentNodeVersion() string {
+	return cm.currentConfig.CurrentNodeVersion
+}
+
+func (cm *ConfigManager) AddNodeVersion(height int64, version string) error {
+	if !cm.currentConfig.NodeVersions.Insert(height, version) {
+		return nil
+	}
+	logging.Info("Adding node version", types.Upgrades, "height", height, "version", version)
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 

@@ -202,6 +202,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
+	for _, pu := range partialUpgrades {
+		if pu.Height < uint64(blockHeight) {
+			am.LogInfo("PartialUpgradeExpired", types.Upgrades, "partialUpgradeHeight", pu.Height, "blockHeight", blockHeight)
+			am.keeper.RemovePartialUpgrade(ctx, pu.Height)
+		}
+	}
+
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)

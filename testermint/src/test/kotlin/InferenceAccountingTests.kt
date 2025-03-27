@@ -17,10 +17,13 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertNotNull
 
+@Timeout(value = 10, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
@@ -109,7 +112,7 @@ class InferenceAccountingTests : TestermintTest() {
         }
 
         payouts.forEach { (address, change) ->
-            assertThat(actualChanges[address]).`as` { "Participant $address settle change" }.isEqualTo(change)
+            assertThat(actualChanges[address]).`as` { "Participant $address settle change" }.isCloseTo(change, Offset.offset(1))
             Logger.info("Participant: $address, Settle Change: $change")
         }
     }

@@ -8,10 +8,10 @@ all: build-docker
 build-docker: api-build-docker node-build-docker
 
 api-build-docker:
-	@make -C decentralized-api build-docker
+	@make -C decentralized-api build-docker SET_LATEST=1
 
 node-build-docker:
-	@make -C inference-chain build-docker
+	@make -C inference-chain build-docker SET_LATEST=1
 
 release: decentralized-api-release inference-chain-release
 	@git tag $(TAG_NAME)
