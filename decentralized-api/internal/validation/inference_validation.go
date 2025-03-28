@@ -2,7 +2,6 @@ package validation
 
 import (
 	"bytes"
-	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"

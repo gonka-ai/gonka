@@ -53,6 +53,8 @@ const (
 	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
 	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
 	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
+	Query_PartialUpgrade_FullMethodName                   = "/inference.inference.Query/PartialUpgrade"
+	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -118,6 +120,9 @@ type QueryClient interface {
 	GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of PartialUpgrade items.
+	PartialUpgrade(ctx context.Context, in *QueryGetPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryGetPartialUpgradeResponse, error)
+	PartialUpgradeAll(ctx context.Context, in *QueryAllPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryAllPartialUpgradeResponse, error)
 }
 
 type queryClient struct {
@@ -434,6 +439,24 @@ func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *Query
 	return out, nil
 }
 
+func (c *queryClient) PartialUpgrade(ctx context.Context, in *QueryGetPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryGetPartialUpgradeResponse, error) {
+	out := new(QueryGetPartialUpgradeResponse)
+	err := c.cc.Invoke(ctx, Query_PartialUpgrade_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PartialUpgradeAll(ctx context.Context, in *QueryAllPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryAllPartialUpgradeResponse, error) {
+	out := new(QueryAllPartialUpgradeResponse)
+	err := c.cc.Invoke(ctx, Query_PartialUpgradeAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -497,6 +520,9 @@ type QueryServer interface {
 	GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of PartialUpgrade items.
+	PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error)
+	PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -605,6 +631,12 @@ func (UnimplementedQueryServer) GetAllParticipantCurrentStats(context.Context, *
 }
 func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
+}
+func (UnimplementedQueryServer) PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PartialUpgrade not implemented")
+}
+func (UnimplementedQueryServer) PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PartialUpgradeAll not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1231,6 +1263,42 @@ func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PartialUpgrade_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetPartialUpgradeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PartialUpgrade(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PartialUpgrade_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PartialUpgrade(ctx, req.(*QueryGetPartialUpgradeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PartialUpgradeAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllPartialUpgradeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PartialUpgradeAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PartialUpgradeAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PartialUpgradeAll(ctx, req.(*QueryAllPartialUpgradeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1373,6 +1441,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMinimumValidationAverage",
 			Handler:    _Query_GetMinimumValidationAverage_Handler,
+		},
+		{
+			MethodName: "PartialUpgrade",
+			Handler:    _Query_PartialUpgrade_Handler,
+		},
+		{
+			MethodName: "PartialUpgradeAll",
+			Handler:    _Query_PartialUpgradeAll_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

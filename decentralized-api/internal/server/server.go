@@ -16,8 +16,13 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/app"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
@@ -58,6 +63,7 @@ func (s *Server) Start() {
 	logging.Debug("StartInferenceServerWrapper", types.Server)
 
 	mux := http.NewServeMux()
+	cdc := getCodec()
 
 	// Create an HTTP server
 	// TODO: some of handlers defined here and some in api package. Suggest to put it in 1 place
@@ -72,13 +78,14 @@ func (s *Server) Start() {
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(s.recorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
-	mux.HandleFunc("/v1/pricing", api.WrapPricing(s.recorder))
-	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
-	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
-	mux.HandleFunc("/v1/models", api.WrapModels(s.recorder))
-	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
-	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
-	mux.HandleFunc("/", s.logUnknownRequest())
+	mux.HandleFunc("/v1/pricing", api.WrapPricing(s.transactionRecorder))
+	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(transactionRecorder, configManager))
+	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.transactionRecorder))
+	mux.HandleFunc("/v1/models", api.WrapModels(s.transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.transactionRecorder))
+	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.transactionRecorder))
+	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.transactionRecorder, cdc))
+	mux.HandleFunc("/", logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
 		addr, err := cosmos_client.PubKeyToAddress(pubkey)
@@ -120,6 +127,21 @@ func (s *Server) Start() {
 	loggedMux := loggingMiddleware(mux)
 	// Start the server
 	log.Fatal(http.ListenAndServe(addr, loggedMux))
+}
+
+func getCodec() *codec.ProtoCodec {
+	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	app.RegisterIBC(interfaceRegistry)
+
+	// Register interfaces used in your types
+	types.RegisterInterfaces(interfaceRegistry)
+	banktypes.RegisterInterfaces(interfaceRegistry)
+	//v1beta1.RegisterInterfaces(interfaceRegistry)
+	v1.RegisterInterfaces(interfaceRegistry)
+
+	// Create the codec
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+	return cdc
 }
 
 func (s *Server) logUnknownRequest() func(http.ResponseWriter, *http.Request) {
@@ -218,7 +240,7 @@ func (s *Server) wrapChat() func(w http.ResponseWriter, request *http.Request) {
 			return
 		} else if chatRequest.RequesterAddress != "" {
 			logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
-			s.handleTransferRequest(request.Context(), w, chatRequest)
+			handleTransferRequest(request.Context(), w, chatRequest)
 			return
 		} else {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -267,7 +289,7 @@ func (s *Server) handleTransferRequest(ctx context.Context, w http.ResponseWrite
 
 	seed := rand.Int31()
 	inferenceUUID := uuid.New().String()
-	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor)
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, config.CurrentNodeVersion)
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -307,7 +329,7 @@ func (s *Server) handleTransferRequest(ctx context.Context, w http.ResponseWrite
 	}
 	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
 	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
+	req.Header.Set(utils.XPublicKeyHeader, pubkey)
 	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
@@ -407,7 +429,7 @@ func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	w.Write(bodyBytes) // TODO handle error??
 }
 
-func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination) (*inference.MsgStartInference, error) {
+func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string) (*inference.MsgStartInference, error) {
 	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
 		return nil, err
@@ -423,6 +445,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		RequestedBy:   request.RequesterAddress,
 		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
+		NodeVersion:   nodeVersion,
 	}
 	return transaction, nil
 }
@@ -474,7 +497,7 @@ func (s *Server) handleExecutorRequest(w http.ResponseWriter, request *ChatReque
 		return
 	}
 
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, config.CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -725,8 +748,14 @@ func (s *Server) wrapValidation() func(w http.ResponseWriter, request *http.Requ
 			return
 		}
 
-		result, err := broker.LockNode(s.nodeBroker, testModel, func(node *broker.Node) (validation.ValidationResult, error) {
-			return s.inferenceValidator.ValidateByInferenceId(validationRequest.Id, node)
+		queryClient := s.recorder.NewInferenceQueryClient()
+		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: validationRequest.Id})
+		if err != nil {
+			logging.Error("Failed get inference by id query", types.Validation, "id", validationRequest.Id, "error", err)
+		}
+
+		result, err := broker.LockNode(s.nodeBroker, testModel, r.Inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+			return validate(r.Inference, node)
 		})
 
 		if err != nil {

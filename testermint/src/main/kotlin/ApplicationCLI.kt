@@ -3,20 +3,7 @@ package com.productscience
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
-import com.productscience.data.AppExport
-import com.productscience.data.BalanceResponse
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParamsWrapper
-import com.productscience.data.InferenceTimeoutsWrapper
-import com.productscience.data.InferencesWrapper
-import com.productscience.data.MinimumValidationAverage
-import com.productscience.data.NodeInfoResponse
-import com.productscience.data.ParticipantStatsResponse
-import com.productscience.data.TokenomicsData
-import com.productscience.data.TopMinersResponse
-import com.productscience.data.TxResponse
-import com.productscience.data.Validator
-import com.productscience.data.parseProto
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
@@ -42,6 +29,7 @@ data class ApplicationCLI(
 
     fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {
+            this.killNameConflicts()
             Logger.info("Creating container,  id={}", containerId)
             var createCmd = dockerClient.createContainerCmd(config.nodeImageName)
                 .withName(containerId)
@@ -51,6 +39,19 @@ data class ApplicationCLI(
             }
             createCmd.exec()
             dockerClient.startContainerCmd(containerId).exec()
+        }
+    }
+
+    private fun killNameConflicts() {
+        wrapLog("killNameConflicts", false) {
+            val containers = dockerClient.listContainersCmd().exec()
+            containers.forEach {
+                if (it.names.contains("/$containerId")) {
+                    Logger.info("Killing conflicting container, id={}", it.id)
+                    dockerClient.killContainerCmd(it.id).exec()
+                    dockerClient.removeContainerCmd(it.id).exec()
+                }
+            }
         }
     }
 
@@ -107,7 +108,7 @@ data class ApplicationCLI(
             waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
         }
     }
-    
+
     fun getInferences(): InferencesWrapper = wrapLog("getInferences", false) {
         execAndParse(listOf("query", "inference", "list-inference"))
     }
@@ -217,15 +218,17 @@ data class ApplicationCLI(
         val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
-        if (output.output.first().startsWith("Usage:")) {
+        if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
             val error = output.output.last().lines().last()
-            Logger.error(
-                "Invalid usage of command: command='{}' error='{}'",
-                args.joinToString(" "), error
-            )
-            throw IllegalArgumentException("Invalid usage of command: $error")
+            throw getExecException(error)
         }
         return output.output
+    }
+
+    private fun extractSignature(response: String): String {
+        val signaturePattern = ".*Signature:\\s*([^,\\s]+).*".toRegex()
+        return signaturePattern.find(response)?.groupValues?.get(1)
+            ?: error("Could not extract signature from response: $response")
     }
 
     fun signPayload(payload: String, accountAddress: String? = null): String {
@@ -242,150 +245,59 @@ data class ApplicationCLI(
             val response = this.exec(
                 parameters
             )
-
-            // so hacky
-            response[1].dropWhile { it != ' ' }.drop(1).also {
+            extractSignature(response[1]).also {
                 Logger.info("Signature created, signature={}", it)
             }
         }
-    }
-
-    fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
-        val sourceAccount = this.getKeys()[0].address
-        val destAccount = destinationNode.getKeys()[0].address
-        val response = this.submitTransaction(
-            listOf(
-                "bank",
-                "send",
-                sourceAccount,
-                destAccount,
-                "$amount${config.denom}",
-            )
-        )
-        response
     }
 
     fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
-    fun submitUpgradeProposal(
-        title: String,
-        description: String,
-        binaryPath: String,
-        apiBinaryPath: String,
-        height: Long,
-    ): TxResponse = wrapLog("submitUpgradeProposal", true) {
-        val proposer = this.getKeys()[0].address
-        val binariesJson =
-            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}}"""
-        this.submitTransaction(
-            listOf(
-                "upgrade",
-                "software-upgrade",
-                title,
-                "--title",
-                title,
-                "--upgrade-height",
-                "$height",
-                "--upgrade-info",
-                binariesJson,
-                "--summary",
-                description,
-                "--deposit",
-                // TODO: Denom and amount should not be hardcoded
-                "100000nicoin",
-                "--from",
-                proposer,
+    fun writeFileToContainer(content: String, fileName: String) {
+        try {
+            // Write content using echo command
+            val writeCommand = listOf(
+                "sh", "-c",
+                "echo '$content' > $fileName"
             )
-        )
-    }
+            val result = exec(writeCommand)
 
-    fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
-        val depositor = this.getKeys()[0].address
-        this.submitTransaction(
-            listOf(
-                "gov",
-                "deposit",
-                proposalId,
-                "$amount${config.denom}",
-                "--from",
-                depositor,
-            )
-        )
-    }
+            // Verify file exists
+            val checkCommand = listOf("test", "-f", fileName)
+            exec(checkCommand)
 
-    fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
-        val voter = this.getKeys()[0].address
-        this.submitTransaction(
-            listOf(
-                "gov",
-                "vote",
-                proposalId,
-                option,
-                "--from",
-                voter,
-            )
-        )
-    }
-
-    fun submitTransaction(args: List<String>): TxResponse {
-        val finalArgs =
-            listOf("tx") + args + listOf(
-                "--keyring-backend",
-                "test",
-                "--chain-id=${config.chainId}",
-                "--keyring-dir=/root/${config.stateDirName}",
-                "--yes",
-                "--gas",
-                "auto",
-                "--gas-adjustment",
-                "1.2",
-                "--broadcast-mode",
-                "sync"
-            )
-        val response = sendTransaction(finalArgs)
-        if (response.height == 0L) {
-            Thread.sleep(1000)
-            val newResponse = this.waitForTxProcessed(response.txhash)
-            check(newResponse.code == 0) {
-                "Transaction failed: ${newResponse.rawLog}"
-            }
-            return newResponse
+        } catch (e: Exception) {
+            throw IllegalStateException("Failed to write file to container: ${e.message}", e)
         }
-        return response
-
     }
 
-    private fun sendTransaction(finalArgs: List<String>, maxRetries: Int = 5): TxResponse {
-        var attempts = 0
-        while (attempts < maxRetries) {
-            try {
-                var response = this.execAndParse<TxResponse>(finalArgs)
-                if (response.code == 32) {
-                    Logger.warn("Transaction account sequence mismatch, retrying (attempt ${attempts + 1}/$maxRetries)")
-                    Thread.sleep(1000)
-                    attempts++
-                    continue
-                }
-                check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
-                return response
-            } catch (e: IllegalArgumentException) {
-                if (e.message?.contains("account sequence mismatch") == true) {
-                    Logger.warn("Account sequence mismatch exception, retrying (attempt ${attempts + 1}/$maxRetries)")
-                    Thread.sleep(1000)
-                    attempts++
-                    continue
-                }
-                throw e
-            }
-        }
-        throw IllegalStateException("Failed to send transaction after $maxRetries retries")
+    fun getModuleAccount(accountName: String): AccountWrapper = wrapLog("getAccount", false) {
+        execAndParse(listOf("query", "auth", "module-account", accountName))
+    }
+
+
+    fun getTransactionJson(args: List<String>): String {
+        val finalArgs = listOf(
+            config.execName,
+            "tx"
+        ) + args + listOf(
+            "--keyring-backend",
+            "test",
+            "--chain-id=${config.chainId}",
+            "--keyring-dir=/root/${config.stateDirName}",
+            "--yes",
+            "--generate-only",
+            "--from",
+            this.config.pairName.trimStart('/')
+        )
+        return exec(finalArgs).joinToString("")
     }
 
     fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {
         var currentWait = 0
-        while (true) {
+        while (currentWait < maxWait) {
             try {
                 val response = this.getTxStatus(txHash)
                 if (response.height != 0L) {
@@ -393,19 +305,48 @@ data class ApplicationCLI(
                 }
                 Thread.sleep(500)
                 currentWait++
-                check(currentWait < maxWait) {
-                    "Transaction not processed after $maxWait seconds"
-                }
-            } catch (e: IllegalArgumentException) {
-                Logger.warn("Unable to find transaction with hash: {}. Exception: {}", txHash, e)
+            } catch (e: TxNotFoundException) {
+                Logger.info("Tx not found (yet), waiting", txHash, e)
+                Thread.sleep(1000)
                 currentWait++
             }
         }
-
+        error("Transaction not processed after $maxWait attempts")
     }
 
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)
 
+
+private val SEQUENCE_MISMATCH_PATTERN = ".*expected (\\d+), got (\\d+).*".toRegex()
+private val TX_NOT_FOUND_PATTERN = "tx \\(([A-F0-9]+)\\) not found".toRegex()
+private const val NOT_READY_MESSAGE = "inference is not ready; please wait for first block"
+
+private fun getExecException(error: String): Throwable {
+    val sequenceMatch = SEQUENCE_MISMATCH_PATTERN.find(error)
+    val txNotFoundMatch = if (sequenceMatch == null) TX_NOT_FOUND_PATTERN.find(error) else null
+
+    return when {
+        sequenceMatch != null -> {
+            val expected = sequenceMatch.groupValues[1].toInt()
+            val actual = sequenceMatch.groupValues[2].toInt()
+            AccountSequenceMismatchException(expected, actual)
+        }
+
+        txNotFoundMatch != null -> {
+            TxNotFoundException(txNotFoundMatch.groupValues[1])
+        }
+
+        error.contains(NOT_READY_MESSAGE) -> NotReadyException()
+        else -> IllegalArgumentException("Invalid usage of command: $error")
+    }
+}
+
+
 class NotReadyException : Exception("Inference is not ready; please wait for first block")
+
+class AccountSequenceMismatchException(val expected: Int, val actual: Int) :
+    Exception("Account sequence mismatch, expected $expected, got $actual")
+
+class TxNotFoundException(val txHash: String) : Exception("Transaction not found: $txHash")

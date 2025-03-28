@@ -21,7 +21,51 @@ func ProcessNewBlockEvent(
 		return
 	}
 
-	// Check for any upcoming upgrade plan
+	checkForPartialUpgrades(transactionRecorder, configManager)
+	checkForFullUpgrades(transactionRecorder, configManager)
+}
+
+func checkForPartialUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
+	partialUpgrades, err := transactionRecorder.GetPartialUpgrades()
+	if err != nil {
+		logging.Error("Error getting partial upgrades", types.Upgrades, "error", err)
+		return
+	}
+	for _, upgrade := range partialUpgrades.PartialUpgrade {
+		if upgrade.NodeVersion != "" {
+			err = configManager.AddNodeVersion(int64(upgrade.Height), upgrade.NodeVersion)
+			if err != nil {
+				logging.Error("Error adding node version", types.Upgrades, "error", err)
+				continue
+			}
+		}
+		if upgrade.ApiBinariesJson != "" {
+			var planInfo UpgradeInfoInput
+			if err := json.Unmarshal([]byte(upgrade.ApiBinariesJson), &planInfo); err != nil {
+				logging.Error("Error unmarshalling upgrade plan info", types.Upgrades, "error", err)
+				continue
+			}
+			if planInfo.Binaries == nil || len(planInfo.Binaries) == 0 {
+				continue
+			}
+			if upgrade.Name == configManager.GetUpgradePlan().Name {
+				logging.Info("Upgrade already ready", types.Upgrades, "name", upgrade.Name)
+				continue
+			}
+			err = configManager.SetUpgradePlan(apiconfig.UpgradePlan{
+				Name:     upgrade.Name,
+				Height:   int64(upgrade.Height),
+				Binaries: planInfo.Binaries,
+			})
+			if err != nil {
+				logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
+				continue
+			}
+		}
+	}
+}
+
+func checkForFullUpgrades(transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	upgradePlan, err := transactionRecorder.GetUpgradePlan()
 	if err != nil {
 		logging.Error("Error getting upgrade plan", types.Upgrades, "error", err)
@@ -51,8 +95,15 @@ func ProcessNewBlockEvent(
 			logging.Error("Error setting upgrade plan", types.Upgrades, "error", err)
 			return
 		}
-	}
 
+		if planInfo.NodeVersion != "" {
+			err = configManager.AddNodeVersion(upgradePlan.Plan.Height, planInfo.NodeVersion)
+			if err != nil {
+				logging.Error("Error adding node version", types.Upgrades, "error", err)
+				return
+			}
+		}
+	}
 }
 
 func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
