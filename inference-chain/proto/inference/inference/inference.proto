@@ -42,5 +42,6 @@ message Inference {
   uint64 epoch_group_id = 21;
   string assigned_to = 22;
   repeated string validated_by = 23;
+  string node_version = 24;
 }
 

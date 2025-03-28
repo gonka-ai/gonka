@@ -35,6 +35,7 @@ service Msg {
   rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
+  rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade            ) returns (MsgCreatePartialUpgradeResponse            );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -63,6 +64,7 @@ message MsgStartInference {
   string model          = 6;
   string requested_by   = 7;
   string assigned_to    = 8;
+  string node_version   = 9;
 }
 
 message MsgStartInferenceResponse {
@@ -220,10 +222,20 @@ message MsgCreateTrainingTaskResponse {
 
 message MsgSubmitHardwareDiff {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
+           string       creator       = 1;
   repeated HardwareNode newOrModified = 2;
-  repeated HardwareNode removed = 3;
+  repeated HardwareNode removed       = 3;
 }
 
 message MsgSubmitHardwareDiffResponse {}
+
+message MsgCreatePartialUpgrade {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority         = 1;
+  uint64 height          = 2;
+  string nodeVersion     = 3;
+  string apiBinariesJson = 4;
+}
+
+message MsgCreatePartialUpgradeResponse {}
 

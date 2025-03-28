@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
+	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
 	"encoding/json"
@@ -98,10 +99,12 @@ func main() {
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, *recorder)
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
 	go listener.Start(context.Background())
 
-	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
+	s := server.NewServer(nodeBroker, config, validator, recorder)
+	s.Start()
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
