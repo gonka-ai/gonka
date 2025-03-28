@@ -1,11 +1,13 @@
-package server
+package validation
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
 	"encoding/json"
 	"errors"
@@ -22,7 +24,24 @@ import (
 	"strings"
 )
 
-func VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+type InferenceValidator struct {
+	recorder      cosmosclient.CosmosMessageClient
+	nodeBroker    *broker.Broker
+	configManager *apiconfig.ConfigManager
+}
+
+func NewInferenceValidator(
+	nodeBroker *broker.Broker,
+	configManager *apiconfig.ConfigManager,
+	recorder cosmosclient.CosmosMessageClient) *InferenceValidator {
+	return &InferenceValidator{
+		nodeBroker:    nodeBroker,
+		configManager: configManager,
+		recorder:      recorder,
+	}
+}
+
+func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient) {
 	inferenceIds, ok := events["inference_validation.inference_id"]
 	if !ok || len(inferenceIds) == 0 {
 		logging.Error("No inference_id found in events", types.Validation)
@@ -43,12 +62,12 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 
 	logInferencesToValidate([]string{inferenceId})
 	go func() {
-		validateInferenceAndSendValMessage(r.Inference, nodeBroker, recorder, true)
+		s.validateInferenceAndSendValMessage(r.Inference, recorder, true)
 	}()
 
 }
 
-func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker, config *apiconfig.Config) {
+func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if ids == nil {
 		logging.Debug("No inferences to validate", types.Validation)
 		return
@@ -81,14 +100,16 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		if inferenceWithExecutor.ExecutorId == transactionRecorder.Address {
 			continue
 		}
+
+		currentSeed := s.configManager.GetConfig().CurrentSeed.Seed
 		shouldValidate, message := calculations.ShouldValidate(
-			config.CurrentSeed.Seed,
+			currentSeed,
 			inferenceWithExecutor,
 			uint32(r.TotalPower),
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)
-		logging.Debug("Should validate", types.Validation, "message", message, "inferenceId", inferenceWithExecutor.InferenceId, "seed", config.CurrentSeed.Seed)
+		logging.Debug("Should validate", types.Validation, "message", message, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed)
 		if shouldValidate {
 			toValidateIds = append(toValidateIds, inferenceWithExecutor.InferenceId)
 		}
@@ -102,7 +123,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 				logging.Error("Failed to get inference by id", types.Validation, "id", response, "error", err)
 				return
 			}
-			validateInferenceAndSendValMessage(response.Inference, nodeBroker, transactionRecorder, false)
+			s.validateInferenceAndSendValMessage(response.Inference, transactionRecorder, false)
 		}()
 	}
 }
@@ -134,8 +155,8 @@ func logInferencesToValidate(toValidate []string) {
 	logging.Info("Inferences to validate", types.Validation, "inferences", ids)
 }
 
-func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
-	valResult, err := lockNodeAndValidate(inf, nodeBroker)
+func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
+	valResult, err := s.lockNodeAndValidate(inf)
 	if err != nil && errors.Is(err, broker.ErrNoNodesAvailable) {
 		logging.Error("Failed to validate inf. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
 		valResult = ModelNotSupportedValidationResult{
@@ -146,7 +167,7 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 		return
 	}
 
-	msgValidation, err := toMsgValidation(valResult)
+	msgValidation, err := ToMsgValidation(valResult)
 	if err != nil {
 		logging.Error("Failed to convert to MsgValidation.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
@@ -161,13 +182,22 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
-func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
-	return broker.LockNode(nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
-		return validate(inference, node)
+func (s *InferenceValidator) ValidateByInferenceId(id string, node *broker.Node) (ValidationResult, error) {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
+	if err != nil {
+		logging.Error("Failed get inference by id query", types.Validation, "id", id, "error", err)
+	}
+	return s.Validate(r.Inference, node)
+}
+
+func (s *InferenceValidator) lockNodeAndValidate(inference types.Inference) (ValidationResult, error) {
+	return broker.LockNode(s.nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+		return s.Validate(inference, node)
 	})
 }
 
-func validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
+func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {
@@ -433,7 +463,7 @@ func (ModelNotSupportedValidationResult) IsSuccessful() bool {
 	return false
 }
 
-func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
+func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
 	var cosineSimVal float64
 	switch result.(type) {
@@ -454,7 +484,7 @@ func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		return nil, errors.New("unknown validation result type")
 	}
 
-	responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+	responseHash, _, err := utils.GetResponseHash(result.GetValidationResponseBytes())
 	if err != nil {
 		return nil, err
 	}
