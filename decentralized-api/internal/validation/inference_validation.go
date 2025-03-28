@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
@@ -187,16 +188,16 @@ func (s *InferenceValidator) ValidateByInferenceId(id string, node *broker.Node)
 	if err != nil {
 		logging.Error("Failed get inference by id query", types.Validation, "id", id, "error", err)
 	}
-	return validate(r.Inference, node)
+	return s.Validate(r.Inference, node)
 }
 
 func (s *InferenceValidator) lockNodeAndValidate(inference types.Inference) (ValidationResult, error) {
-	return broker.LockNode(s.nodeBroker, inference.Model, func(node *broker.Node) (ValidationResult, error) {
-		return validate(inference, node)
+	return broker.LockNode(s.nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+		return s.Validate(inference, node)
 	})
 }
 
-func validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
+func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {
