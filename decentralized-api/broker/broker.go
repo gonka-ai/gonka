@@ -34,12 +34,12 @@ type ModelArgs struct {
 }
 
 type Node struct {
-	Host             string               `json:"host"`
-	InferenceSegment string               `json:"inference_segment"`
-	InferencePort    int                  `json:"inference_port"`
-	PoCSegment       string               `json:"poc_segment"`
-	PoCPort          int                  `json:"poc_port"`
-	Models        map[string]ModelArgs
+	Host             string `json:"host"`
+	InferenceSegment string `json:"inference_segment"`
+	InferencePort    int    `json:"inference_port"`
+	PoCSegment       string `json:"poc_segment"`
+	PoCPort          int    `json:"poc_port"`
+	Models           map[string]ModelArgs
 	Id               string               `json:"id"`
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
@@ -379,6 +379,9 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 	for model := range node.Models {
 		modelsNames = append(modelsNames, model)
 	}
+
+	// sort models names to make sure they will be in same order every time
+	sort.Strings(modelsNames)
 
 	return &types.HardwareNode{
 		LocalId:  node.Id,
