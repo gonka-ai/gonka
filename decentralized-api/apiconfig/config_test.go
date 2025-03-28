@@ -11,6 +11,113 @@ import (
 	"testing"
 )
 
+type version struct {
+	height  int64
+	version string
+}
+
+func TestNodeVersionStack_PopIf(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialStack    []version
+		popHeight       int64
+		expectedPops    []string
+		secondPopHeight int64
+		secondPops      []string
+	}{
+		{
+			name:         "Empty stack",
+			initialStack: []version{},
+			popHeight:    100,
+			expectedPops: []string{},
+		},
+		{
+			name: "Height less than top of stack",
+			initialStack: []version{
+				{height: 200, version: "v1"},
+			},
+			popHeight:    100,
+			expectedPops: []string{},
+		},
+		{
+			name: "Height equal to top of stack",
+			initialStack: []version{
+				{height: 200, version: "v1"},
+			},
+			popHeight:    200,
+			expectedPops: []string{"v1"},
+		},
+		{
+			name: "Height greater than top of stack",
+			initialStack: []version{
+				{height: 200, version: "v1"},
+			},
+			popHeight:    300,
+			expectedPops: []string{"v1"},
+		},
+		{
+			name: "Multiple versions in the stack",
+			initialStack: []version{
+				{height: 100, version: "v1"},
+				{height: 200, version: "v2"},
+				{height: 300, version: "v3"},
+			},
+			popHeight:    250,
+			expectedPops: []string{"v2"},
+		},
+		{
+			name: "Multiple versions in the stack, reverse order",
+			initialStack: []version{
+				{height: 300, version: "v3"},
+				{height: 200, version: "v2"},
+				{height: 100, version: "v1"},
+			},
+			popHeight:       250,
+			expectedPops:    []string{"v2"},
+			secondPopHeight: 0,
+			secondPops:      []string{},
+		},
+		{
+			name: "with duplicates",
+			initialStack: []version{
+				{height: 100, version: "v1"},
+				{height: 100, version: "v1"},
+				{height: 200, version: "v2"},
+				{height: 300, version: "v3"},
+			},
+			popHeight:       250,
+			expectedPops:    []string{"v2"},
+			secondPopHeight: 300,
+			secondPops:      []string{"v3"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stack := apiconfig.NodeVersionStack{}
+			for _, v := range test.initialStack {
+				stack.Insert(v.height, v.version)
+			}
+			for _, version := range test.expectedPops {
+				pop, _ := stack.PopIf(test.popHeight)
+				require.Equal(t, version, pop)
+			}
+			_, found := stack.PopIf(test.popHeight)
+			require.False(t, found)
+
+			if test.secondPopHeight != 0 {
+				for _, version := range test.secondPops {
+					pop, _ := stack.PopIf(test.secondPopHeight)
+					require.Equal(t, version, pop)
+				}
+				_, found = stack.PopIf(test.secondPopHeight)
+				require.False(t, found)
+			}
+
+		})
+	}
+}
+
 func TestConfigLoad(t *testing.T) {
 	testManager := &apiconfig.ConfigManager{
 		KoanProvider: rawbytes.Provider([]byte(testYaml)),
@@ -22,6 +129,30 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "join1", testManager.GetConfig().ChainNode.AccountName)
 	require.Equal(t, "test", testManager.GetConfig().ChainNode.KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetConfig().ChainNode.KeyringDir)
+}
+
+func TestNodeVersion(t *testing.T) {
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
+		WriterProvider: &CaptureWriterProvider{},
+	}
+	err := testManager.Load()
+	require.NoError(t, err)
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
+	err = testManager.AddNodeVersion(50, "v2")
+	require.NoError(t, err)
+	err = testManager.AddNodeVersion(60, "v3")
+	require.NoError(t, err)
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
+	err = testManager.SetHeight(50)
+	require.NoError(t, err)
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "v2")
+	err = testManager.SetHeight(51)
+	require.NoError(t, err)
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "v2")
+	err = testManager.SetHeight(60)
+	require.NoError(t, err)
+	require.Equal(t, testManager.GetCurrentNodeVersion(), "v3")
 }
 
 func TestConfigLoadEnvOverride(t *testing.T) {
@@ -76,23 +207,27 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 	err := testManager.Load()
 	require.NoError(t, err)
-
-	err = testManager.Write()
+	err = testManager.AddNodeVersion(50, "v1")
 	require.NoError(t, err)
+	//err = testManager.Write()
+	//require.NoError(t, err)
 
 	t.Log("\n")
 	t.Log(writeCapture.CapturedData)
 	testManager2 := &apiconfig.ConfigManager{
-		KoanProvider: rawbytes.Provider([]byte(writeCapture.CapturedData)),
+		KoanProvider:   rawbytes.Provider([]byte(writeCapture.CapturedData)),
+		WriterProvider: writeCapture,
 	}
 	err = testManager2.Load()
 
+	testManager2.SetHeight(50)
 	require.NoError(t, err)
 	require.Equal(t, 8080, testManager2.GetConfig().Api.Port)
 	require.Equal(t, "http://join1-node:26657", testManager2.GetConfig().ChainNode.Url)
 	require.Equal(t, "join1", testManager2.GetConfig().ChainNode.AccountName)
 	require.Equal(t, "test", testManager2.GetConfig().ChainNode.KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager2.GetConfig().ChainNode.KeyringDir)
+	require.Equal(t, "v1", testManager2.GetCurrentNodeVersion())
 }
 
 func loadManager(t *testing.T, err error) error {

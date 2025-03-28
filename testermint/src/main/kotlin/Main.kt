@@ -16,15 +16,18 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceState
 import com.productscience.data.InstantDeserializer
 import com.productscience.data.LongSerializer
+import com.productscience.data.MessageSerializer
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.PubKey
 import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
+import com.productscience.data.GovernanceMessage
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.data.ValidationParams
 import com.productscience.data.spec
+import org.reflections.Reflections
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -158,7 +161,7 @@ private fun fundUnfunded(
     highestFunded: LocalInferencePair,
 ) {
     for (pair in unfunded) {
-        highestFunded.node.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
+        highestFunded.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
         highestFunded.node.waitForNextBlock()
     }
     val fundingHeight = highestFunded.node.getStatus().syncInfo.latestBlockHeight
@@ -217,11 +220,27 @@ val openAiJson: Gson = GsonBuilder()
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .create()
 
-val gsonCamelCase = GsonBuilder()
-    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
-    .registerTypeAdapter(Instant::class.java, InstantDeserializer())
-    .registerTypeAdapter(Duration::class.java, DurationDeserializer())
-    .create()
+val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data")
+
+fun createGsonWithTxMessageSerializers(packageName: String): Gson {
+    val gsonBuilder = GsonBuilder()
+        .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
+        .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+        .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+
+    // Scan the package to get all `TxMessage` implementations
+    val reflections = Reflections(packageName)
+    val txMessageSubtypes = reflections.getSubTypesOf(GovernanceMessage::class.java)
+
+    // Register `MessageSerializer` for each implementation of `TxMessage`
+    txMessageSubtypes.forEach { subclass ->
+        if (!subclass.isInterface) { // Ignore interfaces and abstract classes
+            gsonBuilder.registerTypeAdapter(subclass, MessageSerializer())
+        }
+    }
+
+    return gsonBuilder.create()
+}
 
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",

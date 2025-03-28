@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
@@ -162,18 +161,8 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
-func validateByInferenceId(id string, node *broker.Node, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
-	queryClient := transactionRecorder.NewInferenceQueryClient()
-	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
-	if err != nil {
-		logging.Error("Failed get inference by id query", types.Validation, "id", id, "error", err)
-	}
-
-	return validate(r.Inference, node)
-}
-
 func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
-	return broker.LockNode(nodeBroker, inference.Model, func(node *broker.Node) (ValidationResult, error) {
+	return broker.LockNode(nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
 		return validate(inference, node)
 	})
 }

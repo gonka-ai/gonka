@@ -108,6 +108,14 @@ func TestGenesisState_Validate(t *testing.T) {
 						ParticipantId:    "1",
 					},
 				},
+				PartialUpgradeList: []types.PartialUpgrade{
+					{
+						Height: 0,
+					},
+					{
+						Height: 1,
+					},
+				},
 				// this line is used by starport scaffolding # types/genesis/validField
 			},
 			valid: true,
@@ -241,6 +249,20 @@ func TestGenesisState_Validate(t *testing.T) {
 					{
 						EpochStartHeight: 0,
 						ParticipantId:    "0",
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			desc: "duplicated partialUpgrade",
+			genState: &types.GenesisState{
+				PartialUpgradeList: []types.PartialUpgrade{
+					{
+						Height: 0,
+					},
+					{
+						Height: 0,
 					},
 				},
 			},

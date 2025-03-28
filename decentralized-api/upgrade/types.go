@@ -11,5 +11,6 @@ type UpgradeInfoOutput struct {
 }
 
 type UpgradeInfoInput struct {
-	Binaries map[string]string `json:"api_binaries"`
+	Binaries    map[string]string `json:"api_binaries"`
+	NodeVersion string            `json:"node_version"`
 }
