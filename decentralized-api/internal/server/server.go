@@ -189,7 +189,7 @@ func (s *Server) wrapGetCompletion() func(w http.ResponseWriter, request *http.R
 }
 
 func readRequest(request *http.Request) (*ChatRequest, error) {
-	body, err := readRequestBody(request)
+	body, err := ReadRequestBody(request)
 	if err != nil {
 		logging.Error("Unable to read request body", types.Server, "error", err)
 		return nil, err
