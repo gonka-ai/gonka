@@ -20,9 +20,6 @@ services:
           devices:
             - capabilities: [gpu]
               device_ids: ["${GPU_DEVICE_ID:-0}"]
-    ports:
-      - "5000:5000"
-      - "8080:8080"
 
   integration-tests:
     <<: *common-config
