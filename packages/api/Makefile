@@ -1,4 +1,4 @@
-.PHONY: all tests integration-tests unit-tests
+.PHONY: all tests integration-tests unit-tests build
 
 export PROJECT_ROOT := $(shell git rev-parse --show-toplevel)
 
@@ -19,8 +19,7 @@ setup-envs:
 build:
 	docker compose build
 
-integration-tests:
-	docker compose build
+integration-tests: build
 	for test_dir in $(INTEGRATION_TEST_DIRS); do \
 		docker compose down --remove-orphans; \
 		docker compose run --rm integration-tests pytest -v $$test_dir; \

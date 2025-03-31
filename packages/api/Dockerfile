@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM gcr.io/decentralized-ai/vllm:0.7.3.post1 AS base
+FROM gcr.io/decentralized-ai/vllm:0.8.1 AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -60,11 +60,11 @@ RUN mkdir -p /app/packages/api/src/api \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
-    poetry config virtualenvs.in-project true \
+    python -m venv /app/packages/api/.venv \
+    && . /app/packages/api/.venv/bin/activate \
     && cd /app/packages/api \
     && poetry install --no-interaction \
-    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.2cxx11abiTRUE-cp312-cp312-linux_x86_64.whl \
-    && . /app/packages/api/.venv/bin/activate
+    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.2cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 
 ################################################################################
 FROM base AS app

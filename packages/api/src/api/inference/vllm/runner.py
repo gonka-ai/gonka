@@ -34,7 +34,7 @@ class IVLLMRunner(ABC):
 
 
 class VLLMRunner(IVLLMRunner):
-    VLLM_PYTHON_PATH = "/usr/bin/python3"
+    VLLM_PYTHON_PATH = "/opt/venv/bin/python3"
     VLLM_PORT = 5000
     VLLM_HOST = "0.0.0.0"
 
@@ -58,6 +58,9 @@ class VLLMRunner(IVLLMRunner):
         if self.process is not None:
             raise RuntimeError("VLLMRunner is already running")
 
+        env = os.environ.copy()
+        env["VLLM_USE_V1"] = "0"
+        
         command = [
             self.vllm_python_path,
             "-m", "vllm.entrypoints.openai.api_server",
@@ -67,7 +70,10 @@ class VLLMRunner(IVLLMRunner):
             "--host", self.VLLM_HOST
         ] + self.additional_args
 
-        self.process = subprocess.Popen(command)
+        self.process = subprocess.Popen(
+            command,
+            env=env,
+        )
 
     def stop(self):
         if self.process is None:
