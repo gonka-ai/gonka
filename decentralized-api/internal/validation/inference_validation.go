@@ -101,7 +101,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 			continue
 		}
 
-		currentSeed := s.configManager.GetConfig().CurrentSeed.Seed
+		currentSeed := s.configManager.GetCurrentSeed().Seed
 		shouldValidate, message := calculations.ShouldValidate(
 			currentSeed,
 			inferenceWithExecutor,

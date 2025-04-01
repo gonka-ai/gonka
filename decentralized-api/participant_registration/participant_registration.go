@@ -5,8 +5,8 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/logging"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -20,9 +20,9 @@ import (
 	"time"
 )
 
-func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, config *apiconfig.Config) (bool, error) {
+func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, chainNodeUrl string) (bool, error) {
 	// Create RPC client
-	client, err := cosmosclient.NewRpcClient(config.ChainNode.Url)
+	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
 	if err != nil {
 		return false, fmt.Errorf("failed to create tendermint RPC client: %w", err)
 	}
@@ -85,7 +85,7 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 }
 
 func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
-	if config.GetConfig().ChainNode.IsGenesis {
+	if config.GetChainNodeConfig().IsGenesis {
 		return registerGenesisParticipant(recorder, config, nodeBroker)
 	} else {
 		return registerJoiningParticipant(recorder, config, nodeBroker)
@@ -93,15 +93,14 @@ func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, conf
 }
 
 func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
-	config := configManager.GetConfig()
-	if exists, err := participantExistsWithWait(recorder, config); exists {
+	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
 		logging.Info("Genesis participant already exists", types.Participants)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Failed to check if genesis participant exists: %w", err)
 	}
 
-	validatorKey, err := getValidatorKey(config)
+	validatorKey, err := getValidatorKey(configManager.GetChainNodeConfig().Url)
 	if err != nil {
 		return err
 	}
@@ -115,10 +114,11 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("Failed to get unique models: %w", err)
 	}
 
-	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
+	publicUrl := configManager.GetApiConfig().PublicUrl
+	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl, "Models", uniqueModelsList)
 
 	msg := &inference.MsgSubmitNewParticipant{
-		Url:          config.Api.PublicUrl,
+		Url:          publicUrl,
 		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		WorkerKey:    workerPublicKey,
@@ -140,15 +140,14 @@ type submitUnfundedNewParticipantDto struct {
 }
 
 func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
-	config := configManager.GetConfig()
-	if exists, err := participantExistsWithWait(recorder, config); exists {
+	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
 		logging.Info("Participant already exists, skipping registration", types.Participants)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("Failed to check if participant exists: %w", err)
 	}
 
-	validatorKey, err := getValidatorKey(config)
+	validatorKey, err := getValidatorKey(configManager.GetChainNodeConfig().Url)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	logging.Info(
 		"Registering joining participant",
 		types.Participants, "validatorKey", validatorKeyString,
-		"Url", config.Api.PublicUrl,
+		"Url", configManager.GetApiConfig().PublicUrl,
 		"Models", uniqueModelsList,
 		"Address", address,
 		"PubKey", pubKeyString,
@@ -182,14 +181,14 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	requestBody := submitUnfundedNewParticipantDto{
 		Address:      address,
-		Url:          config.Api.PublicUrl,
+		Url:          configManager.GetApiConfig().PublicUrl,
 		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		PubKey:       pubKeyString,
 		WorkerKey:    workerKey,
 	}
 
-	requestUrl, err := url.JoinPath(config.ChainNode.SeedApiUrl, "/v1/participants")
+	requestUrl, err := url.JoinPath(configManager.GetChainNodeConfig().SeedApiUrl, "/v1/participants")
 	if err != nil {
 		return fmt.Errorf("Failed to join URL path: %w", err)
 	}
@@ -244,9 +243,9 @@ func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
 	return uniqueModelsList, nil
 }
 
-func getValidatorKey(config *apiconfig.Config) (crypto.PubKey, error) {
+func getValidatorKey(chainNodeUrl string) (crypto.PubKey, error) {
 	// Get validator key through RPC
-	client, err := cosmosclient.NewRpcClient(config.ChainNode.Url)
+	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tendermint RPC client: %w", err)
 	}

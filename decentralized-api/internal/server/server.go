@@ -107,7 +107,7 @@ func (s *Server) Start() {
 		}
 
 		logging.Debug("Verifying block signatures", types.System, "height", height)
-		if err := merkleproof.VerifyBlockSignatures(s.configManager.GetConfig().ChainNode.Url, height); err != nil {
+		if err := merkleproof.VerifyBlockSignatures(s.configManager.GetChainNodeConfig().Url, height); err != nil {
 			logging.Error("Failed to verify block signatures", types.Participants, "error", err)
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 			return
@@ -121,7 +121,7 @@ func (s *Server) Start() {
 		writer.Write([]byte("{\"status\": \"ok\"}")) // TODO handle error??
 	})
 
-	addr := fmt.Sprintf(":%d", s.configManager.GetConfig().Api.Port)
+	addr := fmt.Sprintf(":%d", s.configManager.GetApiConfig().Port)
 
 	logging.Info("Starting the server", types.Server, "address", addr)
 	loggedMux := loggingMiddleware(mux)
@@ -289,7 +289,7 @@ func (s *Server) handleTransferRequest(ctx context.Context, w http.ResponseWrite
 
 	seed := rand.Int31()
 	inferenceUUID := uuid.New().String()
-	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetConfig().CurrentNodeVersion)
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetCurrentNodeVersion())
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -310,7 +310,7 @@ func (s *Server) handleTransferRequest(ctx context.Context, w http.ResponseWrite
 	// the same process to create the same final request body
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 
-	if s.configManager.GetConfig().Api.PublicUrl == executor.Url {
+	if s.configManager.GetApiConfig().PublicUrl == executor.Url {
 		// node found itself as executor
 
 		request.InferenceId = inferenceUUID
@@ -497,7 +497,7 @@ func (s *Server) handleExecutorRequest(w http.ResponseWriter, request *ChatReque
 		return
 	}
 
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetConfig().CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -531,7 +531,7 @@ func (s *Server) handleExecutorRequest(w http.ResponseWriter, request *ChatReque
 		return
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, s.configManager.GetConfig().ChainNode.AccountName)
+	err = s.sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)

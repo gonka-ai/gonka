@@ -2,7 +2,6 @@ package event_listener
 
 import (
 	"context"
-	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"fmt"
@@ -21,8 +20,8 @@ func subscribeToEvents(ws *websocket.Conn, query string) {
 	}
 }
 
-func getWebsocketUrl(config *apiconfig.Config) string {
-	u, err := url.Parse(config.ChainNode.Url)
+func getWebsocketUrl(chainNodeUrl string) string {
+	u, err := url.Parse(chainNodeUrl)
 	if err != nil {
 		logging.Error("Error parsing URL", types.EventProcessing, "error", err)
 		return ""

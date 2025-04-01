@@ -61,7 +61,7 @@ func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageC
 		}
 
 		if epochIdStr == "current" {
-			getParticipants(nil, w, config.GetConfig(), transactionRecorder)
+			getParticipants(nil, w, config.GetChainNodeConfig().Url, transactionRecorder)
 		} else {
 			epochInt, err := strconv.Atoi(epochIdStr)
 			if err != nil {
@@ -75,12 +75,12 @@ func WrapGetParticipantsByEpoch(transactionRecorder cosmos_client.CosmosMessageC
 			}
 
 			epochUint := uint64(epochInt)
-			getParticipants(&epochUint, w, config.GetConfig(), transactionRecorder)
+			getParticipants(&epochUint, w, config.GetChainNodeConfig().Url, transactionRecorder)
 		}
 	}
 }
 
-func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfig.Config, transactionRecorder cosmos_client.CosmosMessageClient) {
+func getParticipants(epochOrNil *uint64, w http.ResponseWriter, chainNodeUrl string, transactionRecorder cosmos_client.CosmosMessageClient) {
 	queryClient := transactionRecorder.NewInferenceQueryClient()
 	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
@@ -120,7 +120,7 @@ func getParticipants(epochOrNil *uint64, w http.ResponseWriter, config *apiconfi
 	// Create the codec
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 
-	rpcClient, err := cosmos_client.NewRpcClient(config.ChainNode.Url)
+	rpcClient, err := cosmos_client.NewRpcClient(chainNodeUrl)
 	if err != nil {
 		logging.Error("Failed to create rpc client", types.System, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
