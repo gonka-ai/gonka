@@ -148,6 +148,10 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         postWithStringResponse("v1/admin/models", model)
     }
 
+    fun submitTransaction(json: String): TxResponse {
+        return postRawJson("v1/tx", json)
+    }
+
     inline fun <reified Out: Any> get(path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))
@@ -160,6 +164,15 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         val response = Fuel.post("$url/$path")
             .jsonBody(body, cosmosJson)
             .responseObject<Out>()
+        logResponse(response)
+
+        return response.third.get()
+    }
+
+    inline fun <reified Out : Any> postRawJson(path: String, json: String): Out {
+        val response = Fuel.post("$url/$path")
+            .jsonBody(json)
+            .responseObject<Out>(gsonDeserializer(cosmosJson))
         logResponse(response)
 
         return response.third.get()
@@ -183,6 +196,10 @@ fun logResponse(reqData: Triple<Request, Response, Result<*, FuelError>>) {
     Logger.trace("Request data: {}", request.body.asString("application/json"))
     Logger.debug("Response: {} {}", response.statusCode, response.responseMessage)
     Logger.trace("Response headers: {}", response.headers)
+
+    if (!response.statusCode.toString().startsWith("2")) {
+        Logger.error("Response data: {}", response.data.decodeToString())
+    }
     if (result is Result.Failure) {
         Logger.error(result.getException(), "Error making request: url={}", request.url)
         Logger.error("Response Data: {}", response.data.decodeToString())

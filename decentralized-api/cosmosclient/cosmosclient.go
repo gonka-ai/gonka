@@ -326,6 +326,10 @@ func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPl
 	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
 }
 
+func (icc *InferenceCosmosClient) GetPartialUpgrades() (*types.QueryAllPartialUpgradeResponse, error) {
+	return icc.NewInferenceQueryClient().PartialUpgradeAll(icc.Context, &types.QueryAllPartialUpgradeRequest{})
+}
+
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
 	return upgradetypes.NewQueryClient(icc.Client.Context())
 }

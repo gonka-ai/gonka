@@ -7,11 +7,13 @@ import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.AppState
+import com.productscience.data.GovernanceProposal
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.PubKey
 import com.productscience.data.Spec
+import com.productscience.data.TxResponse
 import org.tinylog.kotlin.Logger
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -120,9 +122,9 @@ data class LocalInferencePair(
     val api: ApplicationAPI,
     val mock: InferenceMock?,
     val name: String,
-    val config: ApplicationConfig,
+    override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null
-) {
+): HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
         val validatorInfo = status.validatorInfo
@@ -204,12 +206,119 @@ data class LocalInferencePair(
         }
         val epochParams = this.mostRecentParams?.epochParams!!
         if (epochParams.epochLength > 500) {
-            error("Epoch length is too long testing")
+            error("Epoch length is too long for testing")
         }
         val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished)
     }
+
+    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        val json = this.node.getTransactionJson(args)
+        val submittedTransaction = this.api.submitTransaction(json)
+        return if (waitForProcessed) {
+            this.node.waitForTxProcessed(submittedTransaction.txhash)
+        } else {
+            submittedTransaction
+        }
+    }
+
+    fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
+        val sourceAccount = this.node.getKeys()[0].address
+        val destAccount = destinationNode.getKeys()[0].address
+        val response = this.submitTransaction(
+            listOf(
+                "bank",
+                "send",
+                sourceAccount,
+                destAccount,
+                "$amount${config.denom}",
+            )
+        )
+        response
+    }
+
+    fun submitGovernanceProposal(proposal: GovernanceProposal): TxResponse =
+        wrapLog("submitGovProposal", infoLevel = false) {
+            val finalProposal = proposal.copy(
+                messages = proposal.messages.map {
+                    it.withAuthority(this.node.getModuleAccount("gov").account.value.address)
+                },
+            )
+            val governanceJson = gsonCamelCase.toJson(finalProposal)
+            val jsonFileName = "governance-proposal.json"
+            node.writeFileToContainer(governanceJson, jsonFileName)
+
+            this.submitTransaction(
+                listOf(
+                    "gov",
+                    "submit-proposal",
+                    jsonFileName
+                )
+            )
+        }
+
+    fun submitUpgradeProposal(
+        title: String,
+        description: String,
+        binaryPath: String,
+        apiBinaryPath: String,
+        height: Long,
+        nodeVersion: String,
+    ): TxResponse = wrapLog("submitUpgradeProposal", true) {
+        val proposer = this.node.getKeys()[0].address
+        val binariesJson =
+            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}, "node_version": "$nodeVersion"}"""
+        this.submitTransaction(
+            listOf(
+                "upgrade",
+                "software-upgrade",
+                title,
+                "--title",
+                title,
+                "--upgrade-height",
+                "$height",
+                "--upgrade-info",
+                binariesJson,
+                "--summary",
+                description,
+                "--deposit",
+                // TODO: Denom and amount should not be hardcoded
+                "100000nicoin",
+                "--from",
+                proposer,
+            )
+        )
+    }
+
+    fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
+        val depositor = this.node.getKeys()[0].address
+        this.submitTransaction(
+            listOf(
+                "gov",
+                "deposit",
+                proposalId,
+                "$amount${config.denom}",
+                "--from",
+                depositor,
+            )
+        )
+    }
+
+    fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
+        val voter = this.node.getKeys()[0].address
+        this.submitTransaction(
+            listOf(
+                "gov",
+                "vote",
+                proposalId,
+                option,
+                "--from",
+                voter,
+            )
+        )
+    }
+
 }
 
 data class ApplicationConfig(
