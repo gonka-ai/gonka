@@ -231,7 +231,7 @@ func nodeAvailable(node *NodeWithState, neededModel string, version string) bool
 	} else {
 		logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
 	}
-	return false
+	return found
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
