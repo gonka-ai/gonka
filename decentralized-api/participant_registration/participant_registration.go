@@ -5,8 +5,8 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/logging"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -108,11 +108,11 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 	workerPublicKey, err := configManager.CreateWorkerKey()
 	if err != nil {
-		return fmt.Errorf("Failed to create worker key: %w", err)
+		return fmt.Errorf("failed to create worker key: %w", err)
 	}
 	uniqueModelsList, err := getUniqueModels(nodeBroker)
 	if err != nil {
-		return fmt.Errorf("Failed to get unique models: %w", err)
+		return fmt.Errorf("failed to get unique models: %w", err)
 	}
 
 	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", config.Api.PublicUrl, "Models", uniqueModelsList)
@@ -233,7 +233,7 @@ func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
 
 	uniqueModelsSet := make(map[string]bool)
 	for _, node := range nodes {
-		for _, model := range node.Node.Models {
+		for model, _ := range node.Node.Models {
 			uniqueModelsSet[model] = true
 		}
 	}
