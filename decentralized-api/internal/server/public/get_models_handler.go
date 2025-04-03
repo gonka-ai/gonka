@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-func (s *Server) GetModels(ctx echo.Context) error {
+func (s *Server) getModels(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	context := *s.recorder.GetContext()
 

@@ -8,6 +8,8 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
+	pserver "decentralized-api/internal/server/public"
+
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
@@ -102,6 +104,12 @@ func main() {
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
 	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
 	go listener.Start(context.Background())
+
+	addr := fmt.Sprintf(":%v", config.GetConfig().Api.PublicServerPort)
+	logging.Info("start public server on addr", types.Server, "addr", addr)
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder)
+	publicServer.Start(addr)
 
 	s := server.NewServer(nodeBroker, config, validator, recorder)
 	s.Start()

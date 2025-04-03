@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-func (s *Server) PostChat(ctx echo.Context) error {
+func (s *Server) postChat(ctx echo.Context) error {
 	logging.Debug("PostChat. Received request", types.Inferences, "path", ctx.Request().URL.Path)
 
 	chatRequest, err := readRequest(ctx.Request())

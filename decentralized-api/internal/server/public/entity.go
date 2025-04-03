@@ -1,6 +1,8 @@
 package public
 
 import (
+	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 )
@@ -40,4 +42,14 @@ type InferenceTransaction struct {
 
 type ModelsResponse struct {
 	Models []types.Model `json:"models"`
+}
+
+type ActiveParticipantWithProof struct {
+	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
+	Addresses               []string                 `json:"addresses"`
+	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
+	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
+	Validators              []*comettypes.Validator  `json:"validators"`
+	Block                   []*comettypes.Block      `json:"block"`
+	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }

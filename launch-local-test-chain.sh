@@ -3,6 +3,7 @@ set -e
 
 # launch genesis node
 export PORT=8080
+export PUBLIC_SERVER_PORT=9000
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 rm -r "prod-local" || true
@@ -32,6 +33,7 @@ export KEY_NAME=join1
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
 export PORT=8081
+export PUBLIC_SERVER_PORT=9001
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
@@ -43,6 +45,7 @@ export POC_CALLBACK_URL="$PUBLIC_URL"
 export KEY_NAME=join2
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PORT=8082
+export PUBLIC_SERVER_PORT=9002
 export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202

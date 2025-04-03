@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-func (s *Server) GetChatById(ctx echo.Context) error {
+func (s *Server) getChatById(ctx echo.Context) error {
 	logging.Debug("GetCompletion received", types.Inferences)
 	id := ctx.Param("id")
 	if id == "" {

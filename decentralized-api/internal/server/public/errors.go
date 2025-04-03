@@ -11,5 +11,8 @@ var (
 	ErrInsufficientBalance          = echo.NewHTTPError(http.StatusPaymentRequired, "Insufficient balance")
 
 	ErrIdRequired        = echo.NewHTTPError(http.StatusBadRequest, "Id is required")
+	ErrAddressRequired   = echo.NewHTTPError(http.StatusBadRequest, "Address is required")
+	ErrInvalidEpochId    = echo.NewHTTPError(http.StatusBadRequest, "Invalid epoch id")
+	ErrEpochIsNotReached = echo.NewHTTPError(http.StatusBadRequest, "Epoch is not reached")
 	ErrInferenceNotFound = echo.NewHTTPError(http.StatusNotFound, "Inference not found")
 )

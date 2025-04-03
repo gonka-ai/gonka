@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-func (s *Server) GetPricing(ctx echo.Context) error {
+func (s *Server) getPricing(ctx echo.Context) error {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	context := *s.recorder.GetContext()
 	req := &types.QueryCurrentEpochGroupDataRequest{}

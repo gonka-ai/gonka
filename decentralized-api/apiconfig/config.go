@@ -87,9 +87,10 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port           int    `koanf:"port"`
-	PoCCallbackUrl string `koanf:"poc_callback_url"`
-	PublicUrl      string `koanf:"public_url"`
+	Port             int    `koanf:"port"`
+	PoCCallbackUrl   string `koanf:"poc_callback_url"`
+	PublicUrl        string `koanf:"public_url"`
+	PublicServerPort int    `koanf:"public_server_port"`
 }
 
 type ChainNodeConfig struct {
