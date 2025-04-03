@@ -1,4 +1,5 @@
 import com.productscience.data.InferenceNode
+import com.productscience.data.ModelConfig
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.initCluster

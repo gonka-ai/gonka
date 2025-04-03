@@ -133,26 +133,30 @@ func TestConfigLoad(t *testing.T) {
 }
 
 func TestNodeVersion(t *testing.T) {
-	testManager := &apiconfig.ConfigManager{
-		KoanProvider:   rawbytes.Provider([]byte(testYaml)),
-		WriterProvider: &CaptureWriterProvider{},
-	}
-	err := testManager.Load()
+	writeCapture := &CaptureWriterProvider{}
+	testManager, err := apiconfig.LoadConfigManager(rawbytes.Provider([]byte(testYaml)),
+		writeCapture)
+	require.NoError(t, err)
+	err = testManager.Load()
 	require.NoError(t, err)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
 	err = testManager.AddNodeVersion(50, "v2")
 	require.NoError(t, err)
 	err = testManager.AddNodeVersion(60, "v3")
 	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "")
 	err = testManager.SetHeight(50)
 	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "v2")
 	err = testManager.SetHeight(51)
 	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "v2")
 	err = testManager.SetHeight(60)
 	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, testManager.GetCurrentNodeVersion(), "v3")
 }
 
