@@ -13,7 +13,7 @@ func TestSingleNode(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
@@ -39,7 +39,7 @@ func TestNodeRemoval(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
@@ -70,7 +70,7 @@ func TestModelMismatch(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
@@ -88,7 +88,7 @@ func TestHighConcurrency(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 100,
 	}
@@ -108,7 +108,7 @@ func TestVersionFiltering(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "v1node",
 		MaxConcurrent: 1000,
 		Version:       "v1",
@@ -117,7 +117,7 @@ func TestVersionFiltering(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "novNode",
 		MaxConcurrent: 1000,
 		Version:       "",
@@ -146,7 +146,7 @@ func TestMultipleNodes(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
@@ -154,7 +154,7 @@ func TestMultipleNodes(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node2",
 		MaxConcurrent: 1,
 	}
@@ -194,7 +194,7 @@ func TestReleaseNode(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
@@ -228,7 +228,7 @@ func TestRoundTripSegment(t *testing.T) {
 		InferencePort:    8080,
 		PoCSegment:       "/is",
 		PoCPort:          5000,
-		Models:           []string{"model1"},
+		Models:           map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:               "node1",
 		MaxConcurrent:    1,
 	}
@@ -254,7 +254,7 @@ func TestCapacityCheck(t *testing.T) {
 		Host:          "localhost",
 		InferencePort: 8080,
 		PoCPort:       5000,
-		Models:        []string{"model1"},
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}

@@ -8,7 +8,7 @@ data class InferenceNode(
     val inferencePort: Int,
     val pocSegment: String = "",
     val pocPort: Int,
-    val models: List<String>,
+    val models: Map<String, ModelConfig>,
     val id: String,
     val maxConcurrent: Int,
     val version: String = "",
@@ -18,4 +18,8 @@ data class NodeState(
     val lockCount: Int,
     val operational: Boolean,
     val failureReason: String
+)
+
+data class ModelConfig(
+    val args: List<String>
 )

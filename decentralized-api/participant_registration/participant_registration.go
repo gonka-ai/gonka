@@ -107,11 +107,11 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
 	workerPublicKey, err := configManager.CreateWorkerKey()
 	if err != nil {
-		return fmt.Errorf("Failed to create worker key: %w", err)
+		return fmt.Errorf("failed to create worker key: %w", err)
 	}
 	uniqueModelsList, err := getUniqueModels(nodeBroker)
 	if err != nil {
-		return fmt.Errorf("Failed to get unique models: %w", err)
+		return fmt.Errorf("failed to get unique models: %w", err)
 	}
 
 	publicUrl := configManager.GetApiConfig().PublicUrl
@@ -232,7 +232,7 @@ func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
 
 	uniqueModelsSet := make(map[string]bool)
 	for _, node := range nodes {
-		for _, model := range node.Node.Models {
+		for model, _ := range node.Node.Models {
 			uniqueModelsSet[model] = true
 		}
 	}
