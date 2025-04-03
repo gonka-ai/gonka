@@ -11,6 +11,7 @@ import com.productscience.data.EpochParams
 import com.productscience.data.FloatSerializer
 import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceNode
+import com.productscience.data.ModelConfig
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceState
@@ -354,7 +355,11 @@ val validNode = InferenceNode(
     host = "36.189.234.237:19009/",
     pocPort = 19009,
     inferencePort = 19009,
-    models = listOf(defaultModel),
+    models = mapOf(
+        defaultModel to ModelConfig(
+            args = emptyList()
+        )
+    ),
     id = "wiremock2",
     maxConcurrent = 1000
 )

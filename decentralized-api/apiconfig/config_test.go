@@ -329,7 +329,7 @@ current_seed:
 nodes:
     - url: http://34.171.235.205:8080/
       models:
-        - unsloth/llama-3-8b-Instruct
+        - unsloth/llama-3-8b-Instruct: {}
       id: node1
       max_concurrent: 500
 previous_seed:

@@ -113,11 +113,15 @@ type InferenceNodeConfig struct {
 	InferencePort    int        `koanf:"inference_port" json:"inference_port"`
 	PoCSegment       string     `koanf:"poc_segment" json:"poc_segment"`
 	PoCPort          int        `koanf:"poc_port" json:"poc_port"`
-	Models           []string   `koanf:"models" json:"models"`
+	Models        map[string]ModelConfig `koanf:"models" json:"models"`
 	Id               string     `koanf:"id" json:"id"`
 	MaxConcurrent    int        `koanf:"max_concurrent" json:"max_concurrent"`
 	Hardware         []Hardware `koanf:"hardware" json:"hardware"`
 	Version          string     `koanf:"version" json:"version"`
+}
+
+type ModelConfig struct {
+	Args []string `json:"args"`
 }
 
 type Hardware struct {
