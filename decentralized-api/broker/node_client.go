@@ -266,3 +266,22 @@ func (api *InferenceNodeClient) GetPowStatus() (*PowStatusResponse, error) {
 
 	return &powResp, nil
 }
+
+func (api *InferenceNodeClient) InferenceHealth() (bool, error) {
+	requestURL, err := url.JoinPath(api.node.InferenceUrl(), "/health")
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return true, nil
+}
