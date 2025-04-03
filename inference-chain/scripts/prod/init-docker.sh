@@ -70,7 +70,7 @@ $APP_NAME init \
   --overwrite \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
-  my-nod
+  my-node
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
@@ -80,8 +80,8 @@ SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-10}
 SNAPSHOT_KEEP_RECENT=${SNAPSHOT_KEEP_RECENT:-5}
 $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
 $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
-sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
-  $STATE_DIR/config/config.toml
+$APP_NAME config set config rpc.laddr "tcp://0.0.0.0:26657" --skip-validate
+
 if [ -n "$P2P_EXTERNAL_ADDRESS" ]; then
   echo "Setting the external address for P2P to $P2P_EXTERNAL_ADDRESS"
   $APP_NAME config set config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
@@ -97,12 +97,27 @@ grep "seeds =" $STATE_DIR/config/config.toml
  if [ "$SYNC_WITH_SNAPSHOTS" = "true" ]; then
      echo "Node must sync using snapshots"
 TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
- $APP_NAME set-statesync "$STATE_DIR/config/config.toml" true
- $APP_NAME set-statesync-rpc-servers "$STATE_DIR/config/config.toml"  "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
+ $APP_NAME config set config statesync.enable true --skip-validate
+ $APP_NAME config set config statesync.rpc_servers "$RPC_SERVER_URL_1,$RPC_SERVER_URL_2" --skip-validate
  $APP_NAME set-statesync-trusted-block "$STATE_DIR/config/config.toml"  "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
  else
      echo "Node will sync WITHOUT snapshots"
  fi
+ 
+echo "Setting up overrides for config.toml"
+ # Process CONFIG_ environment variables
+ for var in $(env | grep '^CONFIG_'); do
+    # Extract key and value
+    key=${var%%=*}
+    value=${var#*=}
+    
+    # Remove CONFIG_ prefix and transform __ to .
+    config_key=${key#CONFIG_}
+    config_key=${config_key//__/.}
+    
+    echo "Setting config: $config_key = $value"
+    $APP_NAME config set config "$config_key" "$value" --skip-validate
+ done
 
 echo "Creating account for $KEY_NAME"
 $APP_NAME keys add "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR"

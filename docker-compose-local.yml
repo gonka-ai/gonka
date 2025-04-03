@@ -11,6 +11,8 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+    env_file:
+      - ./env_overrides.env
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"

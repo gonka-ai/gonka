@@ -101,8 +101,22 @@ fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
-
 echo "Genesis file created"
+echo "Setting up overrides for config.toml"
+ # Process CONFIG_ environment variables
+ for var in $(env | grep '^CONFIG_'); do
+    # Extract key and value
+    key=${var%%=*}
+    value=${var#*=}
+
+    # Remove CONFIG_ prefix and transform __ to .
+    config_key=${key#CONFIG_}
+    config_key=${config_key//__/.}
+
+    echo "Setting config: $config_key = $value"
+    $APP_NAME config set config "$config_key" "$value" --skip-validate
+ done
+
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {
   echo "Cosmovisor failed, idling the container..."

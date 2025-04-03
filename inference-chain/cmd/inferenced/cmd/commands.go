@@ -55,6 +55,8 @@ func initRootCmd(
 		SetStateSync(),
 		SetRpcServers(),
 		SetTrustedBlock(),
+		PatchToml(),
+		PatchTomlDirect(),
 	)
 }
 
