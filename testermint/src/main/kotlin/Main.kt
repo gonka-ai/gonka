@@ -24,7 +24,6 @@ import com.productscience.data.PubKey
 import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.GovernanceMessage
-import com.productscience.data.ModelConfig
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.data.ValidationParams
