@@ -36,8 +36,6 @@ import (
 	"time"
 )
 
-const testModel = "unsloth/llama-3-8b-Instruct"
-
 type Server struct {
 	nodeBroker         *broker.Broker
 	configManager      *apiconfig.ConfigManager
@@ -67,21 +65,17 @@ func (s *Server) Start() {
 
 	// Create an HTTP server
 	// TODO: some of handlers defined here and some in api package. Suggest to put it in 1 place
-	mux.HandleFunc("/v1/chat/completions/", s.wrapGetCompletion())
-	mux.HandleFunc("/v1/chat/completions", s.wrapChat())
-	mux.HandleFunc("/v1/validation", s.wrapValidation())
+	// mux.HandleFunc("/v1/chat/completions/", s.wrapGetCompletion())
+	// mux.HandleFunc("/v1/chat/completions", s.wrapChat())
+
 	mux.HandleFunc("/v1/participants", s.wrapSubmitNewParticipant())
-	mux.HandleFunc("/v1/participants/", s.wrapGetInferenceParticipant())
 	mux.HandleFunc("/v1/nodes", api.WrapNodes(s.nodeBroker, s.configManager))
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(s.nodeBroker, s.configManager))
-	mux.HandleFunc("/v1/epochs/", api.WrapGetParticipantsByEpoch(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(s.recorder))
 	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
-	mux.HandleFunc("/v1/pricing", api.WrapPricing(s.recorder))
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
-	mux.HandleFunc("/v1/models", api.WrapModels(s.recorder))
 	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
 	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
@@ -116,10 +110,6 @@ func (s *Server) Start() {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte("Block signatures verified")) // TODO handle error??
 	})
-	mux.HandleFunc("/v1/status", func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusOK)
-		writer.Write([]byte("{\"status\": \"ok\"}")) // TODO handle error??
-	})
 
 	addr := fmt.Sprintf(":%d", s.configManager.GetConfig().Api.Port)
 
@@ -148,17 +138,6 @@ func (s *Server) logUnknownRequest() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Warn("Unknown request", types.Server, "path", request.URL.Path)
 		http.Error(w, "Unknown request", http.StatusNotFound)
-	}
-}
-
-func (s *Server) wrapGetInferenceParticipant() func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			logging.Warn("Invalid method", types.Server, "method", request.Method)
-			http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
-			return
-		}
-		s.processGetInferenceParticipantByAddress(w, request)
 	}
 }
 
@@ -550,32 +529,6 @@ func getInferenceErrorMessage(resp *http.Response) string {
 	}
 }
 
-func (s *Server) processGetInferenceParticipantByAddress(w http.ResponseWriter, request *http.Request) {
-	// Manually extract the {id} from the URL path
-	address := strings.TrimPrefix(request.URL.Path, "/v1/participants/")
-	if address == "" {
-		http.Error(w, "Address is required", http.StatusBadRequest)
-		return
-	}
-
-	logging.Debug("GET inference participant", types.Inferences, "address", address)
-	queryClient := s.recorder.NewInferenceQueryClient()
-	response, err := queryClient.InferenceParticipant(request.Context(), &types.QueryInferenceParticipantRequest{Address: address})
-	if err != nil {
-		logging.Error("Failed to get inference participant", types.Inferences, "address", address, "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if response == nil {
-		logging.Error("Inference participant not found", types.Inferences, "address", address)
-		http.Error(w, "Inference participant not found", http.StatusNotFound)
-		return
-	}
-
-	api.RespondWithJson(w, response)
-}
-
 func (s *Server) processGetCompletionById(w http.ResponseWriter, request *http.Request) {
 	// Manually extract the {id} from the URL path
 	id := strings.TrimPrefix(request.URL.Path, "/v1/chat/completions/")
@@ -740,47 +693,6 @@ func getPromptHash(requestBytes []byte) (string, string, error) {
 	return promptHash, canonicalJSON, nil
 }
 
-func (s *Server) wrapValidation() func(w http.ResponseWriter, request *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		var validationRequest ValidationRequest
-		if err := json.NewDecoder(request.Body).Decode(&validationRequest); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		queryClient := s.recorder.NewInferenceQueryClient()
-		r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: validationRequest.Id})
-		if err != nil {
-			logging.Error("Failed get inference by id query", types.Validation, "id", validationRequest.Id, "error", err)
-		}
-
-		result, err := broker.LockNode(s.nodeBroker, testModel, r.Inference.NodeVersion, func(node *broker.Node) (validation.ValidationResult, error) {
-			return s.inferenceValidator.Validate(r.Inference, node)
-		})
-
-		if err != nil {
-			logging.Error("Failed to validate inference", types.Validation, "id", validationRequest.Id, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		msgVal, err := validation.ToMsgValidation(result)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if err = s.recorder.ReportValidation(msgVal); err != nil {
-			logging.Error("Failed to submit MsgValidation", types.Validation, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(msgVal.String())) // TODO: handle error??
-	}
-}
-
 func (s *Server) wrapSubmitNewParticipant() func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Debug("SubmitNewParticipant received", types.Participants, "method", request.Method)
@@ -908,12 +820,4 @@ func (s *Server) getParticipants(w http.ResponseWriter, request *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseJson)
-}
-
-// Why u no have this in std lib????
-func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V {
-	if value, exists := m[key]; exists {
-		return value
-	}
-	return defaultValue
 }

@@ -5,12 +5,10 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
 	"encoding/json"
-	"fmt"
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
-	"strconv"
 	"strings"
 )
 
@@ -21,8 +19,6 @@ func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.Resp
 		switch request.Method {
 		case http.MethodPost:
 			postPoCBatches(recorder, w, request)
-		case http.MethodGet:
-			getPoCBatches(recorder, w, request)
 		default:
 			logging.Error("Invalid request method", types.Server, "method", request.Method)
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
@@ -33,7 +29,6 @@ func WrapPoCBatches(recorder cosmos_client.CosmosMessageClient) func(w http.Resp
 func postPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
 	suffix := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
 	logging.Debug("postPoCBatches", types.PoC, "suffix", suffix)
-
 	switch suffix {
 	case "generated":
 		submitPoCBatches(recorder, w, request)
@@ -109,38 +104,4 @@ func submitValidatedPoCBatches(recorder cosmos_client.CosmosMessageClient, w htt
 
 	w.WriteHeader(http.StatusOK)
 	return
-}
-
-func getPoCBatches(recorder cosmos_client.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
-	// Get what's after /v1/poc/batches/
-	epoch := strings.TrimPrefix(request.URL.Path, "/v1/poc-batches/")
-	logging.Debug("getPoCBatches", types.PoC, "epoch", epoch)
-
-	// Parse int64 from epoch:
-	value, err := strconv.ParseInt(epoch, 10, 64)
-	if err != nil {
-		logging.Error("Failed to parse epoch", types.PoC, "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	logging.Debug("Requesting PoC batches.", types.PoC, "epoch", value)
-
-	queryClient := recorder.NewInferenceQueryClient()
-	// ignite scaffold query pocBatchesForStage blockHeight:int
-	response, err := queryClient.PocBatchesForStage(*recorder.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: value})
-	if err != nil {
-		logging.Error("Failed to get PoC batches.", types.PoC, "epoch", value)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if response == nil {
-		logging.Error("PoC batches batches not found", types.PoC, "epoch", value)
-		msg := fmt.Sprintf("PoC batches batches not found. epoch = %d", value)
-		http.Error(w, msg, http.StatusNotFound)
-		return
-	}
-
-	RespondWithJson(w, response)
 }

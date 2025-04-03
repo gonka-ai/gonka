@@ -35,11 +35,6 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-// Debug-only request
-type ValidationRequest struct {
-	Id string `json:"id"`
-}
-
 type ParticipantsDto struct {
 	Participants []ParticipantDto `json:"participants"`
 	BlockHeight  int64            `json:"block_height"`

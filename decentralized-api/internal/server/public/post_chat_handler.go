@@ -161,7 +161,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := getInferenceErrorMessage(resp)
 		logging.Warn("Inference node response with an error", types.Inferences, "code", resp.StatusCode, "msg", msg)
-		return echo.ErrInternalServerError
+		return echo.NewHTTPError(http.StatusInternalServerError, msg)
 	}
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
