@@ -5,9 +5,14 @@
     "inference_port": 8080,
     "poc_port": 5000,
     "max_concurrent": 500,
-    "models": [
-      "unsloth/llama-3-8b-Instruct"
-    ],
+    "models": {
+      "unsloth/llama-3-8b-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
     "hardware": [
       {"type": "A100", "count": 1},
       {"type": "T4", "count": 2}

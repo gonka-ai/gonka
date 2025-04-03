@@ -29,13 +29,17 @@ type Broker struct {
 	client         cosmosclient.CosmosMessageClient
 }
 
+type ModelArgs struct {
+	Args []string
+}
+
 type Node struct {
-	Host             string               `json:"host"`
-	InferenceSegment string               `json:"inference_segment"`
-	InferencePort    int                  `json:"inference_port"`
-	PoCSegment       string               `json:"poc_segment"`
-	PoCPort          int                  `json:"poc_port"`
-	Models           []string             `json:"models"`
+	Host             string `json:"host"`
+	InferenceSegment string `json:"inference_segment"`
+	InferencePort    int    `json:"inference_port"`
+	PoCSegment       string `json:"poc_segment"`
+	PoCPort          int    `json:"poc_port"`
+	Models           map[string]ModelArgs
 	Id               string               `json:"id"`
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
@@ -145,6 +149,11 @@ func (b *Broker) registerNode(command RegisterNode) {
 	b.curMaxNodesNum.Add(1)
 	curNum := b.curMaxNodesNum.Load()
 
+	models := make(map[string]ModelArgs)
+	for model, config := range command.Node.Models {
+		models[model] = ModelArgs{Args: config.Args}
+	}
+
 	b.nodes[command.Node.Id] = &NodeWithState{
 		Node: Node{
 			Host:             command.Node.Host,
@@ -152,7 +161,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			InferencePort:    command.Node.InferencePort,
 			PoCSegment:       command.Node.PoCSegment,
 			PoCPort:          command.Node.PoCPort,
-			Models:           command.Node.Models,
+			Models:           models,
 			Id:               command.Node.Id,
 			MaxConcurrent:    command.Node.MaxConcurrent,
 			NodeNum:          curNum,
@@ -215,14 +224,14 @@ func nodeAvailable(node *NodeWithState, neededModel string, version string) bool
 	if version != "" && node.Node.Version != version {
 		return false
 	}
-	for _, model := range node.Node.Models {
-		if model == neededModel {
-			logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
-			return true
-		}
+
+	_, found := node.Node.Models[neededModel]
+	if !found {
+		logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
+	} else {
+		logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
 	}
-	logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
-	return false
+	return found
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
@@ -365,11 +374,20 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 			Count: hw.Count,
 		})
 	}
+
+	modelsNames := make([]string, 0)
+	for model := range node.Models {
+		modelsNames = append(modelsNames, model)
+	}
+
+	// sort models names to make sure they will be in same order every time
+	sort.Strings(modelsNames)
+
 	return &types.HardwareNode{
 		LocalId:  node.Id,
 		Status:   in.State.Status,
 		Hardware: hardware,
-		Models:   node.Models,
+		Models:   modelsNames,
 	}
 }
 
