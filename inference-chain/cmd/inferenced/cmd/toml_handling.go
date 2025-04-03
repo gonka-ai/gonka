@@ -49,39 +49,6 @@ func PatchToml() *cobra.Command {
 	return cmd
 }
 
-func PatchTomlDirect() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "patch-toml-direct [base-file] [override-content]",
-		Short: "Merge TOML file with provided TOML content string, with the provided content overriding the file",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			baseFile := args[0]
-			overrideContent := args[1]
-
-			// Read base file
-			baseContent, err := os.ReadFile(baseFile)
-			if err != nil {
-				return fmt.Errorf("error reading base file %s: %w", baseFile, err)
-			}
-
-			// Merge the file with provided content
-			result, err := MergeTomlFiles(string(baseContent), overrideContent)
-			if err != nil {
-				return fmt.Errorf("error merging TOML content: %w", err)
-			}
-
-			// Write the result back to the base file
-			if err := os.WriteFile(baseFile, []byte(result), 0644); err != nil {
-				return fmt.Errorf("error writing merged content to %s: %w", baseFile, err)
-			}
-
-			fmt.Printf("Successfully merged provided TOML content into %s\n", baseFile)
-			return nil
-		},
-	}
-	return cmd
-}
-
 // Below here, All AI generated (FWIW, openAI o3-mini-high, with a once over by Claude 3.7 Sonnet.
 // But tested
 

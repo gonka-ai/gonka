@@ -116,6 +116,11 @@ echo "Setting up overrides for config.toml"
     echo "Setting config: $config_key = $value"
     $APP_NAME config set config "$config_key" "$value" --skip-validate
  done
+# Check and apply config overrides if present
+if [ -f "config_override.toml" ]; then
+    echo "Applying config overrides from config_override.toml"
+    $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
+fi
 
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {

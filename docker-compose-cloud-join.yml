@@ -9,8 +9,6 @@ services:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
       - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
       - KEY_NAME=${KEY_NAME}
-    env_file:
-      - ./env_overrides.env
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
