@@ -3,7 +3,9 @@ package broker
 import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
@@ -15,6 +17,8 @@ const (
 	trainStartPath  = "/api/v1/train/start"
 	trainStatusPath = "/api/v1/train/status"
 	stopPath        = "/api/v1/stop"
+	nodeStatePath   = "/api/v1/state"
+	powStatusPath   = "/api/v1/pow/status"
 )
 
 type InferenceNodeClient struct {
@@ -183,4 +187,82 @@ func (api *InferenceNodeClient) Stop() error {
 	}
 
 	return nil
+}
+
+type MLNodeState string
+
+const (
+	POW       MLNodeState = "POW"
+	INFERENCE MLNodeState = "INFERENCE"
+	TRAIN     MLNodeState = "TRAIN"
+	STOPPED   MLNodeState = "STOPPED"
+)
+
+type StateResponse struct {
+	State MLNodeState `json:"state"`
+}
+
+func (api *InferenceNodeClient) NodeState() (*StateResponse, error) {
+	requestURL, err := url.JoinPath(api.node.PoCUrl(), nodeStatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var stateResp StateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stateResp); err != nil {
+		return nil, err
+	}
+
+	return &stateResp, nil
+}
+
+type PowState string
+
+const (
+	POW_IDLE          PowState = "IDLE"
+	POW_NO_CONTROLLER PowState = "NOT_LOADED"
+	POW_LOADING       PowState = "LOADING"
+	POW_GENERATING    PowState = "GENERATING"
+	POW_VALIDATING    PowState = "VALIDATING"
+	POW_STOPPED       PowState = "STOPPED"
+	POW_MIXED         PowState = "MIXED"
+)
+
+type PowStatusResponse struct {
+	Status             PowState `json:"status"`
+	IsModelInitialized bool     `json:"is_model_initialized"`
+}
+
+func (api *InferenceNodeClient) GetPowStatus() (*PowStatusResponse, error) {
+	requestURL, err := url.JoinPath(api.node.PoCUrl(), powStatusPath)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var powResp PowStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&powResp); err != nil {
+		return nil, err
+	}
+
+	return &powResp, nil
 }
