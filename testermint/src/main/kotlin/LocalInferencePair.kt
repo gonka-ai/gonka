@@ -15,6 +15,7 @@ import com.productscience.data.PubKey
 import com.productscience.data.Spec
 import com.productscience.data.TxResponse
 import org.tinylog.kotlin.Logger
+import java.io.File
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -317,6 +318,12 @@ data class LocalInferencePair(
                 voter,
             )
         )
+    }
+
+    fun markNeedsReboot() {
+        File("reboot.txt").bufferedWriter().use { writer ->
+            writer.write("true")
+        }
     }
 
 }

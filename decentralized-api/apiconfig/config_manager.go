@@ -16,44 +16,25 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
-
-// The config manager is NOT designed for rapid changes. It has a mutex on write and writes to a file (at the moment).
-
-type ConfigMutation func(*Config)
 
 type ConfigManager struct {
 	currentConfig  Config
 	KoanProvider   koanf.Provider
 	WriterProvider WriteCloserProvider
-	mutations      chan ConfigMutation
+	mutex          sync.Mutex
 }
 
 type WriteCloserProvider interface {
 	GetWriter() WriteCloser
 }
 
-func LoadConfigManager(
-	koanProvider koanf.Provider,
-	writerProvider WriteCloserProvider,
-) (*ConfigManager, error) {
-	manager := ConfigManager{
-		KoanProvider:   koanProvider,
-		WriterProvider: writerProvider,
-		mutations:      make(chan ConfigMutation, 100),
-	}
-	err := manager.Load()
-	if err != nil {
-		return nil, err
-	}
-	return &manager, nil
-}
-
 func LoadDefaultConfigManager() (*ConfigManager, error) {
 	manager := ConfigManager{
 		KoanProvider:   getFileProvider(),
 		WriterProvider: NewFileWriteCloserProvider(getConfigPath()),
-		mutations:      make(chan ConfigMutation, 100),
+		mutex:          sync.Mutex{},
 	}
 	err := manager.Load()
 	if err != nil {
@@ -63,27 +44,20 @@ func LoadDefaultConfigManager() (*ConfigManager, error) {
 }
 
 func (cm *ConfigManager) Write() error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) Load() error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 	config, err := readConfig(cm.KoanProvider)
 	if err != nil {
 		return err
 	}
 	cm.currentConfig = config
-	go cm.processMutations()
 	return nil
-}
-
-func (cm *ConfigManager) processMutations() {
-	logging.Info("Processing config mutations", types.Config)
-	for mutation := range cm.mutations {
-		mutation(&cm.currentConfig)
-		if err := cm.Write(); err != nil {
-			logging.Error("Failed to write config", types.Config, "error", err)
-		}
-	}
 }
 
 // Need to make sure we pass back a COPY of the ChainNodeConfig to make sure
@@ -107,11 +81,9 @@ func (cm *ConfigManager) getConfig() *Config {
 }
 
 func (cm *ConfigManager) SetUpgradePlan(plan UpgradePlan) error {
-	cm.mutations <- func(config *Config) {
-		config.UpgradePlan = plan
-		logging.Info("Setting upgrade plan", types.Config, "plan", plan)
-	}
-	return nil
+	cm.currentConfig.UpgradePlan = plan
+	logging.Info("Setting upgrade plan", types.Config, "plan", plan)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
@@ -119,16 +91,14 @@ func (cm *ConfigManager) GetUpgradePlan() UpgradePlan {
 }
 
 func (cm *ConfigManager) SetHeight(height int64) error {
-	cm.mutations <- func(config *Config) {
-		config.CurrentHeight = height
-		newVersion, found := cm.currentConfig.NodeVersions.PopIf(height)
-		if found {
-			logging.Info("New Node Version!", types.Upgrades, "version", newVersion, "oldVersion", cm.currentConfig.CurrentNodeVersion)
-			cm.currentConfig.CurrentNodeVersion = newVersion
-		}
-		logging.Info("Setting height", types.Config, "height", height)
+	cm.currentConfig.CurrentHeight = height
+	newVersion, found := cm.currentConfig.NodeVersions.PopIf(height)
+	if found {
+		logging.Info("New Node Version!", types.Upgrades, "version", newVersion, "oldVersion", cm.currentConfig.CurrentNodeVersion)
+		cm.currentConfig.CurrentNodeVersion = newVersion
 	}
-	return nil
+	logging.Info("Setting height", types.Config, "height", height)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetCurrentNodeVersion() string {
@@ -148,11 +118,9 @@ func (cm *ConfigManager) GetHeight() int64 {
 }
 
 func (cm *ConfigManager) SetPreviousSeed(seed SeedInfo) error {
-	cm.mutations <- func(config *Config) {
-		config.PreviousSeed = seed
-		logging.Info("Setting previous seed", types.Config, "seed", seed)
-	}
-	return nil
+	cm.currentConfig.PreviousSeed = seed
+	logging.Info("Setting previous seed", types.Config, "seed", seed)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
@@ -160,11 +128,9 @@ func (cm *ConfigManager) GetPreviousSeed() SeedInfo {
 }
 
 func (cm *ConfigManager) SetCurrentSeed(seed SeedInfo) error {
-	cm.mutations <- func(config *Config) {
-		config.CurrentSeed = seed
-		logging.Info("Setting current seed", types.Config, "seed", seed)
-	}
-	return nil
+	cm.currentConfig.CurrentSeed = seed
+	logging.Info("Setting current seed", types.Config, "seed", seed)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetCurrentSeed() SeedInfo {
@@ -172,11 +138,9 @@ func (cm *ConfigManager) GetCurrentSeed() SeedInfo {
 }
 
 func (cm *ConfigManager) SetUpcomingSeed(seed SeedInfo) error {
-	cm.mutations <- func(config *Config) {
-		config.UpcomingSeed = seed
-		logging.Info("Setting upcoming seed", types.Config, "seed", seed)
-	}
-	return nil
+	cm.currentConfig.UpcomingSeed = seed
+	logging.Info("Setting upcoming seed", types.Config, "seed", seed)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
@@ -184,11 +148,9 @@ func (cm *ConfigManager) GetUpcomingSeed() SeedInfo {
 }
 
 func (cm *ConfigManager) SetNodes(nodes []InferenceNodeConfig) error {
-	cm.mutations <- func(config *Config) {
-		config.Nodes = nodes
-		logging.Info("Setting nodes", types.Config, "nodes", nodes)
-	}
-	return nil
+	cm.currentConfig.Nodes = nodes
+	logging.Info("Setting nodes", types.Config, "nodes", nodes)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
 }
 
 func (cm *ConfigManager) CreateWorkerKey() (string, error) {
@@ -197,14 +159,10 @@ func (cm *ConfigManager) CreateWorkerKey() (string, error) {
 	workerPublicKeyString := base64.StdEncoding.EncodeToString(workerPublicKey.Bytes())
 	workerPrivateKey := workerKey.Bytes()
 	workerPrivateKeyString := base64.StdEncoding.EncodeToString(workerPrivateKey)
-
-	done := make(chan error)
-	cm.mutations <- func(config *Config) {
-		config.KeyConfig.WorkerPrivateKey = workerPrivateKeyString
-		config.KeyConfig.WorkerPublicKey = workerPublicKeyString
-		done <- nil
-	}
-	if err := <-done; err != nil {
+	cm.currentConfig.KeyConfig.WorkerPrivateKey = workerPrivateKeyString
+	cm.currentConfig.KeyConfig.WorkerPublicKey = workerPublicKeyString
+	err := cm.Write()
+	if err != nil {
 		return "", err
 	}
 	return workerPublicKeyString, nil

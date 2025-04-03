@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
-	"time"
 )
 
 type version struct {
@@ -248,23 +247,6 @@ func loadManager(t *testing.T, err error) error {
 	err = testManager.Load()
 	require.NoError(t, err)
 	return err
-}
-
-func TestChangeConfigLive(t *testing.T) {
-	writeCapture := &CaptureWriterProvider{}
-	testManager, err := apiconfig.LoadConfigManager(rawbytes.Provider([]byte(testYaml)),
-		writeCapture)
-	require.NoError(t, err)
-	// Set height from 1 to 1000 in succession:
-	for i := 1; i <= 1000; i++ {
-		println("Setting height to", i)
-		err = testManager.SetHeight(int64(i))
-		require.NoError(t, err)
-	}
-
-	// wait for .1 second
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, int64(1000), testManager.GetHeight())
 }
 
 // We cannot write anything to stdout when loading config or we break cosmovisor!
