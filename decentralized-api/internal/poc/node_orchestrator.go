@@ -212,17 +212,26 @@ func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Respo
 	return sendPostRequest(o.HTTPClient, stopUrl, nil)
 }
 
+// TODO choose model, instead of pick any model
 func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.Response, error) {
 	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
 	if err != nil {
 		return nil, err
 	}
 
-	model := node.Models[0]
+	var anyModel string
+	var anyModelArgs []string
+
+	for model, args := range node.Models {
+		anyModel = model
+		anyModelArgs = args.Args
+		break
+	}
+
 	inferenceUpDto := InferenceUpDto{
-		Model: model,
+		Model: anyModel,
 		Dtype: "float16",
-		Args:  []string{"--enforce-eager"},
+		Args:  anyModelArgs,
 	}
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
