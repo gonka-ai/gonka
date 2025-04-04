@@ -155,3 +155,11 @@ type SetNodesActualStatusCommand struct {
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
+
+type InferenceUpAllCommand struct {
+	Response chan bool
+}
+
+func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}

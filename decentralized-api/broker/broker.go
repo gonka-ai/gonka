@@ -119,6 +119,8 @@ func (b *Broker) processCommands() {
 			b.reconcileNodes(command)
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
+		case InferenceUpAllCommand:
+			b.inferenceUpAll(command)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -632,4 +634,31 @@ func toStatus(response StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
+}
+
+func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
+	for _, node := range b.nodes {
+		client, err := NewNodeClient(&node.Node)
+		if err != nil {
+			logging.Error("Failed to create client for inference up", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		err = client.Stop()
+		if err != nil {
+			logging.Error("Failed to stop node for inference up", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		err = client.InferenceUp()
+		if err != nil {
+			logging.Error("Failed to bring up inference", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		}
+	}
+
+	command.Response <- true
 }

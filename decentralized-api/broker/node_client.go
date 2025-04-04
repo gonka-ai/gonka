@@ -19,6 +19,7 @@ const (
 	stopPath        = "/api/v1/stop"
 	nodeStatePath   = "/api/v1/state"
 	powStatusPath   = "/api/v1/pow/status"
+	inferenceUpPath = "/api/v1/inference/up"
 )
 
 type InferenceNodeClient struct {
@@ -284,4 +285,32 @@ func (api *InferenceNodeClient) InferenceHealth() (bool, error) {
 	}
 
 	return true, nil
+}
+
+type inferenceUpDto struct {
+	Model string   `json:"model"`
+	Dtype string   `json:"dtype"`
+	Args  []string `json:"additional_args"`
+}
+
+func (api *InferenceNodeClient) InferenceUp() error {
+	inferenceUpUrl, err := url.JoinPath(api.node.PoCUrl(), inferenceUpPath)
+	if err != nil {
+		return err
+	}
+
+	model := api.node.Models[0]
+	dto := inferenceUpDto{
+		Model: model,
+		Dtype: "float16",
+		Args:  []string{"--enforce-eager"},
+	}
+
+	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+
+	_, err = utils.SendPostJsonRequest(&api.client, inferenceUpUrl, dto)
+	if err != nil {
+		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+	}
+	return err
 }
