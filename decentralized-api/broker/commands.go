@@ -1,6 +1,9 @@
 package broker
 
-import "decentralized-api/apiconfig"
+import (
+	"decentralized-api/apiconfig"
+	"github.com/productscience/inference/x/inference/types"
+)
 
 type Command interface {
 	GetResponseChannelCapacity() int
@@ -133,5 +136,22 @@ func NewStartTrainingCommand(masterNodeAddress string, worldSize int, nodeRanks 
 }
 
 func (c StartTrainingCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+type ReconcileNodesCommand struct {
+	Response chan bool
+}
+
+func (c ReconcileNodesCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+type SetNodesActualStatusCommand struct {
+	NodeIdToStatus map[string]types.HardwareNodeStatus
+	Response       chan bool
+}
+
+func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }

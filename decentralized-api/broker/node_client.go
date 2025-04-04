@@ -192,10 +192,10 @@ func (api *InferenceNodeClient) Stop() error {
 type MLNodeState string
 
 const (
-	POW       MLNodeState = "POW"
-	INFERENCE MLNodeState = "INFERENCE"
-	TRAIN     MLNodeState = "TRAIN"
-	STOPPED   MLNodeState = "STOPPED"
+	MlNodeState_POW       MLNodeState = "POW"
+	MlNodeState_INFERENCE MLNodeState = "INFERENCE"
+	MlNodeState_TRAIN     MLNodeState = "TRAIN"
+	MlNodeState_STOPPED   MLNodeState = "STOPPED"
 )
 
 type StateResponse struct {
