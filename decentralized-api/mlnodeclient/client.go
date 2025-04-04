@@ -1,10 +1,9 @@
-package broker
+package mlnodeclient
 
 import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
@@ -23,20 +22,19 @@ const (
 )
 
 type InferenceNodeClient struct {
-	node   *Node
-	client http.Client
+	pocUrl       string
+	inferenceUrl string
+	client       http.Client
 }
 
-func NewNodeClient(node *Node) (*InferenceNodeClient, error) {
-	if node == nil {
-		return nil, errors.New("node is nil")
-	}
+func NewNodeClient(pocUrl string, inferenceUrl string) *InferenceNodeClient {
 	return &InferenceNodeClient{
-		node: node,
+		pocUrl:       pocUrl,
+		inferenceUrl: inferenceUrl,
 		client: http.Client{
 			Timeout: 5 * time.Minute,
 		},
-	}, nil
+	}
 }
 
 type StartTraining struct {
@@ -135,7 +133,7 @@ const (
 )
 
 func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
@@ -163,7 +161,7 @@ func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, w
 }
 
 func (api *InferenceNodeClient) GetTrainingStatus() error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
@@ -177,7 +175,7 @@ func (api *InferenceNodeClient) GetTrainingStatus() error {
 }
 
 func (api *InferenceNodeClient) Stop() error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), stopPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, stopPath)
 	if err != nil {
 		return err
 	}
@@ -204,7 +202,7 @@ type StateResponse struct {
 }
 
 func (api *InferenceNodeClient) NodeState() (*StateResponse, error) {
-	requestURL, err := url.JoinPath(api.node.PoCUrl(), nodeStatePath)
+	requestURL, err := url.JoinPath(api.pocUrl, nodeStatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +243,7 @@ type PowStatusResponse struct {
 }
 
 func (api *InferenceNodeClient) GetPowStatus() (*PowStatusResponse, error) {
-	requestURL, err := url.JoinPath(api.node.PoCUrl(), powStatusPath)
+	requestURL, err := url.JoinPath(api.pocUrl, powStatusPath)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +267,7 @@ func (api *InferenceNodeClient) GetPowStatus() (*PowStatusResponse, error) {
 }
 
 func (api *InferenceNodeClient) InferenceHealth() (bool, error) {
-	requestURL, err := url.JoinPath(api.node.InferenceUrl(), "/health")
+	requestURL, err := url.JoinPath(api.inferenceUrl, "/health")
 	if err != nil {
 		return false, err
 	}
@@ -293,13 +291,12 @@ type inferenceUpDto struct {
 	Args  []string `json:"additional_args"`
 }
 
-func (api *InferenceNodeClient) InferenceUp() error {
-	inferenceUpUrl, err := url.JoinPath(api.node.PoCUrl(), inferenceUpPath)
+func (api *InferenceNodeClient) InferenceUp(model string) error {
+	inferenceUpUrl, err := url.JoinPath(api.inferenceUrl, inferenceUpPath)
 	if err != nil {
 		return err
 	}
 
-	model := api.node.Models[0]
 	dto := inferenceUpDto{
 		Model: model,
 		Dtype: "float16",
@@ -313,4 +310,18 @@ func (api *InferenceNodeClient) InferenceUp() error {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
 	}
 	return err
+}
+
+func (api *InferenceNodeClient) InitGenerate() error {
+	requestUrl, err := url.JoinPath(api.pocUrl, "/api/v1/init/generate")
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
 	"reflect"
@@ -56,14 +57,14 @@ type NodeWithState struct {
 }
 
 type NodeState struct {
-	LockCount       int                       `json:"lock_count"`
-	Operational     bool                      `json:"operational"`
-	FailureReason   string                    `json:"failure_reason"`
-	TrainingTaskId  uint64                    `json:"training_task_id"`
-	Status          types.HardwareNodeStatus  `json:"status"`
-	StatusTimestamp time.Time                 `json:"status_timestamp"`
-	IntendedStatus  *types.HardwareNodeStatus `json:"intended_status,omitempty"`
-	LastStateChange time.Time                 `json:"last_state_change"`
+	LockCount       int                      `json:"lock_count"`
+	Operational     bool                     `json:"operational"`
+	FailureReason   string                   `json:"failure_reason"`
+	TrainingTaskId  uint64                   `json:"training_task_id"`
+	Status          types.HardwareNodeStatus `json:"status"`
+	StatusTimestamp time.Time                `json:"status_timestamp"`
+	IntendedStatus  types.HardwareNodeStatus `json:"intended_status,omitempty"`
+	LastStateChange time.Time                `json:"last_state_change"`
 }
 
 func (s *NodeState) UpdateStatus(status types.HardwareNodeStatus, time time.Time) {
@@ -136,6 +137,8 @@ func (b *Broker) processCommands() {
 			b.setNodesActualStatus(command)
 		case InferenceUpAllCommand:
 			b.inferenceUpAll(command)
+		case StartPocCommand:
+			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -184,12 +187,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 		Hardware:      command.Node.Hardware,
 	}
 
-	client, err := NewNodeClient(&node)
-	if err != nil {
-		logging.Error("Error creating node client", types.Nodes, "error", err)
-		command.Response <- nil
-		return
-	}
+	client := newNodeClient(&node)
 
 	state, err := client.NodeState()
 	if err != nil {
@@ -207,11 +205,15 @@ func (b *Broker) registerNode(command RegisterNode) {
 			FailureReason:   "",
 			Status:          status,
 			StatusTimestamp: time.Now(),
-			IntendedStatus:  &status,
+			IntendedStatus:  status,
 		},
 	}
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
 	command.Response <- &command.Node
+}
+
+func newNodeClient(node *Node) *mlnodeclient.InferenceNodeClient {
+	return mlnodeclient.NewNodeClient(node.PoCUrl(), node.InferenceUrl())
 }
 
 func (b *Broker) removeNode(command RemoveNode) {
@@ -397,17 +399,9 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 			return
 		}
 
-		client, err := NewNodeClient(&node.Node)
-		if err != nil {
-			// FIXME: think how this will be retried,
-			// 	because you might have started the training on some nodes by this moment
-			logging.Error("Error creating node client", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
+		client := mlnodeclient.NewNodeClient(node.Node.PoCUrl(), node.Node.InferenceUrl())
 
-		// TODO: check node status before hand. Maybe it's already doing the training??
-		err = client.Stop()
+		err := client.Stop()
 		if err != nil {
 			logging.Error("Error stopping training", types.Nodes, "error", err)
 			command.Response <- false
@@ -514,11 +508,9 @@ func nodeReconciliationWorker(broker *Broker) {
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	for nodeId, node := range b.nodes {
-		if node.State.IntendedStatus == nil {
-			continue // No intended state set, skip reconciliation
-		}
+		// TODO: maybe also skip if status is unknown or smth?
 
-		if node.State.Status == *node.State.IntendedStatus {
+		if node.State.Status == node.State.IntendedStatus {
 			// TODO: check inference is actually alive???
 			continue // Node is already in the intended state
 		}
@@ -528,21 +520,16 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			"current_state", node.State.Status.String(),
 			"intended_state", node.State.IntendedStatus.String())
 
-		if *node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
 				types.Nodes, "node_id", nodeId)
 			continue
 		}
 
-		client, err := NewNodeClient(&node.Node)
-		if err != nil {
-			logging.Error("Failed to create client for reconciliation", types.Nodes,
-				"node_id", nodeId, "error", err)
-			continue
-		}
+		client := newNodeClient(&node.Node)
 
 		logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-		err = client.Stop()
+		err := client.Stop()
 		if err != nil {
 			logging.Error("Failed to stop node during reconciliation", types.Nodes,
 				"node_id", nodeId, "error", err)
@@ -640,12 +627,7 @@ func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
 		return nil, errors.New("node not found")
 	}
 
-	client, err := NewNodeClient(&node.Node)
-	if err != nil {
-		logging.Error("Failed to create client for node status query", types.Nodes,
-			"node_id", nodeId, "error", err)
-		return nil, err
-	}
+	client := newNodeClient(&node.Node)
 
 	status, err := client.NodeState()
 	if err != nil {
@@ -663,15 +645,15 @@ func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
 	}, nil
 }
 
-func toStatus(response StateResponse) types.HardwareNodeStatus {
+func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	switch response.State {
-	case MlNodeState_POW:
+	case mlnodeclient.MlNodeState_POW:
 		return types.HardwareNodeStatus_POC
-	case MlNodeState_INFERENCE:
+	case mlnodeclient.MlNodeState_INFERENCE:
 		return types.HardwareNodeStatus_INFERENCE
-	case MlNodeState_TRAIN:
+	case mlnodeclient.MlNodeState_TRAIN:
 		return types.HardwareNodeStatus_TRAINING
-	case MlNodeState_STOPPED:
+	case mlnodeclient.MlNodeState_STOPPED:
 		return types.HardwareNodeStatus_STOPPED
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
@@ -680,31 +662,31 @@ func toStatus(response StateResponse) types.HardwareNodeStatus {
 
 func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 	for _, node := range b.nodes {
-		client, err := NewNodeClient(&node.Node)
-		if err != nil {
-			logging.Error("Failed to create client for inference up", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-			continue
-		}
+		client := newNodeClient(&node.Node)
 
-		err = client.Stop()
+		err := client.Stop()
 		if err != nil {
 			logging.Error("Failed to stop node for inference up", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
 			continue
 		} else {
-			status := types.HardwareNodeStatus_STOPPED
-			node.State.IntendedStatus = &status
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 			node.State.Status = types.HardwareNodeStatus_STOPPED
 		}
 
-		err = client.InferenceUp()
+		if len(node.Node.Models) == 0 {
+			logging.Error("No models found for node, can't inference up", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		model := node.Node.Models[0]
+		err = client.InferenceUp(model)
 		if err != nil {
 			logging.Error("Failed to bring up inference", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
 		} else {
-			intendedStatus := types.HardwareNodeStatus_INFERENCE
-			node.State.IntendedStatus = &intendedStatus
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 			node.State.Status = types.HardwareNodeStatus_INFERENCE
 		}
 	}

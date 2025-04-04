@@ -175,6 +175,14 @@ func (o *NodePoCOrchestrator) StopPoC() {
 		return
 	}
 
+	command := broker.NewInferenceUpAllCommand()
+	err = o.nodeBroker.QueueMessage(command)
+	if err != nil {
+		logging.Error("Failed to send inference up command", types.PoC, "error", err)
+		return
+	}
+	_ = <-command.Response
+
 	for _, n := range nodes {
 		_, err := o.sendStopRequest(n.Node)
 		if err != nil {

@@ -116,10 +116,6 @@ func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
-type StartPoC struct {
-	Response chan bool
-}
-
 type StartTrainingCommand struct {
 	masterNodeAddress string
 	worldSize         int
@@ -166,6 +162,12 @@ func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
 
 type InferenceUpAllCommand struct {
 	Response chan bool
+}
+
+func NewInferenceUpAllCommand() InferenceUpAllCommand {
+	return InferenceUpAllCommand{
+		Response: make(chan bool, 2),
+	}
 }
 
 func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
