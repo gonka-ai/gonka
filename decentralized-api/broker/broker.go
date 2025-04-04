@@ -486,43 +486,41 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			continue // No intended state set, skip reconciliation
 		}
 
-		// Check if actual state matches intended state
-		if node.State.Status != *node.State.IntendedStatus {
-			logging.Info("Node state mismatch detected", types.Nodes,
-				"node_id", nodeId,
-				"current_state", node.State.Status.String(),
-				"intended_state", node.State.IntendedStatus.String())
-
-			// Only handle INFERENCE state reconciliation for now
-			if *node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
-				logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
-					types.Nodes, "node_id", nodeId)
-				continue
-			}
-
-			// Try to reconcile node state
-			client, err := NewNodeClient(&node.Node)
-			if err != nil {
-				logging.Error("Failed to create client for reconciliation", types.Nodes,
-					"node_id", nodeId, "error", err)
-				continue
-			}
-
-			// Stop any existing processes and restart inference
-			logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-			err = client.Stop()
-			if err != nil {
-				logging.Error("Failed to stop node during reconciliation", types.Nodes,
-					"node_id", nodeId, "error", err)
-				continue
-			}
-
-			// Node is operational again
-			node.State.Operational = true
-			node.State.FailureReason = ""
-
-			logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "node_id", nodeId)
+		if node.State.Status == *node.State.IntendedStatus {
+			// TODO: check inference is actually alive???
+			continue // Node is already in the intended state
 		}
+
+		logging.Info("Node state mismatch detected", types.Nodes,
+			"node_id", nodeId,
+			"current_state", node.State.Status.String(),
+			"intended_state", node.State.IntendedStatus.String())
+
+		if *node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+			logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
+				types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		client, err := NewNodeClient(&node.Node)
+		if err != nil {
+			logging.Error("Failed to create client for reconciliation", types.Nodes,
+				"node_id", nodeId, "error", err)
+			continue
+		}
+
+		logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
+		err = client.Stop()
+		if err != nil {
+			logging.Error("Failed to stop node during reconciliation", types.Nodes,
+				"node_id", nodeId, "error", err)
+			continue
+		}
+
+		node.State.Operational = true
+		node.State.FailureReason = ""
+
+		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "node_id", nodeId)
 	}
 
 	command.Response <- true
