@@ -84,7 +84,7 @@ var DevTestParams = Params{
 }
 
 func (api *InferenceNodeClient) InitGenerate(dto InitDto) error {
-	requestUrl, err := url.JoinPath(api.pocUrl, "/api/v1/init/generate")
+	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
 	}

@@ -17,17 +17,12 @@ import (
 
 const (
 	StopAllPath       = "/api/v1/stop"
-	InitGeneratePath  = "/api/v1/pow/init/generate"
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
 	PoCStopPath       = "/api/v1/pow/stop"
 	InferenceUpPath   = "/api/v1/inference/up"
 	InferenceDownPath = "/api/v1/inference/down"
 	PoCBatchesPath    = "/v1/poc-batches"
-
-	DefaultRTarget        = 1.390051443
-	DefaultBatchSize      = 8000
-	DefaultFraudThreshold = 0.01
 )
 
 type NodePoCOrchestrator struct {

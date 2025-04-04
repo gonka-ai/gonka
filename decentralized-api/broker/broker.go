@@ -187,25 +187,14 @@ func (b *Broker) registerNode(command RegisterNode) {
 		Hardware:      command.Node.Hardware,
 	}
 
-	client := newNodeClient(&node)
-
-	state, err := client.NodeState()
-	if err != nil {
-		logging.Error("Error getting node state", types.Nodes, "error", err)
-		command.Response <- nil
-		return
-	}
-
-	status := toStatus(*state)
-
 	b.nodes[command.Node.Id] = &NodeWithState{
 		Node: node,
 		State: NodeState{
 			LockCount:       0,
 			FailureReason:   "",
-			Status:          status,
+			Status:          types.HardwareNodeStatus_UNKNOWN,
 			StatusTimestamp: time.Now(),
-			IntendedStatus:  status,
+			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
 		},
 	}
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
