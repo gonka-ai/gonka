@@ -173,27 +173,45 @@ func (b *Broker) registerNode(command RegisterNode) {
 	b.curMaxNodesNum.Add(1)
 	curNum := b.curMaxNodesNum.Load()
 
+	node := Node{
+		Host:          command.Node.Host,
+		InferencePort: command.Node.InferencePort,
+		PoCPort:       command.Node.PoCPort,
+		Models:        command.Node.Models,
+		Id:            command.Node.Id,
+		MaxConcurrent: command.Node.MaxConcurrent,
+		NodeNum:       curNum,
+		Hardware:      command.Node.Hardware,
+	}
+
+	client, err := NewNodeClient(&node)
+	if err != nil {
+		logging.Error("Error creating node client", types.Nodes, "error", err)
+		command.Response <- nil
+		return
+	}
+
+	state, err := client.NodeState()
+	if err != nil {
+		logging.Error("Error getting node state", types.Nodes, "error", err)
+		command.Response <- nil
+		return
+	}
+
+	status := toStatus(*state)
+
 	b.nodes[command.Node.Id] = &NodeWithState{
-		Node: Node{
-			Host:          command.Node.Host,
-			InferencePort: command.Node.InferencePort,
-			PoCPort:       command.Node.PoCPort,
-			Models:        command.Node.Models,
-			Id:            command.Node.Id,
-			MaxConcurrent: command.Node.MaxConcurrent,
-			NodeNum:       curNum,
-			Hardware:      command.Node.Hardware,
-		},
+		Node: node,
 		State: NodeState{
-			LockCount:     0,
-			FailureReason: "",
-			// FIXME
-			// 	PRTODO: !!! it can be different!, query the node for it's status
-			Status: types.HardwareNodeStatus_INFERENCE,
+			LockCount:       0,
+			FailureReason:   "",
+			Status:          status,
+			StatusTimestamp: time.Now(),
+			IntendedStatus:  &status,
 		},
 	}
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
-	command.Response <- command.Node
+	command.Response <- &command.Node
 }
 
 func (b *Broker) removeNode(command RemoveNode) {

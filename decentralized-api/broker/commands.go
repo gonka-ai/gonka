@@ -31,7 +31,7 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 
 type RegisterNode struct {
 	Node     apiconfig.InferenceNodeConfig
-	Response chan apiconfig.InferenceNodeConfig
+	Response chan *apiconfig.InferenceNodeConfig
 }
 
 func (r RegisterNode) GetResponseChannelCapacity() int {
