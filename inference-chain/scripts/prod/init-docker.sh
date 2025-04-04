@@ -119,9 +119,9 @@ echo "Setting up overrides for config.toml"
     $APP_NAME config set config "$config_key" "$value" --skip-validate
  done
 # Check and apply config overrides if present
-if [ -f "config_override.toml" ]; then
-    echo "Applying config overrides from config_override.toml"
-    $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
+if [ -f "config_overrides.toml" ]; then
+    echo "Applying config overrides from config_overrides.toml"
+    $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_overrides.toml
 fi
 
 echo "Creating account for $KEY_NAME"
