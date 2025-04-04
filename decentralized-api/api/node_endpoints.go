@@ -61,14 +61,22 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
 		node := *n.Node
+
+		models := make(map[string]apiconfig.ModelConfig)
+		for model, cfg := range node.Models {
+			models[model] = apiconfig.ModelConfig{Args: cfg.Args}
+		}
+
 		iNodes[i] = apiconfig.InferenceNodeConfig{
-			Host:          node.Host,
-			InferencePort: node.InferencePort,
-			PoCPort:       node.PoCPort,
-			Models:        node.Models,
-			Id:            node.Id,
-			MaxConcurrent: node.MaxConcurrent,
-			Hardware:      node.Hardware,
+			Host:             node.Host,
+			InferenceSegment: node.InferenceSegment,
+			InferencePort:    node.InferencePort,
+			PoCSegment:       node.PoCSegment,
+			PoCPort:          node.PoCPort,
+			Models:           models,
+			Id:               node.Id,
+			MaxConcurrent:    node.MaxConcurrent,
+			Hardware:         node.Hardware,
 		}
 	}
 	err = config.SetNodes(iNodes)
@@ -126,8 +134,8 @@ func addNode(
 		return apiconfig.InferenceNodeConfig{}, true
 	}
 	node := <-response
-	config := configManager.GetConfig()
-	newNodes := append(config.Nodes, node)
+	nodes := configManager.GetNodes()
+	newNodes := append(nodes, node)
 	err = configManager.SetNodes(newNodes)
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err)

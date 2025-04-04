@@ -103,6 +103,14 @@ func TestGenesis(t *testing.T) {
 				ParticipantId:    "1",
 			},
 		},
+		PartialUpgradeList: []types.PartialUpgrade{
+			{
+				Height: 0,
+			},
+			{
+				Height: 1,
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -143,5 +151,6 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
 	require.ElementsMatch(t, genesisState.InferenceValidationDetailsList, got.InferenceValidationDetailsList)
 	require.ElementsMatch(t, genesisState.EpochPerformanceSummaryList, got.EpochPerformanceSummaryList)
+	require.ElementsMatch(t, genesisState.PartialUpgradeList, got.PartialUpgradeList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

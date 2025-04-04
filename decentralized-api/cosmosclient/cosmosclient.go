@@ -35,12 +35,12 @@ type InferenceCosmosClient struct {
 	Context context.Context
 }
 
-func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.Config) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
-	logging.Info("Connecting to cosmos sdk node", types.System, "config", config, "height", config.CurrentHeight)
+	logging.Info("Connecting to cosmos sdk node", types.System, "config", config, "height", config.GetHeight())
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.GetChainNodeConfig())
 		if err == nil {
 			return client, nil
 		}
@@ -324,6 +324,10 @@ func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse,
 
 func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
 	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
+}
+
+func (icc *InferenceCosmosClient) GetPartialUpgrades() (*types.QueryAllPartialUpgradeResponse, error) {
+	return icc.NewInferenceQueryClient().PartialUpgradeAll(icc.Context, &types.QueryAllPartialUpgradeRequest{})
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {

@@ -1,10 +1,14 @@
-import com.productscience.getLocalInferencePairs
-import com.productscience.inferenceConfig
-import com.productscience.initialize
+import com.productscience.*
+import com.productscience.data.CreatePartialUpgrade
+import com.productscience.data.GovernanceProposal
+import com.productscience.data.InferenceNode
+import com.productscience.data.TxResponse
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
+import java.util.concurrent.TimeUnit
 
 val minDeposit = 10000000L
 
@@ -21,26 +25,75 @@ class UpgradeTests : TestermintTest() {
         val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
         val upgradeBlock = height + 15
         Logger.info("Upgrade block: $upgradeBlock", "")
-        val response = genesis.node.submitUpgradeProposal(
+        val response = genesis.submitUpgradeProposal(
             title = "v0.0.2",
             description = "For testing",
             binaryPath = path,
             apiBinaryPath = apiPath,
-            height = upgradeBlock
+            height = upgradeBlock,
+            nodeVersion = "",
         )
         val proposalId = response.getProposalId()
         if (proposalId == null) {
             assert(false)
             return
         }
-        val depositResponse = genesis.node.makeGovernanceDeposit(proposalId, minDeposit)
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
         println("DEPOSIT:\n" + depositResponse)
         pairs.forEach {
-            val response2 = it.node.voteOnProposal(proposalId, "yes")
+            val response2 = it.voteOnProposal(proposalId, "yes")
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
         genesis.node.waitForMinimumBlock(upgradeBlock)
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    fun partialUpgrade() {
+        val (cluster, genesis) = initCluster(reboot = true)
+        val effectiveHeight = genesis.getCurrentBlockHeight() + 40
+        val newResponse = "Only a short response"
+        val newSegment = "/newVersion"
+        val newVersion = "v1"
+        cluster.allPairs.forEach {
+            it.mock?.setInferenceResponse(
+                defaultInferenceResponseObject.withResponse(newResponse),
+                segment = newSegment
+            )
+            it.api.addNode(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
+                 inferenceSegment = newSegment, version = newVersion, id = "v1Node"
+            ))
+        }
+        val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
+        assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
+        val result: TxResponse = genesis.submitGovernanceProposal(
+            GovernanceProposal(
+                metadata = "https://www.yahoo.com",
+                deposit = "${minDeposit}${inferenceConfig.denom}",
+                title = "Test Proposal",
+                summary = "Test Proposal Summary",
+                expedited = false,
+                listOf(
+                    CreatePartialUpgrade(
+                        height = effectiveHeight.toString(),
+                        nodeVersion = newVersion,
+                        apiBinariesJson = ""
+                    )
+                )
+            )
+        )
+        val proposalId = result.getProposalId()!!
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
+        Logger.info("DEPOSIT:\n{}", depositResponse)
+        cluster.joinPairs.forEach {
+            val response2 = it.voteOnProposal(proposalId, "yes")
+            assertThat(response2).isNotNull()
+            println("VOTE:\n" + response2)
+        }
+        genesis.node.waitForMinimumBlock(effectiveHeight + 10)
+        val newResult = genesis.makeInferenceRequest(inferenceRequest)
+        assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
 
     fun getBinaryPath(path: String, sha: String): String {

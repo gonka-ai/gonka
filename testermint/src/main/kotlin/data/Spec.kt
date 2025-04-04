@@ -3,6 +3,7 @@ package com.productscience.data
 import com.google.gson.FieldNamingStrategy
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import org.tinylog.kotlin.Logger
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty1
 import kotlin.reflect.jvm.javaField
@@ -20,7 +21,13 @@ class Spec<T : Any>(private val constraints: MutableMap<KProperty1<T, *>, Any?>,
                     (expectedValue as Spec<Any>).matches(actualValue ?: return false)
                 }
 
-                else -> actualValue == expectedValue
+                else -> {
+                    val isMatch = actualValue == expectedValue
+                    if (!isMatch) {
+                        Logger.debug("Mismatch for ${property.name}: expected $expectedValue, got $actualValue")
+                    }
+                    isMatch
+                }
             }
         }
     }

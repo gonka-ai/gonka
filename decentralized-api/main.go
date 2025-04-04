@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
+	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
 	"encoding/json"
@@ -48,14 +49,14 @@ func main() {
 		"cosmos",
 		10,
 		5*time.Second,
-		config.GetConfig(),
+		config,
 	)
 	if err != nil {
 		panic(err)
 	}
 
 	nodeBroker := broker.NewBroker(recorder)
-	nodes := config.GetConfig().Nodes
+	nodes := config.GetNodes()
 	for _, node := range nodes {
 		server.LoadNodeToBroker(nodeBroker, &node)
 	}
@@ -91,17 +92,19 @@ func main() {
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
 		nodeBroker,
-		config.GetConfig().Api.PoCCallbackUrl,
-		config.GetConfig().ChainNode.Url,
+		config.GetApiConfig().PoCCallbackUrl,
+		config.GetChainNodeConfig().Url,
 		recorder,
 		&params.Params,
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, *recorder)
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
 	go listener.Start(context.Background())
 
-	server.StartInferenceServerWrapper(nodeBroker, recorder, config)
+	s := server.NewServer(nodeBroker, config, validator, recorder)
+	s.Start()
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {

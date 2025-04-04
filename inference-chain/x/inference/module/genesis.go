@@ -58,6 +58,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	for _, elem := range genState.EpochPerformanceSummaryList {
 		k.SetEpochPerformanceSummary(ctx, elem)
 	}
+	// Set all the partialUpgrade
+	for _, elem := range genState.PartialUpgradeList {
+		k.SetPartialUpgrade(ctx, elem)
+	}
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -139,6 +143,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.InferenceTimeoutList = k.GetAllInferenceTimeout(ctx)
 	genesis.InferenceValidationDetailsList = k.GetAllInferenceValidationDetails(ctx)
 	genesis.EpochPerformanceSummaryList = k.GetAllEpochPerformanceSummary(ctx)
+	genesis.PartialUpgradeList = k.GetAllPartialUpgrade(ctx)
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis

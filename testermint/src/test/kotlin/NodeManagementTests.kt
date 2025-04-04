@@ -1,4 +1,5 @@
 import com.productscience.data.InferenceNode
+import com.productscience.data.ModelConfig
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -19,7 +20,11 @@ class NodeManagementTests : TestermintTest() {
         val (_, genesis) = initCluster()
         val node = genesis.api.addNode(InferenceNode(
             host = "http://localhost:8080",
-            models = listOf("model1"),
+            models = mapOf(
+                        "model1" to ModelConfig(
+                            args = emptyList()
+                        )
+                    ),
             id = "node2",
             pocPort = 100,
             inferencePort = 200,
@@ -37,7 +42,11 @@ class NodeManagementTests : TestermintTest() {
             host = "http://localhost:8080",
             pocPort = 100,
             inferencePort = 200,
-            models = listOf("model1"),
+            models = mapOf(
+                        "model1" to ModelConfig(
+                            args = emptyList()
+                        )
+                    ),
             id = "nodeToRemove",
             maxConcurrent = 1
         ))
@@ -59,14 +68,22 @@ class NodeManagementTests : TestermintTest() {
             host = "http://localhost:8080",
             pocPort = 100,
             inferencePort = 200,
-            models = listOf("model1"),
+            models = mapOf(
+                        "model1" to ModelConfig(
+                            args = emptyList()
+                        )
+                    ),
             id = node1Name,
             maxConcurrent = 1
         ), InferenceNode(
             host = "http://localhost:8080",
             pocPort = 100,
             inferencePort = 200,
-            models = listOf("model1"),
+            models = mapOf(
+                        "model1" to ModelConfig(
+                            args = emptyList()
+                        )
+                    ),
             id = node2Name,
             maxConcurrent = 1
         )))

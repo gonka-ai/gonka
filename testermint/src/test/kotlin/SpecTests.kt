@@ -1,8 +1,12 @@
 import com.productscience.data.TopMinersResponse
 import com.productscience.data.spec
 import com.productscience.cosmosJson
+import com.productscience.data.CreatePartialUpgrade
 import com.productscience.data.Decimal
+import com.productscience.data.camelToSnake
+import com.productscience.gsonCamelCase
 import com.productscience.inferenceConfig
+import com.productscience.openAiJson
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 
@@ -36,9 +40,17 @@ class DecimalTests {
         assertThat(decimal.value).isEqualTo(12345)
         assertThat(decimal.exponent).isEqualTo(-3)
     }
-
-
 }
+
+@Tag("exclude")
+class TxMessageSerializationTests {
+    @Test
+    fun `simple message`() {
+        val message = CreatePartialUpgrade("creator", "50", "v1", "")
+        println(gsonCamelCase.toJson(message))
+    }
+}
+
 
 @Tag("exclude")
 class SpecTests {

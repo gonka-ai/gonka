@@ -16,6 +16,7 @@ import "inference/inference/top_miner.proto";
 import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
+import "inference/inference/partial_upgrade.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -36,5 +37,6 @@ message GenesisState {
   repeated InferenceTimeout           inference_timeout_list         = 11 [(gogoproto.nullable) = false] ;
   repeated InferenceValidationDetails inferenceValidationDetailsList = 12 [(gogoproto.nullable) = false] ;
   repeated EpochPerformanceSummary    epochPerformanceSummaryList    = 13 [(gogoproto.nullable) = false] ;
+  repeated PartialUpgrade             partialUpgradeList             = 14 [(gogoproto.nullable) = false] ;
 }
 
