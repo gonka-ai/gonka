@@ -8,6 +8,5 @@ type Server struct {
 
 func NewServer() *Server {
 	e := echo.New()
-	e.POST("")
 	return &Server{e}
 }
