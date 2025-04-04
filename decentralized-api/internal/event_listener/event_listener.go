@@ -57,7 +57,7 @@ func NewEventListener(
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
-	websocketUrl := getWebsocketUrl(el.configManager.GetConfig())
+	websocketUrl := getWebsocketUrl(el.configManager.GetChainNodeConfig().Url)
 	logging.Info("Connecting to websocket at", types.EventProcessing, "url", websocketUrl)
 
 	ws, _, err := websocket.DefaultDialer.Dial(websocketUrl, nil)
@@ -123,7 +123,10 @@ func (el *EventListener) processEvents(ctx context.Context, eventChan chan *chai
 }
 
 func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan chan *chainevents.JSONRPCResponse) {
-	worker(ctx, blockEventChan, el.processEvent, "process_block_events")
+	const numWorkers = 2
+	for i := 0; i < numWorkers; i++ {
+		worker(ctx, blockEventChan, el.processEvent, "process_block_events")
+	}
 }
 
 func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan chan *chainevents.JSONRPCResponse) {
@@ -164,18 +167,19 @@ func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan c
 			}
 
 			if event.Result.Data.Type == newBlockEventType {
+				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
 				blockEventChan <- &event
 				continue
 			}
 
-			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type)
+			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
 			eventChan <- &event
 		}
 	}
 }
 
 func (el *EventListener) startSyncStatusChecker() {
-	chainNodeUrl := el.configManager.GetConfig().ChainNode.Url
+	chainNodeUrl := el.configManager.GetChainNodeConfig().Url
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -217,8 +221,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse) {
 }
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
-	currentConfig := el.configManager.GetConfig()
-	if waitForEventHeight(event, currentConfig) {
+	if waitForEventHeight(event, el.configManager) {
 		return
 	}
 
@@ -241,7 +244,10 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	switch action {
 	case finishInferenceAction:
 		if el.isNodeSynced() {
-			el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
+			el.validator.SampleInferenceToValidate(
+				event.Result.Events["inference_finished.inference_id"],
+				el.transactionRecorder,
+			)
 		}
 	case validationAction:
 		if el.isNodeSynced() {
@@ -255,15 +261,15 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	}
 }
 
-func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.Config) bool {
+func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.ConfigManager) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
 		logging.Error("Failed to parse height", types.EventProcessing, "error", err)
 		return true
 	}
-	for currentConfig.CurrentHeight < expectedHeight {
-		logging.Info("Height race condition! Waiting for height to catch up", types.EventProcessing, "currentHeight", currentConfig.CurrentHeight, "expectedHeight", expectedHeight)
+	for currentConfig.GetHeight() < expectedHeight {
+		logging.Info("Height race condition! Waiting for height to catch up", types.EventProcessing, "currentHeight", currentConfig.GetHeight(), "expectedHeight", expectedHeight, "id", event.ID)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false

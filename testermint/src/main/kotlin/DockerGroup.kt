@@ -5,6 +5,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.Consumer.Companion.create
 import com.productscience.data.UnfundedInferenceParticipant
 import org.tinylog.Logger
+import java.io.File
 import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -212,7 +213,8 @@ fun initCluster(
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
-    val cluster = setupLocalCluster(joinCount, config, reboot)
+    val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
+    val cluster = setupLocalCluster(joinCount, config, reboot || rebootFlagOn)
     Thread.sleep(50000)
     try {
         initialize(cluster.allPairs)

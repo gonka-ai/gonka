@@ -124,11 +124,11 @@ func TestConfigLoad(t *testing.T) {
 	}
 	err := testManager.Load()
 	require.NoError(t, err)
-	require.Equal(t, 8080, testManager.GetConfig().Api.Port)
-	require.Equal(t, "http://join1-node:26657", testManager.GetConfig().ChainNode.Url)
-	require.Equal(t, "join1", testManager.GetConfig().ChainNode.AccountName)
-	require.Equal(t, "test", testManager.GetConfig().ChainNode.KeyringBackend)
-	require.Equal(t, "/root/.inference", testManager.GetConfig().ChainNode.KeyringDir)
+	require.Equal(t, 8080, testManager.GetApiConfig().Port)
+	require.Equal(t, "http://join1-node:26657", testManager.GetChainNodeConfig().Url)
+	require.Equal(t, "join1", testManager.GetChainNodeConfig().AccountName)
+	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
+	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 }
 
 func TestNodeVersion(t *testing.T) {
@@ -167,13 +167,13 @@ func TestConfigLoadEnvOverride(t *testing.T) {
 	os.Setenv("DAPI_API__PUBLIC_URL", "http://public")
 	err := testManager.Load()
 	require.NoError(t, err)
-	require.Equal(t, 9000, testManager.GetConfig().Api.Port)
-	require.Equal(t, "http://join1-node:26658", testManager.GetConfig().ChainNode.Url)
-	require.Equal(t, "join2", testManager.GetConfig().ChainNode.AccountName)
-	require.Equal(t, "http://callback", testManager.GetConfig().Api.PoCCallbackUrl)
-	require.Equal(t, "http://public", testManager.GetConfig().Api.PublicUrl)
-	require.Equal(t, "test", testManager.GetConfig().ChainNode.KeyringBackend)
-	require.Equal(t, "/root/.inference", testManager.GetConfig().ChainNode.KeyringDir)
+	require.Equal(t, 9000, testManager.GetApiConfig().Port)
+	require.Equal(t, "http://join1-node:26658", testManager.GetChainNodeConfig().Url)
+	require.Equal(t, "join2", testManager.GetChainNodeConfig().AccountName)
+	require.Equal(t, "http://callback", testManager.GetApiConfig().PoCCallbackUrl)
+	require.Equal(t, "http://public", testManager.GetApiConfig().PublicUrl)
+	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
+	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 
 }
 
@@ -222,11 +222,11 @@ func TestConfigRoundTrip(t *testing.T) {
 
 	testManager2.SetHeight(50)
 	require.NoError(t, err)
-	require.Equal(t, 8080, testManager2.GetConfig().Api.Port)
-	require.Equal(t, "http://join1-node:26657", testManager2.GetConfig().ChainNode.Url)
-	require.Equal(t, "join1", testManager2.GetConfig().ChainNode.AccountName)
-	require.Equal(t, "test", testManager2.GetConfig().ChainNode.KeyringBackend)
-	require.Equal(t, "/root/.inference", testManager2.GetConfig().ChainNode.KeyringDir)
+	require.Equal(t, 8080, testManager2.GetApiConfig().Port)
+	require.Equal(t, "http://join1-node:26657", testManager2.GetChainNodeConfig().Url)
+	require.Equal(t, "join1", testManager2.GetChainNodeConfig().AccountName)
+	require.Equal(t, "test", testManager2.GetChainNodeConfig().KeyringBackend)
+	require.Equal(t, "/root/.inference", testManager2.GetChainNodeConfig().KeyringDir)
 	require.Equal(t, "v1", testManager2.GetCurrentNodeVersion())
 }
 
