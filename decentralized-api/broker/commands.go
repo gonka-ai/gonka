@@ -3,6 +3,7 @@ package broker
 import (
 	"decentralized-api/apiconfig"
 	"github.com/productscience/inference/x/inference/types"
+	"time"
 )
 
 type Command interface {
@@ -148,8 +149,15 @@ func (c ReconcileNodesCommand) GetResponseChannelCapacity() int {
 }
 
 type SetNodesActualStatusCommand struct {
-	NodeIdToStatus map[string]types.HardwareNodeStatus
-	Response       chan bool
+	StatusUpdates []StatusUpdate
+	Response      chan bool
+}
+
+type StatusUpdate struct {
+	NodeId     string
+	PrevStatus types.HardwareNodeStatus
+	NewStatus  types.HardwareNodeStatus
+	Timestamp  time.Time
 }
 
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {

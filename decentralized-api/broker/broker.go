@@ -61,6 +61,7 @@ type NodeState struct {
 	FailureReason   string                    `json:"failure_reason"`
 	TrainingTaskId  uint64                    `json:"training_task_id"`
 	Status          types.HardwareNodeStatus  `json:"status"`
+	StatusTimestamp time.Time                 `json:"status_timestamp"`
 	IntendedStatus  *types.HardwareNodeStatus `json:"intended_status,omitempty"`
 	LastStateChange time.Time                 `json:"last_state_change"`
 }
@@ -529,14 +530,22 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 }
 
 func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
-	for nodeId, status := range command.NodeIdToStatus {
+	for _, update := range command.StatusUpdates {
+		nodeId := update.NodeId
 		node, exists := b.nodes[nodeId]
 		if !exists {
 			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
 			continue
 		}
 
+		if node.State.StatusTimestamp.After(update.Timestamp) {
+			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		status := update.NewStatus
 		node.State.Status = status
+		node.State.StatusTimestamp = update.Timestamp
 		logging.Info("Set actual status for node", types.Nodes,
 			"node_id", nodeId, "status", status.String())
 	}
@@ -555,10 +564,11 @@ func nodeStatusQueryWorker(broker *Broker) {
 			continue
 		}
 
-		changedStatuses := make(map[string]types.HardwareNodeStatus)
+		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
 			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node.Id)
+			timestamp := time.Now()
 			if err != nil {
 				logging.Error("Failed to queue status query command", types.Nodes,
 					"node_id", nodeResp.Node.Id, "error", err)
@@ -571,13 +581,18 @@ func nodeStatusQueryWorker(broker *Broker) {
 					"prev_status", queryStatusResult.PrevStatus.String(),
 					"new_status", queryStatusResult.NewStatus.String())
 
-				changedStatuses[nodeResp.Node.Id] = queryStatusResult.NewStatus
+				statusUpdates = append(statusUpdates, StatusUpdate{
+					NodeId:     nodeResp.Node.Id,
+					PrevStatus: queryStatusResult.PrevStatus,
+					NewStatus:  queryStatusResult.NewStatus,
+					Timestamp:  timestamp,
+				})
 			}
 		}
 
 		err = broker.QueueMessage(SetNodesActualStatusCommand{
-			NodeIdToStatus: changedStatuses,
-			Response:       make(chan bool, 2),
+			StatusUpdates: statusUpdates,
+			Response:      make(chan bool, 2),
 		})
 		if err != nil {
 			logging.Error("Failed to queue status update command", types.Nodes, "error", err)
