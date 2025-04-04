@@ -650,13 +650,20 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 			logging.Error("Failed to stop node for inference up", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
 			continue
+		} else {
+			status := types.HardwareNodeStatus_STOPPED
+			node.State.IntendedStatus = &status
+			node.State.Status = types.HardwareNodeStatus_STOPPED
 		}
 
 		err = client.InferenceUp()
 		if err != nil {
 			logging.Error("Failed to bring up inference", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
-			continue
+		} else {
+			intendedStatus := types.HardwareNodeStatus_INFERENCE
+			node.State.IntendedStatus = &intendedStatus
+			node.State.Status = types.HardwareNodeStatus_INFERENCE
 		}
 	}
 
