@@ -66,6 +66,20 @@ type NodeState struct {
 	LastStateChange time.Time                 `json:"last_state_change"`
 }
 
+func (s *NodeState) UpdateStatus(status types.HardwareNodeStatus, time time.Time) {
+	s.Status = status
+	s.StatusTimestamp = time
+}
+
+func (s *NodeState) Failure(reason string) {
+	s.FailureReason = reason
+	s.Status = types.HardwareNodeStatus_FAILED
+}
+
+func (s *NodeState) IsOperational() bool {
+	return s.Status != types.HardwareNodeStatus_FAILED
+}
+
 type NodeResponse struct {
 	Node  *Node      `json:"node"`
 	State *NodeState `json:"state"`
@@ -171,9 +185,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			Hardware:      command.Node.Hardware,
 		},
 		State: NodeState{
-			LockCount: 0,
-			// PRTODO: !!! remove operational? now you have statuses!
-			Operational:   true,
+			LockCount:     0,
 			FailureReason: "",
 			// FIXME
 			// 	PRTODO: !!! it can be different!, query the node for it's status
@@ -217,7 +229,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 }
 
 func nodeAvailable(node *NodeWithState, neededModel string) bool {
-	available := node.State.Operational && node.State.LockCount < node.Node.MaxConcurrent
+	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
 	}
@@ -237,8 +249,7 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
 			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			node.State.Operational = false
-			node.State.FailureReason = "Inference failed"
+			node.State.Failure("Inference failed")
 		}
 	}
 	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
@@ -520,8 +531,8 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			continue
 		}
 
-		node.State.Operational = true
-		node.State.FailureReason = ""
+		// node.State.Operational = true
+		// node.State.FailureReason = ""
 
 		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "node_id", nodeId)
 	}
@@ -543,11 +554,9 @@ func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
 			continue
 		}
 
-		status := update.NewStatus
-		node.State.Status = status
-		node.State.StatusTimestamp = update.Timestamp
+		node.State.UpdateStatus(update.NewStatus, update.Timestamp)
 		logging.Info("Set actual status for node", types.Nodes,
-			"node_id", nodeId, "status", status.String())
+			"node_id", nodeId, "status", update.NewStatus.String())
 	}
 
 	command.Response <- true

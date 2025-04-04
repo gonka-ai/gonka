@@ -23,6 +23,7 @@ enum HardwareNodeStatus {
   POC = 2;
   TRAINING = 3;
   STOPPED = 4;
+  FAILED = 5;
 }
 
 message Hardware {
