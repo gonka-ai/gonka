@@ -311,17 +311,3 @@ func (api *InferenceNodeClient) InferenceUp(model string) error {
 	}
 	return err
 }
-
-func (api *InferenceNodeClient) InitGenerate() error {
-	requestUrl, err := url.JoinPath(api.pocUrl, "/api/v1/init/generate")
-	if err != nil {
-		return err
-	}
-
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
