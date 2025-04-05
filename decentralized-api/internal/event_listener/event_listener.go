@@ -50,7 +50,6 @@ func NewEventListener(
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
-	params *types.Params,
 	trainingExecutor *training.Executor,
 ) *EventListener {
 	return &EventListener{

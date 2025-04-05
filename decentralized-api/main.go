@@ -101,7 +101,7 @@ func main() {
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
 	tendermintClient := cosmosclient.TendermintClient{
-		ChainNodeUrl: config.GetConfig().ChainNode.Url,
+		ChainNodeUrl: config.GetChainNodeConfig().Url,
 	}
 	// FIXME: What context to pass?
 	ctx := context.Background()
@@ -109,12 +109,12 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
 	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 
 	// TODO: propagagte trainingExecutor
-	s := server.NewServer(nodeBroker, config, validator, recorder)
+	s := server.NewServer(nodeBroker, config, validator, recorder, trainingExecutor)
 	s.Start()
 }
 

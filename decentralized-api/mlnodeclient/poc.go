@@ -34,7 +34,7 @@ func BuildInitDto(blockHeight int64, pubKey string, totalNodes, nodeNum int64, b
 		BatchSize:      DefaultBatchSize,
 		RTarget:        DefaultRTarget,
 		FraudThreshold: DefaultFraudThreshold,
-		Params:         &DevTestParams,
+		Params:         &TestNetParams,
 		URL:            callbackUrl,
 		TotalNodes:     totalNodes,
 		NodeNum:        nodeNum,
@@ -81,6 +81,20 @@ var DevTestParams = Params{
 	RopeTheta:        500000.0,
 	UseScaledRope:    true,
 	SeqLen:           4,
+}
+
+var TestNetParams = Params{
+	Dim:              2048,
+	NLayers:          16,
+	NHeads:           16,
+	NKVHeads:         16,
+	VocabSize:        8192,
+	FFNDimMultiplier: 1.3,
+	MultipleOf:       1024,
+	NormEps:          1e-5,
+	RopeTheta:        500000.0,
+	UseScaledRope:    true,
+	SeqLen:           16,
 }
 
 func (api *InferenceNodeClient) InitGenerate(dto InitDto) error {

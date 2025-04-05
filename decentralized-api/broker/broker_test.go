@@ -122,8 +122,8 @@ func TestVersionFiltering(t *testing.T) {
 		MaxConcurrent: 1000,
 		Version:       "",
 	}
-	queueMessage(t, broker, RegisterNode{v1node, make(chan apiconfig.InferenceNodeConfig, 2)})
-	queueMessage(t, broker, RegisterNode{novNode, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{v1node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{novNode, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "v1", false, availableNode})
 	node := <-availableNode
@@ -232,7 +232,7 @@ func TestRoundTripSegment(t *testing.T) {
 		Id:               "node1",
 		MaxConcurrent:    1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode

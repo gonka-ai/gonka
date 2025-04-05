@@ -125,7 +125,7 @@ func (k Keeper) CompleteTask(ctx sdk.Context, taskId uint64) error {
 // GetTrainingTask retrieves the full task object given its taskId.
 func (k Keeper) GetTrainingTask(ctx sdk.Context, taskId uint64) (*types.TrainingTask, bool) {
 	var task types.TrainingTask
-	return GetValue(k, ctx, &task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(taskId))
+	return GetValue(&k, ctx, &task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(taskId))
 }
 
 func (k Keeper) SetTrainingTask(ctx sdk.Context, task *types.TrainingTask) {
