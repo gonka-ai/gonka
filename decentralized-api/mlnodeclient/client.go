@@ -1,9 +1,10 @@
-package broker
+package mlnodeclient
 
 import (
 	"decentralized-api/logging"
 	"decentralized-api/utils"
-	"errors"
+	"encoding/json"
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
@@ -15,23 +16,25 @@ const (
 	trainStartPath  = "/api/v1/train/start"
 	trainStatusPath = "/api/v1/train/status"
 	stopPath        = "/api/v1/stop"
+	nodeStatePath   = "/api/v1/state"
+	powStatusPath   = "/api/v1/pow/status"
+	inferenceUpPath = "/api/v1/inference/up"
 )
 
 type InferenceNodeClient struct {
-	node   *Node
-	client http.Client
+	pocUrl       string
+	inferenceUrl string
+	client       http.Client
 }
 
-func NewNodeClient(node *Node) (*InferenceNodeClient, error) {
-	if node == nil {
-		return nil, errors.New("node is nil")
-	}
+func NewNodeClient(pocUrl string, inferenceUrl string) *InferenceNodeClient {
 	return &InferenceNodeClient{
-		node: node,
+		pocUrl:       pocUrl,
+		inferenceUrl: inferenceUrl,
 		client: http.Client{
 			Timeout: 5 * time.Minute,
 		},
-	}, nil
+	}
 }
 
 type StartTraining struct {
@@ -130,7 +133,7 @@ const (
 )
 
 func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
@@ -158,7 +161,7 @@ func (api *InferenceNodeClient) StartTraining(masterNodeAddr string, rank int, w
 }
 
 func (api *InferenceNodeClient) GetTrainingStatus() error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), trainStartPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
@@ -172,7 +175,7 @@ func (api *InferenceNodeClient) GetTrainingStatus() error {
 }
 
 func (api *InferenceNodeClient) Stop() error {
-	requestUrl, err := url.JoinPath(api.node.PoCUrl(), stopPath)
+	requestUrl, err := url.JoinPath(api.pocUrl, stopPath)
 	if err != nil {
 		return err
 	}
@@ -183,4 +186,128 @@ func (api *InferenceNodeClient) Stop() error {
 	}
 
 	return nil
+}
+
+type MLNodeState string
+
+const (
+	MlNodeState_POW       MLNodeState = "POW"
+	MlNodeState_INFERENCE MLNodeState = "INFERENCE"
+	MlNodeState_TRAIN     MLNodeState = "TRAIN"
+	MlNodeState_STOPPED   MLNodeState = "STOPPED"
+)
+
+type StateResponse struct {
+	State MLNodeState `json:"state"`
+}
+
+func (api *InferenceNodeClient) NodeState() (*StateResponse, error) {
+	requestURL, err := url.JoinPath(api.pocUrl, nodeStatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var stateResp StateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stateResp); err != nil {
+		return nil, err
+	}
+
+	return &stateResp, nil
+}
+
+type PowState string
+
+const (
+	POW_IDLE          PowState = "IDLE"
+	POW_NO_CONTROLLER PowState = "NOT_LOADED"
+	POW_LOADING       PowState = "LOADING"
+	POW_GENERATING    PowState = "GENERATING"
+	POW_VALIDATING    PowState = "VALIDATING"
+	POW_STOPPED       PowState = "STOPPED"
+	POW_MIXED         PowState = "MIXED"
+)
+
+type PowStatusResponse struct {
+	Status             PowState `json:"status"`
+	IsModelInitialized bool     `json:"is_model_initialized"`
+}
+
+func (api *InferenceNodeClient) GetPowStatus() (*PowStatusResponse, error) {
+	requestURL, err := url.JoinPath(api.pocUrl, powStatusPath)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var powResp PowStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&powResp); err != nil {
+		return nil, err
+	}
+
+	return &powResp, nil
+}
+
+func (api *InferenceNodeClient) InferenceHealth() (bool, error) {
+	requestURL, err := url.JoinPath(api.inferenceUrl, "/health")
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return true, nil
+}
+
+type inferenceUpDto struct {
+	Model string   `json:"model"`
+	Dtype string   `json:"dtype"`
+	Args  []string `json:"additional_args"`
+}
+
+func (api *InferenceNodeClient) InferenceUp(model string) error {
+	inferenceUpUrl, err := url.JoinPath(api.inferenceUrl, inferenceUpPath)
+	if err != nil {
+		return err
+	}
+
+	dto := inferenceUpDto{
+		Model: model,
+		Dtype: "float16",
+		Args:  []string{"--enforce-eager"},
+	}
+
+	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+
+	_, err = utils.SendPostJsonRequest(&api.client, inferenceUpUrl, dto)
+	if err != nil {
+		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+	}
+	return err
 }

@@ -1,6 +1,10 @@
 package broker
 
-import "decentralized-api/apiconfig"
+import (
+	"decentralized-api/apiconfig"
+	"github.com/productscience/inference/x/inference/types"
+	"time"
+)
 
 type Command interface {
 	GetResponseChannelCapacity() int
@@ -27,7 +31,7 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 
 type RegisterNode struct {
 	Node     apiconfig.InferenceNodeConfig
-	Response chan apiconfig.InferenceNodeConfig
+	Response chan *apiconfig.InferenceNodeConfig
 }
 
 func (r RegisterNode) GetResponseChannelCapacity() int {
@@ -112,10 +116,6 @@ func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
-type StartPoC struct {
-	Response chan bool
-}
-
 type StartTrainingCommand struct {
 	masterNodeAddress string
 	worldSize         int
@@ -133,5 +133,43 @@ func NewStartTrainingCommand(masterNodeAddress string, worldSize int, nodeRanks 
 }
 
 func (c StartTrainingCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+type ReconcileNodesCommand struct {
+	Response chan bool
+}
+
+func (c ReconcileNodesCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+type SetNodesActualStatusCommand struct {
+	StatusUpdates []StatusUpdate
+	Response      chan bool
+}
+
+type StatusUpdate struct {
+	NodeId     string
+	PrevStatus types.HardwareNodeStatus
+	NewStatus  types.HardwareNodeStatus
+	Timestamp  time.Time
+}
+
+func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+type InferenceUpAllCommand struct {
+	Response chan bool
+}
+
+func NewInferenceUpAllCommand() InferenceUpAllCommand {
+	return InferenceUpAllCommand{
+		Response: make(chan bool, 2),
+	}
+}
+
+func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }

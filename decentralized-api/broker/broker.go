@@ -4,14 +4,16 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"reflect"
 	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 /*
@@ -55,11 +57,28 @@ type NodeWithState struct {
 }
 
 type NodeState struct {
-	LockCount      int                      `json:"lock_count"`
-	Operational    bool                     `json:"operational"`
-	FailureReason  string                   `json:"failure_reason"`
-	TrainingTaskId uint64                   `json:"training_task_id"`
-	Status         types.HardwareNodeStatus `json:"status"`
+	LockCount       int                      `json:"lock_count"`
+	Operational     bool                     `json:"operational"`
+	FailureReason   string                   `json:"failure_reason"`
+	TrainingTaskId  uint64                   `json:"training_task_id"`
+	Status          types.HardwareNodeStatus `json:"status"`
+	StatusTimestamp time.Time                `json:"status_timestamp"`
+	IntendedStatus  types.HardwareNodeStatus `json:"intended_status,omitempty"`
+	LastStateChange time.Time                `json:"last_state_change"`
+}
+
+func (s *NodeState) UpdateStatus(status types.HardwareNodeStatus, time time.Time) {
+	s.Status = status
+	s.StatusTimestamp = time
+}
+
+func (s *NodeState) Failure(reason string) {
+	s.FailureReason = reason
+	s.Status = types.HardwareNodeStatus_FAILED
+}
+
+func (s *NodeState) IsOperational() bool {
+	return s.Status != types.HardwareNodeStatus_FAILED
 }
 
 type NodeResponse struct {
@@ -76,6 +95,8 @@ func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 
 	go broker.processCommands()
 	go nodeSyncWorker(broker)
+	go nodeStatusQueryWorker(broker)
+	go nodeReconciliationWorker(broker)
 	return broker
 }
 
@@ -110,6 +131,14 @@ func (b *Broker) processCommands() {
 			b.lockNodesForTraining(command)
 		case StartTrainingCommand:
 			b.startTraining(command)
+		case ReconcileNodesCommand:
+			b.reconcileNodes(command)
+		case SetNodesActualStatusCommand:
+			b.setNodesActualStatus(command)
+		case InferenceUpAllCommand:
+			b.inferenceUpAll(command)
+		case StartPocCommand:
+			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -147,29 +176,33 @@ func (b *Broker) registerNode(command RegisterNode) {
 	b.curMaxNodesNum.Add(1)
 	curNum := b.curMaxNodesNum.Load()
 
+	node := Node{
+		Host:          command.Node.Host,
+		InferencePort: command.Node.InferencePort,
+		PoCPort:       command.Node.PoCPort,
+		Models:        command.Node.Models,
+		Id:            command.Node.Id,
+		MaxConcurrent: command.Node.MaxConcurrent,
+		NodeNum:       curNum,
+		Hardware:      command.Node.Hardware,
+	}
+
 	b.nodes[command.Node.Id] = &NodeWithState{
-		Node: Node{
-			Host:          command.Node.Host,
-			InferencePort: command.Node.InferencePort,
-			PoCPort:       command.Node.PoCPort,
-			Models:        command.Node.Models,
-			Id:            command.Node.Id,
-			MaxConcurrent: command.Node.MaxConcurrent,
-			NodeNum:       curNum,
-			Hardware:      command.Node.Hardware,
-		},
+		Node: node,
 		State: NodeState{
-			LockCount: 0,
-			// PRTODO: !!! remove operational? now you have statuses!
-			Operational:   true,
-			FailureReason: "",
-			// FIXME
-			// 	PRTODO: !!! it can be different!, query the node for it's status
-			Status: types.HardwareNodeStatus_INFERENCE,
+			LockCount:       0,
+			FailureReason:   "",
+			Status:          types.HardwareNodeStatus_UNKNOWN,
+			StatusTimestamp: time.Now(),
+			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
 		},
 	}
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
-	command.Response <- command.Node
+	command.Response <- &command.Node
+}
+
+func newNodeClient(node *Node) *mlnodeclient.InferenceNodeClient {
+	return mlnodeclient.NewNodeClient(node.PoCUrl(), node.InferenceUrl())
 }
 
 func (b *Broker) removeNode(command RemoveNode) {
@@ -205,7 +238,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 }
 
 func nodeAvailable(node *NodeWithState, neededModel string) bool {
-	available := node.State.Operational && node.State.LockCount < node.Node.MaxConcurrent
+	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
 	}
@@ -225,8 +258,7 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
 			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			node.State.Operational = false
-			node.State.FailureReason = "Inference failed"
+			node.State.Failure("Inference failed")
 		}
 	}
 	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
@@ -356,17 +388,9 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 			return
 		}
 
-		client, err := NewNodeClient(&node.Node)
-		if err != nil {
-			// FIXME: think how this will be retried,
-			// 	because you might have started the training on some nodes by this moment
-			logging.Error("Error creating node client", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
+		client := mlnodeclient.NewNodeClient(node.Node.PoCUrl(), node.Node.InferenceUrl())
 
-		// TODO: check node status before hand. Maybe it's already doing the training??
-		err = client.Stop()
+		err := client.Stop()
 		if err != nil {
 			logging.Error("Error stopping training", types.Nodes, "error", err)
 			command.Response <- false
@@ -449,4 +473,212 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 	}
 
 	return true
+}
+
+func nodeReconciliationWorker(broker *Broker) {
+	ticker := time.NewTicker(2 * time.Minute) // Reconcile every 2 minutes
+	defer ticker.Stop()
+
+	for range ticker.C {
+		logging.Debug("Starting node state reconciliation", types.Nodes)
+		response := make(chan bool, 1)
+		err := broker.QueueMessage(ReconcileNodesCommand{
+			Response: response,
+		})
+
+		if err != nil {
+			logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
+			continue
+		}
+
+		// We don't need to wait for the response here
+	}
+}
+
+func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
+	for nodeId, node := range b.nodes {
+		// TODO: maybe also skip if status is unknown or smth?
+
+		if node.State.Status == node.State.IntendedStatus {
+			// TODO: check inference is actually alive???
+			continue // Node is already in the intended state
+		}
+
+		logging.Info("Node state mismatch detected", types.Nodes,
+			"node_id", nodeId,
+			"current_state", node.State.Status.String(),
+			"intended_state", node.State.IntendedStatus.String())
+
+		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+			logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
+				types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		client := newNodeClient(&node.Node)
+
+		logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
+		err := client.Stop()
+		if err != nil {
+			logging.Error("Failed to stop node during reconciliation", types.Nodes,
+				"node_id", nodeId, "error", err)
+			continue
+		}
+
+		// node.State.Operational = true
+		// node.State.FailureReason = ""
+
+		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "node_id", nodeId)
+	}
+
+	command.Response <- true
+}
+
+func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
+	for _, update := range command.StatusUpdates {
+		nodeId := update.NodeId
+		node, exists := b.nodes[nodeId]
+		if !exists {
+			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		if node.State.StatusTimestamp.After(update.Timestamp) {
+			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		node.State.UpdateStatus(update.NewStatus, update.Timestamp)
+		logging.Info("Set actual status for node", types.Nodes,
+			"node_id", nodeId, "status", update.NewStatus.String())
+	}
+
+	command.Response <- true
+}
+
+func nodeStatusQueryWorker(broker *Broker) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		nodes, err := broker.GetNodes()
+		if err != nil {
+			logging.Error("Failed to get nodes for status query", types.Nodes, "error", err)
+			continue
+		}
+
+		statusUpdates := make([]StatusUpdate, 0)
+
+		for _, nodeResp := range nodes {
+			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node.Id)
+			timestamp := time.Now()
+			if err != nil {
+				logging.Error("Failed to queue status query command", types.Nodes,
+					"node_id", nodeResp.Node.Id, "error", err)
+				continue
+			}
+
+			if queryStatusResult.PrevStatus != queryStatusResult.NewStatus {
+				logging.Info("Node status changed", types.Nodes,
+					"node_id", nodeResp.Node.Id,
+					"prev_status", queryStatusResult.PrevStatus.String(),
+					"new_status", queryStatusResult.NewStatus.String())
+
+				statusUpdates = append(statusUpdates, StatusUpdate{
+					NodeId:     nodeResp.Node.Id,
+					PrevStatus: queryStatusResult.PrevStatus,
+					NewStatus:  queryStatusResult.NewStatus,
+					Timestamp:  timestamp,
+				})
+			}
+		}
+
+		err = broker.QueueMessage(SetNodesActualStatusCommand{
+			StatusUpdates: statusUpdates,
+			Response:      make(chan bool, 2),
+		})
+		if err != nil {
+			logging.Error("Failed to queue status update command", types.Nodes, "error", err)
+			continue
+		}
+	}
+}
+
+type statusQueryResult struct {
+	PrevStatus types.HardwareNodeStatus
+	NewStatus  types.HardwareNodeStatus
+}
+
+func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
+	node, exists := b.nodes[nodeId]
+	if !exists {
+		logging.Error("Cannot query status: node not found", types.Nodes, "node_id", nodeId)
+		return nil, errors.New("node not found")
+	}
+
+	client := newNodeClient(&node.Node)
+
+	status, err := client.NodeState()
+	if err != nil {
+		logging.Error("Failed to query node status", types.Nodes,
+			"node_id", nodeId, "error", err)
+		return nil, err
+	}
+
+	prevStatus := node.State.Status
+	newStatus := toStatus(*status)
+
+	return &statusQueryResult{
+		PrevStatus: prevStatus,
+		NewStatus:  newStatus,
+	}, nil
+}
+
+func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
+	switch response.State {
+	case mlnodeclient.MlNodeState_POW:
+		return types.HardwareNodeStatus_POC
+	case mlnodeclient.MlNodeState_INFERENCE:
+		return types.HardwareNodeStatus_INFERENCE
+	case mlnodeclient.MlNodeState_TRAIN:
+		return types.HardwareNodeStatus_TRAINING
+	case mlnodeclient.MlNodeState_STOPPED:
+		return types.HardwareNodeStatus_STOPPED
+	default:
+		return types.HardwareNodeStatus_UNKNOWN
+	}
+}
+
+func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
+	for _, node := range b.nodes {
+		client := newNodeClient(&node.Node)
+
+		err := client.Stop()
+		if err != nil {
+			logging.Error("Failed to stop node for inference up", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+			node.State.Status = types.HardwareNodeStatus_STOPPED
+		}
+
+		if len(node.Node.Models) == 0 {
+			logging.Error("No models found for node, can't inference up", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		model := node.Node.Models[0]
+		err = client.InferenceUp(model)
+		if err != nil {
+			logging.Error("Failed to bring up inference", types.Nodes,
+				"node_id", node.Node.Id, "error", err)
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+			node.State.Status = types.HardwareNodeStatus_INFERENCE
+		}
+	}
+
+	command.Response <- true
 }

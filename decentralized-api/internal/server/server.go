@@ -129,7 +129,7 @@ func wrapGetInferenceParticipant(recorder cosmos_client.CosmosMessageClient) fun
 func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNodeConfig) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
-		Response: make(chan apiconfig.InferenceNodeConfig, 2),
+		Response: make(chan *apiconfig.InferenceNodeConfig, 2),
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
