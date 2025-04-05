@@ -291,7 +291,7 @@ type inferenceUpDto struct {
 	Args  []string `json:"additional_args"`
 }
 
-func (api *InferenceNodeClient) InferenceUp(model string) error {
+func (api *InferenceNodeClient) InferenceUp(model string, args []string) error {
 	inferenceUpUrl, err := url.JoinPath(api.inferenceUrl, inferenceUpPath)
 	if err != nil {
 		return err
@@ -300,7 +300,7 @@ func (api *InferenceNodeClient) InferenceUp(model string) error {
 	dto := inferenceUpDto{
 		Model: model,
 		Dtype: "float16",
-		Args:  []string{"--enforce-eager"},
+		Args:  args,
 	}
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)

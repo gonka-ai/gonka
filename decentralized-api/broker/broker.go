@@ -189,16 +189,16 @@ func (b *Broker) registerNode(command RegisterNode) {
 	}
 
 	node := Node{
-		Host:          command.Node.Host,
+		Host:             command.Node.Host,
 		InferenceSegment: command.Node.InferenceSegment,
-		InferencePort: command.Node.InferencePort,
+		InferencePort:    command.Node.InferencePort,
 		PoCSegment:       command.Node.PoCSegment,
-		PoCPort:       command.Node.PoCPort,
-		Models:        models,
-		Id:            command.Node.Id,
-		MaxConcurrent: command.Node.MaxConcurrent,
-		NodeNum:       curNum,
-		Hardware:      command.Node.Hardware,
+		PoCPort:          command.Node.PoCPort,
+		Models:           models,
+		Id:               command.Node.Id,
+		MaxConcurrent:    command.Node.MaxConcurrent,
+		NodeNum:          curNum,
+		Hardware:         command.Node.Hardware,
 		Version:          command.Node.Version,
 	}
 
@@ -714,8 +714,15 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 			continue
 		}
 
-		model := node.Node.Models[0]
-		err = client.InferenceUp(model)
+		model := ""
+		var modelArgs []string
+		for modelName, args := range node.Node.Models {
+			model = modelName
+			modelArgs = args.Args
+			break
+		}
+
+		err = client.InferenceUp(model, modelArgs)
 		if err != nil {
 			logging.Error("Failed to bring up inference", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
