@@ -11,14 +11,24 @@ type Server struct {
 	recorder cosmos_client.CosmosMessageClient
 }
 
+// TODO breacking changes: url path, support on ml node side
 func NewServer(recorder cosmos_client.CosmosMessageClient) *Server {
 	e := echo.New()
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/mlnode/v1/")
 
-	return &Server{
+	s := &Server{
 		e:        e,
 		recorder: recorder,
 	}
+
+	// TODO test it
+	g.POST("poc-batches/generated", s.postGeneratedBatches)
+	g.POST("poc-batches/validated", s.postValidatedBatches)
+	return s
+}
+
+func (s *Server) Start(addr string) {
+	go s.e.Start(addr)
 }

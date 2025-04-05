@@ -8,6 +8,7 @@ import (
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/server"
+	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
 
 	"decentralized-api/internal/validation"
@@ -110,6 +111,11 @@ func main() {
 
 	publicServer := pserver.NewServer(nodeBroker, config, recorder)
 	publicServer.Start(addr)
+
+	addr = fmt.Sprintf(":%v", config.GetConfig().Api.MLServerPort)
+	logging.Info("start ml server on addr", types.Server, "addr", addr)
+	mlServer := mlserver.NewServer(recorder)
+	mlServer.Start(addr)
 
 	s := server.NewServer(nodeBroker, config, validator, recorder)
 	s.Start()
