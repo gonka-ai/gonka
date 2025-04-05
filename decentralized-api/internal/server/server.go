@@ -64,7 +64,6 @@ func (s *Server) Start() {
 	cdc := getCodec()
 
 	// Create an HTTP server
-	// TODO: some of handlers defined here and some in api package. Suggest to put it in 1 place
 	// mux.HandleFunc("/v1/chat/completions/", s.wrapGetCompletion())
 	// mux.HandleFunc("/v1/chat/completions", s.wrapChat())
 
@@ -73,15 +72,18 @@ func (s *Server) Start() {
 	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
 	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(s.recorder))
-
 	mux.HandleFunc("/v1/nodes", api.WrapNodes(s.nodeBroker, s.configManager))
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(s.nodeBroker, s.configManager))
-	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
-	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
+
+	// TODO make it public
+	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
+	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
+
 	mux.HandleFunc("/", s.logUnknownRequest())
+
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
 		addr, err := cosmos_client.PubKeyToAddress(pubkey)
