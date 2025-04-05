@@ -8,11 +8,12 @@ import (
 	"decentralized-api/logging"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -106,6 +107,20 @@ var DevTestParams = Params{
 	SeqLen:           4,
 }
 
+var TestNetParams = Params{
+	Dim:              2048,
+	NLayers:          16,
+	NHeads:           16,
+	NKVHeads:         16,
+	VocabSize:        8192,
+	FFNDimMultiplier: 1.3,
+	MultipleOf:       1024,
+	NormEps:          1e-5,
+	RopeTheta:        500000.0,
+	UseScaledRope:    true,
+	SeqLen:           16,
+}
+
 func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 	if o.noOp {
 		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
@@ -157,7 +172,7 @@ func (o *NodePoCOrchestrator) buildInitDto(blockHeight, totalNodes, nodeNum int6
 		BatchSize:      DefaultBatchSize,
 		RTarget:        DefaultRTarget,
 		FraudThreshold: DefaultFraudThreshold,
-		Params:         &DevTestParams,
+		Params:         &TestNetParams,
 		URL:            callbackUrl,
 		TotalNodes:     totalNodes,
 		NodeNum:        nodeNum,

@@ -81,10 +81,15 @@ build-docker:
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
 	@docker push gcr.io/decentralized-ai/api:$(VERSION)
+	@docker tag gcr.io/decentralized-ai/api:$(VERSION) ghcr.io/product-science/api:$(VERSION)
+	@docker push ghcr.io/product-science/api:$(VERSION)
+
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
 		@docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
 		@docker push gcr.io/decentralized-ai/api:latest; \
+		@docker tag ghcr.io/product-science/api:$(VERSION) ghcr.io/product-science/api:latest; \
+		@docker push ghcr.io/product-science/api:latest; \
 	fi
 
 build-for-upgrade:
@@ -110,7 +115,7 @@ build-for-upgrade:
 PLATFORMS := linux darwin windows
 ARCHS := amd64 arm64
 
-release: build-all package build-docker
+release: build-docker
 
 build-all:
 	@echo "Building all platforms/architectures..."
