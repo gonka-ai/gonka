@@ -68,7 +68,11 @@ func (s *Server) Start() {
 	// mux.HandleFunc("/v1/chat/completions/", s.wrapGetCompletion())
 	// mux.HandleFunc("/v1/chat/completions", s.wrapChat())
 
+	// TODO delete
 	mux.HandleFunc("/v1/participants", s.wrapSubmitNewParticipant())
+	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
+	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
+
 	mux.HandleFunc("/v1/nodes", api.WrapNodes(s.nodeBroker, s.configManager))
 	mux.HandleFunc("/v1/nodes/", api.WrapNodes(s.nodeBroker, s.configManager))
 	mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(s.recorder))
@@ -76,8 +80,6 @@ func (s *Server) Start() {
 	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
-	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
-	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
 	mux.HandleFunc("/", s.logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {

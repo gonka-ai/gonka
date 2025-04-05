@@ -62,14 +62,14 @@ func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 		epochOrNil = &epochUint
 	}
 
-	response, err := s.getParticipants(epochOrNil)
+	response, err := s.getParticipantsFullInfoByEpoch(epochOrNil)
 	if err != nil {
 		return err
 	}
 	return c.JSON(http.StatusOK, response)
 }
 
-func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
+func (s *Server) getParticipantsFullInfoByEpoch(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
 	currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
@@ -175,6 +175,45 @@ func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProo
 		Validators:              vals.Validators,
 		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
 	}, nil
+}
+
+func (s *Server) getAllParticipants(ctx echo.Context) error {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	r, err := queryClient.ParticipantAll(ctx.Request().Context(), &types.QueryAllParticipantRequest{})
+	if err != nil {
+		return err
+	}
+
+	participants := make([]ParticipantDto, len(r.Participant))
+	for i, p := range r.Participant {
+		balances, err := s.recorder.BankBalances(ctx.Request().Context(), p.Address)
+		pBalance := int64(0)
+		if err == nil {
+			for _, balance := range balances {
+				// TODO: surely there is a place to get denom from
+				if balance.Denom == "nicoin" {
+					pBalance = balance.Amount.Int64()
+				}
+			}
+			if pBalance == 0 {
+				logging.Debug("Participant has no balance", types.Participants, "address", p.Address)
+			}
+		} else {
+			logging.Warn("Failed to get balance for participant", types.Participants, "address", p.Address, "error", err)
+		}
+		participants[i] = ParticipantDto{
+			Id:          p.Address,
+			Url:         p.InferenceUrl,
+			Models:      p.Models,
+			CoinsOwed:   p.CoinBalance,
+			Balance:     pBalance,
+			VotingPower: int64(p.Weight),
+		}
+	}
+	return ctx.JSON(http.StatusOK, &ParticipantsDto{
+		Participants: participants,
+		BlockHeight:  r.BlockHeight,
+	})
 }
 
 func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, epoch uint64) (*coretypes.ResultABCIQuery, error) {

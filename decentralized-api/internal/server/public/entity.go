@@ -53,3 +53,39 @@ type ActiveParticipantWithProof struct {
 	Block                   []*comettypes.Block      `json:"block"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
 }
+
+type ParticipantDto struct {
+	Id          string   `json:"id"`
+	Url         string   `json:"url"`
+	Models      []string `json:"models"`
+	CoinsOwed   int64    `json:"coins_owed"`
+	RefundsOwed int64    `json:"refunds_owed"`
+	Balance     int64    `json:"balance"`
+	VotingPower int64    `json:"voting_power"`
+	Reputation  float32  `json:"reputation"`
+}
+
+type ParticipantsDto struct {
+	Participants []ParticipantDto `json:"participants"`
+	BlockHeight  int64            `json:"block_height"`
+}
+
+type StartTrainingDto struct {
+	HardwareResources []HardwareResourcesDto `json:"hardware_resources"`
+	Config            TrainingConfigDto      `json:"config"`
+}
+
+type HardwareResourcesDto struct {
+	Type  string `json:"type"`
+	Count uint32 `json:"count"`
+}
+
+type TrainingConfigDto struct {
+	Datasets              TrainingDatasetsDto `json:"datasets"`
+	NumUocEstimationSteps uint32              `json:"num_uoc_estimation_steps"`
+}
+
+type TrainingDatasetsDto struct {
+	Train string `json:"train"`
+	Test  string `json:"test"`
+}
