@@ -12,9 +12,9 @@ class InferenceMock(port: Int, val name: String) {
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
 
-    fun setInferenceResponse(response: String, delay: Int = 0) =
+    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "") =
         this.givenThat(
-            post(urlEqualTo("/v1/chat/completions"))
+            post(urlEqualTo("$segment/v1/chat/completions"))
                 .willReturn(aResponse()
                     .withFixedDelay(delay.toInt())
                     .withStatus(200)
@@ -22,9 +22,9 @@ class InferenceMock(port: Int, val name: String) {
 
         )
 
-    fun setInferenceResponse(openAIResponse: OpenAIResponse, delay: Int = 0) =
+    fun setInferenceResponse(openAIResponse: OpenAIResponse, delay: Int = 0, segment: String = "") =
         this.setInferenceResponse(
-            openAiJson.toJson(openAIResponse), delay)
+            openAiJson.toJson(openAIResponse), delay, segment)
 
     fun setPocResponse(weight: Long) {
         val nonces = (1..weight).toList()

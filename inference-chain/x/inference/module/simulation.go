@@ -95,6 +95,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgAssignTrainingTask int = 100
 
+	opWeightMsgCreatePartialUpgrade = "op_weight_msg_create_partial_upgrade"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgCreatePartialUpgrade int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -305,6 +309,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgCreatePartialUpgrade int
+	simState.AppParams.GetOrGenerate(opWeightMsgCreatePartialUpgrade, &weightMsgCreatePartialUpgrade, nil,
+		func(_ *rand.Rand) {
+			weightMsgCreatePartialUpgrade = defaultWeightMsgCreatePartialUpgrade
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgCreatePartialUpgrade,
+		inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -446,6 +461,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgAssignTrainingTask,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgCreatePartialUpgrade,
+			defaultWeightMsgCreatePartialUpgrade,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

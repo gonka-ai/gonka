@@ -1,7 +1,7 @@
 package event_listener
 
 import (
-	"decentralized-api/chainevents"
+	"decentralized-api/internal/event_listener/chainevents"
 	"encoding/json"
 	"log"
 	"testing"

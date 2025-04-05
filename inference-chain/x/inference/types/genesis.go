@@ -20,6 +20,7 @@ func DefaultGenesis() *GenesisState {
 		InferenceTimeoutList:           []InferenceTimeout{},
 		InferenceValidationDetailsList: []InferenceValidationDetails{},
 		EpochPerformanceSummaryList:    []EpochPerformanceSummary{},
+		PartialUpgradeList:             []PartialUpgrade{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
@@ -118,6 +119,16 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for epochPerformanceSummary")
 		}
 		epochPerformanceSummaryIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in partialUpgrade
+	partialUpgradeIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.PartialUpgradeList {
+		index := string(PartialUpgradeKey(elem.Height))
+		if _, ok := partialUpgradeIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for partialUpgrade")
+		}
+		partialUpgradeIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 

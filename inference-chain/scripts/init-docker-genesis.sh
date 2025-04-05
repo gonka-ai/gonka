@@ -37,6 +37,13 @@ $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
 $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 
 echo "Setting the node configuration (config.toml)"
+if [ -n "$P2P_EXTERNAL_ADDRESS" ]; then
+  echo "Setting the external address for P2P to $P2P_EXTERNAL_ADDRESS"
+  $APP_NAME config set config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate
+else
+  echo "P2P_EXTERNAL_ADDRESS is not set, skipping"
+fi
+
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 # no seeds for genesis node
@@ -94,8 +101,27 @@ fi
 
 modify_genesis_file 'genesis_overrides.json'
 modify_genesis_file "$HOME/.inference/genesis_overrides.json"
-
 echo "Genesis file created"
+echo "Setting up overrides for config.toml"
+ # Process CONFIG_ environment variables
+ for var in $(env | grep '^CONFIG_'); do
+    # Extract key and value
+    key=${var%%=*}
+    value=${var#*=}
+
+    # Remove CONFIG_ prefix and transform __ to .
+    config_key=${key#CONFIG_}
+    config_key=${config_key//__/.}
+
+    echo "Setting config: $config_key = $value"
+    $APP_NAME config set config "$config_key" "$value" --skip-validate
+ done
+# Check and apply config overrides if present
+if [ -f "config_override.toml" ]; then
+    echo "Applying config overrides from config_override.toml"
+    $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
+fi
+
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {
   echo "Cosmovisor failed, idling the container..."

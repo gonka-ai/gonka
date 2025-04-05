@@ -201,6 +201,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
+	for _, pu := range partialUpgrades {
+		if pu.Height < uint64(blockHeight) {
+			am.LogInfo("PartialUpgradeExpired", types.Upgrades, "partialUpgradeHeight", pu.Height, "blockHeight", blockHeight)
+			am.keeper.RemovePartialUpgrade(ctx, pu.Height)
+		}
+	}
+
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
@@ -233,6 +241,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
+
 		_, err = am.keeper.Staking.SetComputeValidators(ctx, computeResult)
 		if err != nil {
 			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())

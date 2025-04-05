@@ -47,7 +47,7 @@ class UnitOfComputeTests : TestermintTest() {
         val pairs = getLocalInferencePairs(inferenceConfig)
 
         pairs.forEachIndexed { i, p ->
-            p.node.voteOnProposal("1", "yes")
+            p.voteOnProposal("1", "yes")
         }
     }
 

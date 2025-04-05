@@ -7,7 +7,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const DefaultMaxTokens = 2048
+const DefaultMaxTokens = 5000
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -38,8 +38,9 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-		MaxTokens:  DefaultMaxTokens,
-		AssignedTo: msg.AssignedTo,
+		MaxTokens:   DefaultMaxTokens,
+		AssignedTo:  msg.AssignedTo,
+		NodeVersion: msg.NodeVersion,
 	}
 	escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
 	if err != nil {

@@ -12,7 +12,10 @@ import (
 	"strconv"
 )
 
-func (eg *EpochGroup) GetRandomMember(goCtx context.Context) (*types.Participant, error) {
+func (eg *EpochGroup) GetRandomMember(
+	goCtx context.Context,
+	filterFn func([]*group.GroupMember) []*group.GroupMember,
+) (*types.Participant, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(eg.GroupData.EpochGroupId)})
@@ -24,7 +27,12 @@ func (eg *EpochGroup) GetRandomMember(goCtx context.Context) (*types.Participant
 		return nil, status.Error(codes.Internal, "Active participants found, but length is 0")
 	}
 
-	participantIndex := selectRandomParticipant(activeParticipants)
+	filteredParticipants := filterFn(activeParticipants)
+	if len(filteredParticipants) == 0 {
+		return nil, status.Error(codes.Internal, "After filtering participants the length is 0")
+	}
+
+	participantIndex := selectRandomParticipant(filteredParticipants)
 
 	participant, ok := eg.ParticipantKeeper.GetParticipant(ctx, participantIndex)
 	if !ok {

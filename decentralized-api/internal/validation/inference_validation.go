@@ -1,4 +1,4 @@
-package server
+package validation
 
 import (
 	"bytes"
@@ -7,23 +7,43 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/utils"
 	"decentralized-api/logging"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/types"
 )
 
-func VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker) {
+type InferenceValidator struct {
+	recorder      cosmosclient.CosmosMessageClient
+	nodeBroker    *broker.Broker
+	configManager *apiconfig.ConfigManager
+}
+
+func NewInferenceValidator(
+	nodeBroker *broker.Broker,
+	configManager *apiconfig.ConfigManager,
+	recorder cosmosclient.CosmosMessageClient) *InferenceValidator {
+	return &InferenceValidator{
+		nodeBroker:    nodeBroker,
+		configManager: configManager,
+		recorder:      recorder,
+	}
+}
+
+func (s *InferenceValidator) VerifyInvalidation(events map[string][]string, recorder cosmosclient.InferenceCosmosClient) {
 	inferenceIds, ok := events["inference_validation.inference_id"]
 	if !ok || len(inferenceIds) == 0 {
 		logging.Error("No inference_id found in events", types.Validation)
@@ -44,12 +64,12 @@ func VerifyInvalidation(events map[string][]string, recorder cosmosclient.Infere
 
 	logInferencesToValidate([]string{inferenceId})
 	go func() {
-		validateInferenceAndSendValMessage(r.Inference, nodeBroker, recorder, true)
+		s.validateInferenceAndSendValMessage(r.Inference, recorder, true)
 	}()
 
 }
 
-func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient, nodeBroker *broker.Broker, config *apiconfig.Config) {
+func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.InferenceCosmosClient) {
 	if ids == nil {
 		logging.Debug("No inferences to validate", types.Validation)
 		return
@@ -82,14 +102,16 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 		if inferenceWithExecutor.ExecutorId == transactionRecorder.Address {
 			continue
 		}
+
+		currentSeed := s.configManager.GetCurrentSeed().Seed
 		shouldValidate, message := calculations.ShouldValidate(
-			config.CurrentSeed.Seed,
+			currentSeed,
 			inferenceWithExecutor,
 			uint32(r.TotalPower),
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)
-		logging.Debug("Should validate", types.Validation, "message", message, "inferenceId", inferenceWithExecutor.InferenceId, "seed", config.CurrentSeed.Seed)
+		logging.Debug("Should validate", types.Validation, "message", message, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed)
 		if shouldValidate {
 			toValidateIds = append(toValidateIds, inferenceWithExecutor.InferenceId)
 		}
@@ -103,7 +125,7 @@ func SampleInferenceToValidate(ids []string, transactionRecorder cosmosclient.In
 				logging.Error("Failed to get inference by id", types.Validation, "id", response, "error", err)
 				return
 			}
-			validateInferenceAndSendValMessage(response.Inference, nodeBroker, transactionRecorder, false)
+			s.validateInferenceAndSendValMessage(response.Inference, transactionRecorder, false)
 		}()
 	}
 }
@@ -135,14 +157,19 @@ func logInferencesToValidate(toValidate []string) {
 	logging.Info("Inferences to validate", types.Validation, "inferences", ids)
 }
 
-func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.Broker, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
-	valResult, err := lockNodeAndValidate(inf, nodeBroker)
-	if err != nil {
-		logging.Error("Failed to validate inf.", types.Validation, "id", inf.InferenceId, "error", err)
+func (s *InferenceValidator) validateInferenceAndSendValMessage(inf types.Inference, transactionRecorder cosmosclient.InferenceCosmosClient, revalidation bool) {
+	valResult, err := s.lockNodeAndValidate(inf)
+	if err != nil && errors.Is(err, broker.ErrNoNodesAvailable) {
+		logging.Error("Failed to validate inference. No nodes available, probably unsupported model.", types.Validation, "id", inf.InferenceId, "error", err)
+		valResult = ModelNotSupportedValidationResult{
+			InferenceId: inf.InferenceId,
+		}
+	} else if err != nil {
+		logging.Error("Failed to validate inference.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
 	}
 
-	msgValidation, err := toMsgValidation(valResult)
+	msgValidation, err := ToMsgValidation(valResult)
 	if err != nil {
 		logging.Error("Failed to convert to MsgValidation.", types.Validation, "id", inf.InferenceId, "error", err)
 		return
@@ -157,23 +184,22 @@ func validateInferenceAndSendValMessage(inf types.Inference, nodeBroker *broker.
 	logging.Info("Successfully validated inference", types.Validation, "id", inf.InferenceId)
 }
 
-func validateByInferenceId(id string, node *broker.Node, transactionRecorder cosmosclient.CosmosMessageClient) (ValidationResult, error) {
-	queryClient := transactionRecorder.NewInferenceQueryClient()
+func (s *InferenceValidator) ValidateByInferenceId(id string, node *broker.Node) (ValidationResult, error) {
+	queryClient := s.recorder.NewInferenceQueryClient()
 	r, err := queryClient.Inference(context.Background(), &types.QueryGetInferenceRequest{Index: id})
 	if err != nil {
 		logging.Error("Failed get inference by id query", types.Validation, "id", id, "error", err)
 	}
-
-	return validate(r.Inference, node)
+	return s.Validate(r.Inference, node)
 }
 
-func lockNodeAndValidate(inference types.Inference, nodeBroker *broker.Broker) (ValidationResult, error) {
-	return broker.LockNode(nodeBroker, testModel, func(node *broker.Node) (ValidationResult, error) {
-		return validate(inference, node)
+func (s *InferenceValidator) lockNodeAndValidate(inference types.Inference) (ValidationResult, error) {
+	return broker.LockNode(s.nodeBroker, inference.Model, inference.NodeVersion, func(node *broker.Node) (ValidationResult, error) {
+		return s.Validate(inference, node)
 	})
 }
 
-func validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
+func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *broker.Node) (ValidationResult, error) {
 	logging.Debug("Validating inference", types.Validation, "id", inference.InferenceId)
 
 	if inference.Status == types.InferenceStatus_STARTED {
@@ -377,12 +403,12 @@ func (DifferentTokensValidationResult) IsSuccessful() bool {
 	return false
 }
 
-type CosineSimilarityValidationResult struct {
+type SimilarityValidationResult struct {
 	BaseValidationResult
 	Value float64
 }
 
-func (r CosineSimilarityValidationResult) IsSuccessful() bool {
+func (r SimilarityValidationResult) IsSuccessful() bool {
 	return r.Value > 0.99
 }
 
@@ -395,53 +421,140 @@ func compareLogits(
 		return &DifferentLengthValidationResult{baseComparisonResult}
 	}
 
-	var originalLogprobs, validationLogprobs []float64
 	for i := range originalLogits {
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
-
-		originalLogprobs = append(originalLogprobs, o.Logprob)
-		validationLogprobs = append(validationLogprobs, v.Logprob)
 	}
+	similarity := customSimilarity(originalLogits, validationLogits)
 
-	cosSimValue := cosineSimilarity(originalLogprobs, validationLogprobs)
-
-	return &CosineSimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: cosSimValue}
+	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
 }
 
-func cosineSimilarity(a, b []float64) float64 {
-	// TODO: handle division by zero case
-	var dotProduct, magnitudeA, magnitudeB float64
-	for i := range a {
-		dotProduct += a[i] * b[i]
-		magnitudeA += a[i] * a[i]
-		magnitudeB += b[i] * b[i]
+func customSimilarity(
+	originalLogprobs []completionapi.Logprob,
+	validationLogprobs []completionapi.Logprob,
+) float64 {
+	distance, err := customDistance(originalLogprobs, validationLogprobs)
+	if err != nil {
+		logging.Error("Error calculating custom distance", types.Validation, "error", err)
+		return 0
 	}
-	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
+	similarity := 1 - distance
+	if similarity < 0 {
+		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
+		return 0
+	}
+	return similarity
 }
 
-func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
+func customDistance(
+	originalLogprobs []completionapi.Logprob,
+	validationLogprobs []completionapi.Logprob,
+) (float64, error) {
+	distance := 0.0
+	for i := range originalLogprobs {
+		o := originalLogprobs[i]
+		v := validationLogprobs[i]
+		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
+		if err != nil {
+			logging.Error("Error calculating position distance", types.Validation, "error", err)
+			return math.Inf(1), err
+		}
+		distance += posDistance
+	}
+	totalLogprobs := len(originalLogprobs) * len(originalLogprobs[0].TopLogprobs)
+
+	return distance / float64(totalLogprobs), nil
+}
+
+func positionDistance(
+	originalLogprobs []completionapi.TopLogprobs,
+	validationLogprobs []completionapi.TopLogprobs,
+) (float64, error) {
+	if len(originalLogprobs) == 0 || len(validationLogprobs) == 0 {
+		return 0.0, fmt.Errorf("empty logprobs provided")
+	}
+	distance := 0.0
+
+	originalLogprobMap := make(map[string]float64)
+	for _, o := range originalLogprobs {
+		originalLogprobMap[o.Token] = o.Logprob
+	}
+	sortedLogprobs := make([]float64, 0, len(originalLogprobMap))
+	for _, logprob := range originalLogprobMap {
+		sortedLogprobs = append(sortedLogprobs, logprob)
+	}
+
+	sort.Float64s(sortedLogprobs)
+
+	var minOriginalLogprob1, minOriginalLogprob2 float64
+	if len(sortedLogprobs) >= 2 {
+		minOriginalLogprob1 = sortedLogprobs[0]
+		minOriginalLogprob2 = sortedLogprobs[1]
+	} else if len(sortedLogprobs) == 1 {
+		minOriginalLogprob1 = sortedLogprobs[0]
+		minOriginalLogprob2 = minOriginalLogprob1 - 100.0
+	}
+
+	// Estimate the next logprob value (2 as fine)
+	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
+
+	for _, v := range validationLogprobs {
+		var originalLogprob float64
+		if origProb, exists := originalLogprobMap[v.Token]; exists {
+			originalLogprob = origProb
+		} else {
+			originalLogprob = nextOriginalLogprob
+		}
+
+		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
+	}
+
+	return distance, nil
+}
+
+type ModelNotSupportedValidationResult struct {
+	InferenceId string
+}
+
+func (r ModelNotSupportedValidationResult) GetInferenceId() string {
+	return r.InferenceId
+}
+
+func (r ModelNotSupportedValidationResult) GetValidationResponseBytes() []byte {
+	return nil
+}
+
+func (ModelNotSupportedValidationResult) IsSuccessful() bool {
+	return false
+}
+
+func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
 	// Match type of result from implementations of ValidationResult
-	var cosineSimVal float64
+	var simVal float64
 	switch result.(type) {
 	case *DifferentLengthValidationResult:
 		log.Printf("Different length validation result")
-		cosineSimVal = -1
+		simVal = -1
 	case *DifferentTokensValidationResult:
 		log.Printf("Different tokens validation result")
-		cosineSimVal = -1
-	case *CosineSimilarityValidationResult:
-		cosineSimVal = result.(*CosineSimilarityValidationResult).Value
-		log.Printf("Cosine similarity validation result. value = %v", cosineSimVal)
+		simVal = -1
+	case *SimilarityValidationResult:
+		simVal = result.(*SimilarityValidationResult).Value
+		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
+	case ModelNotSupportedValidationResult:
+		simVal = 1
+		logging.Info("Model not supported validation result. Assuming is valid", types.Validation, "inference_id", result.GetInferenceId())
 	default:
 		logging.Error("Unknown validation result type", types.Validation, "type", fmt.Sprintf("%T", result), "result", result)
 		return nil, errors.New("unknown validation result type")
 	}
 
-	responseHash, _, err := getResponseHash(result.GetValidationResponseBytes())
+	responseHash, _, err := utils.GetResponseHash(result.GetValidationResponseBytes())
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +564,6 @@ func toMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 		InferenceId:     result.GetInferenceId(),
 		ResponsePayload: string(result.GetValidationResponseBytes()),
 		ResponseHash:    responseHash,
-		Value:           cosineSimVal,
+		Value:           simVal,
 	}, nil
 }

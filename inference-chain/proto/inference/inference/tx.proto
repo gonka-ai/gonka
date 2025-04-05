@@ -35,6 +35,7 @@ service Msg {
   rpc RegisterModel                    (MsgRegisterModel                   ) returns (MsgRegisterModelResponse                   );
   rpc CreateTrainingTask               (MsgCreateTrainingTask              ) returns (MsgCreateTrainingTaskResponse              );
   rpc SubmitHardwareDiff               (MsgSubmitHardwareDiff              ) returns (MsgSubmitHardwareDiffResponse              );
+  rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade            ) returns (MsgCreatePartialUpgradeResponse            );
   rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
   rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
 }
@@ -65,6 +66,7 @@ message MsgStartInference {
   string model          = 6;
   string requested_by   = 7;
   string assigned_to    = 8;
+  string node_version   = 9;
 }
 
 message MsgStartInferenceResponse {
@@ -245,4 +247,14 @@ message MsgAssignTrainingTask {
 }
 
 message MsgAssignTrainingTaskResponse {}
+
+message MsgCreatePartialUpgrade {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority         = 1;
+  uint64 height          = 2;
+  string nodeVersion     = 3;
+  string apiBinariesJson = 4;
+}
+
+message MsgCreatePartialUpgradeResponse {}
 

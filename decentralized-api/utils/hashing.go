@@ -11,13 +11,11 @@ import (
 // CanonicalizeJSON takes a JSON byte slice and returns a canonicalized JSON string
 func CanonicalizeJSON(jsonBytes []byte) (string, error) {
 	var jsonObj interface{}
-	// Decode JSON into a generic interface
 	if err := json.Unmarshal(jsonBytes, &jsonObj); err != nil {
 		return "", err
 	}
 	// add a random seed if it doesn't exist in jsonObj
 
-	// Use a buffer to write the canonical JSON
 	buf := &bytes.Buffer{}
 	encoder := json.NewEncoder(buf)
 	encoder.SetIndent("", "")

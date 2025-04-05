@@ -237,6 +237,17 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
+				{
+					RpcMethod: "PartialUpgradeAll",
+					Use:       "list-partial-upgrade",
+					Short:     "List all partial_upgrade",
+				},
+				{
+					RpcMethod:      "PartialUpgrade",
+					Use:            "show-partial-upgrade [id]",
+					Short:          "Shows a partial_upgrade",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -343,6 +354,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "assign-training-task",
 					Short:          "Send a assign-training-task tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "CreatePartialUpgrade",
+					Use:            "create-partial-upgrade [height] [node-version] [api-binaries-json]",
+					Short:          "Send a create_partial_upgrade tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

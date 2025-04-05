@@ -8,11 +8,12 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/utils"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -101,6 +102,20 @@ var DevTestParams = Params{
 	SeqLen:           4,
 }
 
+var TestNetParams = Params{
+	Dim:              2048,
+	NLayers:          16,
+	NHeads:           16,
+	NKVHeads:         16,
+	VocabSize:        8192,
+	FFNDimMultiplier: 1.3,
+	MultipleOf:       1024,
+	NormEps:          1e-5,
+	RopeTheta:        500000.0,
+	UseScaledRope:    true,
+	SeqLen:           16,
+}
+
 func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 	if o.noOp {
 		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
@@ -162,17 +177,26 @@ func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Respo
 	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
 }
 
+// TODO choose model, instead of pick any model
 func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.Response, error) {
 	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
 	if err != nil {
 		return nil, err
 	}
 
-	model := node.Models[0]
+	var anyModel string
+	var anyModelArgs []string
+
+	for model, args := range node.Models {
+		anyModel = model
+		anyModelArgs = args.Args
+		break
+	}
+
 	inferenceUpDto := InferenceUpDto{
-		Model: model,
+		Model: anyModel,
 		Dtype: "float16",
-		Args:  []string{"--enforce-eager"},
+		Args:  anyModelArgs,
 	}
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
