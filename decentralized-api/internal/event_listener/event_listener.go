@@ -38,6 +38,7 @@ type EventListener struct {
 	nodePocOrchestrator *poc.NodePoCOrchestrator
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
+	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
 
 	ws *websocket.Conn
@@ -58,6 +59,7 @@ func NewEventListener(
 		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
+		trainingExecutor:    trainingExecutor,
 	}
 }
 
@@ -263,7 +265,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 		proposalIdOrNil := event.Result.Events["proposal_id"]
 		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
-		if isNodeSynced() {
+		if el.isNodeSynced() {
 			logging.Debug("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
 			taskIds := event.Result.Events["training_task_assigned.task_id"]
 			if taskIds == nil {
@@ -276,7 +278,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 					logging.Error("Failed to parse task ID", types.Training, "error", err)
 					return
 				}
-				executor.ProcessTaskAssignedEvent(taskIdUint)
+				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
 			}
 		}
 	default:
