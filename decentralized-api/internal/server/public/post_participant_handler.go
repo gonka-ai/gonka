@@ -1,7 +1,6 @@
 package public
 
 import (
-	"decentralized-api/api"
 	"decentralized-api/logging"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
@@ -10,7 +9,7 @@ import (
 )
 
 func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
-	var body api.SubmitUnfundedNewParticipantDto
+	var body SubmitUnfundedNewParticipantDto
 
 	if err := ctx.Bind(&body); err != nil {
 		logging.Error("Failed to decode request body", types.Participants, "error", err)
@@ -45,7 +44,7 @@ func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
 	})
 }
 
-func (s *Server) submitNewUnfundedParticipant(body api.SubmitUnfundedNewParticipantDto) error {
+func (s *Server) submitNewUnfundedParticipant(body SubmitUnfundedNewParticipantDto) error {
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,

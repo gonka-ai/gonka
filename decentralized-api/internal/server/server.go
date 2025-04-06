@@ -66,6 +66,9 @@ func (s *Server) Start() {
 	// Create an HTTP server
 	// mux.HandleFunc("/v1/chat/completions/", s.wrapGetCompletion())
 	// mux.HandleFunc("/v1/chat/completions", s.wrapChat())
+	// mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
+	// mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
+
 
 	// TODO delete
 	mux.HandleFunc("/v1/participants", s.wrapSubmitNewParticipant())
@@ -77,11 +80,6 @@ func (s *Server) Start() {
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
-
-	// TODO make it public
-	mux.HandleFunc("/v1/verify-proof", api.WrapVerifyProof())
-	mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
-
 	mux.HandleFunc("/", s.logUnknownRequest())
 
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
@@ -695,133 +693,4 @@ func getPromptHash(requestBytes []byte) (string, string, error) {
 
 	promptHash := utils.GenerateSHA256Hash(canonicalJSON)
 	return promptHash, canonicalJSON, nil
-}
-
-func (s *Server) wrapSubmitNewParticipant() func(w http.ResponseWriter, request *http.Request) {
-	return func(w http.ResponseWriter, request *http.Request) {
-		logging.Debug("SubmitNewParticipant received", types.Participants, "method", request.Method)
-		if request.Method == http.MethodPost {
-			s.submitNewParticipant(w, request)
-		} else if request.Method == http.MethodGet {
-			s.getParticipants(w, request)
-		} else {
-			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-			return
-		}
-	}
-}
-
-func (s *Server) submitNewUnfundedParticipant(w http.ResponseWriter, body api.SubmitUnfundedNewParticipantDto) {
-	msg := &inference.MsgSubmitNewUnfundedParticipant{
-		Address:      body.Address,
-		Url:          body.Url,
-		Models:       body.Models,
-		ValidatorKey: body.ValidatorKey,
-		PubKey:       body.PubKey,
-		WorkerKey:    body.WorkerKey,
-	}
-
-	logging.Debug("Submitting NewUnfundedParticipant", types.Participants, "message", msg)
-
-	if err := s.recorder.SubmitNewUnfundedParticipant(msg); err != nil {
-		logging.Error("Failed to submit MsgSubmitNewUnfundedParticipant", types.Participants, "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-func (s *Server) submitNewParticipant(w http.ResponseWriter, request *http.Request) {
-	var body api.SubmitUnfundedNewParticipantDto
-	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-		logging.Error("Failed to decode request body", types.Participants, "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	logging.Debug("SubmitNewParticipantDto", types.Participants, "body", body)
-	if body.Address != "" && body.PubKey != "" {
-		s.submitNewUnfundedParticipant(w, body)
-		return
-	}
-
-	msg := &inference.MsgSubmitNewParticipant{
-		Url:          body.Url,
-		Models:       body.Models,
-		ValidatorKey: body.ValidatorKey,
-		WorkerKey:    body.WorkerKey,
-	}
-
-	logging.Info("ValidatorKey in dapi", types.Participants, "key", body.ValidatorKey)
-	if err := s.recorder.SubmitNewParticipant(msg); err != nil {
-		logging.Error("Failed to submit MsgSubmitNewParticipant", types.Participants, "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	responseBody := ParticipantDto{
-		Id:     msg.Creator,
-		Url:    msg.Url,
-		Models: msg.Models,
-	}
-
-	responseJson, err := json.Marshal(responseBody)
-	if err != nil {
-		logging.Error("Failed to marshal response", types.Participants, "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write(responseJson)
-}
-
-func (s *Server) getParticipants(w http.ResponseWriter, request *http.Request) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	r, err := queryClient.ParticipantAll(request.Context(), &types.QueryAllParticipantRequest{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	participants := make([]ParticipantDto, len(r.Participant))
-	for i, p := range r.Participant {
-		balances, err := s.recorder.BankBalances(request.Context(), p.Address)
-		pBalance := int64(0)
-		if err == nil {
-			for _, balance := range balances {
-				// TODO: surely there is a place to get denom from
-				if balance.Denom == "nicoin" {
-					pBalance = balance.Amount.Int64()
-				}
-			}
-			if pBalance == 0 {
-				logging.Debug("Participant has no balance", types.Participants, "address", p.Address)
-			}
-		} else {
-			logging.Warn("Failed to get balance for participant", types.Participants, "address", p.Address, "error", err)
-		}
-		participants[i] = ParticipantDto{
-			Id:          p.Address,
-			Url:         p.InferenceUrl,
-			Models:      p.Models,
-			CoinsOwed:   p.CoinBalance,
-			Balance:     pBalance,
-			VotingPower: int64(p.Weight),
-		}
-	}
-
-	responseBody := ParticipantsDto{
-		Participants: participants,
-		BlockHeight:  r.BlockHeight,
-	}
-
-	responseJson, err := json.Marshal(responseBody)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(responseJson)
 }

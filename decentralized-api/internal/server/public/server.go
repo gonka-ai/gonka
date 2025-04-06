@@ -38,13 +38,16 @@ func NewServer(
 	g.GET("chat/completions/:id", s.getChatById)
 
 	g.GET("participants/:address", s.getInferenceParticipantByAddress)
-	// TODO test it
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
 	// TODO test it
 	g.POST("training-jobs", s.postTrainingJob)
 	g.GET("training-jobs/:id", s.getTrainingJob)
+
+	// TODO test it
+	g.POST("verify-proof", s.postVerifyProof)
+	g.POST("verify-block", s.postVerifyBlock)
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
