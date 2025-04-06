@@ -189,7 +189,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		WorkerKey:    workerKey,
 	}
 
-	requestUrl, err := url.JoinPath(config.ChainNode.SeedApiUrl, "/v1/participants")
+	requestUrl, err := url.JoinPath(config.ChainNode.SeedApiUrl, "/public/v1/participants")
 	if err != nil {
 		return fmt.Errorf("Failed to join URL path: %w", err)
 	}

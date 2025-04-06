@@ -6,7 +6,12 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/app"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type Server struct {
@@ -20,8 +25,9 @@ type Server struct {
 func NewServer(
 	recorder cosmos_client.CosmosMessageClient,
 	nodeBroker *broker.Broker,
-	configManager *apiconfig.ConfigManager,
-	cdc *codec.ProtoCodec) *Server {
+	configManager *apiconfig.ConfigManager) *Server {
+	cdc := getCodec()
+
 	e := echo.New()
 	s := &Server{
 		e:             e,
@@ -47,6 +53,16 @@ func NewServer(
 
 	g.POST("tx/send", s.sendTransaction)
 	return s
+}
+
+func getCodec() *codec.ProtoCodec {
+	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	app.RegisterIBC(interfaceRegistry)
+	types.RegisterInterfaces(interfaceRegistry)
+	banktypes.RegisterInterfaces(interfaceRegistry)
+	v1.RegisterInterfaces(interfaceRegistry)
+	cdc := codec.NewProtoCodec(interfaceRegistry)
+	return cdc
 }
 
 func (s *Server) Start(addr string) {
