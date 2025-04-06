@@ -84,7 +84,7 @@ func sendRegisterParticipantRequest(cmd *cobra.Command, nodeAddress string, body
 		return err
 	}
 
-	url := nodeAddress + "/v1/participants"
+	url := nodeAddress + "/public/v1/participants"
 	cmd.Printf("Sending a request to %s\n", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))

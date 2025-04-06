@@ -89,3 +89,29 @@ type TrainingDatasetsDto struct {
 	Train string `json:"train"`
 	Test  string `json:"test"`
 }
+
+type ProofVerificationRequest struct {
+	Value    string               `json:"value"`
+	AppHash  string               `json:"app_hash"`
+	ProofOps cryptotypes.ProofOps `json:"proof_ops"`
+	Epoch    int64                `json:"epoch"`
+}
+
+type VerifyBlockRequest struct {
+	Block      comettypes.Block `json:"block"`
+	Validators []Validator      `json:"validators"`
+}
+
+type Validator struct {
+	PubKey      string `json:"pub_key"`
+	VotingPower int64  `json:"voting_power"`
+}
+
+type SubmitUnfundedNewParticipantDto struct {
+	Address      string   `json:"address"`
+	Url          string   `json:"url"`
+	Models       []string `json:"models"`
+	ValidatorKey string   `json:"validator_key"`
+	PubKey       string   `json:"pub_key"`
+	WorkerKey    string   `json:"worker_key"`
+}
