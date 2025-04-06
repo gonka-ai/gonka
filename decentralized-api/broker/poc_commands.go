@@ -44,4 +44,6 @@ func (c StartPocCommand) Execute(broker *Broker) {
 		n.State.IntendedStatus = types.HardwareNodeStatus_POC
 		n.State.Status = types.HardwareNodeStatus_POC
 	}
+
+	c.Response <- true
 }
