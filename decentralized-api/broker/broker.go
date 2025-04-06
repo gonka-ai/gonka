@@ -619,20 +619,20 @@ func nodeStatusQueryWorker(broker *Broker) {
 			timestamp := time.Now()
 			if err != nil {
 				logging.Error("Failed to queue status query command", types.Nodes,
-					"node_id", nodeResp.Node.Id, "error", err)
+					"nodeId", nodeResp.Node.Id, "error", err)
 				continue
 			}
 
-			if queryStatusResult.PrevStatus != queryStatusResult.NewStatus {
+			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus {
 				logging.Info("Node status changed", types.Nodes,
-					"node_id", nodeResp.Node.Id,
-					"prev_status", queryStatusResult.PrevStatus.String(),
-					"new_status", queryStatusResult.NewStatus.String())
+					"nodeId", nodeResp.Node.Id,
+					"prevStatus", queryStatusResult.PrevStatus.String(),
+					"currentStatus", queryStatusResult.CurrentStatus.String())
 
 				statusUpdates = append(statusUpdates, StatusUpdate{
 					NodeId:     nodeResp.Node.Id,
 					PrevStatus: queryStatusResult.PrevStatus,
-					NewStatus:  queryStatusResult.NewStatus,
+					NewStatus:  queryStatusResult.CurrentStatus,
 					Timestamp:  timestamp,
 				})
 			}
@@ -650,8 +650,8 @@ func nodeStatusQueryWorker(broker *Broker) {
 }
 
 type statusQueryResult struct {
-	PrevStatus types.HardwareNodeStatus
-	NewStatus  types.HardwareNodeStatus
+	PrevStatus    types.HardwareNodeStatus
+	CurrentStatus types.HardwareNodeStatus
 }
 
 func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
@@ -671,11 +671,20 @@ func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
 	}
 
 	prevStatus := node.State.Status
-	newStatus := toStatus(*status)
+	currentStatus := toStatus(*status)
+	logging.Info("Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
+
+	if currentStatus == types.HardwareNodeStatus_INFERENCE {
+		ok, err := client.InferenceHealth()
+		if !ok || err != nil {
+			currentStatus = types.HardwareNodeStatus_FAILED
+			logging.Info("Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+		}
+	}
 
 	return &statusQueryResult{
-		PrevStatus: prevStatus,
-		NewStatus:  newStatus,
+		PrevStatus:    prevStatus,
+		CurrentStatus: currentStatus,
 	}, nil
 }
 
