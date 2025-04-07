@@ -86,7 +86,7 @@ func (el *EventListener) Start(ctx context.Context) {
 
 	go el.startSyncStatusChecker()
 
-	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	eventChan := make(chan *chainevents.JSONRPCResponse, 10000)
 	defer close(eventChan)
 	el.processEvents(ctx, eventChan)
 
