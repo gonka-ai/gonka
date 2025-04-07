@@ -37,7 +37,6 @@ func NewServer(
 		cdc:           cdc,
 	}
 
-	// TODO test
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/admin/v1/")
 
@@ -50,7 +49,6 @@ func NewServer(
 	g.GET("unit-of-compute-price-proposal", s.getUnitOfComputePriceProposal)
 
 	g.POST("models", s.registerModel)
-
 	g.POST("tx/send", s.sendTransaction)
 	return s
 }

@@ -62,7 +62,7 @@ func main() {
 	nodeBroker := broker.NewBroker(recorder)
 	nodes := config.GetConfig().Nodes
 	for _, node := range nodes {
-		server.LoadNodeToBroker(nodeBroker, &node)
+		nodeBroker.LoadNodeToBroker(&node)
 	}
 
 	params, err := getParams(context.Background(), *recorder)

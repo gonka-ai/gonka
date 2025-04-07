@@ -70,11 +70,6 @@ func (s *Server) Start() {
 	// mux.HandleFunc("/v1/verify-block", api.WrapVerifyBlock(s.configManager))
 
 	// TODO delete
-	// mux.HandleFunc("/v1/poc-batches/", api.WrapPoCBatches(s.recorder))
-	mux.HandleFunc("/v1/nodes", api.WrapNodes(s.nodeBroker, s.configManager))
-	mux.HandleFunc("/v1/nodes/", api.WrapNodes(s.nodeBroker, s.configManager))
-	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
-	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
 	mux.HandleFunc("/", s.logUnknownRequest())
 
@@ -136,17 +131,6 @@ func (s *Server) logUnknownRequest() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		logging.Warn("Unknown request", types.Server, "path", request.URL.Path)
 		http.Error(w, "Unknown request", http.StatusNotFound)
-	}
-}
-
-func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNodeConfig) {
-	err := nodeBroker.QueueMessage(broker.RegisterNode{
-		Node:     *node,
-		Response: make(chan apiconfig.InferenceNodeConfig, 2),
-	})
-	if err != nil {
-		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
-		panic(err)
 	}
 }
 

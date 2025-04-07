@@ -35,22 +35,6 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-type ParticipantsDto struct {
-	Participants []ParticipantDto `json:"participants"`
-	BlockHeight  int64            `json:"block_height"`
-}
-
-type ParticipantDto struct {
-	Id          string   `json:"id"`
-	Url         string   `json:"url"`
-	Models      []string `json:"models"`
-	CoinsOwed   int64    `json:"coins_owed"`
-	RefundsOwed int64    `json:"refunds_owed"`
-	Balance     int64    `json:"balance"`
-	VotingPower int64    `json:"voting_power"`
-	Reputation  float32  `json:"reputation"`
-}
-
 type ResponseWithBody struct {
 	Response  *http.Response
 	BodyBytes []byte

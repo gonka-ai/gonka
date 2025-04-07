@@ -85,6 +85,21 @@ func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	return broker
 }
 
+func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) {
+	if node == nil {
+		return
+	}
+
+	err := b.QueueMessage(RegisterNode{
+		Node:     *node,
+		Response: make(chan apiconfig.InferenceNodeConfig, 2),
+	})
+	if err != nil {
+		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
+		panic(err)
+	}
+}
+
 func nodeSyncWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
