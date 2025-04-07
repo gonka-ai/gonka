@@ -71,7 +71,6 @@ func (s *Server) Start() {
 
 	// TODO delete
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
-	mux.HandleFunc("/", s.logUnknownRequest())
 
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
 		pubkey := strings.TrimPrefix(request.URL.Path, "/v1/debug/pubkey-to-addr/")
