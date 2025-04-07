@@ -1,5 +1,4 @@
 #!/bin/sh
-set -e
 
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
@@ -36,6 +35,8 @@ STATE_DIR="/root/.inference"
 ACCOUNT_EXISTS=false
 echo "🔍 Checking if account $KEY_NAME exists in keyring ($KEYRING_BACKEND)..."
 ACCOUNT_CHECK=$($APP_NAME keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR" 2>&1 || true)
+
+set -e
 
 echo "DEBUG LOG ACCOUNT_CHECK: $ACCOUNT_CHECK"
 
@@ -103,6 +104,26 @@ TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
  else
      echo "Node will sync WITHOUT snapshots"
  fi
+ 
+echo "Setting up overrides for config.toml"
+ # Process CONFIG_ environment variables
+ for var in $(env | grep '^CONFIG_'); do
+    # Extract key and value
+    key=${var%%=*}
+    value=${var#*=}
+    
+    # Remove CONFIG_ prefix and transform __ to .
+    config_key=${key#CONFIG_}
+    config_key=${config_key//__/.}
+    
+    echo "Setting config: $config_key = $value"
+    $APP_NAME config set config "$config_key" "$value" --skip-validate
+ done
+# Check and apply config overrides if present
+if [ -f "config_overrides.toml" ]; then
+    echo "Applying config overrides from config_overrides.toml"
+    $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_overrides.toml
+fi
 
 echo "Creating account for $KEY_NAME"
 $APP_NAME keys add "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir "$STATE_DIR"

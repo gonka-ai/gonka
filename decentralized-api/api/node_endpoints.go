@@ -134,8 +134,8 @@ func addNode(
 		return apiconfig.InferenceNodeConfig{}, true
 	}
 	node := <-response
-	config := configManager.GetConfig()
-	newNodes := append(config.Nodes, node)
+	nodes := configManager.GetNodes()
+	newNodes := append(nodes, node)
 	err = configManager.SetNodes(newNodes)
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err)

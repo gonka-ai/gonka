@@ -60,7 +60,23 @@ func (cm *ConfigManager) Load() error {
 	return nil
 }
 
-func (cm *ConfigManager) GetConfig() *Config {
+// Need to make sure we pass back a COPY of the ChainNodeConfig to make sure
+// we don't modify the original
+func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
+	return cm.currentConfig.ChainNode
+}
+
+func (cm *ConfigManager) GetApiConfig() ApiConfig {
+	return cm.currentConfig.Api
+}
+
+func (cm *ConfigManager) GetNodes() []InferenceNodeConfig {
+	nodes := make([]InferenceNodeConfig, len(cm.currentConfig.Nodes))
+	copy(nodes, cm.currentConfig.Nodes)
+	return nodes
+}
+
+func (cm *ConfigManager) getConfig() *Config {
 	return &cm.currentConfig
 }
 
