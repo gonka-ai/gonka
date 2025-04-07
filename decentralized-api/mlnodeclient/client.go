@@ -292,7 +292,7 @@ type inferenceUpDto struct {
 }
 
 func (api *Client) InferenceUp(model string, args []string) error {
-	inferenceUpUrl, err := url.JoinPath(api.inferenceUrl, inferenceUpPath)
+	inferenceUpUrl, err := url.JoinPath(api.pocUrl, inferenceUpPath)
 	if err != nil {
 		return err
 	}
