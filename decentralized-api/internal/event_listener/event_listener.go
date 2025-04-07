@@ -77,7 +77,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
-	subscribeToEvents(ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
