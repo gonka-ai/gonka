@@ -23,6 +23,8 @@ func (c StartPocCommand) Execute(broker *Broker) {
 
 	totalNodes := len(nodes)
 	for _, n := range nodes {
+		n.State.IntendedStatus = types.HardwareNodeStatus_POC
+
 		client := newNodeClient(&n.Node)
 
 		err := client.Stop()
@@ -31,7 +33,6 @@ func (c StartPocCommand) Execute(broker *Broker) {
 			continue
 		}
 
-		n.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		n.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 
 		dto := mlnodeclient.BuildInitDto(c.BlockHeight, c.PubKey, int64(totalNodes), int64(n.Node.NodeNum), c.BlockHash, c.CallbackUrl)
@@ -41,7 +42,6 @@ func (c StartPocCommand) Execute(broker *Broker) {
 			continue
 		}
 
-		n.State.IntendedStatus = types.HardwareNodeStatus_POC
 		n.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
 	}
 

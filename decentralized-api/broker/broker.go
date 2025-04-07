@@ -596,7 +596,6 @@ func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
 	} else {
 		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "nodeId", nodeId)
 		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 }
 
@@ -726,6 +725,8 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 
 func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 	for _, node := range b.nodes {
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
 		client := newNodeClient(&node.Node)
 
 		err := client.Stop()
@@ -734,7 +735,6 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 				"node_id", node.Node.Id, "error", err)
 			continue
 		} else {
-			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 		}
 
@@ -743,7 +743,6 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 			logging.Error("Failed to bring up inference", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
 		} else {
-			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
 		}
 	}
