@@ -48,31 +48,24 @@ func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
 
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 	epochParam := c.Param("epoch")
-
-		if epochParam == "current" {
-			s.getParticipants(nil, w, config.GetChainNodeConfig().Url)
-		} else {
-			epochInt, err := strconv.Atoi(epochIdStr)
-			if err != nil {
-				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
-				return
-			}
-
-			if epochInt < 0 {
-				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
-				return
-			}
-
-			epochUint := uint64(epochInt)
-			s.getParticipants(&epochUint, w, config.GetChainNodeConfig().Url)
-			return c.JSON(http.StatusOK, response)
+	var epoch *uint64
+	if epochParam != "current" {
+		epochId, err := strconv.ParseUint(epochParam, 10, 64)
+		if err != nil || epochId <= 0 {
+			return ErrInvalidEpochId
 		}
+		epoch = &epochId
 	}
+	resp, err := s.getParticipants(epoch)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) getParticipants(epochOrNil *uint64, w http.ResponseWriter, chainNodeUrl string) {
+func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
+	currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		logging.Error("Failed to get current epoch", types.Participants, "error", err)
 		return nil, err
@@ -100,7 +93,7 @@ func (s *Server) getParticipants(epochOrNil *uint64, w http.ResponseWriter, chai
 
 	cdc := codec.NewProtoCodec(interfaceRegistry)
 
-	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetConfig().ChainNode.Url)
+	rpcClient, err := cosmos_client.NewRpcClient(s.configManager.GetChainNodeConfig().Url)
 	if err != nil {
 		logging.Error("Failed to create rpc client", types.System, "error", err)
 		return nil, err

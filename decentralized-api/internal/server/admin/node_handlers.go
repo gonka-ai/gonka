@@ -109,8 +109,7 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 	}
 
 	node := <-response
-	config := s.configManager.GetConfig()
-	newNodes := append(config.Nodes, node)
+	newNodes := append(s.configManager.GetNodes(), node)
 	err = s.configManager.SetNodes(newNodes)
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err, "node", newNode.Id)
