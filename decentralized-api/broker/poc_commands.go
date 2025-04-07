@@ -32,7 +32,7 @@ func (c StartPocCommand) Execute(broker *Broker) {
 		}
 
 		n.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
-		n.State.Status = types.HardwareNodeStatus_STOPPED
+		n.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 
 		dto := mlnodeclient.BuildInitDto(c.BlockHeight, c.PubKey, int64(totalNodes), int64(n.Node.NodeNum), c.BlockHash, c.CallbackUrl)
 		err = client.InitGenerate(dto)
@@ -42,7 +42,7 @@ func (c StartPocCommand) Execute(broker *Broker) {
 		}
 
 		n.State.IntendedStatus = types.HardwareNodeStatus_POC
-		n.State.Status = types.HardwareNodeStatus_POC
+		n.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
 	}
 
 	c.Response <- true

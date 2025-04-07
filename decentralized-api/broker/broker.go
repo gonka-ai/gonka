@@ -74,14 +74,19 @@ type NodeState struct {
 	LastStateChange time.Time                `json:"last_state_change"`
 }
 
-func (s *NodeState) UpdateStatus(status types.HardwareNodeStatus, time time.Time) {
+func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
 	s.Status = status
 	s.StatusTimestamp = time
 }
 
+func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
+	s.Status = status
+	s.StatusTimestamp = time.Now()
+}
+
 func (s *NodeState) Failure(reason string) {
 	s.FailureReason = reason
-	s.Status = types.HardwareNodeStatus_FAILED
+	s.UpdateStatusNow(types.HardwareNodeStatus_FAILED)
 }
 
 func (s *NodeState) IsOperational() bool {
@@ -216,7 +221,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 	command.Response <- &command.Node
 }
 
-func newNodeClient(node *Node) *mlnodeclient.InferenceNodeClient {
+func newNodeClient(node *Node) *mlnodeclient.Client {
 	return mlnodeclient.NewNodeClient(node.PoCUrl(), node.InferenceUrl())
 }
 
@@ -545,7 +550,6 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		// TODO: maybe also skip if status is unknown or smth?
 
 		if node.State.Status == node.State.IntendedStatus {
-			// TODO: check inference is actually alive???
 			continue // Node is already in the intended state
 		}
 
@@ -560,23 +564,40 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			continue
 		}
 
-		client := newNodeClient(&node.Node)
-
-		logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-		err := client.Stop()
-		if err != nil {
-			logging.Error("Failed to stop node during reconciliation", types.Nodes,
-				"node_id", nodeId, "error", err)
-			continue
+		if node.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+			(node.State.Status == types.HardwareNodeStatus_UNKNOWN ||
+				node.State.Status == types.HardwareNodeStatus_STOPPED ||
+				node.State.Status == types.HardwareNodeStatus_FAILED) {
+			b.restoreNodeToInferenceState(node)
 		}
-
-		// node.State.Operational = true
-		// node.State.FailureReason = ""
-
-		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "node_id", nodeId)
 	}
 
 	command.Response <- true
+}
+
+func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
+	client := newNodeClient(&node.Node)
+
+	nodeId := node.Node.Id
+	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
+	err := client.Stop()
+	if err != nil {
+		logging.Error("Failed to stop node during reconciliation", types.Nodes,
+			"node_id", nodeId, "error", err)
+		return
+	} else {
+		node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
+	}
+
+	err = inferenceUp(&node.Node, client)
+	if err != nil {
+		logging.Error("Failed to bring up inference during reconciliation", types.Nodes, "noeId", nodeId, "error", err)
+		return
+	} else {
+		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "nodeId", nodeId)
+		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	}
 }
 
 func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
@@ -593,7 +614,7 @@ func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
 			continue
 		}
 
-		node.State.UpdateStatus(update.NewStatus, update.Timestamp)
+		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
 		logging.Info("Set actual status for node", types.Nodes,
 			"node_id", nodeId, "status", update.NewStatus.String())
 	}
@@ -714,32 +735,36 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 			continue
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
-			node.State.Status = types.HardwareNodeStatus_STOPPED
+			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 		}
 
-		if len(node.Node.Models) == 0 {
-			logging.Error("No models found for node, can't inference up", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-			continue
-		}
-
-		model := ""
-		var modelArgs []string
-		for modelName, args := range node.Node.Models {
-			model = modelName
-			modelArgs = args.Args
-			break
-		}
-
-		err = client.InferenceUp(model, modelArgs)
+		err = inferenceUp(&node.Node, client)
 		if err != nil {
 			logging.Error("Failed to bring up inference", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-			node.State.Status = types.HardwareNodeStatus_INFERENCE
+			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
 		}
 	}
 
 	command.Response <- true
+}
+
+func inferenceUp(node *Node, nodeClient *mlnodeclient.Client) error {
+	if len(node.Models) == 0 {
+		logging.Error("No models found for node, can't inference up", types.Nodes,
+			"node_id", node.Id, "error")
+		return errors.New("no models found for node, can't inference up")
+	}
+
+	model := ""
+	var modelArgs []string
+	for modelName, args := range node.Models {
+		model = modelName
+		modelArgs = args.Args
+		break
+	}
+
+	return nodeClient.InferenceUp(model, modelArgs)
 }

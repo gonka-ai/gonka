@@ -97,7 +97,7 @@ var TestNetParams = Params{
 	SeqLen:           16,
 }
 
-func (api *InferenceNodeClient) InitGenerate(dto InitDto) error {
+func (api *Client) InitGenerate(dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
