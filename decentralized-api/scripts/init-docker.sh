@@ -26,7 +26,7 @@ fi
 echo "Setting keyring_backend to test in $yaml_file"
 sed -i "s/keyring_backend: .*/keyring_backend: test/" "$yaml_file"
 
-echo "The final api config:"
+echo "Initial config (before env var merge)"
 cat "$yaml_file"
 
 echo "init for cosmovisor"
