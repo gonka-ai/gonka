@@ -628,23 +628,23 @@ func nodeStatusQueryWorker(broker *Broker) {
 	for range ticker.C {
 		nodes, err := broker.GetNodes()
 		if err != nil {
-			logging.Error("Failed to get nodes for status query", types.Nodes, "error", err)
+			logging.Error("nodeStatusQueryWorker. Failed to get nodes for status query", types.Nodes, "error", err)
 			continue
 		}
 
 		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
-			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node.Id)
+			queryStatusResult, err := broker.queryNodeStatus(*nodeResp.Node, *nodeResp.State)
 			timestamp := time.Now()
 			if err != nil {
-				logging.Error("Failed to queue status query command", types.Nodes,
+				logging.Error("nodeStatusQueryWorker. Failed to queue status query command", types.Nodes,
 					"nodeId", nodeResp.Node.Id, "error", err)
 				continue
 			}
 
 			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus {
-				logging.Info("Node status changed", types.Nodes,
+				logging.Info("nodeStatusQueryWorker. Node status changed", types.Nodes,
 					"nodeId", nodeResp.Node.Id,
 					"prevStatus", queryStatusResult.PrevStatus.String(),
 					"currentStatus", queryStatusResult.CurrentStatus.String())
@@ -663,7 +663,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 			Response:      make(chan bool, 2),
 		})
 		if err != nil {
-			logging.Error("Failed to queue status update command", types.Nodes, "error", err)
+			logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
 			continue
 		}
 	}
@@ -674,31 +674,28 @@ type statusQueryResult struct {
 	CurrentStatus types.HardwareNodeStatus
 }
 
-func (b *Broker) queryNodeStatus(nodeId string) (*statusQueryResult, error) {
-	node, exists := b.nodes[nodeId]
-	if !exists {
-		logging.Error("Cannot query status: node not found", types.Nodes, "node_id", nodeId)
-		return nil, errors.New("node not found")
-	}
-
-	client := newNodeClient(&node.Node)
+// Pass by value, because this is supposed to be a readonly function
+func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult, error) {
+	client := newNodeClient(&node)
 
 	status, err := client.NodeState()
+
+	nodeId := node.Id
 	if err != nil {
-		logging.Error("Failed to query node status", types.Nodes,
-			"node_id", nodeId, "error", err)
+		logging.Error("queryNodeStatus. Failed to query node status", types.Nodes,
+			"nodeId", nodeId, "error", err)
 		return nil, err
 	}
 
-	prevStatus := node.State.Status
+	prevStatus := state.Status
 	currentStatus := toStatus(*status)
-	logging.Info("Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
+	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
 	if currentStatus == types.HardwareNodeStatus_INFERENCE {
 		ok, err := client.InferenceHealth()
 		if !ok || err != nil {
 			currentStatus = types.HardwareNodeStatus_FAILED
-			logging.Info("Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
+			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
 		}
 	}
 
