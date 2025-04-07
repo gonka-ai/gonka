@@ -70,7 +70,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	seed := rand.Int31()
 	inferenceUUID := uuid.New().String()
-	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetConfig().CurrentNodeVersion)
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetCurrentNodeVersion())
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		return err
@@ -90,7 +90,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	// the same process to create the same final request body
 	logging.Debug("Sending request to executor", types.Inferences, "url", executor.Url, "seed", seed, "inferenceId", inferenceUUID)
 
-	if s.configManager.GetConfig().Api.PublicUrl == executor.Url {
+	if s.configManager.GetApiConfig().PublicUrl == executor.Url {
 		// node found itself as executor
 
 		request.InferenceId = inferenceUUID
@@ -141,7 +141,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		return err
 	}
 
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetConfig().CurrentNodeVersion, func(node *broker.Node) (*http.Response, error) {
+	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -173,7 +173,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		return nil
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, s.configManager.GetConfig().ChainNode.AccountName)
+	err = s.sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)

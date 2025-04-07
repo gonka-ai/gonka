@@ -107,18 +107,18 @@ func main() {
 	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
 	go listener.Start(context.Background())
 
-	addr := fmt.Sprintf(":%v", config.GetConfig().Api.PublicServerPort)
+	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
 	publicServer := pserver.NewServer(nodeBroker, config, recorder)
 	publicServer.Start(addr)
 
-	addr = fmt.Sprintf(":%v", config.GetConfig().Api.MLServerPort)
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
 	mlServer := mlserver.NewServer(recorder)
 	mlServer.Start(addr)
 
-	addr = fmt.Sprintf(":%v", config.GetConfig().Api.AdminServerPort)
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)

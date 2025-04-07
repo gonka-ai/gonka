@@ -68,7 +68,7 @@ func (s *Server) postVerifyBlock(ctx echo.Context) error {
 		valSet[i] = comettypes.NewValidator(pubKey, validator.VotingPower)
 	}
 
-	err := debug(s.configManager.GetConfig().ChainNode.Url, block)
+	err := debug(s.configManager.GetChainNodeConfig().Url, block)
 	if err != nil {
 		logging.Error("Debug block verification failed!", types.Participants, "error", err)
 		return err
