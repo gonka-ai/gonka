@@ -225,10 +225,11 @@ data class ApplicationCLI(
         return output.output
     }
 
-    private fun extractSignature(response: String): String {
+    private fun extractSignature(response: List<String>): String {
         val signaturePattern = ".*Signature:\\s*([^,\\s]+).*".toRegex()
-        return signaturePattern.find(response)?.groupValues?.get(1)
-            ?: error("Could not extract signature from response: $response")
+        return response.firstNotNullOfOrNull {
+            signaturePattern.find(it)?.groupValues?.get(1)
+        } ?: error("Could not extract signature from response: $response")
     }
 
     fun signPayload(payload: String, accountAddress: String? = null): String {
@@ -245,7 +246,7 @@ data class ApplicationCLI(
             val response = this.exec(
                 parameters
             )
-            extractSignature(response[1]).also {
+            extractSignature(response).also {
                 Logger.info("Signature created, signature={}", it)
             }
         }

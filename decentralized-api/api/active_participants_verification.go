@@ -95,7 +95,7 @@ func WrapVerifyBlock(config *apiconfig.ConfigManager) http.HandlerFunc {
 			valSet[i] = comettypes.NewValidator(pubKey, validator.VotingPower)
 		}
 
-		err := debug(config.GetConfig().ChainNode.Url, block)
+		err := debug(config.GetChainNodeConfig().Url, block)
 		if err != nil {
 			logging.Error("Debug block verification failed!", types.Participants, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

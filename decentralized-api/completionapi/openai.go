@@ -36,15 +36,17 @@ type Delta struct {
 	Content *string `json:"content"`
 }
 
+type TopLogprobs struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+	Bytes   []int   `json:"bytes"`
+}
+
 type Logprob struct {
-	Token       string  `json:"token"`
-	Logprob     float64 `json:"logprob"`
-	Bytes       []int   `json:"bytes"`
-	TopLogprobs []struct {
-		Token   string  `json:"token"`
-		Logprob float64 `json:"logprob"`
-		Bytes   []int   `json:"bytes"`
-	} `json:"top_logprobs"`
+	Token       string        `json:"token"`
+	Logprob     float64       `json:"logprob"`
+	Bytes       []int         `json:"bytes"`
+	TopLogprobs []TopLogprobs `json:"top_logprobs"`
 }
 
 type Usage struct {

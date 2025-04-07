@@ -87,11 +87,16 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
+	@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
+	@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) ghcr.io/product-science/inferenced:$(VERSION)
+	@docker push ghcr.io/product-science/inferenced:$(VERSION)
+
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
 		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
 		@docker push gcr.io/decentralized-ai/inferenced:latest; \
+		@docker tag ghcr.io/product-science/inferenced:$(VERSION) ghcr.io/product-science/inferenced:latest; \
+		@docker push ghcr.io/product-science/inferenced:latest; \
 	fi
 
 build-for-upgrade:
@@ -117,7 +122,7 @@ build-for-upgrade:
 PLATFORMS := linux darwin windows
 ARCHS := amd64 arm64
 
-release: build-all package build-docker
+release: build-docker
 
 build-all:
 	@echo "Building all platforms/architectures..."

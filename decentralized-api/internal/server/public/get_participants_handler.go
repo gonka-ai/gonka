@@ -49,29 +49,30 @@ func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 	epochParam := c.Param("epoch")
 
-	var epochOrNil *uint64
+		if epochParam == "current" {
+			s.getParticipants(nil, w, config.GetChainNodeConfig().Url)
+		} else {
+			epochInt, err := strconv.Atoi(epochIdStr)
+			if err != nil {
+				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
+				return
+			}
 
-	if epochParam == "current" {
-		epochOrNil = nil
-	} else {
-		epochInt, err := strconv.Atoi(epochParam)
-		if err != nil || epochInt < 0 {
-			return ErrInvalidEpochId
+			if epochInt < 0 {
+				http.Error(w, "Invalid epoch ID", http.StatusBadRequest)
+				return
+			}
+
+			epochUint := uint64(epochInt)
+			s.getParticipants(&epochUint, w, config.GetChainNodeConfig().Url)
+			return c.JSON(http.StatusOK, response)
 		}
-		epochUint := uint64(epochInt)
-		epochOrNil = &epochUint
 	}
-
-	response, err := s.getParticipantsFullInfoByEpoch(epochOrNil)
-	if err != nil {
-		return err
-	}
-	return c.JSON(http.StatusOK, response)
 }
 
-func (s *Server) getParticipantsFullInfoByEpoch(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
+func (s *Server) getParticipants(epochOrNil *uint64, w http.ResponseWriter, chainNodeUrl string) {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
+	currEpoch, err := queryClient.GetCurrentEpoch(*transactionRecorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		logging.Error("Failed to get current epoch", types.Participants, "error", err)
 		return nil, err

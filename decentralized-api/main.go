@@ -53,14 +53,14 @@ func main() {
 		"cosmos",
 		10,
 		5*time.Second,
-		config.GetConfig(),
+		config,
 	)
 	if err != nil {
 		panic(err)
 	}
 
 	nodeBroker := broker.NewBroker(recorder)
-	nodes := config.GetConfig().Nodes
+	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
 	}
@@ -96,8 +96,8 @@ func main() {
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
 		nodeBroker,
-		config.GetConfig().Api.PoCCallbackUrl,
-		config.GetConfig().ChainNode.Url,
+		config.GetApiConfig().PoCCallbackUrl,
+		config.GetChainNodeConfig().Url,
 		recorder,
 		&params.Params,
 	)

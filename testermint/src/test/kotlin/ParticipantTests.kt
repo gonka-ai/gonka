@@ -34,4 +34,25 @@ class ParticipantTests : TestermintTest() {
         val stopMin = genesis.node.getMinimumValidationAverage()
         assertThat(stopMin.minimumValidationAverage).isLessThan(startMin.minimumValidationAverage)
     }
+
+    @Test
+    fun `get participants`() {
+        val (cluster, genesis) = initCluster()
+        val message = genesis.api.getParticipants()
+        println(message)
+    }
+
+    @Test
+    fun `power to zero removes participant from validators`() {
+        val (cluster, genesis) = initCluster()
+        genesis.markNeedsReboot()
+        val zeroParticipant = cluster.joinPairs.first()
+        val participants = genesis.api.getParticipants()
+        zeroParticipant.mock?.setPocResponse(0)
+        genesis.waitForNextSettle()
+        genesis.node.waitForNextBlock(10)
+        val participantsAfter = genesis.api.getParticipants()
+        assertThat(participantsAfter.find { it.id == zeroParticipant.node.addresss }).isNull()
+
+    }
 }
