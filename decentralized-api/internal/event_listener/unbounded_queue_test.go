@@ -2,7 +2,12 @@ package event_listener
 
 import (
 	"context"
+	"decentralized-api/logging"
+	"fmt"
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
 	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -336,6 +341,93 @@ func TestEmptyQueueBehavior(t *testing.T) {
 	}
 }
 
+func TestQueueMemoryManagement(t *testing.T) {
+	q := NewUnboundedQueue[int]()
+	defer q.Close()
+
+	const (
+		producerCount    = 4
+		itemsPerProducer = 1_000_000 // 1M items per producer
+		totalItems       = producerCount * itemsPerProducer
+	)
+
+	// Log initial memory state
+	runtime.GC()
+	logMemoryStats("initial")
+
+	// Start consumers first (they don't store items)
+	var wg sync.WaitGroup
+	consumeDone := make(chan struct{})
+	itemsProcessed := atomic.Int64{}
+
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case _, ok := <-q.Out:
+					if !ok {
+						return
+					}
+					if itemsProcessed.Add(1) == int64(totalItems) {
+						close(consumeDone)
+						return
+					}
+				case <-consumeDone:
+					return
+				}
+			}
+		}()
+	}
+
+	// Log memory before producing
+	logMemoryStats("before producing")
+
+	beforeMemory := getAllocatedMemory()
+	// Produce items
+	for p := 0; p < producerCount; p++ {
+		go func(producerID int) {
+			base := producerID * itemsPerProducer
+			for i := 0; i < itemsPerProducer; i++ {
+				q.In <- base + i
+			}
+		}(p)
+	}
+
+	// Wait for all items to be consumed
+	select {
+	case <-consumeDone:
+		// Success
+	case <-time.After(30 * time.Second):
+		t.Fatal("Timeout waiting for items to be consumed")
+	}
+
+	// Log memory during peak
+	logMemoryStats("during peak")
+
+	// Force GC and check memory again
+	runtime.GC()
+	logMemoryStats("after GC")
+
+	// Close queue and wait for consumers
+	q.Close()
+	wg.Wait()
+
+	// Final memory check after everything is done
+	runtime.GC()
+	logMemoryStats("final")
+
+	finalMemory := getAllocatedMemory()
+	const maxMemoryIncrease = 104_857 // 0.1MB in bytes (ish)
+	println("Memory increase " + formatSize(finalMemory-beforeMemory))
+	require.Less(t, finalMemory, beforeMemory+maxMemoryIncrease, "Memory usage increased by more than 0.1MB")
+
+	if processed := itemsProcessed.Load(); processed != int64(totalItems) {
+		t.Errorf("Expected to process %d items, but processed %d", totalItems, processed)
+	}
+}
+
 // TestQueueStress runs a stress test with multiple producers and consumers
 func TestQueueStress(t *testing.T) {
 	if testing.Short() {
@@ -408,7 +500,6 @@ func TestQueueStress(t *testing.T) {
 			}
 		}(p)
 	}
-
 	// Wait for producers to finish
 	wgProducers.Wait()
 
@@ -602,4 +693,38 @@ func BenchmarkQueueLatency(b *testing.B) {
 		q.In <- i
 		<-q.Out
 	}
+}
+func getAllocatedMemory() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.Alloc
+}
+func logMemoryStats(tag string) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	logging.Info("Memory stats",
+		types.EventProcessing,
+		"tag", tag,
+		"alloc", formatSize(m.Alloc),
+		"totalAlloc", formatSize(m.TotalAlloc),
+		"sys", formatSize(m.Sys),
+		"heapAlloc", formatSize(m.HeapAlloc),
+		"heapSys", formatSize(m.HeapSys),
+		"heapIdle", formatSize(m.HeapIdle),
+		"heapReleased", formatSize(m.HeapReleased))
+}
+
+// Helper to format byte sizes in human-readable form
+func formatSize(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := uint64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

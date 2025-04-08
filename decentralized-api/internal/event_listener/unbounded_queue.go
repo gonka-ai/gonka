@@ -83,6 +83,9 @@ func (q *UnboundedQueue[T]) Size() int {
 
 // Close shuts down the queue and waits for the manager to exit
 func (q *UnboundedQueue[T]) Close() {
+	defer func() {
+		_ = recover() // Ignore panic from closing already closed channels
+	}()
 	close(q.done)
 	close(q.input) // Stop accepting new items
 	q.wg.Wait()    // Wait for the manager to finish
