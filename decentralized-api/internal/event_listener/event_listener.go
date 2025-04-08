@@ -115,21 +115,21 @@ func worker(
 	}()
 }
 
-func (el *EventListener) processEvents(ctx context.Context, eventChan *UnboundedQueue[*chainevents.JSONRPCResponse]) {
+func (el *EventListener) processEvents(ctx context.Context, mainQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	const numWorkers = 10
 	for i := 0; i < numWorkers; i++ {
-		worker(ctx, eventChan, el.processEvent, "process_events_"+strconv.Itoa(i))
+		worker(ctx, mainQueue, el.processEvent, "process_events_"+strconv.Itoa(i))
 	}
 }
 
-func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan *UnboundedQueue[*chainevents.JSONRPCResponse]) {
+func (el *EventListener) processBlockEvents(ctx context.Context, blockQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	const numWorkers = 2
 	for i := 0; i < numWorkers; i++ {
-		worker(ctx, blockEventChan, el.processEvent, "process_block_events")
+		worker(ctx, blockQueue, el.processEvent, "process_block_events")
 	}
 }
 
-func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan *UnboundedQueue[*chainevents.JSONRPCResponse]) {
+func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,13 +168,13 @@ func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan *
 
 			if event.Result.Data.Type == newBlockEventType {
 				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
-				blockEventChan.In <- &event
+				blockQueue.In <- &event
 				continue
 			}
 
 			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
 			select {
-			case eventChan.In <- &event:
+			case mainQueue.In <- &event:
 				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
 			default:
 				logging.Warn("Event channel full, dropping event", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)

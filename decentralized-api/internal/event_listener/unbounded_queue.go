@@ -1,9 +1,7 @@
 package event_listener
 
 import (
-	"fmt"
 	"sync"
-	"time"
 )
 
 // UnboundedQueue[T] represents an unbounded thread-safe FIFO queue
@@ -88,80 +86,4 @@ func (q *UnboundedQueue[T]) Close() {
 	close(q.done)
 	close(q.input) // Stop accepting new items
 	q.wg.Wait()    // Wait for the manager to finish
-}
-
-func main() {
-	// Create a string queue
-	stringQueue := NewUnboundedQueue[string]()
-	defer stringQueue.Close()
-
-	// Create an int queue
-	intQueue := NewUnboundedQueue[int]()
-	defer intQueue.Close()
-
-	// Wait group to coordinate test completion
-	var wg sync.WaitGroup
-
-	// Example with string queue
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		// Producer
-		go func() {
-			for i := 0; i < 5; i++ {
-				item := fmt.Sprintf("Item-%d", i)
-				stringQueue.In <- item
-				fmt.Printf("String queue - Enqueued: %s\n", item)
-				time.Sleep(100 * time.Millisecond)
-			}
-		}()
-
-		// Consumer
-		for i := 0; i < 5; i++ {
-			select {
-			case item, ok := <-stringQueue.Out:
-				if !ok {
-					return
-				}
-				fmt.Printf("String queue - Received: %s\n", item)
-			case <-time.After(1 * time.Second):
-				fmt.Println("String queue - Timeout")
-				return
-			}
-		}
-	}()
-
-	// Example with int queue
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		// Producer
-		go func() {
-			for i := 0; i < 5; i++ {
-				intQueue.In <- i * 10
-				fmt.Printf("Int queue - Enqueued: %d\n", i*10)
-				time.Sleep(100 * time.Millisecond)
-			}
-		}()
-
-		// Consumer
-		for i := 0; i < 5; i++ {
-			select {
-			case item, ok := <-intQueue.Out:
-				if !ok {
-					return
-				}
-				fmt.Printf("Int queue - Received: %d\n", item)
-			case <-time.After(1 * time.Second):
-				fmt.Println("Int queue - Timeout")
-				return
-			}
-		}
-	}()
-
-	// Wait for all operations to complete
-	wg.Wait()
-	fmt.Println("All operations completed")
 }
