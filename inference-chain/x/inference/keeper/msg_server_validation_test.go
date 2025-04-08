@@ -144,7 +144,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		PromptPayload: "promptPayload",
 		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
-		Model:         "model1",
+		Model:         "Qwen/QwQ-32B",
 	})
 	require.NoError(t, err)
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
