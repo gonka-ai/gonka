@@ -20,6 +20,7 @@ services:
           devices:
             - capabilities: [gpu]
               device_ids: ["${GPU_DEVICE_ID:-0}"]
+    restart: always
 
   integration-tests:
     <<: *common-config

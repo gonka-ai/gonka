@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from api.service_management import ServiceState
+from api.service_management import (
+    ServiceState,
+    update_service_state
+)
 from pow.service.manager import PowManager
 from api.inference.manager import InferenceManager
 from zeroband.service.manager import TrainManager
@@ -18,6 +21,7 @@ class StateResponse(BaseModel):
 
 @router.get("/state")
 async def state(request: Request) -> StateResponse:
+    update_service_state(request)
     state: ServiceState = request.app.state.service_state
     return StateResponse(state=state)
 

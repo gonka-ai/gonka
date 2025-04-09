@@ -7,6 +7,7 @@ from pow.compute.controller import ParallelController
 from common.logger import create_logger
 from pow.service.sender import Sender
 from pow.compute.utils import Phase
+from common.manager import IManager
 
 
 class PowState(Enum):
@@ -38,8 +39,9 @@ class PowInitRequestUrl(PowInitRequest):
 logger = create_logger(__name__)
 
 
-class PowManager:
+class PowManager(IManager):
     def __init__(self):
+        super().__init__()
         self.pow_controller: Optional[ParallelController] = None
         self.pow_sender: Optional[Sender] = None
         self.init_request: Optional[PowInitRequest] = None
@@ -80,7 +82,7 @@ class PowManager:
             fraud_threshold=init_request.fraud_threshold,
         )
 
-    def start(self):
+    def _start(self):
         if self.pow_controller is None:
             raise Exception("PoW not initialized")
         
@@ -106,7 +108,7 @@ class PowManager:
             "is_model_initialized": not loading,
         }
 
-    def stop(self):
+    def _stop(self):
         self.pow_controller.stop()
         self.pow_sender.stop()
         self.pow_sender.stop()
@@ -132,3 +134,6 @@ class PowManager:
 
     def is_running(self) -> bool:
         return self.pow_controller is not None and self.pow_controller.is_running()
+
+    def _is_healthy(self) -> bool:
+        return self.pow_controller is not None and self.pow_controller.is_alive()

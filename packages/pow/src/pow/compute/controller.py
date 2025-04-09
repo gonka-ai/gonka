@@ -2,7 +2,7 @@ import torch.multiprocessing as mp
 import queue
 import time
 from multiprocessing import Event, Queue, Value
-from typing import List, Iterator
+from typing import List, Iterator, Optional
 from itertools import count
 import torch
 
@@ -14,7 +14,7 @@ from pow.compute.utils import (
 from pow.compute.worker import Worker
 from pow.models.utils import Params
 from common.logger import create_logger
-
+from common.trackable_task import ITrackableTask
 
 logger = create_logger(__name__)
 
@@ -141,7 +141,7 @@ class Controller:
         return self.model_init_event.is_set()
 
 
-class ParallelController:
+class ParallelController(ITrackableTask):
     def __init__(
         self,
         params: Params,
@@ -206,7 +206,7 @@ class ParallelController:
         return self.phase.value
 
     def is_running(self) -> bool:
-        return any(controller.process.is_alive() for controller in self.controllers)
+        return all(controller.process.is_alive() for controller in self.controllers)
 
     def start_generate(self):
         self.set_phase(Phase.GENERATE)
@@ -260,3 +260,16 @@ class ParallelController:
         for device_id in range(torch.cuda.device_count()):
             all_devices.append([f"cuda:{device_id}"])
         return all_devices
+
+    def is_alive(self) -> bool:
+        return self.is_running()
+
+    def get_error_if_exist(self) -> Optional[str]:
+        errors = []
+        for controller in self.controllers:
+            if controller.process.stderr:
+                errors.append(controller.process.stderr.read().strip())
+
+        if errors:
+            return "\n".join(errors)
+        return None

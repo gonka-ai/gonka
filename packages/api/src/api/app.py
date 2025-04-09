@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 
@@ -16,6 +18,11 @@ from api.service_management import (
     API_PREFIX
 )
 from api.routes import router as api_router
+from api.watcher import watch_managers
+
+
+WATCH_INTERVAL = 2
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,6 +30,18 @@ async def lifespan(app: FastAPI):
     app.state.pow_manager = PowManager()
     app.state.inference_manager = InferenceManager()
     app.state.train_manager = TrainManager()
+
+    monitor_task = asyncio.create_task(
+        watch_managers(
+            app,
+            [
+                app.state.pow_manager,
+                app.state.inference_manager,
+                app.state.train_manager,
+            ],
+            interval=WATCH_INTERVAL
+        )
+    )
 
     yield
     
@@ -32,6 +51,13 @@ async def lifespan(app: FastAPI):
         app.state.inference_manager.stop()
     if app.state.train_manager.is_running():
         app.state.train_manager.stop()
+
+    monitor_task.cancel()
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        pass
+
 
 app = FastAPI(lifespan=lifespan)
 

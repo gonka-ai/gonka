@@ -2,10 +2,14 @@ import os
 import subprocess
 import time
 import requests
+import gc
+import torch
 from typing import Optional, List
 from abc import ABC, abstractmethod
 
 from common.logger import create_logger
+from common.trackable_task import ITrackableTask
+
 
 TERMINATION_TIMEOUT = 20
 WAIT_FOR_SERVER_TIMEOUT = 1200
@@ -14,28 +18,22 @@ WAIT_FOR_SERVER_CHECK_INTERVAL = 3
 logger = create_logger(__name__)
 
 
-class IVLLMRunner(ABC):
+class IVLLMRunner(ITrackableTask):
     @abstractmethod
-    def start(self):
-        pass
-
-    @abstractmethod
-    def stop(self):
+    def is_available(self) -> bool:
         pass
 
     @abstractmethod
     def is_running(self) -> bool:
         pass
 
-    @abstractmethod
-    def is_available(self) -> bool:
-        pass
-
+    def is_alive(self) -> bool:
+        return self.is_available()
 
 
 class VLLMRunner(IVLLMRunner):
     VLLM_PYTHON_PATH = "/opt/venv/bin/python3"
-    VLLM_PORT = 5000
+    VLLM_PORT = os.getenv("INFERENCE_PORT", 5000)
     VLLM_HOST = "0.0.0.0"
 
     def __init__(
@@ -44,23 +42,16 @@ class VLLMRunner(IVLLMRunner):
         dtype: str = "auto",
         additional_args: List[str] = None,
     ):
-        self.vllm_python_path = os.getenv(
-            "VLLM_PYTHON_PATH",
-            self.VLLM_PYTHON_PATH
-        )
+        self.vllm_python_path = os.getenv("VLLM_PYTHON_PATH", self.VLLM_PYTHON_PATH)
         self.model = model
         self.dtype = dtype
         self.additional_args = additional_args or []
-        
         self.process: Optional[subprocess.Popen] = None
 
     def start(self):
-        if self.process is not None:
+        if self.process:
             raise RuntimeError("VLLMRunner is already running")
 
-        env = os.environ.copy()
-        env["VLLM_USE_V1"] = "0"
-        
         command = [
             self.vllm_python_path,
             "-m", "vllm.entrypoints.openai.api_server",
@@ -70,54 +61,70 @@ class VLLMRunner(IVLLMRunner):
             "--host", self.VLLM_HOST
         ] + self.additional_args
 
+        env = os.environ.copy()
+        env["VLLM_USE_V1"] = "0"
+
         self.process = subprocess.Popen(
             command,
             env=env,
         )
 
+        if not self._wait_for_server():
+            raise RuntimeError(f"vLLM failed to start within the expected timeout: {self.get_error_if_exist()}")
+
+        logger.info("vLLM is up and running.")
+
     def stop(self):
-        if self.process is None:
-            raise RuntimeError("VLLMRunner is not running")
+        if not self.process:
+            logger.warning("VLLMRunner stop called but no process is running.")
+            return
 
+        logger.info("Stopping vLLM process...")
         self.process.terminate()
-        self.process.wait(timeout=TERMINATION_TIMEOUT)
-        if self.process.poll() is None:
+
+        try:
+            self.process.wait(timeout=TERMINATION_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            logger.warning("Termination timed out; forcefully killing vLLM process.")
             self.process.kill()
+            self.process.wait()
+
         self.process = None
+        self._cleanup_gpu()
+        logger.info("vLLM process stopped.")
 
-    def _wait_for_server(
-        self,
-        timeout: int = WAIT_FOR_SERVER_TIMEOUT,
-        check_interval: int = WAIT_FOR_SERVER_CHECK_INTERVAL
-    ):
+    def _cleanup_gpu(self):
+        logger.debug("Cleaning GPU memory...")
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    def _wait_for_server(self) -> bool:
         start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                requests.get(f"http://{self.VLLM_HOST}:{self.VLLM_PORT}/v1/models")
-                return
-            except requests.ConnectionError:
-                time.sleep(check_interval)
-        raise TimeoutError("Server did not start within the specified timeout")
+        while time.time() - start_time < WAIT_FOR_SERVER_TIMEOUT:
+            if not self.is_running():
+                raise RuntimeError(f"vLLM process exited prematurely: {self.get_error_if_exist()}")
 
-    def _check_process(self):
-        if self.process is not None:
-            return_code = self.process.poll()
-            if return_code is not None:
-                logger.warning(f"VLLM process has terminated unexpectedly with return code {return_code}")
-                self.process = None
-                return False
-        return True
+            if self.is_available():
+                return True
 
-    def is_running(self):
-        if self.process is None:
-            return False
-        return self._check_process()
+            time.sleep(WAIT_FOR_SERVER_CHECK_INTERVAL)
 
-    def is_available(self):
-        if not self._check_process():
+        logger.error("vLLM server did not become available within timeout.")
+        return False
+
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def is_available(self) -> bool:
+        if not self.is_running():
             return False
         try:
-            requests.get(f"http://{self.VLLM_HOST}:{self.VLLM_PORT}/v1/models")
-            return True
+            resp = requests.get(f"http://{self.VLLM_HOST}:{self.VLLM_PORT}/v1/models")
+            return resp.status_code == 200
         except requests.ConnectionError:
             return False
+
+    def get_error_if_exist(self) -> Optional[str]:
+        if self.process and self.process.stderr:
+            return self.process.stderr.read().strip()
+        return None

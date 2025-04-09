@@ -6,7 +6,9 @@ export PROJECT_ROOT := $(shell git rev-parse --show-toplevel)
 
 VERSION ?= $(shell git describe --always)
 IMAGE_NAME := gcr.io/decentralized-ai/mlnode:$(VERSION)
+IMAGE_NAME_GITHUB := ghcr.io/product-science/mlnode:$(VERSION)
 LATEST_IMAGE_NAME := gcr.io/decentralized-ai/mlnode:latest
+LATEST_IMAGE_NAME_GITHUB := ghcr.io/product-science/mlnode:latest
 TAG_NAME := "release/v$(VERSION)"
 
 ENV_FILES := $(wildcard $(PROJECT_ROOT)/.env ./.env)
@@ -89,14 +91,17 @@ tests: unit-tests integration-tests unit-tests-gpu
 build-release:
 	docker build \
 		-t $(IMAGE_NAME) \
-		-t $(LATEST_IMAGE_NAME) \
 		-f packages/api/Dockerfile \
 		--target app \
 		$(PROJECT_ROOT)
 
+	docker tag $(IMAGE_NAME) $(IMAGE_NAME_GITHUB)
+
 push-release: build-release
 	@echo "Pushing $(IMAGE_NAME)"
 	docker push $(IMAGE_NAME)
+	@echo "Pushing $(IMAGE_NAME_GITHUB)"
+	docker push $(IMAGE_NAME_GITHUB)
 
 push-latest:
 	@echo "Tagging $(IMAGE_NAME) as $(LATEST_IMAGE_NAME)"
@@ -104,7 +109,16 @@ push-latest:
 	@echo "Pushing $(LATEST_IMAGE_NAME)"
 	docker push $(LATEST_IMAGE_NAME)
 
+	@echo "Tagging $(IMAGE_NAME_GITHUB) as $(LATEST_IMAGE_NAME_GITHUB)"
+	docker tag $(IMAGE_NAME_GITHUB) $(LATEST_IMAGE_NAME_GITHUB)
+	@echo "Pushing $(LATEST_IMAGE_NAME_GITHUB)"
+	docker push $(LATEST_IMAGE_NAME_GITHUB)
+
 release: tests build-release push-release
+	git tag $(TAG_NAME)
+	git push origin $(TAG_NAME)
+
+release-no-tests: build-release push-release
 	git tag $(TAG_NAME)
 	git push origin $(TAG_NAME)
 

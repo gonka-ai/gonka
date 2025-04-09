@@ -7,6 +7,7 @@ from api.inference.vllm.runner import (
 )
 
 from common.logger import create_logger
+from common.manager import IManager
 
 logger = create_logger(__name__)
 
@@ -17,11 +18,12 @@ class InferenceInitRequest(BaseModel):
     additional_args: List[str] = []
 
 
-class InferenceManager:
+class InferenceManager(IManager):
     def __init__(
         self,
         runner_class: Type[IVLLMRunner] = VLLMRunner
     ):
+        super().__init__()
         self.vllm_runner: Optional[IVLLMRunner] = None
         self.runner_class = runner_class
 
@@ -38,19 +40,31 @@ class InferenceManager:
             additional_args=init_request.additional_args,
         )
 
-    def start(self):
+    def _start(self):
         if self.vllm_runner is None:
             raise Exception("VLLMRunner not initialized")
-
+        
         if self.is_running():
             raise Exception("VLLMRunner is running")
 
         self.vllm_runner.start()
         logger.info("VLLMRunner started")
 
-    def stop(self):
+    def _stop(self):
         self.vllm_runner.stop()
         logger.info("VLLMRunner stopped")
 
     def is_running(self) -> bool:
         return self.vllm_runner is not None and self.vllm_runner.is_running()
+
+    def _is_healthy(self) -> bool:
+        if self.vllm_runner is None:
+            return False
+
+        is_alive = self.vllm_runner.is_alive()
+        if not is_alive:
+            error = self.vllm_runner.get_error_if_exist()
+            if error:
+                logger.error(f"VLLMRunner is not alive: {error}")
+
+        return is_alive
