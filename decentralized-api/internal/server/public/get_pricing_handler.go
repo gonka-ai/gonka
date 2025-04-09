@@ -1,7 +1,6 @@
 package public
 
 import (
-	"decentralized-api/api/model"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
@@ -24,17 +23,17 @@ func (s *Server) getPricing(ctx echo.Context) error {
 		return err
 	}
 
-	models := make([]model.ModelPriceDto, len(modelsResponse.Model))
+	models := make([]ModelPriceDto, len(modelsResponse.Model))
 	for i, m := range modelsResponse.Model {
 		pricePerToken := m.UnitsOfComputePerToken * uint64(unitOfComputePrice)
-		models[i] = model.ModelPriceDto{
+		models[i] = ModelPriceDto{
 			Id:                     m.Id,
 			UnitsOfComputePerToken: m.UnitsOfComputePerToken,
 			PricePerToken:          pricePerToken,
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, &model.PricingDto{
+	return ctx.JSON(http.StatusOK, &PricingDto{
 		Price:  uint64(unitOfComputePrice),
 		Models: models,
 	})

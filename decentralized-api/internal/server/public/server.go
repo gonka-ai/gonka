@@ -41,11 +41,9 @@ func NewServer(
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
-	// TODO test it
 	g.POST("training-jobs", s.postTrainingJob)
 	g.GET("training-jobs/:id", s.getTrainingJob)
 
-	// TODO test it
 	g.POST("verify-proof", s.postVerifyProof)
 	g.POST("verify-block", s.postVerifyBlock)
 
@@ -53,6 +51,9 @@ func NewServer(
 	g.GET("models", s.getModels)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
+
+	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
+	g.GET("debug/verify/:height", s.debugVerify)
 	return s
 }
 

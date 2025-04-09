@@ -5,7 +5,6 @@ import (
 	"context"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
-	"decentralized-api/internal/server"
 	utils2 "decentralized-api/internal/utils"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
@@ -293,7 +292,7 @@ func getInferenceErrorMessage(resp *http.Response) string {
 }
 
 func readRequest(request *http.Request) (*ChatRequest, error) {
-	body, err := server.ReadRequestBody(request)
+	body, err := readRequestBody(request)
 	if err != nil {
 		logging.Error("Unable to read request body", types.Server, "error", err)
 		return nil, err
@@ -315,6 +314,15 @@ func readRequest(request *http.Request) (*ChatRequest, error) {
 		InferenceId:      request.Header.Get(utils.XInferenceIdHeader),
 		RequesterAddress: request.Header.Get(utils.XRequesterAddressHeader),
 	}, nil
+}
+
+func readRequestBody(r *http.Request) ([]byte, error) {
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r.Body); err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	return buf.Bytes(), nil
 }
 
 func validateClient(request *ChatRequest, client *types.QueryInferenceParticipantResponse) error {

@@ -7,7 +7,6 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
-	"decentralized-api/internal/server"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
@@ -123,8 +122,8 @@ func main() {
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)
 
-	s := server.NewServer(nodeBroker, config, validator, recorder)
-	s.Start()
+	ctx := context.Background()
+	<-ctx.Done()
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
