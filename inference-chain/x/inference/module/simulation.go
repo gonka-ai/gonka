@@ -87,6 +87,14 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgSubmitHardwareDiff int = 100
 
+	opWeightMsgClaimTrainingTaskForAssignment = "op_weight_msg_claim_training_task_for_assignment"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgClaimTrainingTaskForAssignment int = 100
+
+	opWeightMsgAssignTrainingTask = "op_weight_msg_assign_training_task"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgAssignTrainingTask int = 100
+
 	opWeightMsgCreatePartialUpgrade = "op_weight_msg_create_partial_upgrade"
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgCreatePartialUpgrade int = 100
@@ -279,6 +287,28 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgSubmitHardwareDiff(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgClaimTrainingTaskForAssignment int
+	simState.AppParams.GetOrGenerate(opWeightMsgClaimTrainingTaskForAssignment, &weightMsgClaimTrainingTaskForAssignment, nil,
+		func(_ *rand.Rand) {
+			weightMsgClaimTrainingTaskForAssignment = defaultWeightMsgClaimTrainingTaskForAssignment
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgClaimTrainingTaskForAssignment,
+		inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgAssignTrainingTask int
+	simState.AppParams.GetOrGenerate(opWeightMsgAssignTrainingTask, &weightMsgAssignTrainingTask, nil,
+		func(_ *rand.Rand) {
+			weightMsgAssignTrainingTask = defaultWeightMsgAssignTrainingTask
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgAssignTrainingTask,
+		inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	var weightMsgCreatePartialUpgrade int
 	simState.AppParams.GetOrGenerate(opWeightMsgCreatePartialUpgrade, &weightMsgCreatePartialUpgrade, nil,
 		func(_ *rand.Rand) {
@@ -415,6 +445,22 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgSubmitHardwareDiff,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgSubmitHardwareDiff(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgClaimTrainingTaskForAssignment,
+			defaultWeightMsgClaimTrainingTaskForAssignment,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgClaimTrainingTaskForAssignment(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgAssignTrainingTask,
+			defaultWeightMsgAssignTrainingTask,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgAssignTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

@@ -1,4 +1,6 @@
 {
+  "scenarioName": "ModelState",
+  "newScenarioState": "POW",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/pow/init/generate"

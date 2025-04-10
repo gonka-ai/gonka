@@ -14,6 +14,8 @@ message HardwareNode {
   HardwareNodeStatus status = 2;
   repeated string models = 3;
   repeated Hardware hardware = 4;
+  string host = 5;
+  string port = 6;
 }
 
 enum HardwareNodeStatus {
@@ -21,6 +23,8 @@ enum HardwareNodeStatus {
   INFERENCE = 1;
   POC = 2;
   TRAINING = 3;
+  STOPPED = 4;
+  FAILED = 5;
 }
 
 message Hardware {
