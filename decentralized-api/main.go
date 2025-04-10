@@ -119,8 +119,7 @@ func main() {
 	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
-	// PRTODO: propagagte trainingExecutor
-	publicServer := pserver.NewServer(nodeBroker, config, recorder)
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
@@ -133,7 +132,6 @@ func main() {
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)
 
-	ctx := context.Background()
 	<-ctx.Done()
 }
 
