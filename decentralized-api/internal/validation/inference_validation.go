@@ -465,7 +465,7 @@ func customDistance(
 		}
 		distance += posDistance
 	}
-	totalLogprobs := len(originalLogprobs) * len(originalLogprobs[0].TopLogprobs)
+	totalLogprobs := max(100, len(originalLogprobs)) * len(originalLogprobs[0].TopLogprobs)
 
 	return distance / float64(totalLogprobs), nil
 }

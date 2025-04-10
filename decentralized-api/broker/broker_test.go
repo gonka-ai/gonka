@@ -17,7 +17,7 @@ func TestSingleNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -43,7 +43,7 @@ func TestNodeRemoval(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -74,7 +74,7 @@ func TestModelMismatch(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model2", "", false, availableNode})
 	if <-availableNode != nil {
@@ -92,7 +92,7 @@ func TestHighConcurrency(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 100,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	for i := 0; i < 100; i++ {
 		queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
@@ -122,8 +122,8 @@ func TestVersionFiltering(t *testing.T) {
 		MaxConcurrent: 1000,
 		Version:       "",
 	}
-	queueMessage(t, broker, RegisterNode{v1node, make(chan apiconfig.InferenceNodeConfig, 2)})
-	queueMessage(t, broker, RegisterNode{novNode, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{v1node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{novNode, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "v1", false, availableNode})
 	node := <-availableNode
@@ -158,8 +158,8 @@ func TestMultipleNodes(t *testing.T) {
 		Id:            "node2",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node1, make(chan apiconfig.InferenceNodeConfig, 2)})
-	queueMessage(t, broker, RegisterNode{node2, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node1, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node2, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	firstNode := <-availableNode
@@ -198,7 +198,7 @@ func TestReleaseNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -232,7 +232,7 @@ func TestRoundTripSegment(t *testing.T) {
 		Id:               "node1",
 		MaxConcurrent:    1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -258,7 +258,7 @@ func TestCapacityCheck(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	if err := broker.QueueMessage(RegisterNode{node, make(chan apiconfig.InferenceNodeConfig, 0)}); err == nil {
+	if err := broker.QueueMessage(RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 0)}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }

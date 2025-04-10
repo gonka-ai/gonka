@@ -24,8 +24,8 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 	}
 
 	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
-	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 3 {
-		requestMap["top_logprobs"] = 3
+	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 5 {
+		requestMap["top_logprobs"] = 5
 	}
 
 	if _, ok := requestMap["seed"]; !ok {

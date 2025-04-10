@@ -19,7 +19,6 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/shopspring/decimal"
-	"math/rand"
 
 	// this line is used by starport scaffolding # 1
 
@@ -228,9 +227,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
-
-		// PRTODO: remove this stub!
-		// am.setStubActiveParticipants(ctx, blockHeight)
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
@@ -396,37 +392,6 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	am.keeper.SetEpochGroupData(ctx, newGroupData)
 	am.keeper.SetEpochGroupData(ctx, previousGroupData)
-}
-
-func (am AppModule) setStubActiveParticipants(ctx context.Context, blockHeight int64) {
-	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
-	if err != nil {
-		am.LogError("setMockActiveParticipants: Unable to get upcoming epoch group", types.EpochGroup, "error", err.Error())
-		return
-	}
-
-	var activeParticipants = make([]*types.ActiveParticipant, 0)
-
-	participants := am.keeper.GetAllParticipant(ctx)
-	for _, p := range participants {
-		activeParticipant := &types.ActiveParticipant{
-			Index:        p.Index,
-			ValidatorKey: p.ValidatorKey,
-			Weight:       rand.Int63(),
-			InferenceUrl: p.InferenceUrl,
-			Models:       p.Models,
-		}
-		activeParticipants = append(activeParticipants, activeParticipant)
-	}
-
-	am.LogInfo("setMockActiveParticipants", types.Participants, "blockHeight", blockHeight, "len(activeParticipants)", len(activeParticipants))
-	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:         activeParticipants,
-		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
-		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
-		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
-		CreatedAtBlockHeight: blockHeight,
-	})
 }
 
 // IsOnePerModuleType implements the depinject.OnePerModuleType interface.
