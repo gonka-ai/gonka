@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Server) sendTransaction(ctx echo.Context) error {
-	logging.Debug("Received send transaction request", types.Messages)
+	logging.Info("Received send transaction request", types.Messages)
 	body, err := io.ReadAll(ctx.Request().Body)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("failed to read request body: %v", err))
@@ -23,7 +23,7 @@ func (s *Server) sendTransaction(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("failed to unmarshal tx JSON: %v", err))
 	}
 
-	logging.Debug("Unmarshalled tx", types.Messages, "tx", tx)
+	logging.Info("Unmarshalled tx", types.Messages, "tx", tx)
 
 	if len(tx.Body.Messages) == 0 {
 		return ErrNoMessagesFoundInTx
@@ -35,11 +35,13 @@ func (s *Server) sendTransaction(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("failed to unpack message: %v", err))
 	}
 
-	logging.Debug("Unpacked message", types.Messages, "Message", msg)
+	logging.Info("Unpacked message", types.Messages, "Message", msg)
 
 	txResp, err := s.recorder.SendTransaction(msg.(sdk.Msg))
 	if err != nil {
 		return err
 	}
+
+	logging.Info("TxResp", types.Messages, "txResp", *txResp)
 	return ctx.JSON(http.StatusOK, txResp)
 }
