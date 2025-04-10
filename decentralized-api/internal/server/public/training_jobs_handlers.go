@@ -73,7 +73,7 @@ func (s *Server) lockTrainingNodes(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	if err := s.trainingExecutor.PreassignTask(body); err != nil {
+	if err := s.trainingExecutor.PreassignTask(body.TrainingTaskId, body.NodeIds); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
