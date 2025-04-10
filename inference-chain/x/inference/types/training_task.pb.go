@@ -23,13 +23,16 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 type TrainingTask struct {
-	Id                    uint64                       `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	RequestedBy           string                       `protobuf:"bytes,2,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
-	CreatedAtBlockHeight  uint64                       `protobuf:"varint,3,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"`
-	AssignedAtBlockHeight uint64                       `protobuf:"varint,4,opt,name=assigned_at_block_height,json=assignedAtBlockHeight,proto3" json:"assigned_at_block_height,omitempty"`
-	FinishedAtBlockHeight uint64                       `protobuf:"varint,5,opt,name=finished_at_block_height,json=finishedAtBlockHeight,proto3" json:"finished_at_block_height,omitempty"`
-	HardwareResources     []*TrainingHardwareResources `protobuf:"bytes,6,rep,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
-	Config                *TrainingConfig              `protobuf:"bytes,7,opt,name=config,proto3" json:"config,omitempty"`
+	Id                             uint64                       `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	RequestedBy                    string                       `protobuf:"bytes,2,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	CreatedAtBlockHeight           uint64                       `protobuf:"varint,3,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"`
+	Assigner                       string                       `protobuf:"bytes,4,opt,name=assigner,proto3" json:"assigner,omitempty"`
+	ClaimedByAssignerAtBlockHeight uint64                       `protobuf:"varint,5,opt,name=claimed_by_assigner_at_block_height,json=claimedByAssignerAtBlockHeight,proto3" json:"claimed_by_assigner_at_block_height,omitempty"`
+	AssignedAtBlockHeight          uint64                       `protobuf:"varint,6,opt,name=assigned_at_block_height,json=assignedAtBlockHeight,proto3" json:"assigned_at_block_height,omitempty"`
+	FinishedAtBlockHeight          uint64                       `protobuf:"varint,7,opt,name=finished_at_block_height,json=finishedAtBlockHeight,proto3" json:"finished_at_block_height,omitempty"`
+	HardwareResources              []*TrainingHardwareResources `protobuf:"bytes,8,rep,name=hardware_resources,json=hardwareResources,proto3" json:"hardware_resources,omitempty"`
+	Config                         *TrainingConfig              `protobuf:"bytes,9,opt,name=config,proto3" json:"config,omitempty"`
+	Assignees                      []*TrainingTaskAssignee      `protobuf:"bytes,10,rep,name=assignees,proto3" json:"assignees,omitempty"`
 }
 
 func (m *TrainingTask) Reset()         { *m = TrainingTask{} }
@@ -86,6 +89,20 @@ func (m *TrainingTask) GetCreatedAtBlockHeight() uint64 {
 	return 0
 }
 
+func (m *TrainingTask) GetAssigner() string {
+	if m != nil {
+		return m.Assigner
+	}
+	return ""
+}
+
+func (m *TrainingTask) GetClaimedByAssignerAtBlockHeight() uint64 {
+	if m != nil {
+		return m.ClaimedByAssignerAtBlockHeight
+	}
+	return 0
+}
+
 func (m *TrainingTask) GetAssignedAtBlockHeight() uint64 {
 	if m != nil {
 		return m.AssignedAtBlockHeight
@@ -110,6 +127,13 @@ func (m *TrainingTask) GetHardwareResources() []*TrainingHardwareResources {
 func (m *TrainingTask) GetConfig() *TrainingConfig {
 	if m != nil {
 		return m.Config
+	}
+	return nil
+}
+
+func (m *TrainingTask) GetAssignees() []*TrainingTaskAssignee {
+	if m != nil {
+		return m.Assignees
 	}
 	return nil
 }
@@ -270,11 +294,64 @@ func (m *TrainingDatasets) GetTest() string {
 	return ""
 }
 
+type TrainingTaskAssignee struct {
+	Participant string   `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
+	NodeIds     []string `protobuf:"bytes,2,rep,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+}
+
+func (m *TrainingTaskAssignee) Reset()         { *m = TrainingTaskAssignee{} }
+func (m *TrainingTaskAssignee) String() string { return proto.CompactTextString(m) }
+func (*TrainingTaskAssignee) ProtoMessage()    {}
+func (*TrainingTaskAssignee) Descriptor() ([]byte, []int) {
+	return fileDescriptor_8a3d50542a135bda, []int{4}
+}
+func (m *TrainingTaskAssignee) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *TrainingTaskAssignee) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_TrainingTaskAssignee.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *TrainingTaskAssignee) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_TrainingTaskAssignee.Merge(m, src)
+}
+func (m *TrainingTaskAssignee) XXX_Size() int {
+	return m.Size()
+}
+func (m *TrainingTaskAssignee) XXX_DiscardUnknown() {
+	xxx_messageInfo_TrainingTaskAssignee.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_TrainingTaskAssignee proto.InternalMessageInfo
+
+func (m *TrainingTaskAssignee) GetParticipant() string {
+	if m != nil {
+		return m.Participant
+	}
+	return ""
+}
+
+func (m *TrainingTaskAssignee) GetNodeIds() []string {
+	if m != nil {
+		return m.NodeIds
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterType((*TrainingTask)(nil), "inference.inference.TrainingTask")
 	proto.RegisterType((*TrainingHardwareResources)(nil), "inference.inference.TrainingHardwareResources")
 	proto.RegisterType((*TrainingConfig)(nil), "inference.inference.TrainingConfig")
 	proto.RegisterType((*TrainingDatasets)(nil), "inference.inference.TrainingDatasets")
+	proto.RegisterType((*TrainingTaskAssignee)(nil), "inference.inference.TrainingTaskAssignee")
 }
 
 func init() {
@@ -282,35 +359,41 @@ func init() {
 }
 
 var fileDescriptor_8a3d50542a135bda = []byte{
-	// 446 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x7c, 0x93, 0x41, 0x6f, 0xd3, 0x30,
-	0x14, 0xc7, 0x9b, 0xb6, 0x2b, 0xcc, 0x1d, 0x13, 0x98, 0x4d, 0x84, 0x4b, 0x54, 0x8a, 0x10, 0x3d,
-	0x65, 0x52, 0xd1, 0xc4, 0x01, 0x2e, 0x2b, 0x4c, 0xda, 0x0d, 0x29, 0x8c, 0x0b, 0x12, 0x8a, 0x5c,
-	0xe7, 0x35, 0xb1, 0x4a, 0xed, 0xe0, 0xf7, 0x22, 0xe8, 0x17, 0xe0, 0xc4, 0x81, 0x8f, 0xc5, 0x71,
-	0x47, 0x8e, 0xa8, 0xfd, 0x22, 0x28, 0x6e, 0x12, 0x58, 0x29, 0xbb, 0x3d, 0xfb, 0xff, 0x7e, 0xff,
-	0x67, 0x3f, 0xfb, 0xb1, 0xa7, 0x4a, 0xcf, 0xc0, 0x82, 0x96, 0x70, 0xf2, 0x27, 0x22, 0x2b, 0x94,
-	0x56, 0x3a, 0x8d, 0x49, 0xe0, 0x3c, 0xcc, 0xad, 0x21, 0xc3, 0xef, 0x37, 0x72, 0xd8, 0x44, 0xc3,
-	0xaf, 0x1d, 0x76, 0x70, 0x59, 0x25, 0x5f, 0x0a, 0x9c, 0xf3, 0x43, 0xd6, 0x56, 0x89, 0xef, 0x0d,
-	0xbc, 0x51, 0x37, 0x6a, 0xab, 0x84, 0x3f, 0x62, 0x07, 0x16, 0x3e, 0x15, 0x80, 0x04, 0x49, 0x3c,
-	0x5d, 0xfa, 0xed, 0x81, 0x37, 0xda, 0x8f, 0xfa, 0xcd, 0xde, 0x64, 0xc9, 0x4f, 0xd9, 0x03, 0x69,
-	0x41, 0x94, 0x09, 0x82, 0xe2, 0xe9, 0x47, 0x23, 0xe7, 0x71, 0x06, 0x2a, 0xcd, 0xc8, 0xef, 0x38,
-	0x9f, 0xa3, 0x4a, 0x3e, 0xa3, 0x49, 0x29, 0x5e, 0x38, 0x8d, 0x3f, 0x67, 0xbe, 0x40, 0x54, 0xa9,
-	0xde, 0xc1, 0x75, 0x1d, 0x77, 0x5c, 0xeb, 0xff, 0x80, 0x33, 0xa5, 0x15, 0x66, 0x3b, 0xc0, 0xbd,
-	0x0d, 0x58, 0xeb, 0xd7, 0xc1, 0x0f, 0x8c, 0x67, 0xc2, 0x26, 0x9f, 0x85, 0x85, 0xd8, 0x02, 0x9a,
-	0xc2, 0x4a, 0x40, 0xbf, 0x37, 0xe8, 0x8c, 0xfa, 0xe3, 0x30, 0xdc, 0xd1, 0x9e, 0xb0, 0x6e, 0xcd,
-	0x45, 0x85, 0x45, 0x35, 0x15, 0xdd, 0xcb, 0xb6, 0xb7, 0xf8, 0x0b, 0xd6, 0x93, 0x46, 0xcf, 0x54,
-	0xea, 0xdf, 0x1a, 0x78, 0xa3, 0xfe, 0xf8, 0xf1, 0x8d, 0x96, 0xaf, 0x5c, 0x6a, 0x54, 0x21, 0xc3,
-	0x73, 0xf6, 0xf0, 0xbf, 0xc5, 0x38, 0x67, 0x5d, 0x5a, 0xe6, 0xe0, 0x9e, 0x65, 0x3f, 0x72, 0x31,
-	0x3f, 0x62, 0x7b, 0xd2, 0x14, 0x9a, 0xdc, 0x8b, 0xdc, 0x89, 0x36, 0x8b, 0xe1, 0x37, 0x8f, 0x1d,
-	0x5e, 0xaf, 0xc0, 0xcf, 0xd8, 0xed, 0x44, 0x90, 0x40, 0x20, 0x74, 0x06, 0xfd, 0xf1, 0x93, 0x1b,
-	0x0f, 0xf6, 0xba, 0x4a, 0x8e, 0x1a, 0xac, 0xec, 0xb8, 0x2e, 0x16, 0x71, 0x61, 0x64, 0x0c, 0x48,
-	0x6a, 0x21, 0x48, 0x19, 0x1d, 0x23, 0x41, 0x8e, 0x55, 0xf9, 0x63, 0x5d, 0x2c, 0xde, 0x19, 0x79,
-	0xde, 0xa8, 0x6f, 0x4b, 0x71, 0xf8, 0x92, 0xdd, 0xdd, 0xb6, 0x2d, 0x0f, 0xee, 0xbe, 0x67, 0x75,
-	0x9b, 0xcd, 0xc2, 0x5d, 0x11, 0x90, 0xaa, 0xff, 0xe5, 0xe2, 0xc9, 0x9b, 0x1f, 0xab, 0xc0, 0xbb,
-	0x5a, 0x05, 0xde, 0xaf, 0x55, 0xe0, 0x7d, 0x5f, 0x07, 0xad, 0xab, 0x75, 0xd0, 0xfa, 0xb9, 0x0e,
-	0x5a, 0xef, 0x4f, 0x53, 0x45, 0x59, 0x31, 0x0d, 0xa5, 0x59, 0x9c, 0xe4, 0xd6, 0x24, 0x85, 0x24,
-	0x94, 0x6a, 0x6b, 0x08, 0xbe, 0xfc, 0x3d, 0x10, 0xcb, 0x1c, 0x70, 0xda, 0x73, 0x93, 0xf0, 0xec,
-	0x77, 0x00, 0x00, 0x00, 0xff, 0xff, 0xde, 0x2e, 0xa5, 0x42, 0x34, 0x03, 0x00, 0x00,
+	// 543 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x7c, 0x54, 0xcd, 0x6e, 0x13, 0x31,
+	0x10, 0xce, 0x26, 0x69, 0x9a, 0x38, 0xa5, 0x02, 0x93, 0x8a, 0x2d, 0x87, 0x55, 0x48, 0x85, 0x08,
+	0x97, 0xad, 0x14, 0x54, 0x71, 0x80, 0x4b, 0x02, 0x15, 0x45, 0x1c, 0x90, 0xb6, 0xe5, 0x82, 0x84,
+	0x56, 0x8e, 0x77, 0x92, 0xb5, 0xd2, 0xd8, 0x8b, 0xed, 0x15, 0xe4, 0x1d, 0x38, 0xf0, 0x38, 0x3c,
+	0x02, 0xc7, 0x1e, 0x39, 0xa2, 0xe4, 0x45, 0xd0, 0x3a, 0xde, 0x6d, 0xf3, 0x43, 0x6e, 0x33, 0xf3,
+	0xcd, 0xf7, 0xf9, 0xf3, 0xdf, 0xa0, 0x67, 0x8c, 0x8f, 0x40, 0x02, 0xa7, 0x70, 0x7a, 0x1b, 0x69,
+	0x49, 0x18, 0x67, 0x7c, 0x1c, 0x6a, 0xa2, 0x26, 0x7e, 0x22, 0x85, 0x16, 0xf8, 0x61, 0x01, 0xfb,
+	0x45, 0xd4, 0xf9, 0x55, 0x45, 0x07, 0x57, 0xb6, 0xf9, 0x8a, 0xa8, 0x09, 0x3e, 0x44, 0x65, 0x16,
+	0xb9, 0x4e, 0xdb, 0xe9, 0x56, 0x83, 0x32, 0x8b, 0xf0, 0x13, 0x74, 0x20, 0xe1, 0x6b, 0x0a, 0x4a,
+	0x43, 0x14, 0x0e, 0x67, 0x6e, 0xb9, 0xed, 0x74, 0x1b, 0x41, 0xb3, 0xa8, 0x0d, 0x66, 0xf8, 0x0c,
+	0x3d, 0xa2, 0x12, 0x48, 0xd6, 0x40, 0x74, 0x38, 0xbc, 0x16, 0x74, 0x12, 0xc6, 0xc0, 0xc6, 0xb1,
+	0x76, 0x2b, 0x46, 0xa7, 0x65, 0xe1, 0xbe, 0x1e, 0x64, 0xe0, 0x85, 0xc1, 0xf0, 0x63, 0x54, 0x27,
+	0x4a, 0xb1, 0x31, 0x07, 0xe9, 0x56, 0x8d, 0x6a, 0x91, 0xe3, 0x0f, 0xe8, 0x84, 0x5e, 0x13, 0x36,
+	0x35, 0x6b, 0x86, 0x79, 0x79, 0x43, 0x7e, 0xcf, 0xc8, 0x7b, 0xb6, 0x75, 0x30, 0xeb, 0xdb, 0xc6,
+	0xd5, 0x85, 0x5e, 0x22, 0xd7, 0x2a, 0x6c, 0x1a, 0xac, 0x19, 0x85, 0xa3, 0x1c, 0xdf, 0x20, 0x8e,
+	0x18, 0x67, 0x2a, 0xde, 0x42, 0xdc, 0x5f, 0x12, 0x73, 0x7c, 0x95, 0xf8, 0x05, 0xe1, 0x98, 0xc8,
+	0xe8, 0x1b, 0x91, 0x10, 0x4a, 0x50, 0x22, 0x95, 0x14, 0x94, 0x5b, 0x6f, 0x57, 0xba, 0xcd, 0x9e,
+	0xef, 0x6f, 0xb9, 0x07, 0x3f, 0xbf, 0x83, 0x0b, 0x4b, 0x0b, 0x72, 0x56, 0xf0, 0x20, 0x5e, 0x2f,
+	0xe1, 0x57, 0xa8, 0x46, 0x05, 0x1f, 0xb1, 0xb1, 0xdb, 0x68, 0x3b, 0xdd, 0x66, 0xef, 0x64, 0xa7,
+	0xe4, 0x1b, 0xd3, 0x1a, 0x58, 0x0a, 0x7e, 0x87, 0x1a, 0x76, 0xb7, 0xa0, 0x5c, 0x64, 0x2c, 0x3d,
+	0xdf, 0xc9, 0xcf, 0x9e, 0x85, 0x3d, 0x58, 0x08, 0x6e, 0xb9, 0x9d, 0x73, 0x74, 0xfc, 0x5f, 0xd7,
+	0x18, 0xa3, 0xaa, 0x9e, 0x25, 0x60, 0x1e, 0x52, 0x23, 0x30, 0x31, 0x6e, 0xa1, 0x3d, 0x2a, 0x52,
+	0xae, 0xcd, 0x1b, 0xba, 0x17, 0x2c, 0x93, 0xce, 0x0f, 0x07, 0x1d, 0xae, 0x5a, 0xc5, 0x7d, 0x54,
+	0x8f, 0x88, 0x26, 0x0a, 0xb4, 0x32, 0x02, 0xcd, 0xde, 0xd3, 0x9d, 0x0e, 0xdf, 0xda, 0xe6, 0xa0,
+	0xa0, 0x65, 0x57, 0xc7, 0xd3, 0x69, 0x98, 0x0a, 0x1a, 0x82, 0xd2, 0x6c, 0x4a, 0x34, 0x13, 0x3c,
+	0x54, 0x1a, 0x12, 0x65, 0x97, 0x3f, 0xe2, 0xe9, 0xf4, 0x93, 0xa0, 0xe7, 0x05, 0x7a, 0x99, 0x81,
+	0x9d, 0xd7, 0xe8, 0xfe, 0xba, 0x6c, 0x66, 0xdc, 0x7c, 0x28, 0xbb, 0x9b, 0x65, 0x62, 0xb6, 0x08,
+	0x4a, 0xdb, 0x1f, 0x61, 0xe2, 0xce, 0x25, 0x6a, 0x6d, 0x3b, 0x36, 0xdc, 0x46, 0xcd, 0x84, 0x48,
+	0xcd, 0x28, 0x4b, 0x08, 0xd7, 0x56, 0xe7, 0x6e, 0x09, 0x1f, 0xa3, 0x3a, 0x17, 0x11, 0x84, 0x2c,
+	0xca, 0x0c, 0x56, 0xba, 0x8d, 0x60, 0x3f, 0xcb, 0xdf, 0x47, 0x6a, 0xf0, 0xf1, 0xf7, 0xdc, 0x73,
+	0x6e, 0xe6, 0x9e, 0xf3, 0x77, 0xee, 0x39, 0x3f, 0x17, 0x5e, 0xe9, 0x66, 0xe1, 0x95, 0xfe, 0x2c,
+	0xbc, 0xd2, 0xe7, 0xb3, 0x31, 0xd3, 0x71, 0x3a, 0xf4, 0xa9, 0x98, 0x9e, 0x26, 0x52, 0x44, 0x29,
+	0xd5, 0x8a, 0xb2, 0xb5, 0x59, 0xf0, 0xfd, 0xee, 0x5c, 0x98, 0x25, 0xa0, 0x86, 0x35, 0x33, 0x10,
+	0x5e, 0xfc, 0x0b, 0x00, 0x00, 0xff, 0xff, 0x6c, 0xad, 0x75, 0x71, 0x3b, 0x04, 0x00, 0x00,
 }
 
 func (m *TrainingTask) Marshal() (dAtA []byte, err error) {
@@ -333,6 +416,20 @@ func (m *TrainingTask) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Assignees) > 0 {
+		for iNdEx := len(m.Assignees) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Assignees[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintTrainingTask(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x52
+		}
+	}
 	if m.Config != nil {
 		{
 			size, err := m.Config.MarshalToSizedBuffer(dAtA[:i])
@@ -343,7 +440,7 @@ func (m *TrainingTask) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			i = encodeVarintTrainingTask(dAtA, i, uint64(size))
 		}
 		i--
-		dAtA[i] = 0x3a
+		dAtA[i] = 0x4a
 	}
 	if len(m.HardwareResources) > 0 {
 		for iNdEx := len(m.HardwareResources) - 1; iNdEx >= 0; iNdEx-- {
@@ -356,18 +453,30 @@ func (m *TrainingTask) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 				i = encodeVarintTrainingTask(dAtA, i, uint64(size))
 			}
 			i--
-			dAtA[i] = 0x32
+			dAtA[i] = 0x42
 		}
 	}
 	if m.FinishedAtBlockHeight != 0 {
 		i = encodeVarintTrainingTask(dAtA, i, uint64(m.FinishedAtBlockHeight))
 		i--
-		dAtA[i] = 0x28
+		dAtA[i] = 0x38
 	}
 	if m.AssignedAtBlockHeight != 0 {
 		i = encodeVarintTrainingTask(dAtA, i, uint64(m.AssignedAtBlockHeight))
 		i--
-		dAtA[i] = 0x20
+		dAtA[i] = 0x30
+	}
+	if m.ClaimedByAssignerAtBlockHeight != 0 {
+		i = encodeVarintTrainingTask(dAtA, i, uint64(m.ClaimedByAssignerAtBlockHeight))
+		i--
+		dAtA[i] = 0x28
+	}
+	if len(m.Assigner) > 0 {
+		i -= len(m.Assigner)
+		copy(dAtA[i:], m.Assigner)
+		i = encodeVarintTrainingTask(dAtA, i, uint64(len(m.Assigner)))
+		i--
+		dAtA[i] = 0x22
 	}
 	if m.CreatedAtBlockHeight != 0 {
 		i = encodeVarintTrainingTask(dAtA, i, uint64(m.CreatedAtBlockHeight))
@@ -501,6 +610,45 @@ func (m *TrainingDatasets) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *TrainingTaskAssignee) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *TrainingTaskAssignee) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *TrainingTaskAssignee) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.NodeIds) > 0 {
+		for iNdEx := len(m.NodeIds) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.NodeIds[iNdEx])
+			copy(dAtA[i:], m.NodeIds[iNdEx])
+			i = encodeVarintTrainingTask(dAtA, i, uint64(len(m.NodeIds[iNdEx])))
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.Participant) > 0 {
+		i -= len(m.Participant)
+		copy(dAtA[i:], m.Participant)
+		i = encodeVarintTrainingTask(dAtA, i, uint64(len(m.Participant)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTrainingTask(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTrainingTask(v)
 	base := offset
@@ -528,6 +676,13 @@ func (m *TrainingTask) Size() (n int) {
 	if m.CreatedAtBlockHeight != 0 {
 		n += 1 + sovTrainingTask(uint64(m.CreatedAtBlockHeight))
 	}
+	l = len(m.Assigner)
+	if l > 0 {
+		n += 1 + l + sovTrainingTask(uint64(l))
+	}
+	if m.ClaimedByAssignerAtBlockHeight != 0 {
+		n += 1 + sovTrainingTask(uint64(m.ClaimedByAssignerAtBlockHeight))
+	}
 	if m.AssignedAtBlockHeight != 0 {
 		n += 1 + sovTrainingTask(uint64(m.AssignedAtBlockHeight))
 	}
@@ -543,6 +698,12 @@ func (m *TrainingTask) Size() (n int) {
 	if m.Config != nil {
 		l = m.Config.Size()
 		n += 1 + l + sovTrainingTask(uint64(l))
+	}
+	if len(m.Assignees) > 0 {
+		for _, e := range m.Assignees {
+			l = e.Size()
+			n += 1 + l + sovTrainingTask(uint64(l))
+		}
 	}
 	return n
 }
@@ -592,6 +753,25 @@ func (m *TrainingDatasets) Size() (n int) {
 	l = len(m.Test)
 	if l > 0 {
 		n += 1 + l + sovTrainingTask(uint64(l))
+	}
+	return n
+}
+
+func (m *TrainingTaskAssignee) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Participant)
+	if l > 0 {
+		n += 1 + l + sovTrainingTask(uint64(l))
+	}
+	if len(m.NodeIds) > 0 {
+		for _, s := range m.NodeIds {
+			l = len(s)
+			n += 1 + l + sovTrainingTask(uint64(l))
+		}
 	}
 	return n
 }
@@ -702,6 +882,57 @@ func (m *TrainingTask) Unmarshal(dAtA []byte) error {
 				}
 			}
 		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Assigner", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTask
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Assigner = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ClaimedByAssignerAtBlockHeight", wireType)
+			}
+			m.ClaimedByAssignerAtBlockHeight = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTask
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ClaimedByAssignerAtBlockHeight |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 6:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field AssignedAtBlockHeight", wireType)
 			}
@@ -720,7 +951,7 @@ func (m *TrainingTask) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 5:
+		case 7:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field FinishedAtBlockHeight", wireType)
 			}
@@ -739,7 +970,7 @@ func (m *TrainingTask) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 6:
+		case 8:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field HardwareResources", wireType)
 			}
@@ -773,7 +1004,7 @@ func (m *TrainingTask) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
-		case 7:
+		case 9:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Config", wireType)
 			}
@@ -806,6 +1037,40 @@ func (m *TrainingTask) Unmarshal(dAtA []byte) error {
 				m.Config = &TrainingConfig{}
 			}
 			if err := m.Config.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Assignees", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTask
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Assignees = append(m.Assignees, &TrainingTaskAssignee{})
+			if err := m.Assignees[len(m.Assignees)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1128,6 +1393,120 @@ func (m *TrainingDatasets) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Test = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTrainingTask(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *TrainingTaskAssignee) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTrainingTask
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: TrainingTaskAssignee: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: TrainingTaskAssignee: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTask
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Participant = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NodeIds", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTask
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTrainingTask
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.NodeIds = append(m.NodeIds, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

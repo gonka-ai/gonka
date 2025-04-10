@@ -36,6 +36,8 @@ const (
 	Msg_CreateTrainingTask_FullMethodName               = "/inference.inference.Msg/CreateTrainingTask"
 	Msg_SubmitHardwareDiff_FullMethodName               = "/inference.inference.Msg/SubmitHardwareDiff"
 	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
+	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
+	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
 )
 
 // MsgClient is the client API for Msg service.
@@ -61,6 +63,8 @@ type MsgClient interface {
 	CreateTrainingTask(ctx context.Context, in *MsgCreateTrainingTask, opts ...grpc.CallOption) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(ctx context.Context, in *MsgSubmitHardwareDiff, opts ...grpc.CallOption) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error)
+	ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error)
+	AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error)
 }
 
 type msgClient struct {
@@ -224,6 +228,24 @@ func (c *msgClient) CreatePartialUpgrade(ctx context.Context, in *MsgCreateParti
 	return out, nil
 }
 
+func (c *msgClient) ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
+	out := new(MsgClaimTrainingTaskForAssignmentResponse)
+	err := c.cc.Invoke(ctx, Msg_ClaimTrainingTaskForAssignment_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error) {
+	out := new(MsgAssignTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Msg_AssignTrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -247,6 +269,8 @@ type MsgServer interface {
 	CreateTrainingTask(context.Context, *MsgCreateTrainingTask) (*MsgCreateTrainingTaskResponse, error)
 	SubmitHardwareDiff(context.Context, *MsgSubmitHardwareDiff) (*MsgSubmitHardwareDiffResponse, error)
 	CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error)
+	ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error)
+	AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -304,6 +328,12 @@ func (UnimplementedMsgServer) SubmitHardwareDiff(context.Context, *MsgSubmitHard
 }
 func (UnimplementedMsgServer) CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreatePartialUpgrade not implemented")
+}
+func (UnimplementedMsgServer) ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClaimTrainingTaskForAssignment not implemented")
+}
+func (UnimplementedMsgServer) AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssignTrainingTask not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -624,6 +654,42 @@ func _Msg_CreatePartialUpgrade_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_ClaimTrainingTaskForAssignment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgClaimTrainingTaskForAssignment)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ClaimTrainingTaskForAssignment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ClaimTrainingTaskForAssignment(ctx, req.(*MsgClaimTrainingTaskForAssignment))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_AssignTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAssignTrainingTask)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AssignTrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AssignTrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AssignTrainingTask(ctx, req.(*MsgAssignTrainingTask))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -698,6 +764,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreatePartialUpgrade",
 			Handler:    _Msg_CreatePartialUpgrade_Handler,
+		},
+		{
+			MethodName: "ClaimTrainingTaskForAssignment",
+			Handler:    _Msg_ClaimTrainingTaskForAssignment_Handler,
+		},
+		{
+			MethodName: "AssignTrainingTask",
+			Handler:    _Msg_AssignTrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

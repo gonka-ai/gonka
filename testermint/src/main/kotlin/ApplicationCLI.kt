@@ -67,6 +67,29 @@ data class ApplicationCLI(
         }
     }
 
+    fun waitFor(
+        check: (ApplicationCLI) -> Boolean,
+        description: String,
+        timeout: Duration = Duration.ofSeconds(20),
+        sleepTimeMillis: Long = 1000,
+    ) {
+        wrapLog("waitFor", false) {
+            Logger.info("Waiting for: {}", description)
+            val startTime = Instant.now()
+            while (true) {
+                if (check(this)) {
+                    Logger.info("Check reached: $description")
+                    break
+                }
+                if (Duration.between(startTime, Instant.now()) > timeout) {
+                    Logger.error("Failed to wait for $description within $timeout")
+                    error("Failed to wait for $description within $timeout")
+                }
+                Thread.sleep(sleepTimeMillis)
+            }
+        }
+    }
+
     fun waitForState(
         check: (status: NodeInfoResponse) -> Boolean,
         description: String,
@@ -179,7 +202,7 @@ data class ApplicationCLI(
     }
 
     // Reified type parameter to abstract out exec and then json to a particular type
-    private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))

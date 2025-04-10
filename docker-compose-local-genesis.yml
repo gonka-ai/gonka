@@ -29,7 +29,7 @@ services:
       - NODE_HOST=${KEY_NAME}-node
       - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
-      - IS_GENESIS=true
+      - DAPI_CHAIN_NODE__IS_GENESIS=true
       - NODE_CONFIG_PATH=/root/node_config.json
     networks:
       - chain-public

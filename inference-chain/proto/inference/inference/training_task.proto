@@ -7,10 +7,13 @@ message TrainingTask {
   uint64 id = 1;
   string requested_by = 2;
   uint64 created_at_block_height = 3;
-  uint64 assigned_at_block_height = 4;
-  uint64 finished_at_block_height = 5;
-  repeated TrainingHardwareResources hardware_resources = 6;
-  TrainingConfig config = 7;
+  string assigner = 4;
+  uint64 claimed_by_assigner_at_block_height = 5;
+  uint64 assigned_at_block_height = 6;
+  uint64 finished_at_block_height = 7;
+  repeated TrainingHardwareResources hardware_resources = 8;
+  TrainingConfig config = 9;
+  repeated TrainingTaskAssignee assignees = 10;
 }
 
 message TrainingHardwareResources {
@@ -26,4 +29,9 @@ message TrainingConfig {
 message TrainingDatasets {
   string train = 1;
   string test = 2;
+}
+
+message TrainingTaskAssignee {
+  string participant = 1;
+  repeated string node_ids = 2;
 }

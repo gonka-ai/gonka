@@ -13,6 +13,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/merkleproof"
+	"decentralized-api/training"
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
@@ -43,18 +44,22 @@ type Server struct {
 	configManager      *apiconfig.ConfigManager
 	inferenceValidator *validation.InferenceValidator
 	recorder           cosmos_client.CosmosMessageClient
+	trainingExecutor *training.Executor
 }
 
 func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	inferenceValidator *validation.InferenceValidator,
-	recorder cosmos_client.CosmosMessageClient) *Server {
+	recorder cosmos_client.CosmosMessageClient,
+	executor *training.Executor,
+) *Server {
 	return &Server{
 		nodeBroker:         nodeBroker,
 		configManager:      configManager,
 		recorder:           recorder,
 		inferenceValidator: inferenceValidator,
+		trainingExecutor: executor,
 	}
 }
 
@@ -82,8 +87,10 @@ func (s *Server) Start() {
 	mux.HandleFunc("/v1/admin/unit-of-compute-price-proposal", api.WrapUnitOfComputePriceProposal(s.recorder, s.configManager))
 	mux.HandleFunc("/v1/admin/models", api.WrapRegisterModel(s.recorder))
 	mux.HandleFunc("/v1/models", api.WrapModels(s.recorder))
-	mux.HandleFunc("/v1/training-jobs", api.WrapTraining(s.recorder))
-	mux.HandleFunc("/v1/training-jobs/", api.WrapTraining(s.recorder))
+	mux.HandleFunc("/v1/training/tasks", api.WrapTraining(s.recorder, s.nodeBroker, s.trainingExecutor))
+	mux.HandleFunc("/v1/training/tasks/", api.WrapTraining(s.recorder, s.nodeBroker, s.trainingExecutor))
+	// FIXME: Needs some kind of a proof that the requester is the assigner
+	mux.HandleFunc("/v1/training/lock-nodes", api.WrapTraining(s.recorder, s.nodeBroker, s.trainingExecutor))
 	mux.HandleFunc("/v1/tx", api.WrapSendTransaction(s.recorder, cdc))
 	mux.HandleFunc("/", s.logUnknownRequest())
 	mux.HandleFunc("/v1/debug/pubkey-to-addr/", func(writer http.ResponseWriter, request *http.Request) {
@@ -165,7 +172,7 @@ func (s *Server) wrapGetInferenceParticipant() func(http.ResponseWriter, *http.R
 func LoadNodeToBroker(nodeBroker *broker.Broker, node *apiconfig.InferenceNodeConfig) {
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     *node,
-		Response: make(chan apiconfig.InferenceNodeConfig, 2),
+		Response: make(chan *apiconfig.InferenceNodeConfig, 2),
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)

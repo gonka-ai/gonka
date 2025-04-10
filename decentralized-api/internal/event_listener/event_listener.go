@@ -9,6 +9,7 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/training"
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	finishInferenceAction   = "/inference.inference.MsgFinishInference"
-	validationAction        = "/inference.inference.MsgValidation"
-	submitGovProposalAction = "/cosmos.gov.v1.MsgSubmitProposal"
+	finishInferenceAction      = "/inference.inference.MsgFinishInference"
+	validationAction           = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -36,6 +38,7 @@ type EventListener struct {
 	nodePocOrchestrator *poc.NodePoCOrchestrator
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
+	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
 
 	ws *websocket.Conn
@@ -46,13 +49,16 @@ func NewEventListener(
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
-	transactionRecorder cosmosclient.InferenceCosmosClient) *EventListener {
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	trainingExecutor *training.Executor,
+) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
 		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
+		trainingExecutor:    trainingExecutor,
 	}
 }
 
@@ -71,6 +77,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
@@ -79,7 +86,7 @@ func (el *EventListener) Start(ctx context.Context) {
 
 	go el.startSyncStatusChecker()
 
-	eventChan := make(chan *chainevents.JSONRPCResponse, 100)
+	eventChan := make(chan *chainevents.JSONRPCResponse, 10000)
 	defer close(eventChan)
 	el.processEvents(ctx, eventChan)
 
@@ -256,6 +263,23 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	case submitGovProposalAction:
 		proposalIdOrNil := event.Result.Events["proposal_id"]
 		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
+	case trainingTaskAssignedAction:
+		if el.isNodeSynced() {
+			logging.Debug("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
+			taskIds := event.Result.Events["training_task_assigned.task_id"]
+			if taskIds == nil {
+				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
+				return
+			}
+			for _, taskId := range taskIds {
+				taskIdUint, err := strconv.ParseUint(taskId, 10, 64)
+				if err != nil {
+					logging.Error("Failed to parse task ID", types.Training, "error", err)
+					return
+				}
+				el.trainingExecutor.ProcessTaskAssignedEvent(taskIdUint)
+			}
+		}
 	default:
 		logging.Debug("Unhandled action received", types.EventProcessing, "action", action)
 	}

@@ -3,9 +3,10 @@ package keeper
 import (
 	"encoding/binary"
 	"fmt"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"strconv"
+	"strings"
 )
 
 // CreateTask creates a new task, storing the full object under /tasks/{taskID}
@@ -60,7 +61,7 @@ func (k Keeper) GetNextTaskID(ctx sdk.Context) uint64 {
 // StartTask moves a task from the queued state to the in-progress state.
 // It removes the task ID from the queued set and adds it to the in-progress set.
 // Optionally, you can also update the task’s full object to record its new state.
-func (k Keeper) StartTask(ctx sdk.Context, taskId uint64) error {
+func (k Keeper) StartTask(ctx sdk.Context, taskId uint64, assignees []*types.TrainingTaskAssignee) error {
 	store := EmptyPrefixStore(ctx, &k)
 
 	queuedKey := types.QueuedTrainingTaskFullKey(taskId)
@@ -79,12 +80,13 @@ func (k Keeper) StartTask(ctx sdk.Context, taskId uint64) error {
 	taskKey := types.TrainingTaskFullKey(taskId)
 	bz := store.Get(taskKey)
 	if bz == nil {
-		return fmt.Errorf("task not found in full object store. taskId = %d", taskId)
+		return types.ErrTrainingTaskNotFound
 	}
 	var task types.TrainingTask
 	k.cdc.MustUnmarshal(bz, &task)
 
-	// TODO: update the task object to mark it as "in_progress" if desired.
+	// Here update the task object
+	task.Assignees = assignees
 	updatedBz := k.cdc.MustMarshal(&task)
 	store.Set(taskKey, updatedBz)
 
@@ -120,57 +122,66 @@ func (k Keeper) CompleteTask(ctx sdk.Context, taskId uint64) error {
 	return nil
 }
 
-// GetTask retrieves the full task object given its taskId.
-func (k Keeper) GetTask(ctx sdk.Context, taskId uint64) (types.TrainingTask, error) {
-	store := EmptyPrefixStore(ctx, &k)
-	bz := store.Get(types.TrainingTaskFullKey(taskId))
-	if bz == nil {
-		return types.TrainingTask{}, fmt.Errorf("task %d not found", taskId)
-	}
+// GetTrainingTask retrieves the full task object given its taskId.
+func (k Keeper) GetTrainingTask(ctx sdk.Context, taskId uint64) (*types.TrainingTask, bool) {
 	var task types.TrainingTask
-	k.cdc.MustUnmarshal(bz, &task)
-	return task, nil
+	return GetValue(&k, ctx, &task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(taskId))
+}
+
+func (k Keeper) SetTrainingTask(ctx sdk.Context, task *types.TrainingTask) {
+	SetValue(k, ctx, task, []byte(types.TrainingTaskKeyPrefix), types.TrainingTaskKey(task.Id))
 }
 
 // ListQueuedTasks returns all task IDs in the queued state by iterating over keys
 // with the queued prefix. We assume that the task ID is stored as an 8-byte big-endian
 // integer appended to the prefix.
-func (k Keeper) ListQueuedTasks(ctx sdk.Context) []uint64 {
-	store := PrefixStore(ctx, &k, []byte(types.QueuedTrainingTaskKeyPrefix))
-	iterator := store.Iterator(nil, nil)
-	defer iterator.Close()
-
-	var taskIDs []uint64
-	for ; iterator.Valid(); iterator.Next() {
-		key := iterator.Key()
-		// Remove the prefix and decode the task ID.
-		idBytes := key[len(types.QueuedTrainingTaskKeyPrefix):]
-		if len(idBytes) != 8 {
-			// Skip keys that do not have an 8-byte ID.
-			continue
-		}
-		taskId := binary.BigEndian.Uint64(idBytes)
-		taskIDs = append(taskIDs, taskId)
-	}
-	return taskIDs
+func (k Keeper) ListQueuedTasks(ctx sdk.Context) ([]uint64, error) {
+	return k.listIds(ctx, []byte(types.QueuedTrainingTaskKeyPrefix))
 }
 
 // ListInProgressTasks returns all task IDs that are in progress.
 // Similar to ListQueuedTasks, we assume an 8-byte big-endian encoding.
-func (k Keeper) ListInProgressTasks(ctx sdk.Context) []uint64 {
-	store := PrefixStore(ctx, &k, []byte(types.InProgressTrainingTaskKeyPrefix))
+func (k Keeper) ListInProgressTasks(ctx sdk.Context) ([]uint64, error) {
+	return k.listIds(ctx, []byte(types.InProgressTrainingTaskKeyPrefix))
+}
+
+func (k Keeper) listIds(ctx sdk.Context, prefixKey []byte) ([]uint64, error) {
+	store := PrefixStore(ctx, &k, prefixKey)
 	iterator := store.Iterator(nil, nil)
 	defer iterator.Close()
 
 	var taskIDs []uint64
 	for ; iterator.Valid(); iterator.Next() {
-		key := iterator.Key()
-		idBytes := key[len(types.InProgressTrainingTaskKeyPrefix):]
-		if len(idBytes) != 8 {
-			continue
+		keyBytes := iterator.Key()
+		key := strings.TrimSuffix(string(keyBytes), "/")
+
+		taskId, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			k.LogError("Error parsing task ID", types.Training, "key", key, "err", err)
+			return nil, err
 		}
-		taskId := binary.BigEndian.Uint64(idBytes)
 		taskIDs = append(taskIDs, taskId)
 	}
-	return taskIDs
+	return taskIDs, nil
+}
+
+func (k Keeper) GetTasks(ctx sdk.Context, ids []uint64) ([]*types.TrainingTask, error) {
+	store := PrefixStore(ctx, &k, []byte(types.TrainingTaskKeyPrefix))
+	tasks := make([]*types.TrainingTask, len(ids))
+	for i, id := range ids {
+		bz := store.Get(types.TrainingTaskKey(id))
+		if bz == nil {
+			return nil, fmt.Errorf("task %d not found", id)
+		}
+		var task types.TrainingTask
+		k.cdc.MustUnmarshal(bz, &task)
+		tasks[i] = &task
+	}
+	return tasks, nil
+}
+
+func (k Keeper) GetAllTrainingTasks(ctx sdk.Context) ([]*types.TrainingTask, error) {
+	return GetAllValues(ctx, k, []byte(types.TrainingTaskKeyPrefix), func() *types.TrainingTask {
+		return &types.TrainingTask{}
+	})
 }

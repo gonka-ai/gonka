@@ -123,7 +123,7 @@ func addNode(
 	newNode apiconfig.InferenceNodeConfig,
 	configManager *apiconfig.ConfigManager,
 ) (apiconfig.InferenceNodeConfig, bool) {
-	response := make(chan apiconfig.InferenceNodeConfig, 2)
+	response := make(chan *apiconfig.InferenceNodeConfig, 2)
 	err := nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     newNode,
 		Response: response,
@@ -134,13 +134,19 @@ func addNode(
 		return apiconfig.InferenceNodeConfig{}, true
 	}
 	node := <-response
+	if node == nil {
+		logging.Error("Error creating new node", types.Nodes, "error", err)
+		http.Error(w, "Error creating new node", http.StatusInternalServerError)
+		return apiconfig.InferenceNodeConfig{}, true
+	}
+
 	nodes := configManager.GetNodes()
-	newNodes := append(nodes, node)
+	newNodes := append(nodes, *node)
 	err = configManager.SetNodes(newNodes)
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err)
 	}
-	return node, false
+	return *node, false
 }
 
 func getNodesResponse(nodeBroker *broker.Broker, w http.ResponseWriter) {

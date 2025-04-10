@@ -2,8 +2,10 @@ package api
 
 import (
 	"decentralized-api/api/model"
+	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	"decentralized-api/training"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
@@ -18,21 +20,25 @@ import (
 
 curl -X GET http://localhost:8080/v1/training-jobs/1
 */
-func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.ResponseWriter, request *http.Request) {
+func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient, broker *broker.Broker, executor *training.Executor) func(w http.ResponseWriter, request *http.Request) {
 	return func(w http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodPost:
-			if request.URL.Path == "/v1/training-jobs" {
+			if request.URL.Path == "/v1/training/tasks" {
 				handleCreateTrainingJob(cosmosClient, w, request)
+			} else if request.URL.Path == "/v1/training/lock-nodes" {
+				handleLockTrainingNodes(cosmosClient, executor, w, request)
 			} else {
 				http.NotFound(w, request)
 			}
 		case http.MethodGet:
-			// e.g. /v1/training-jobs/123
+			// e.g. /v1/training/tasks/123
 			pathParts := strings.Split(request.URL.Path, "/")
-			// pathParts[0] = "", pathParts[1] = "v1", pathParts[2] = "training-jobs", pathParts[3] = "{id}"
-			if len(pathParts) == 4 && pathParts[1] == "v1" && pathParts[2] == "training-jobs" {
-				handleGetTrainingJob(cosmosClient, pathParts[3], w, request)
+			// pathParts[0] = "", pathParts[1] = "v1", pathParts[2] = "training", pathParts[3] = "tasks", pathParts[4] = "{id}"
+			if len(pathParts) == 5 && pathParts[1] == "v1" && pathParts[2] == "training" && pathParts[3] == "tasks" {
+				handleGetTrainingJob(cosmosClient, pathParts[4], w, request)
+			} else if len(pathParts) == 4 && pathParts[1] == "v1" && pathParts[2] == "training" && pathParts[3] == "tasks" {
+				handleGetTrainingJobs(cosmosClient, w, request)
 			} else {
 				http.NotFound(w, request)
 			}
@@ -40,6 +46,17 @@ func WrapTraining(cosmosClient cosmosclient.CosmosMessageClient) func(w http.Res
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
 	}
+}
+
+func handleGetTrainingJobs(client cosmosclient.CosmosMessageClient, w http.ResponseWriter, request *http.Request) {
+	queryClient := client.NewInferenceQueryClient()
+	tasks, err := queryClient.TrainingTaskAll(*client.GetContext(), &types.QueryTrainingTaskAllRequest{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	RespondWithJson(w, tasks)
 }
 
 func handleCreateTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, w http.ResponseWriter, r *http.Request) {
@@ -93,4 +110,21 @@ func handleGetTrainingJob(cosmosClient cosmosclient.CosmosMessageClient, id stri
 	}
 
 	RespondWithJson(w, task)
+}
+
+// FIXME: Needs some kind of a proof that the requester is the assigner
+func handleLockTrainingNodes(cosmosClient cosmosclient.CosmosMessageClient, executor *training.Executor, w http.ResponseWriter, r *http.Request) {
+	body, err := parseJsonBody[model.LockTrainingNodesDto](r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = executor.PreassignTask(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

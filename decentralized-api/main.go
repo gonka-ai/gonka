@@ -11,6 +11,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
+	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
@@ -99,11 +100,21 @@ func main() {
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
+	tendermintClient := cosmosclient.TendermintClient{
+		ChainNodeUrl: config.GetChainNodeConfig().Url,
+	}
+	// FIXME: What context to pass?
+	ctx := context.Background()
+	training.NewAssigner(recorder, &tendermintClient, ctx)
+	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
+
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 
-	s := server.NewServer(nodeBroker, config, validator, recorder)
+	// TODO: propagagte trainingExecutor
+	s := server.NewServer(nodeBroker, config, validator, recorder, trainingExecutor)
 	s.Start()
 }
 
