@@ -23,7 +23,6 @@ services:
         - ./prod-local/${KEY_NAME}:/root/.inference
         - ./${NODE_CONFIG}:/root/node_config.json
     ports:
-      - "${PORT}:8080"
       - "${PUBLIC_SERVER_PORT}:9000"
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"

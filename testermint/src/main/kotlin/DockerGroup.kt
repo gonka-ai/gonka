@@ -21,7 +21,7 @@ const val GENESIS_COMPOSE_FILE = "docker-compose-local-genesis.yml"
 const val NODE_COMPOSE_FILE = "docker-compose-local.yml"
 
 data class GenesisUrls(val keyName: String) {
-    val apiUrl = "http://$keyName-api:8080"
+    val apiUrl = "http://$keyName-api:9000"
     val rpcUrl = "http://$keyName-node:26657"
     val p2pUrl = "http://$keyName-node:26656"
 }
@@ -29,15 +29,17 @@ data class GenesisUrls(val keyName: String) {
 data class DockerGroup(
     val dockerClient: DockerClient,
     val keyName: String,
-    val port: Int,
+    val publicPort: Int,
+    val mlPort: Int,
+    val adminPort: Int,
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val wiremockExternalPort: Int,
     val workingDirectory: String,
     val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
-    val publicUrl: String = "http://$keyName-api:8080",
-    val pocCallbackUrl: String = publicUrl,
+    val publicUrl: String = "http://$keyName-api:9000",
+    val pocCallbackUrl: String = "http://$keyName-api:9100",
     val config: ApplicationConfig,
 ) {
     val composeFile = if (isGenesis) GENESIS_COMPOSE_FILE else NODE_COMPOSE_FILE
@@ -74,12 +76,17 @@ data class DockerGroup(
             put("NODE_HOST", "$keyName-node")
             put("DAPI_API__POC_CALLBACK_URL", pocCallbackUrl)
             put("DAPI_API__PUBLIC_URL", publicUrl)
+            put("DAPI_API__PUBLIC_SERVER_PORT", "9000")
+            put("DAPI_API__ML_SERVER_PORT", "9100")
+            put("DAPI_API__ADMIN_SERVER_PORT", "9200")
             put("DAPI_CHAIN_NODE__IS_GENESIS", isGenesis.toString().lowercase())
             put("NODE_CONFIG_PATH", "/root/node_config.json")
             put("NODE_CONFIG", nodeConfigFile)
             put("PUBLIC_URL", publicUrl)
-            put("PORT", port.toString())
-            put("POC_CALLBACK_URL", publicUrl)
+            put("PUBLIC_SERVER_PORT", publicPort.toString())
+            put("ML_SERVER_PORT", mlPort.toString())
+            put("ADMIN_SERVER_PORT", adminPort.toString())
+            put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", wiremockExternalPort.toString())
             put("GENESIS_OVERRIDES_FILE", genesisOverridesFile)
@@ -139,18 +146,13 @@ data class DockerGroup(
         Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
         Logger.info("Setup files for keyName={}", keyName)
     }
-
-    val apiUrl = "http://$keyName-api:8080"
-    val rpcUrl = "http://$keyName-node:26657"
-    val p2pUrl = "http://$keyName-node:26656"
-
     init {
         require(isGenesis || genesisGroup != null) { "Genesis group must be provided" }
     }
 }
 
-fun createDockerGroup(iteration: Int, genesisUrls: GenesisUrls?, config: ApplicationConfig): DockerGroup {
-    val keyName = if (iteration == 0) "genesis" else "join$iteration"
+fun createDockerGroup(joinIter: Int, iteration: Int, genesisUrls: GenesisUrls?, config: ApplicationConfig): DockerGroup {
+    val keyName = if (iteration == 0) "genesis" else "join$joinIter"
     val nodeConfigFile = "node_payload_wiremock_$keyName.json"
     val repoRoot = getRepoRoot()
 
@@ -176,7 +178,9 @@ fun createDockerGroup(iteration: Int, genesisUrls: GenesisUrls?, config: Applica
     return DockerGroup(
         dockerClient = DockerClientBuilder.getInstance().build(),
         keyName = keyName,
-        port = 8080 + iteration,
+        publicPort = 9000 + iteration,
+        mlPort = 9001 + iteration,
+        adminPort = 9002 + iteration,
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         wiremockExternalPort = 8090 + iteration,
@@ -196,9 +200,11 @@ fun getRepoRoot(): String {
 }
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<DockerGroup> {
-    val genesisGroup = createDockerGroup(0, null, config)
-    val joinGroups =
-        (1..joinCount).map { createDockerGroup(it, GenesisUrls(genesisGroup.keyName.trimStart('/')), config) }
+    val genesisGroup = createDockerGroup(0, 0, null, config)
+    val joinGroups = (1..joinCount).mapIndexed { index, _ ->
+        val actualIndex = (index + 1) * 10
+        createDockerGroup(index+1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config)
+    }
     val allGroups = listOf(genesisGroup) + joinGroups
     Logger.info("Initializing cluster with {} nodes", allGroups.size)
     allGroups.forEach { it.tearDownExisting() }
@@ -274,7 +280,8 @@ data class LocalCluster(
         val newJoinGroups =
             (1..joinCount).map {
                 createDockerGroup(
-                    iteration = it + this.joinPairs.size,
+                    it,
+                    iteration = (it + this.joinPairs.size) * 10,
                     genesisUrls = GenesisUrls(this.genesis.name.trimStart('/')),
                     config = this.genesis.config
                 )

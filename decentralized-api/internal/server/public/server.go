@@ -30,7 +30,7 @@ func NewServer(
 	}
 
 	e.Use(middleware.LoggingMiddleware)
-	g := e.Group("/public/v1/")
+	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
 

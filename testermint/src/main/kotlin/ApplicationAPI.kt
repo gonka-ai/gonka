@@ -18,8 +18,16 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class ApplicationAPI(val url: String, override val config: ApplicationConfig) : HasConfig {
+const val SERVER_TYPE_PUBLIC = "public"
+const val SERVER_TYPE_ML = "ml"
+const val SERVER_TYPE_ADMIN = "admin"
+
+data class ApplicationAPI(val urls: Map<String, String>, override val config: ApplicationConfig) : HasConfig {
+    private fun urlFor(type: String): String =
+        urls[type] ?: error("URL for type \"$type\" not found in ApplicationAPI")
+
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
         val resp = Fuel.get("$url/v1/participants")
             .timeoutRead(1000*60)
             .responseObject<ParticipantsResponse>(gsonDeserializer(cosmosJson))
@@ -28,6 +36,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun addInferenceParticipant(inferenceParticipant: InferenceParticipant) = wrapLog("AddInferenceParticipant", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
         val response = Fuel.post("$url/v1/participants")
             .jsonBody(inferenceParticipant, cosmosJson)
             .response()
@@ -36,6 +45,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun addUnfundedInferenceParticipant(inferenceParticipant: UnfundedInferenceParticipant) =
         wrapLog("AddUnfundedInferenceParticipant", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
             val response = Fuel.post("$url/v1/participants")
                 .jsonBody(inferenceParticipant, cosmosJson)
                 .response()
@@ -51,6 +61,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun getInference(inferenceId: String): InferencePayload = wrapLog("getInference", true) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
         val response = Fuel.get(url + "/v1/chat/completions/$inferenceId")
             .responseObject<InferencePayload>(gsonDeserializer(cosmosJson))
         logResponse(response)
@@ -63,6 +74,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         signature: String,
     ): OpenAIResponse =
         wrapLog("MakeInferenceRequest", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
             val response = Fuel.post((url + "/v1/chat/completions"))
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
@@ -80,15 +92,9 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         signature: String,
     ): List<String> =
         wrapLog("MakeStreamedInferenceRequest", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
             stream(url = "$url/v1/chat/completions", address = address, signature = signature, jsonBody = request)
         }
-
-    fun runValidation(inferenceId: String): Unit = wrapLog("RunValidation", true) {
-        val response = Fuel.get("$url/v1/validation")
-            .jsonBody("{\"inference_id\": \"$inferenceId\"}")
-            .response()
-        logResponse(response)
-    }
 
     fun setNodesTo(node: InferenceNode) {
         val nodes = getNodes()
@@ -99,14 +105,16 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
 
     fun getNodes(): List<NodeResponse> =
         wrapLog("GetNodes", false) {
-            val response = Fuel.get("$url/v1/nodes")
+            val url = urlFor(SERVER_TYPE_ADMIN)
+            val response = Fuel.get("$url/admin/v1/nodes")
                 .responseObject<List<NodeResponse>>(gsonDeserializer(cosmosJson))
             logResponse(response)
             response.third.get()
         }
 
     fun addNode(node: InferenceNode): InferenceNode = wrapLog("AddNode", true) {
-        val response = Fuel.post("$url/v1/nodes")
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.post("$url/admin/v1/nodes")
             .jsonBody(node, cosmosJson)
             .responseObject<InferenceNode>(gsonDeserializer(cosmosJson))
         logResponse(response)
@@ -114,7 +122,8 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun addNodes(nodes: List<InferenceNode>): List<InferenceNode> = wrapLog("AddNodes", true) {
-        val response = Fuel.post("$url/v1/nodes/batch")
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.post("$url/admin/v1/nodes/batch")
             .jsonBody(nodes, cosmosJson)
             .responseObject<List<InferenceNode>>(gsonDeserializer(cosmosJson))
         logResponse(response)
@@ -122,13 +131,15 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun removeNode(nodeId: String) = wrapLog("RemoveNode", true) {
-        val response = Fuel.delete("$url/v1/nodes/$nodeId")
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.delete("$url/admin/v1/nodes/$nodeId")
             .responseString()
         logResponse(response)
     }
 
     fun submitPriceProposal(proposal: UnitOfComputePriceProposalDto): String = wrapLog("SubmitPriceProposal", true) {
-        val response = Fuel.post("$url/v1/admin/unit-of-compute-price-proposal")
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.post("$url/admin/v1/unit-of-compute-price-proposal")
             .jsonBody(proposal, cosmosJson)
             .responseString()
         logResponse(response)
@@ -137,22 +148,26 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
     }
 
     fun getPriceProposal(): GetUnitOfComputePriceProposalDto = wrapLog("SubmitPriceProposal", true) {
-        get<GetUnitOfComputePriceProposalDto>("v1/admin/unit-of-compute-price-proposal")
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        get<GetUnitOfComputePriceProposalDto>(url, "admin/v1/unit-of-compute-price-proposal")
     }
 
     fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
-        get<GetPricingDto>("v1/pricing")
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get<GetPricingDto>(url, "v1/pricing")
     }
 
     fun registerModel(model: RegisterModelDto): String = wrapLog("RegisterModel", true) {
-        postWithStringResponse("v1/admin/models", model)
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        postWithStringResponse(url, "admin/v1/models", model)
     }
 
     fun submitTransaction(json: String): TxResponse {
-        return postRawJson("v1/tx", json)
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        return postRawJson(url, "admin/v1/tx/send", json)
     }
 
-    inline fun <reified Out: Any> get(path: String): Out {
+    inline fun <reified Out: Any> get(url: String, path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))
         logResponse(response)
@@ -160,7 +175,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         return response.third.get()
     }
 
-    inline fun <reified In: Any, reified Out: Any> post(path: String, body: In): Out {
+    inline fun <reified In: Any, reified Out: Any> post(url: String, path: String, body: In): Out {
         val response = Fuel.post("$url/$path")
             .jsonBody(body, cosmosJson)
             .responseObject<Out>()
@@ -169,7 +184,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         return response.third.get()
     }
 
-    inline fun <reified Out : Any> postRawJson(path: String, json: String): Out {
+    inline fun <reified Out : Any> postRawJson(url: String, path: String, json: String): Out {
         val response = Fuel.post("$url/$path")
             .jsonBody(json)
             .responseObject<Out>(gsonDeserializer(cosmosJson))
@@ -178,7 +193,7 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         return response.third.get()
     }
 
-    inline fun <reified In: Any> postWithStringResponse(path: String, body: In): String {
+    inline fun <reified In: Any> postWithStringResponse(url: String, path: String, body: In): String {
         val response = Fuel.post("$url/$path")
             .jsonBody(body, cosmosJson)
             .responseString()
