@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/logging"
+	"errors"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
@@ -99,7 +100,7 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 }
 
 func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.InferenceNodeConfig, error) {
-	response := make(chan apiconfig.InferenceNodeConfig, 2)
+	response := make(chan *apiconfig.InferenceNodeConfig, 2)
 	err := s.nodeBroker.QueueMessage(broker.RegisterNode{
 		Node:     newNode,
 		Response: response,
@@ -109,12 +110,17 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 	}
 
 	node := <-response
-	newNodes := append(s.configManager.GetNodes(), node)
+	if node == nil {
+		logging.Error("Error creating new node", types.Nodes, "error", err)
+		return apiconfig.InferenceNodeConfig{}, errors.New("error creating new node")
+	}
+
+	newNodes := append(s.configManager.GetNodes(), *node)
 	err = s.configManager.SetNodes(newNodes)
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err, "node", newNode.Id)
 		return apiconfig.InferenceNodeConfig{}, err
 	}
 
-	return node, nil
+	return *node, nil
 }
