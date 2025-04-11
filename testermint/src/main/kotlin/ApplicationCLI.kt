@@ -1,35 +1,35 @@
 package com.productscience
 
-import com.github.dockerjava.api.async.ResultCallback
-import com.github.dockerjava.api.model.Frame
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
-import com.productscience.data.AppExport
-import com.productscience.data.BalanceResponse
-import com.productscience.data.InferenceParams
-import com.productscience.data.NodeInfoResponse
-import com.productscience.data.TokenomicsData
-import com.productscience.data.TxResponse
-import com.productscience.data.Validator
-import com.productscience.data.parseProto
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
 import java.time.Instant
-import java.time.format.DateTimeParseException
 
 // Usage
 data class ApplicationCLI(
     val containerId: String,
     override val config: ApplicationConfig,
-    var mostRecentExport: AppExport? = null,
 ) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
 
+    fun getGenesisState(): AppExport =
+        wrapLog("getGenesisJson", false) {
+            val filePath = "/root/.inference/config/genesis.json"
+            val readFileCommand = listOf("cat", filePath)
+
+            val output = exec(readFileCommand)
+            val joined = output.joinToString("")
+            cosmosJson.fromJson(joined, AppExport::class.java)
+        }
+
     fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {
+            this.killNameConflicts()
             Logger.info("Creating container,  id={}", containerId)
             var createCmd = dockerClient.createContainerCmd(config.nodeImageName)
                 .withName(containerId)
@@ -42,6 +42,19 @@ data class ApplicationCLI(
         }
     }
 
+    private fun killNameConflicts() {
+        wrapLog("killNameConflicts", false) {
+            val containers = dockerClient.listContainersCmd().exec()
+            containers.forEach {
+                if (it.names.contains("/$containerId")) {
+                    Logger.info("Killing conflicting container, id={}", it.id)
+                    dockerClient.killContainerCmd(it.id).exec()
+                    dockerClient.removeContainerCmd(it.id).exec()
+                }
+            }
+        }
+    }
+
     override fun close() {
         this.killContainer()
     }
@@ -51,6 +64,29 @@ data class ApplicationCLI(
             Logger.info("Killing container, id={}", containerId)
             dockerClient.killContainerCmd(containerId).exec()
             dockerClient.removeContainerCmd(containerId).exec()
+        }
+    }
+
+    fun waitFor(
+        check: (ApplicationCLI) -> Boolean,
+        description: String,
+        timeout: Duration = Duration.ofSeconds(20),
+        sleepTimeMillis: Long = 1000,
+    ) {
+        wrapLog("waitFor", false) {
+            Logger.info("Waiting for: {}", description)
+            val startTime = Instant.now()
+            while (true) {
+                if (check(this)) {
+                    Logger.info("Check reached: $description")
+                    break
+                }
+                if (Duration.between(startTime, Instant.now()) > timeout) {
+                    Logger.error("Failed to wait for $description within $timeout")
+                    error("Failed to wait for $description within $timeout")
+                }
+                Thread.sleep(sleepTimeMillis)
+            }
         }
     }
 
@@ -96,14 +132,21 @@ data class ApplicationCLI(
         }
     }
 
-    fun exportState(height: Int? = null): AppExport =
-        wrapLog<AppExport>("GetFullState", false) {
-            execAndParse(
-                listOfNotNull("export", "--height".takeIf { height != null }, height?.toString()),
-                includeOutputFlag = false
-            )
-        }.also { this.mostRecentExport = it }
+    fun getInferences(): InferencesWrapper = wrapLog("getInferences", false) {
+        execAndParse(listOf("query", "inference", "list-inference"))
+    }
 
+    fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
+        execAndParse(listOf("query", "inference", "list-inference-timeout"))
+    }
+
+    fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
+        execAndParse(listOf("query", "inference", "get-all-participant-current-stats"))
+    }
+
+    fun getMinimumValidationAverage(): MinimumValidationAverage = wrapLog("getMinimumValidationAverage", false) {
+        execAndParse(listOf("query", "inference", "get-minimum-validation-average"))
+    }
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
@@ -111,7 +154,7 @@ data class ApplicationCLI(
     fun getAddress(): String = wrapLog("getAddress", false) {
         if (addresss == null) {
             val keys = getKeys()
-            addresss = keys.first { it.name == this.config.pairName.drop(1) }.address
+            addresss = (keys.firstOrNull { it.name == this.config.pairName.drop(1) } ?: keys.first()).address
         }
         addresss!!
     }
@@ -134,7 +177,7 @@ data class ApplicationCLI(
         )
     }
 
-    fun getSelfBalance(denom: String): Long = wrapLog("getSelfBalance", false) {
+    fun getSelfBalance(denom: String = this.config.denom): Long = wrapLog("getSelfBalance", false) {
         val account = getAddress()
         val balance = getBalance(account, denom)
         balance.balance.amount
@@ -144,11 +187,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
-    fun getInferenceParams(): InferenceParams = wrapLog("getInferenceParams", false) {
-        // At present, there is a bug in Cosmos that causes this to fail, but it gives us something we can parse anyhow
-        val response = exec(listOf(config.appName) + listOf("query", "inference", "params"))
-        val protoText = """\{.*\}""".toRegex().find(response.first())?.value
-        parseProto(protoText!!)
+    fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
+        execAndParse(listOf("query", "inference", "params"))
     }
 
     data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
@@ -157,25 +197,34 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-tokenomics-data"))
     }
 
+    fun getTopMiners(): TopMinersResponse = wrapLog("getTopMiners", false) {
+        execAndParse(listOf("query", "inference", "list-top-miner"))
+    }
+
     // Reified type parameter to abstract out exec and then json to a particular type
-    private inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
-        val argsWithJson = listOf(config.appName) +
+    inline fun <reified T> execAndParse(args: List<String>, includeOutputFlag: Boolean = true): T {
+        val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("")
         Logger.debug("Output: {}", output)
-        return gsonSnakeCase.fromJson(output, T::class.java)
+        if (output.contains("inference is not ready; please wait for first block")) {
+            throw NotReadyException()
+        }
+        // Extract JSON payload if output contains gas estimate
+        val jsonOutput = output.replace(Regex("^gas estimate: \\d+"), "")
+        return cosmosJson.fromJson(jsonOutput, T::class.java)
     }
 
     // New function that allows using TypeToken for proper deserialization of generic types
     private fun <T> execAndParseWithType(typeToken: TypeToken<T>, args: List<String>): T {
-        val argsWithJson = (listOf(config.appName) + args + "--output" + "json")
+        val argsWithJson = (listOf(config.execName) + args + "--output" + "json")
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
         val response = exec(argsWithJson)
         val output = response.joinToString("\n")
         Logger.debug("Output: {}", output)
-        return gsonSnakeCase.fromJson(output, typeToken.type)
+        return cosmosJson.fromJson(output, typeToken.type)
     }
 
 
@@ -192,20 +241,23 @@ data class ApplicationCLI(
         val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
-        if (output.output.first().startsWith("Usage:")) {
+        if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
             val error = output.output.last().lines().last()
-            Logger.error(
-                "Invalid usage of command: command='{}' error='{}'",
-                args.joinToString(" "), error
-            )
-            throw IllegalArgumentException("Invalid usage of command: $error")
+            throw getExecException(error)
         }
         return output.output
     }
 
+    private fun extractSignature(response: List<String>): String {
+        val signaturePattern = ".*Signature:\\s*([^,\\s]+).*".toRegex()
+        return response.firstNotNullOfOrNull {
+            signaturePattern.find(it)?.groupValues?.get(1)
+        } ?: error("Could not extract signature from response: $response")
+    }
+
     fun signPayload(payload: String, accountAddress: String? = null): String {
         val parameters = listOfNotNull(
-            config.appName,
+            config.execName,
             "signature",
             "create",
             // Do we need single quotes here?
@@ -217,131 +269,59 @@ data class ApplicationCLI(
             val response = this.exec(
                 parameters
             )
-
-            // so hacky
-            response[1].dropWhile { it != ' ' }.drop(1).also {
+            extractSignature(response).also {
                 Logger.info("Signature created, signature={}", it)
             }
         }
-    }
-
-    fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
-        val sourceAccount = this.getKeys()[0].address
-        val destAccount = destinationNode.getKeys()[0].address
-        val response = this.submitTransaction(
-            listOf(
-                "bank",
-                "send",
-                sourceAccount,
-                destAccount,
-                "$amount${config.denom}",
-            )
-        )
-        response
     }
 
     fun getTxStatus(txHash: String): TxResponse = wrapLog("getTxStatus", false) {
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
-    fun submitUpgradeProposal(
-        title: String,
-        description: String,
-        binaryPath: String,
-        apiBinaryPath: String,
-        height: Long,
-    ): TxResponse = wrapLog("submitUpgradeProposal", true) {
-        val proposer = this.getKeys()[0].address
-        val binariesJson =
-            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}}"""
-        this.submitTransaction(
-            listOf(
-                "upgrade",
-                "software-upgrade",
-                title,
-                "--title",
-                title,
-                "--upgrade-height",
-                "$height",
-                "--upgrade-info",
-                binariesJson,
-                "--summary",
-                description,
-                "--deposit",
-                // TODO: Denom and amount should not be hardcoded
-                "100000nicoin",
-                "--from",
-                proposer,
+    fun writeFileToContainer(content: String, fileName: String) {
+        try {
+            // Write content using echo command
+            val writeCommand = listOf(
+                "sh", "-c",
+                "echo '$content' > $fileName"
             )
-        )
-    }
+            val result = exec(writeCommand)
 
-    fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
-        val depositor = this.getKeys()[0].address
-        this.submitTransaction(
-            listOf(
-                "gov",
-                "deposit",
-                proposalId,
-                "$amount${config.denom}",
-                "--from",
-                depositor,
-            )
-        )
-    }
+            // Verify file exists
+            val checkCommand = listOf("test", "-f", fileName)
+            exec(checkCommand)
 
-    fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
-        val voter = this.getKeys()[0].address
-        this.submitTransaction(
-            listOf(
-                "gov",
-                "vote",
-                proposalId,
-                option,
-                "--from",
-                voter,
-            )
-        )
-    }
-
-    fun submitTransaction(args: List<String>): TxResponse {
-        val finalArgs =
-            listOf("tx") + args + listOf(
-                "--keyring-backend",
-                "test",
-                "--chain-id=${config.chainId}",
-                "--keyring-dir=/root/${config.stateDirName}",
-                "--yes",
-                "--broadcast-mode",
-                "sync"
-            )
-        val response = sendTransaction(finalArgs)
-        if (response.height == 0L) {
-            Thread.sleep(1000)
-            val newResponse = this.waitForTxProcessed(response.txhash)
-            check(newResponse.code == 0) {
-                "Transaction failed: ${newResponse.rawLog}"
-            }
-            return newResponse
+        } catch (e: Exception) {
+            throw IllegalStateException("Failed to write file to container: ${e.message}", e)
         }
-        return response
-
     }
 
-    private fun sendTransaction(finalArgs: List<String>): TxResponse {
-        var response = this.execAndParse<TxResponse>(finalArgs)
-        while (response.code == 32) {
-            Logger.warn("Transaction account sequence mismatch, retrying")
-            Thread.sleep(1000)
-            response = this.execAndParse(finalArgs)
-        }
-        check(response.code == 0) { "Transaction failed: code=${response.code} log=${response.rawLog}" }
-        return response
+    fun getModuleAccount(accountName: String): AccountWrapper = wrapLog("getAccount", false) {
+        execAndParse(listOf("query", "auth", "module-account", accountName))
+    }
+
+
+    fun getTransactionJson(args: List<String>): String {
+        val finalArgs = listOf(
+            config.execName,
+            "tx"
+        ) + args + listOf(
+            "--keyring-backend",
+            "test",
+            "--chain-id=${config.chainId}",
+            "--keyring-dir=/root/${config.stateDirName}",
+            "--yes",
+            "--generate-only",
+            "--from",
+            this.config.pairName.trimStart('/')
+        )
+        return exec(finalArgs).joinToString("")
     }
 
     fun waitForTxProcessed(txHash: String, maxWait: Int = 10): TxResponse {
         var currentWait = 0
-        while (true) {
+        while (currentWait < maxWait) {
             try {
                 val response = this.getTxStatus(txHash)
                 if (response.height != 0L) {
@@ -349,105 +329,48 @@ data class ApplicationCLI(
                 }
                 Thread.sleep(500)
                 currentWait++
-                check(currentWait < maxWait) {
-                    "Transaction not processed after $maxWait seconds"
-                }
-            } catch (e: IllegalArgumentException) {
-                Logger.warn("Unable to find transaction with hash: {}. Exception: {}", txHash, e)
+            } catch (e: TxNotFoundException) {
+                Logger.info("Tx not found (yet), waiting", txHash, e)
+                Thread.sleep(1000)
                 currentWait++
             }
         }
-
+        error("Transaction not processed after $maxWait attempts")
     }
 
-}
-
-class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
-    val output = mutableListOf<String>()
-    override fun onNext(frame: Frame) {
-        output.add(String(frame.payload).trim())
-    }
 }
 
 val maxBlockWaitTime = Duration.ofSeconds(15)
 
-val timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z".toRegex()
 
-fun extractTimestamp(entireLine: String): Instant? {
-    val matchResult = timestampPattern.find(entireLine)
-    return if (matchResult != null) {
-        try {
-            Instant.parse(matchResult.value)
-        } catch (e: DateTimeParseException) {
-            null
+private val SEQUENCE_MISMATCH_PATTERN = ".*expected (\\d+), got (\\d+).*".toRegex()
+private val TX_NOT_FOUND_PATTERN = "tx \\(([A-F0-9]+)\\) not found".toRegex()
+private const val NOT_READY_MESSAGE = "inference is not ready; please wait for first block"
+
+private fun getExecException(error: String): Throwable {
+    val sequenceMatch = SEQUENCE_MISMATCH_PATTERN.find(error)
+    val txNotFoundMatch = if (sequenceMatch == null) TX_NOT_FOUND_PATTERN.find(error) else null
+
+    return when {
+        sequenceMatch != null -> {
+            val expected = sequenceMatch.groupValues[1].toInt()
+            val actual = sequenceMatch.groupValues[2].toInt()
+            AccountSequenceMismatchException(expected, actual)
         }
-    } else {
-        null
+
+        txNotFoundMatch != null -> {
+            TxNotFoundException(txNotFoundMatch.groupValues[1])
+        }
+
+        error.contains(NOT_READY_MESSAGE) -> NotReadyException()
+        else -> IllegalArgumentException("Invalid usage of command: $error")
     }
 }
 
-class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
-    var currentHeight = 0L
-    val currentMessage = StringBuilder()
-    val currentTimestamp: Instant? = null
 
-    override fun onNext(frame: Frame) = logContext(
-        mapOf(
-            "operation" to type,
-            "pair" to name,
-            "source" to "container",
-            "blockHeight" to currentHeight.toString()
-        )
-    ) {
-        val logEntry = String(frame.payload).trim()
-        val timestamp = extractTimestamp(logEntry)
-        if (timestamp != null) {
-            val entryWithoutTimestamp = logEntry.replaceFirst(timestampPattern, "").trim()
-            if (currentMessage.isNotEmpty()) {
-                log(currentMessage.toString())
-                currentMessage.clear()
-            }
-            if (frame.payload.size < 1000) {
-                log(entryWithoutTimestamp)
-            } else {
-                currentMessage.append(entryWithoutTimestamp)
-            }
-        } else {
-            currentMessage.append(logEntry)
-            if (frame.payload.size < 1000) {
-                log(currentMessage.toString())
-                currentMessage.clear()
-            }
-        }
-        Unit
-    }
+class NotReadyException : Exception("Inference is not ready; please wait for first block")
 
-    private fun log(logEntry: String) {
-        if (logEntry.contains("committed state")) {
-            // extract out height=123
+class AccountSequenceMismatchException(val expected: Int, val actual: Int) :
+    Exception("Account sequence mismatch, expected $expected, got $actual")
 
-            "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
-                val height = it.groupValues[1].toLong()
-                if (height > currentHeight) {
-                    Logger.info("New block, height={}", height)
-                    currentHeight = height
-                }
-            }
-        }
-
-        if (logEntry.contains("INFO+")) {
-            Logger.info(logEntry)
-        } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
-            // We map this to debug as there is a LOT of info level logs
-            Logger.debug(logEntry)
-        } else if (logEntry.contains("ERR") || logEntry.contains(" ERROR ")) {
-            Logger.error(logEntry)
-        } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
-            Logger.debug(logEntry)
-        } else if (logEntry.contains("WRN ") || logEntry.contains(" WARN ")) {
-            Logger.warn(logEntry)
-        } else {
-            Logger.trace(logEntry)
-        }
-    }
-}
+class TxNotFoundException(val txHash: String) : Exception("Transaction not found: $txHash")

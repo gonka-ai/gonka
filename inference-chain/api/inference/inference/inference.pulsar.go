@@ -528,6 +528,52 @@ func (x *fastReflection_ProposalDetails) ProtoMethods() *protoiface.Methods {
 	}
 }
 
+var _ protoreflect.List = (*_Inference_23_list)(nil)
+
+type _Inference_23_list struct {
+	list *[]string
+}
+
+func (x *_Inference_23_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_Inference_23_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfString((*x.list)[i])
+}
+
+func (x *_Inference_23_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_Inference_23_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.String()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_Inference_23_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message Inference at list field ValidatedBy as it is not of Message kind"))
+}
+
+func (x *_Inference_23_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_Inference_23_list) NewElement() protoreflect.Value {
+	v := ""
+	return protoreflect.ValueOfString(v)
+}
+
+func (x *_Inference_23_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_Inference                        protoreflect.MessageDescriptor
 	fd_Inference_index                  protoreflect.FieldDescriptor
@@ -551,6 +597,9 @@ var (
 	fd_Inference_escrow_amount          protoreflect.FieldDescriptor
 	fd_Inference_proposal_details       protoreflect.FieldDescriptor
 	fd_Inference_epoch_group_id         protoreflect.FieldDescriptor
+	fd_Inference_assigned_to            protoreflect.FieldDescriptor
+	fd_Inference_validated_by           protoreflect.FieldDescriptor
+	fd_Inference_node_version           protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -577,6 +626,9 @@ func init() {
 	fd_Inference_escrow_amount = md_Inference.Fields().ByName("escrow_amount")
 	fd_Inference_proposal_details = md_Inference.Fields().ByName("proposal_details")
 	fd_Inference_epoch_group_id = md_Inference.Fields().ByName("epoch_group_id")
+	fd_Inference_assigned_to = md_Inference.Fields().ByName("assigned_to")
+	fd_Inference_validated_by = md_Inference.Fields().ByName("validated_by")
+	fd_Inference_node_version = md_Inference.Fields().ByName("node_version")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -770,6 +822,24 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.AssignedTo != "" {
+		value := protoreflect.ValueOfString(x.AssignedTo)
+		if !f(fd_Inference_assigned_to, value) {
+			return
+		}
+	}
+	if len(x.ValidatedBy) != 0 {
+		value := protoreflect.ValueOfList(&_Inference_23_list{list: &x.ValidatedBy})
+		if !f(fd_Inference_validated_by, value) {
+			return
+		}
+	}
+	if x.NodeVersion != "" {
+		value := protoreflect.ValueOfString(x.NodeVersion)
+		if !f(fd_Inference_node_version, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -827,6 +897,12 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.ProposalDetails != nil
 	case "inference.inference.Inference.epoch_group_id":
 		return x.EpochGroupId != uint64(0)
+	case "inference.inference.Inference.assigned_to":
+		return x.AssignedTo != ""
+	case "inference.inference.Inference.validated_by":
+		return len(x.ValidatedBy) != 0
+	case "inference.inference.Inference.node_version":
+		return x.NodeVersion != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -885,6 +961,12 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 		x.ProposalDetails = nil
 	case "inference.inference.Inference.epoch_group_id":
 		x.EpochGroupId = uint64(0)
+	case "inference.inference.Inference.assigned_to":
+		x.AssignedTo = ""
+	case "inference.inference.Inference.validated_by":
+		x.ValidatedBy = nil
+	case "inference.inference.Inference.node_version":
+		x.NodeVersion = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -964,6 +1046,18 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.epoch_group_id":
 		value := x.EpochGroupId
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Inference.assigned_to":
+		value := x.AssignedTo
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Inference.validated_by":
+		if len(x.ValidatedBy) == 0 {
+			return protoreflect.ValueOfList(&_Inference_23_list{})
+		}
+		listValue := &_Inference_23_list{list: &x.ValidatedBy}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.Inference.node_version":
+		value := x.NodeVersion
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1026,6 +1120,14 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 		x.ProposalDetails = value.Message().Interface().(*ProposalDetails)
 	case "inference.inference.Inference.epoch_group_id":
 		x.EpochGroupId = value.Uint()
+	case "inference.inference.Inference.assigned_to":
+		x.AssignedTo = value.Interface().(string)
+	case "inference.inference.Inference.validated_by":
+		lv := value.List()
+		clv := lv.(*_Inference_23_list)
+		x.ValidatedBy = *clv.list
+	case "inference.inference.Inference.node_version":
+		x.NodeVersion = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1051,6 +1153,12 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 			x.ProposalDetails = new(ProposalDetails)
 		}
 		return protoreflect.ValueOfMessage(x.ProposalDetails.ProtoReflect())
+	case "inference.inference.Inference.validated_by":
+		if x.ValidatedBy == nil {
+			x.ValidatedBy = []string{}
+		}
+		value := &_Inference_23_list{list: &x.ValidatedBy}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.Inference.index":
 		panic(fmt.Errorf("field index of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.inference_id":
@@ -1091,6 +1199,10 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 		panic(fmt.Errorf("field escrow_amount of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.epoch_group_id":
 		panic(fmt.Errorf("field epoch_group_id of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.assigned_to":
+		panic(fmt.Errorf("field assigned_to of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.node_version":
+		panic(fmt.Errorf("field node_version of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1147,6 +1259,13 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.Inference.epoch_group_id":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Inference.assigned_to":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Inference.validated_by":
+		list := []string{}
+		return protoreflect.ValueOfList(&_Inference_23_list{list: &list})
+	case "inference.inference.Inference.node_version":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1289,6 +1408,20 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.EpochGroupId != 0 {
 			n += 2 + runtime.Sov(uint64(x.EpochGroupId))
 		}
+		l = len(x.AssignedTo)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
+		if len(x.ValidatedBy) > 0 {
+			for _, s := range x.ValidatedBy {
+				l = len(s)
+				n += 2 + l + runtime.Sov(uint64(l))
+			}
+		}
+		l = len(x.NodeVersion)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1317,6 +1450,35 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.NodeVersion) > 0 {
+			i -= len(x.NodeVersion)
+			copy(dAtA[i:], x.NodeVersion)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.NodeVersion)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xc2
+		}
+		if len(x.ValidatedBy) > 0 {
+			for iNdEx := len(x.ValidatedBy) - 1; iNdEx >= 0; iNdEx-- {
+				i -= len(x.ValidatedBy[iNdEx])
+				copy(dAtA[i:], x.ValidatedBy[iNdEx])
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ValidatedBy[iNdEx])))
+				i--
+				dAtA[i] = 0x1
+				i--
+				dAtA[i] = 0xba
+			}
+		}
+		if len(x.AssignedTo) > 0 {
+			i -= len(x.AssignedTo)
+			copy(dAtA[i:], x.AssignedTo)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.AssignedTo)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xb2
 		}
 		if x.EpochGroupId != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochGroupId))
@@ -2044,6 +2206,102 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 22:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field AssignedTo", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.AssignedTo = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 23:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatedBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ValidatedBy = append(x.ValidatedBy, string(dAtA[iNdEx:postIndex]))
+				iNdEx = postIndex
+			case 24:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NodeVersion", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.NodeVersion = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2100,6 +2358,7 @@ const (
 	InferenceStatus_VALIDATED   InferenceStatus = 2
 	InferenceStatus_INVALIDATED InferenceStatus = 3
 	InferenceStatus_VOTING      InferenceStatus = 4
+	InferenceStatus_EXPIRED     InferenceStatus = 5
 )
 
 // Enum value maps for InferenceStatus.
@@ -2110,6 +2369,7 @@ var (
 		2: "VALIDATED",
 		3: "INVALIDATED",
 		4: "VOTING",
+		5: "EXPIRED",
 	}
 	InferenceStatus_value = map[string]int32{
 		"STARTED":     0,
@@ -2117,6 +2377,7 @@ var (
 		"VALIDATED":   2,
 		"INVALIDATED": 3,
 		"VOTING":      4,
+		"EXPIRED":     5,
 	}
 )
 
@@ -2224,6 +2485,9 @@ type Inference struct {
 	EscrowAmount         int64            `protobuf:"varint,19,opt,name=escrow_amount,json=escrowAmount,proto3" json:"escrow_amount,omitempty"`
 	ProposalDetails      *ProposalDetails `protobuf:"bytes,20,opt,name=proposal_details,json=proposalDetails,proto3" json:"proposal_details,omitempty"`
 	EpochGroupId         uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
+	AssignedTo           string           `protobuf:"bytes,22,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
+	ValidatedBy          []string         `protobuf:"bytes,23,rep,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
+	NodeVersion          string           `protobuf:"bytes,24,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -2393,6 +2657,27 @@ func (x *Inference) GetEpochGroupId() uint64 {
 	return 0
 }
 
+func (x *Inference) GetAssignedTo() string {
+	if x != nil {
+		return x.AssignedTo
+	}
+	return ""
+}
+
+func (x *Inference) GetValidatedBy() []string {
+	if x != nil {
+		return x.ValidatedBy
+	}
+	return nil
+}
+
+func (x *Inference) GetNodeVersion() string {
+	if x != nil {
+		return x.NodeVersion
+	}
+	return ""
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
@@ -2409,7 +2694,7 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x12, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63,
 	0x79, 0x49, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x61, 0x64,
 	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x6f, 0x6c,
-	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xf0, 0x06, 0x0a, 0x09, 0x49,
+	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xd7, 0x07, 0x0a, 0x09, 0x49,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21,
 	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02,
@@ -2464,25 +2749,33 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x52, 0x0f, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x61, 0x6c,
 	0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x12, 0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68,
 	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x69, 0x64, 0x18, 0x15, 0x20, 0x01, 0x28, 0x04, 0x52,
-	0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x2a, 0x58, 0x0a,
-	0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
-	0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a,
-	0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56,
-	0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49, 0x4e,
-	0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06, 0x56,
-	0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x49, 0x64, 0x12, 0x1f, 0x0a,
+	0x0b, 0x61, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x65, 0x64, 0x5f, 0x74, 0x6f, 0x18, 0x16, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x0a, 0x61, 0x73, 0x73, 0x69, 0x67, 0x6e, 0x65, 0x64, 0x54, 0x6f, 0x12, 0x21,
+	0x0a, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18, 0x17,
+	0x20, 0x03, 0x28, 0x09, 0x52, 0x0b, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x42,
+	0x79, 0x12, 0x21, 0x0a, 0x0c, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
+	0x6e, 0x18, 0x18, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x56, 0x65, 0x72,
+	0x73, 0x69, 0x6f, 0x6e, 0x2a, 0x65, 0x0a, 0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54,
+	0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44,
+	0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10,
+	0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49, 0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44,
+	0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06, 0x56, 0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x12, 0x0b,
+	0x0a, 0x07, 0x45, 0x58, 0x50, 0x49, 0x52, 0x45, 0x44, 0x10, 0x05, 0x42, 0xbc, 0x01, 0x0a, 0x17,
+	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
+	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2,
+	0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
+	0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
+	0x6f, 0x33,
 }
 
 var (

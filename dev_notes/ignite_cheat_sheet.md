@@ -3,10 +3,18 @@ Some tips for how to use Cosmos Ignite to update and create things:
 
 ## Add new store object:
 
-`ignite scaffold map participant address reputation:int weight:int joinTime:uint joinHeight:int lastInferenceTime:uint --index index --module inference --no-message`
+`ignite scaffold map participant reputation:int weight:int join_time:uint join_height:int last_inference_time:uint --index address --module inference --no-message`
+
+- **Be sure to include --no-message**, or else the store object will be modifiable simply by messages sent to the chain.
+- Prefer snake_case
+- Since address is added as an index, it doesn't need to be added as a field
+- You can have multiple fields as an index by using the --index parameter multiple times (`--index key1 --index key2`)
 
 ## Add new message:
 `ignite scaffold message createGame black red --module checkers --response gameIndex`
+
+## Add new query:
+`ignite scaffold query getGameResult gameIndex --module checkers --response result`
 
 ## Types that can be used in above CLI calls:
 

@@ -5,8 +5,23 @@
     "inference_port": 8080,
     "poc_port": 8080,
     "max_concurrent": 10,
-    "models": [
-      "unsloth/llama-3-8b-Instruct"
+    "models": {
+      "my-secret-model": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
+    "hardware": [
+      {
+        "type": "A600",
+        "count": 50
+      },
+      {
+        "type": "A5500",
+        "count": 2
+      }
     ]
   }
 ]

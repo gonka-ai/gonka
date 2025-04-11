@@ -8,6 +8,9 @@ services:
       - ./my_contract:/contract
     environment:
       - KEY_NAME=${KEY_NAME}
+      - IS_GENESIS=true
+      - INIT_TGBOT=true
+      - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
     networks:
       - chain-public
     ports:
@@ -40,16 +43,6 @@ services:
     volumes:
       - ./prod-local/wiremock/${KEY_NAME}:/home/wiremock
     entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
-    networks:
-      - chain-public
-
-  binary-server:
-    image: httpd:latest
-    container_name: binary-server
-    ports:
-      - '8781:80'
-    volumes:
-      - ./public-html:/usr/local/apache2/htdocs/
     networks:
       - chain-public
 

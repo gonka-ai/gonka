@@ -2,15 +2,23 @@ package keeper
 
 import (
 	"context"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/types"
+	"errors"
 	"math"
 	"strconv"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
 	TokenCost = 1_000
 )
+
+var ModelToPassValue = map[string]float64{
+	"Qwen/Qwen2.5-7B-Instruct": 0.950,
+	"Qwen/QwQ-32B":             0.950,
+}
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -26,11 +34,11 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	if inference.Status == types.InferenceStatus_INVALIDATED {
-		k.LogInfo("Validation: Inference already invalidated", "inference", inference)
+		k.LogInfo("Inference already invalidated", types.Validation, "inference", inference)
 		return &types.MsgValidationResponse{}, nil
 	}
 	if inference.Status == types.InferenceStatus_STARTED {
-		k.LogError("Validation: Inference not finished", "status", inference.Status, "inference", inference)
+		k.LogError("Inference not finished", types.Validation, "status", inference.Status, "inference", inference)
 		return nil, types.ErrInferenceNotFinished
 	}
 
@@ -43,7 +51,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, types.ErrParticipantCannotValidateOwnInference
 	}
 
-	passed := msg.Value > float64(params.ValidationParams.PassValue)
+	passValue, ok := ModelToPassValue[inference.Model]
+	if !ok {
+		k.LogError("Model not supported", types.Validation, "model", inference.Model)
+		return nil, errors.New("Model " + inference.Model + " not supported")
+	}
+
+	passed := msg.Value > passValue
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)
@@ -51,13 +65,34 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 		return nil, err
 	}
 
-	k.LogInfo("Validation: Validating inner loop", "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
+	k.LogInfo("Validating inner loop", types.Validation, "inferenceId", inference.InferenceId, "validator", msg.Creator, "passed", passed, "revalidation", msg.Revalidation)
 	if msg.Revalidation {
 		return epochGroup.Revalidate(passed, inference, msg, ctx)
 	} else if passed {
 		inference.Status = types.InferenceStatus_VALIDATED
+		originalWorkers := append([]string{inference.ExecutedBy}, inference.ValidatedBy...)
+		adjustments := calculations.ShareWork(originalWorkers, []string{msg.Creator}, inference.ActualCost)
+		inference.ValidatedBy = append(inference.ValidatedBy, msg.Creator)
+		for _, adjustment := range adjustments {
+			if adjustment.ParticipantId == executor.Address {
+				executor.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting executor CoinBalance for validation", types.Payments, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
+			} else {
+				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
+				if !found {
+					k.LogError("Participant not found for redistribution", types.Validation, "participantId", adjustment.ParticipantId)
+					continue
+				}
+				worker.CoinBalance += adjustment.WorkAdjustment
+				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
+				k.LogInfo("Adjusting worker CoinBalance for validation", types.Payments, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
+				k.SetParticipant(ctx, worker)
+			}
+		}
+
 		executor.ConsecutiveInvalidInferences = 0
-		executor.ValidatedInferences++
+		executor.CurrentEpochStats.ValidatedInferences++
 	} else {
 		inference.Status = types.InferenceStatus_VOTING
 		proposalDetails, err := epochGroup.StartValidationVote(ctx, &inference, msg.Creator)
@@ -72,7 +107,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	executor.Status = calculateStatus(params.ValidationParams, executor)
 	k.SetParticipant(ctx, executor)
 
-	k.LogInfo("Validation: Saving inference", "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
+	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
 	k.SetInference(ctx, inference)
 
 	ctx.EventManager().EmitEvent(
@@ -93,7 +128,7 @@ func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *typ
 			Participant: msg.Creator, PocStartBlockHeight: inference.EpochGroupId,
 		}
 	}
-	k.LogInfo("Validation: Adding inference to epoch group validations", "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochGroupId)
+	k.LogInfo("Adding inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochGroupId)
 	epochGroupValidations.ValidatedInferences = append(epochGroupValidations.ValidatedInferences, msg.InferenceId)
 	k.SetEpochGroupValidations(ctx, epochGroupValidations)
 }
@@ -103,13 +138,13 @@ func calculateStatus(validationParameters *types.ValidationParams, participant t
 	// Frankly, it seemed like overkill. Z-Score is easy to explain, people get p-value wrong all the time and it's
 	// a far more complicated algorithm (to understand and to calculate)
 	// If we have consecutive failures with a likelihood of less than 1 in a million times, we're assuming bad (for 5% FPR, that's 5 consecutive failures)
-	falsePositiveRate := float64(validationParameters.FalsePositiveRate)
+	falsePositiveRate := validationParameters.FalsePositiveRate.ToFloat()
 	if ProbabilityOfConsecutiveFailures(falsePositiveRate, participant.ConsecutiveInvalidInferences) < 0.000001 {
 		return types.ParticipantStatus_INVALID
 	}
-	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.ValidatedInferences, participant.InvalidatedInferences)
+	zScore := CalculateZScoreFromFPR(falsePositiveRate, participant.CurrentEpochStats.ValidatedInferences, participant.CurrentEpochStats.InvalidatedInferences)
 	measurementsNeeded := MeasurementsNeeded(falsePositiveRate, uint64(validationParameters.MinRampUpMeasurements))
-	if participant.InferenceCount < measurementsNeeded {
+	if participant.CurrentEpochStats.InferenceCount < measurementsNeeded {
 		return types.ParticipantStatus_RAMPING
 	}
 	if zScore > 1 {

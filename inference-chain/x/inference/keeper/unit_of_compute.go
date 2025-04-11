@@ -12,7 +12,7 @@ func (k Keeper) SetUnitOfComputePriceProposal(ctx context.Context, proposal *typ
 // TODO: fix name!
 func (k Keeper) GettUnitOfComputePriceProposal(ctx context.Context, participant string) (*types.UnitOfComputePriceProposal, bool) {
 	var object types.UnitOfComputePriceProposal
-	return GetValue(k, ctx, &object, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(participant))
+	return GetValue(&k, ctx, &object, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), types.UnitOfComputeProposalKey(participant))
 }
 
 func (k Keeper) AllUnitOfComputePriceProposals(ctx context.Context) ([]*types.UnitOfComputePriceProposal, error) {
@@ -25,5 +25,6 @@ func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*uint64, erro
 		return nil, err
 	}
 
-	return &epochGroup.GroupData.UnitOfComputePrice, nil
+	price := uint64(epochGroup.GroupData.UnitOfComputePrice)
+	return &price, nil
 }

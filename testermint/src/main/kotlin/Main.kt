@@ -1,17 +1,34 @@
 package com.productscience
 
+import com.github.kittinunf.fuel.core.FuelError
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.productscience.data.AppState
+import com.productscience.data.Decimal
+import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
+import com.productscience.data.EpochParams
+import com.productscience.data.FloatSerializer
+import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.InferenceNode
+import com.productscience.data.ModelConfig
+import com.productscience.data.InferenceParams
 import com.productscience.data.InferencePayload
+import com.productscience.data.InferenceState
 import com.productscience.data.InstantDeserializer
+import com.productscience.data.LongSerializer
+import com.productscience.data.MessageSerializer
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.Participant
 import com.productscience.data.PubKey
 import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
+import com.productscience.data.GovernanceMessage
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
+import com.productscience.data.ValidationParams
+import com.productscience.data.spec
+import org.reflections.Reflections
 import org.tinylog.kotlin.Logger
 import java.time.Duration
 import java.time.Instant
@@ -82,25 +99,30 @@ data class InferenceResult(
 }
 
 private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
-    highestFunded.waitForFirstPoC()
+    highestFunded.waitForFirstValidators()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
     val inferenceId = response.id
 
     val inference = generateSequence {
         highestFunded.node.waitForNextBlock()
-        highestFunded.api.getInference(inferenceId)
-    }.take(5).firstOrNull { it.status == 1 }
+        try {
+            highestFunded.api.getInference(inferenceId)
+        } catch(_: FuelError) {
+            InferencePayload.empty()
+        }
+    }.take(5).firstOrNull { it.status == 1 || it.status == 2 }
     check(inference != null) { "Inference never logged in chain" }
     return inference
 }
 
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
+        it.waitForFirstBlock()
+        it.waitForFirstValidators()
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
-        it.node.waitForMinimumBlock(1)
-        it.node.exportState()
+        it.getParams()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
@@ -123,6 +145,15 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
 //    fundUnfunded(unfunded, highestFunded)
 
     highestFunded.node.waitForNextBlock()
+    pairs.forEach { pair ->
+        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength*2).toInt()) {
+            val address = pair.node.getAddress()
+            val stats = pair.node.getParticipantCurrentStats()
+            val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
+            weight != 0L
+        }
+    }
+
     return highestFunded
 }
 
@@ -131,7 +162,7 @@ private fun fundUnfunded(
     highestFunded: LocalInferencePair,
 ) {
     for (pair in unfunded) {
-        highestFunded.node.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
+        highestFunded.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
         highestFunded.node.waitForNextBlock()
     }
     val fundingHeight = highestFunded.node.getStatus().syncInfo.latestBlockHeight
@@ -174,18 +205,43 @@ private fun TxResponse.assertSuccess() {
 }
 
 val defaultFunding = 20_000_000L
-val gsonSnakeCase = GsonBuilder()
+val cosmosJson: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+    .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
+    .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
+    .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
     .create()
 
-val gsonCamelCase = GsonBuilder()
-    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
+val openAiJson: Gson = GsonBuilder()
+    .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .create()
+
+val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data")
+
+fun createGsonWithTxMessageSerializers(packageName: String): Gson {
+    val gsonBuilder = GsonBuilder()
+        .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
+        .registerTypeAdapter(Instant::class.java, InstantDeserializer())
+        .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+
+    // Scan the package to get all `TxMessage` implementations
+    val reflections = Reflections(packageName)
+    val txMessageSubtypes = reflections.getSubTypesOf(GovernanceMessage::class.java)
+
+    // Register `MessageSerializer` for each implementation of `TxMessage`
+    txMessageSubtypes.forEach { subclass ->
+        if (!subclass.isInterface) { // Ignore interfaces and abstract classes
+            gsonBuilder.registerTypeAdapter(subclass, MessageSerializer())
+        }
+    }
+
+    return gsonBuilder.create()
+}
 
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
@@ -196,11 +252,70 @@ val inferenceConfig = ApplicationConfig(
     apiImageName = "gcr.io/decentralized-ai/api",
     denom = "nicoin",
     stateDirName = ".inference",
+    // TODO: probably need to add more to the spec here, so if tests change them we change back
+    genesisSpec = spec {
+        this[AppState::inference] = spec<InferenceState> {
+            this[InferenceState::params] = spec<InferenceParams> {
+                this[InferenceParams::epochParams] = spec<EpochParams> {
+                    this[EpochParams::epochLength] = 10L
+                    this[EpochParams::pocStageDuration] = 2L
+                    this[EpochParams::pocExchangeDuration] = 1L
+                    this[EpochParams::pocValidationDelay] = 1L
+                    this[EpochParams::pocValidationDuration] = 2L
+                }
+                this[InferenceParams::validationParams] = spec<ValidationParams> {
+                    this[ValidationParams::minValidationAverage] = Decimal.fromDouble(0.01)
+                    this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(1.0)
+                    this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
+                    this[ValidationParams::fullValidationTrafficCutoff] = 100L
+                    this[ValidationParams::minValidationHalfway] = Decimal.fromDouble(0.05)
+                    this[ValidationParams::minValidationTrafficCutoff] = 10L
+                }
+            }
+            this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+                this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
+            }
+        }
+    }
 )
 
 val inferenceRequest = """
     {
       "model" : "unsloth/llama-3-8b-Instruct",
+      "temperature" : 0.8,
+      "messages": [{
+          "role": "system",
+          "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state"
+        }
+      ],
+      "seed" : -25
+    }
+""".trimIndent()
+
+val inferenceRequestModel2 = """
+    {
+      "model" : "my-secret-model",
+      "temperature" : 0.8,
+      "messages": [{
+          "role": "system",
+          "content": "Regardless of the language of the question, answer in english"
+        },
+        {
+            "role": "user",
+            "content": "When did Hawaii become a state"
+        }
+      ],
+      "seed" : -25
+    }
+""".trimIndent()
+
+val inferenceRequestNoSuchModel = """
+    {
+      "model" : "theres-no-model",
       "temperature" : 0.8,
       "messages": [{
           "role": "system",
@@ -239,9 +354,13 @@ val validNode = InferenceNode(
     host = "36.189.234.237:19009/",
     pocPort = 19009,
     inferencePort = 19009,
-    models = listOf(defaultModel),
+    models = mapOf(
+        defaultModel to ModelConfig(
+            args = emptyList()
+        )
+    ),
     id = "wiremock2",
-    maxConcurrent = 10
+    maxConcurrent = 1000
 )
 
 val defaultInferenceResponse = """
@@ -1801,4 +1920,4 @@ val defaultInferenceResponse = """
     }
 """.trimIndent()
 
-val defaultInferenceResponseObject = gsonSnakeCase.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
+val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)

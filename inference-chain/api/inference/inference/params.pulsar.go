@@ -3,7 +3,6 @@ package inference
 
 import (
 	_ "cosmossdk.io/api/amino"
-	binary "encoding/binary"
 	fmt "fmt"
 	_ "github.com/cosmos/cosmos-proto"
 	runtime "github.com/cosmos/cosmos-proto/runtime"
@@ -12,7 +11,6 @@ import (
 	protoiface "google.golang.org/protobuf/runtime/protoiface"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	io "io"
-	math "math"
 	reflect "reflect"
 	sync "sync"
 )
@@ -690,14 +688,18 @@ func (x *fastReflection_Params) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_GenesisOnlyParams                            protoreflect.MessageDescriptor
-	fd_GenesisOnlyParams_total_supply               protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_originator_supply          protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_reward_amount          protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_standard_reward_amount     protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_pre_programmed_sale_amount protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_top_rewards                protoreflect.FieldDescriptor
-	fd_GenesisOnlyParams_supply_denom               protoreflect.FieldDescriptor
+	md_GenesisOnlyParams                              protoreflect.MessageDescriptor
+	fd_GenesisOnlyParams_total_supply                 protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_originator_supply            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_amount            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_standard_reward_amount       protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_pre_programmed_sale_amount   protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_rewards                  protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_supply_denom                 protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_period            protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts           protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_payouts_per_miner protoreflect.FieldDescriptor
+	fd_GenesisOnlyParams_top_reward_max_duration      protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -710,6 +712,10 @@ func init() {
 	fd_GenesisOnlyParams_pre_programmed_sale_amount = md_GenesisOnlyParams.Fields().ByName("pre_programmed_sale_amount")
 	fd_GenesisOnlyParams_top_rewards = md_GenesisOnlyParams.Fields().ByName("top_rewards")
 	fd_GenesisOnlyParams_supply_denom = md_GenesisOnlyParams.Fields().ByName("supply_denom")
+	fd_GenesisOnlyParams_top_reward_period = md_GenesisOnlyParams.Fields().ByName("top_reward_period")
+	fd_GenesisOnlyParams_top_reward_payouts = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts")
+	fd_GenesisOnlyParams_top_reward_payouts_per_miner = md_GenesisOnlyParams.Fields().ByName("top_reward_payouts_per_miner")
+	fd_GenesisOnlyParams_top_reward_max_duration = md_GenesisOnlyParams.Fields().ByName("top_reward_max_duration")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisOnlyParams)(nil)
@@ -819,6 +825,30 @@ func (x *fastReflection_GenesisOnlyParams) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
+	if x.TopRewardPeriod != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPeriod)
+		if !f(fd_GenesisOnlyParams_top_reward_period, value) {
+			return
+		}
+	}
+	if x.TopRewardPayouts != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPayouts)
+		if !f(fd_GenesisOnlyParams_top_reward_payouts, value) {
+			return
+		}
+	}
+	if x.TopRewardPayoutsPerMiner != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardPayoutsPerMiner)
+		if !f(fd_GenesisOnlyParams_top_reward_payouts_per_miner, value) {
+			return
+		}
+	}
+	if x.TopRewardMaxDuration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopRewardMaxDuration)
+		if !f(fd_GenesisOnlyParams_top_reward_max_duration, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -848,6 +878,14 @@ func (x *fastReflection_GenesisOnlyParams) Has(fd protoreflect.FieldDescriptor) 
 		return x.TopRewards != int32(0)
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		return x.SupplyDenom != ""
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		return x.TopRewardPeriod != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		return x.TopRewardPayouts != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		return x.TopRewardPayoutsPerMiner != int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		return x.TopRewardMaxDuration != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -878,6 +916,14 @@ func (x *fastReflection_GenesisOnlyParams) Clear(fd protoreflect.FieldDescriptor
 		x.TopRewards = int32(0)
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		x.SupplyDenom = ""
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		x.TopRewardPeriod = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		x.TopRewardPayouts = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		x.TopRewardPayoutsPerMiner = int64(0)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		x.TopRewardMaxDuration = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -915,6 +961,18 @@ func (x *fastReflection_GenesisOnlyParams) Get(descriptor protoreflect.FieldDesc
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		value := x.SupplyDenom
 		return protoreflect.ValueOfString(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		value := x.TopRewardPeriod
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		value := x.TopRewardPayouts
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		value := x.TopRewardPayoutsPerMiner
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		value := x.TopRewardMaxDuration
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -949,6 +1007,14 @@ func (x *fastReflection_GenesisOnlyParams) Set(fd protoreflect.FieldDescriptor, 
 		x.TopRewards = int32(value.Int())
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		x.SupplyDenom = value.Interface().(string)
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		x.TopRewardPeriod = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		x.TopRewardPayouts = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		x.TopRewardPayoutsPerMiner = value.Int()
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		x.TopRewardMaxDuration = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -983,6 +1049,14 @@ func (x *fastReflection_GenesisOnlyParams) Mutable(fd protoreflect.FieldDescript
 		panic(fmt.Errorf("field top_rewards of message inference.inference.GenesisOnlyParams is not mutable"))
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		panic(fmt.Errorf("field supply_denom of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		panic(fmt.Errorf("field top_reward_period of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		panic(fmt.Errorf("field top_reward_payouts of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		panic(fmt.Errorf("field top_reward_payouts_per_miner of message inference.inference.GenesisOnlyParams is not mutable"))
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		panic(fmt.Errorf("field top_reward_max_duration of message inference.inference.GenesisOnlyParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1010,6 +1084,14 @@ func (x *fastReflection_GenesisOnlyParams) NewField(fd protoreflect.FieldDescrip
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.GenesisOnlyParams.supply_denom":
 		return protoreflect.ValueOfString("")
+	case "inference.inference.GenesisOnlyParams.top_reward_period":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_payouts_per_miner":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.GenesisOnlyParams.top_reward_max_duration":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisOnlyParams"))
@@ -1101,6 +1183,18 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.TopRewardPeriod != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPeriod))
+		}
+		if x.TopRewardPayouts != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPayouts))
+		}
+		if x.TopRewardPayoutsPerMiner != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardPayoutsPerMiner))
+		}
+		if x.TopRewardMaxDuration != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopRewardMaxDuration))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1129,6 +1223,26 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.TopRewardMaxDuration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardMaxDuration))
+			i--
+			dAtA[i] = 0x58
+		}
+		if x.TopRewardPayoutsPerMiner != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPayoutsPerMiner))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.TopRewardPayouts != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPayouts))
+			i--
+			dAtA[i] = 0x48
+		}
+		if x.TopRewardPeriod != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopRewardPeriod))
+			i--
+			dAtA[i] = 0x40
 		}
 		if len(x.SupplyDenom) > 0 {
 			i -= len(x.SupplyDenom)
@@ -1362,6 +1476,82 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 				}
 				x.SupplyDenom = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPeriod", wireType)
+				}
+				x.TopRewardPeriod = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPeriod |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPayouts", wireType)
+				}
+				x.TopRewardPayouts = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPayouts |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardPayoutsPerMiner", wireType)
+				}
+				x.TopRewardPayoutsPerMiner = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardPayoutsPerMiner |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardMaxDuration", wireType)
+				}
+				x.TopRewardMaxDuration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopRewardMaxDuration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1398,10 +1588,12 @@ func (x *fastReflection_GenesisOnlyParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_TokenomicsParams                            protoreflect.MessageDescriptor
-	fd_TokenomicsParams_subsidy_reduction_interval protoreflect.FieldDescriptor
-	fd_TokenomicsParams_subsidy_reduction_amount   protoreflect.FieldDescriptor
-	fd_TokenomicsParams_current_subsidy_percentage protoreflect.FieldDescriptor
+	md_TokenomicsParams                             protoreflect.MessageDescriptor
+	fd_TokenomicsParams_subsidy_reduction_interval  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_subsidy_reduction_amount    protoreflect.FieldDescriptor
+	fd_TokenomicsParams_current_subsidy_percentage  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_top_reward_allowed_failure  protoreflect.FieldDescriptor
+	fd_TokenomicsParams_top_miner_poc_qualification protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1410,6 +1602,8 @@ func init() {
 	fd_TokenomicsParams_subsidy_reduction_interval = md_TokenomicsParams.Fields().ByName("subsidy_reduction_interval")
 	fd_TokenomicsParams_subsidy_reduction_amount = md_TokenomicsParams.Fields().ByName("subsidy_reduction_amount")
 	fd_TokenomicsParams_current_subsidy_percentage = md_TokenomicsParams.Fields().ByName("current_subsidy_percentage")
+	fd_TokenomicsParams_top_reward_allowed_failure = md_TokenomicsParams.Fields().ByName("top_reward_allowed_failure")
+	fd_TokenomicsParams_top_miner_poc_qualification = md_TokenomicsParams.Fields().ByName("top_miner_poc_qualification")
 }
 
 var _ protoreflect.Message = (*fastReflection_TokenomicsParams)(nil)
@@ -1477,21 +1671,33 @@ func (x *fastReflection_TokenomicsParams) Interface() protoreflect.ProtoMessage 
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_TokenomicsParams) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.SubsidyReductionInterval != float64(0) || math.Signbit(x.SubsidyReductionInterval) {
-		value := protoreflect.ValueOfFloat64(x.SubsidyReductionInterval)
+	if x.SubsidyReductionInterval != nil {
+		value := protoreflect.ValueOfMessage(x.SubsidyReductionInterval.ProtoReflect())
 		if !f(fd_TokenomicsParams_subsidy_reduction_interval, value) {
 			return
 		}
 	}
-	if x.SubsidyReductionAmount != float32(0) || math.Signbit(float64(x.SubsidyReductionAmount)) {
-		value := protoreflect.ValueOfFloat32(x.SubsidyReductionAmount)
+	if x.SubsidyReductionAmount != nil {
+		value := protoreflect.ValueOfMessage(x.SubsidyReductionAmount.ProtoReflect())
 		if !f(fd_TokenomicsParams_subsidy_reduction_amount, value) {
 			return
 		}
 	}
-	if x.CurrentSubsidyPercentage != float32(0) || math.Signbit(float64(x.CurrentSubsidyPercentage)) {
-		value := protoreflect.ValueOfFloat32(x.CurrentSubsidyPercentage)
+	if x.CurrentSubsidyPercentage != nil {
+		value := protoreflect.ValueOfMessage(x.CurrentSubsidyPercentage.ProtoReflect())
 		if !f(fd_TokenomicsParams_current_subsidy_percentage, value) {
+			return
+		}
+	}
+	if x.TopRewardAllowedFailure != nil {
+		value := protoreflect.ValueOfMessage(x.TopRewardAllowedFailure.ProtoReflect())
+		if !f(fd_TokenomicsParams_top_reward_allowed_failure, value) {
+			return
+		}
+	}
+	if x.TopMinerPocQualification != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TopMinerPocQualification)
+		if !f(fd_TokenomicsParams_top_miner_poc_qualification, value) {
 			return
 		}
 	}
@@ -1511,11 +1717,15 @@ func (x *fastReflection_TokenomicsParams) Range(f func(protoreflect.FieldDescrip
 func (x *fastReflection_TokenomicsParams) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
-		return x.SubsidyReductionInterval != float64(0) || math.Signbit(x.SubsidyReductionInterval)
+		return x.SubsidyReductionInterval != nil
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
-		return x.SubsidyReductionAmount != float32(0) || math.Signbit(float64(x.SubsidyReductionAmount))
+		return x.SubsidyReductionAmount != nil
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
-		return x.CurrentSubsidyPercentage != float32(0) || math.Signbit(float64(x.CurrentSubsidyPercentage))
+		return x.CurrentSubsidyPercentage != nil
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		return x.TopRewardAllowedFailure != nil
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		return x.TopMinerPocQualification != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1533,11 +1743,15 @@ func (x *fastReflection_TokenomicsParams) Has(fd protoreflect.FieldDescriptor) b
 func (x *fastReflection_TokenomicsParams) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
-		x.SubsidyReductionInterval = float64(0)
+		x.SubsidyReductionInterval = nil
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
-		x.SubsidyReductionAmount = float32(0)
+		x.SubsidyReductionAmount = nil
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
-		x.CurrentSubsidyPercentage = float32(0)
+		x.CurrentSubsidyPercentage = nil
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		x.TopRewardAllowedFailure = nil
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		x.TopMinerPocQualification = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1556,13 +1770,19 @@ func (x *fastReflection_TokenomicsParams) Get(descriptor protoreflect.FieldDescr
 	switch descriptor.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
 		value := x.SubsidyReductionInterval
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
 		value := x.SubsidyReductionAmount
-		return protoreflect.ValueOfFloat32(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
 		value := x.CurrentSubsidyPercentage
-		return protoreflect.ValueOfFloat32(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		value := x.TopRewardAllowedFailure
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		value := x.TopMinerPocQualification
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1584,11 +1804,15 @@ func (x *fastReflection_TokenomicsParams) Get(descriptor protoreflect.FieldDescr
 func (x *fastReflection_TokenomicsParams) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
-		x.SubsidyReductionInterval = value.Float()
+		x.SubsidyReductionInterval = value.Message().Interface().(*Decimal)
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
-		x.SubsidyReductionAmount = float32(value.Float())
+		x.SubsidyReductionAmount = value.Message().Interface().(*Decimal)
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
-		x.CurrentSubsidyPercentage = float32(value.Float())
+		x.CurrentSubsidyPercentage = value.Message().Interface().(*Decimal)
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		x.TopRewardAllowedFailure = value.Message().Interface().(*Decimal)
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		x.TopMinerPocQualification = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1610,11 +1834,27 @@ func (x *fastReflection_TokenomicsParams) Set(fd protoreflect.FieldDescriptor, v
 func (x *fastReflection_TokenomicsParams) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
-		panic(fmt.Errorf("field subsidy_reduction_interval of message inference.inference.TokenomicsParams is not mutable"))
+		if x.SubsidyReductionInterval == nil {
+			x.SubsidyReductionInterval = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.SubsidyReductionInterval.ProtoReflect())
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
-		panic(fmt.Errorf("field subsidy_reduction_amount of message inference.inference.TokenomicsParams is not mutable"))
+		if x.SubsidyReductionAmount == nil {
+			x.SubsidyReductionAmount = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.SubsidyReductionAmount.ProtoReflect())
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
-		panic(fmt.Errorf("field current_subsidy_percentage of message inference.inference.TokenomicsParams is not mutable"))
+		if x.CurrentSubsidyPercentage == nil {
+			x.CurrentSubsidyPercentage = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.CurrentSubsidyPercentage.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		if x.TopRewardAllowedFailure == nil {
+			x.TopRewardAllowedFailure = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.TopRewardAllowedFailure.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		panic(fmt.Errorf("field top_miner_poc_qualification of message inference.inference.TokenomicsParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1629,11 +1869,19 @@ func (x *fastReflection_TokenomicsParams) Mutable(fd protoreflect.FieldDescripto
 func (x *fastReflection_TokenomicsParams) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.TokenomicsParams.subsidy_reduction_interval":
-		return protoreflect.ValueOfFloat64(float64(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.TokenomicsParams.subsidy_reduction_amount":
-		return protoreflect.ValueOfFloat32(float32(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.TokenomicsParams.current_subsidy_percentage":
-		return protoreflect.ValueOfFloat32(float32(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_reward_allowed_failure":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.TokenomicsParams.top_miner_poc_qualification":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TokenomicsParams"))
@@ -1703,14 +1951,24 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		if x.SubsidyReductionInterval != 0 || math.Signbit(x.SubsidyReductionInterval) {
-			n += 9
+		if x.SubsidyReductionInterval != nil {
+			l = options.Size(x.SubsidyReductionInterval)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.SubsidyReductionAmount != 0 || math.Signbit(float64(x.SubsidyReductionAmount)) {
-			n += 5
+		if x.SubsidyReductionAmount != nil {
+			l = options.Size(x.SubsidyReductionAmount)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.CurrentSubsidyPercentage != 0 || math.Signbit(float64(x.CurrentSubsidyPercentage)) {
-			n += 5
+		if x.CurrentSubsidyPercentage != nil {
+			l = options.Size(x.CurrentSubsidyPercentage)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.TopRewardAllowedFailure != nil {
+			l = options.Size(x.TopRewardAllowedFailure)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.TopMinerPocQualification != 0 {
+			n += 1 + runtime.Sov(uint64(x.TopMinerPocQualification))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -1741,23 +1999,66 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.CurrentSubsidyPercentage != 0 || math.Signbit(float64(x.CurrentSubsidyPercentage)) {
-			i -= 4
-			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.CurrentSubsidyPercentage))))
+		if x.TopMinerPocQualification != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TopMinerPocQualification))
 			i--
-			dAtA[i] = 0x1d
+			dAtA[i] = 0x28
 		}
-		if x.SubsidyReductionAmount != 0 || math.Signbit(float64(x.SubsidyReductionAmount)) {
-			i -= 4
-			binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(x.SubsidyReductionAmount))))
+		if x.TopRewardAllowedFailure != nil {
+			encoded, err := options.Marshal(x.TopRewardAllowedFailure)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x15
+			dAtA[i] = 0x22
 		}
-		if x.SubsidyReductionInterval != 0 || math.Signbit(x.SubsidyReductionInterval) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.SubsidyReductionInterval))))
+		if x.CurrentSubsidyPercentage != nil {
+			encoded, err := options.Marshal(x.CurrentSubsidyPercentage)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x9
+			dAtA[i] = 0x1a
+		}
+		if x.SubsidyReductionAmount != nil {
+			encoded, err := options.Marshal(x.SubsidyReductionAmount)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x12
+		}
+		if x.SubsidyReductionInterval != nil {
+			encoded, err := options.Marshal(x.SubsidyReductionInterval)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0xa
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -1809,38 +2110,168 @@ func (x *fastReflection_TokenomicsParams) ProtoMethods() *protoiface.Methods {
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 1 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SubsidyReductionInterval", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.SubsidyReductionInterval = float64(math.Float64frombits(v))
+				if x.SubsidyReductionInterval == nil {
+					x.SubsidyReductionInterval = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SubsidyReductionInterval); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			case 2:
-				if wireType != 5 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SubsidyReductionAmount", wireType)
 				}
-				var v uint32
-				if (iNdEx + 4) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-				iNdEx += 4
-				x.SubsidyReductionAmount = float32(math.Float32frombits(v))
+				if x.SubsidyReductionAmount == nil {
+					x.SubsidyReductionAmount = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.SubsidyReductionAmount); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			case 3:
-				if wireType != 5 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CurrentSubsidyPercentage", wireType)
 				}
-				var v uint32
-				if (iNdEx + 4) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
-				iNdEx += 4
-				x.CurrentSubsidyPercentage = float32(math.Float32frombits(v))
+				if x.CurrentSubsidyPercentage == nil {
+					x.CurrentSubsidyPercentage = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.CurrentSubsidyPercentage); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopRewardAllowedFailure", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.TopRewardAllowedFailure == nil {
+					x.TopRewardAllowedFailure = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.TopRewardAllowedFailure); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopMinerPocQualification", wireType)
+				}
+				x.TopMinerPocQualification = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TopMinerPocQualification |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1880,9 +2311,12 @@ var (
 	md_EpochParams                               protoreflect.MessageDescriptor
 	fd_EpochParams_epoch_length                  protoreflect.FieldDescriptor
 	fd_EpochParams_epoch_multiplier              protoreflect.FieldDescriptor
-	fd_EpochParams_epoch_new_coin                protoreflect.FieldDescriptor
-	fd_EpochParams_coin_halving_interval         protoreflect.FieldDescriptor
+	fd_EpochParams_epoch_shift                   protoreflect.FieldDescriptor
 	fd_EpochParams_default_unit_of_compute_price protoreflect.FieldDescriptor
+	fd_EpochParams_poc_stage_duration            protoreflect.FieldDescriptor
+	fd_EpochParams_poc_exchange_duration         protoreflect.FieldDescriptor
+	fd_EpochParams_poc_validation_delay          protoreflect.FieldDescriptor
+	fd_EpochParams_poc_validation_duration       protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1890,9 +2324,12 @@ func init() {
 	md_EpochParams = File_inference_inference_params_proto.Messages().ByName("EpochParams")
 	fd_EpochParams_epoch_length = md_EpochParams.Fields().ByName("epoch_length")
 	fd_EpochParams_epoch_multiplier = md_EpochParams.Fields().ByName("epoch_multiplier")
-	fd_EpochParams_epoch_new_coin = md_EpochParams.Fields().ByName("epoch_new_coin")
-	fd_EpochParams_coin_halving_interval = md_EpochParams.Fields().ByName("coin_halving_interval")
+	fd_EpochParams_epoch_shift = md_EpochParams.Fields().ByName("epoch_shift")
 	fd_EpochParams_default_unit_of_compute_price = md_EpochParams.Fields().ByName("default_unit_of_compute_price")
+	fd_EpochParams_poc_stage_duration = md_EpochParams.Fields().ByName("poc_stage_duration")
+	fd_EpochParams_poc_exchange_duration = md_EpochParams.Fields().ByName("poc_exchange_duration")
+	fd_EpochParams_poc_validation_delay = md_EpochParams.Fields().ByName("poc_validation_delay")
+	fd_EpochParams_poc_validation_duration = md_EpochParams.Fields().ByName("poc_validation_duration")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochParams)(nil)
@@ -1972,21 +2409,39 @@ func (x *fastReflection_EpochParams) Range(f func(protoreflect.FieldDescriptor, 
 			return
 		}
 	}
-	if x.EpochNewCoin != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.EpochNewCoin)
-		if !f(fd_EpochParams_epoch_new_coin, value) {
+	if x.EpochShift != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EpochShift)
+		if !f(fd_EpochParams_epoch_shift, value) {
 			return
 		}
 	}
-	if x.CoinHalvingInterval != int64(0) {
-		value := protoreflect.ValueOfInt64(x.CoinHalvingInterval)
-		if !f(fd_EpochParams_coin_halving_interval, value) {
-			return
-		}
-	}
-	if x.DefaultUnitOfComputePrice != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.DefaultUnitOfComputePrice)
+	if x.DefaultUnitOfComputePrice != int64(0) {
+		value := protoreflect.ValueOfInt64(x.DefaultUnitOfComputePrice)
 		if !f(fd_EpochParams_default_unit_of_compute_price, value) {
+			return
+		}
+	}
+	if x.PocStageDuration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocStageDuration)
+		if !f(fd_EpochParams_poc_stage_duration, value) {
+			return
+		}
+	}
+	if x.PocExchangeDuration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocExchangeDuration)
+		if !f(fd_EpochParams_poc_exchange_duration, value) {
+			return
+		}
+	}
+	if x.PocValidationDelay != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocValidationDelay)
+		if !f(fd_EpochParams_poc_validation_delay, value) {
+			return
+		}
+	}
+	if x.PocValidationDuration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocValidationDuration)
+		if !f(fd_EpochParams_poc_validation_duration, value) {
 			return
 		}
 	}
@@ -2009,12 +2464,18 @@ func (x *fastReflection_EpochParams) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.EpochLength != int64(0)
 	case "inference.inference.EpochParams.epoch_multiplier":
 		return x.EpochMultiplier != int64(0)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		return x.EpochNewCoin != uint64(0)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		return x.CoinHalvingInterval != int64(0)
+	case "inference.inference.EpochParams.epoch_shift":
+		return x.EpochShift != int64(0)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
-		return x.DefaultUnitOfComputePrice != uint64(0)
+		return x.DefaultUnitOfComputePrice != int64(0)
+	case "inference.inference.EpochParams.poc_stage_duration":
+		return x.PocStageDuration != int64(0)
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		return x.PocExchangeDuration != int64(0)
+	case "inference.inference.EpochParams.poc_validation_delay":
+		return x.PocValidationDelay != int64(0)
+	case "inference.inference.EpochParams.poc_validation_duration":
+		return x.PocValidationDuration != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2035,12 +2496,18 @@ func (x *fastReflection_EpochParams) Clear(fd protoreflect.FieldDescriptor) {
 		x.EpochLength = int64(0)
 	case "inference.inference.EpochParams.epoch_multiplier":
 		x.EpochMultiplier = int64(0)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		x.EpochNewCoin = uint64(0)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		x.CoinHalvingInterval = int64(0)
+	case "inference.inference.EpochParams.epoch_shift":
+		x.EpochShift = int64(0)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
-		x.DefaultUnitOfComputePrice = uint64(0)
+		x.DefaultUnitOfComputePrice = int64(0)
+	case "inference.inference.EpochParams.poc_stage_duration":
+		x.PocStageDuration = int64(0)
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		x.PocExchangeDuration = int64(0)
+	case "inference.inference.EpochParams.poc_validation_delay":
+		x.PocValidationDelay = int64(0)
+	case "inference.inference.EpochParams.poc_validation_duration":
+		x.PocValidationDuration = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2063,15 +2530,24 @@ func (x *fastReflection_EpochParams) Get(descriptor protoreflect.FieldDescriptor
 	case "inference.inference.EpochParams.epoch_multiplier":
 		value := x.EpochMultiplier
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.EpochParams.epoch_new_coin":
-		value := x.EpochNewCoin
-		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.EpochParams.coin_halving_interval":
-		value := x.CoinHalvingInterval
+	case "inference.inference.EpochParams.epoch_shift":
+		value := x.EpochShift
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		value := x.DefaultUnitOfComputePrice
-		return protoreflect.ValueOfUint64(value)
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.EpochParams.poc_stage_duration":
+		value := x.PocStageDuration
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		value := x.PocExchangeDuration
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.EpochParams.poc_validation_delay":
+		value := x.PocValidationDelay
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.EpochParams.poc_validation_duration":
+		value := x.PocValidationDuration
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2096,12 +2572,18 @@ func (x *fastReflection_EpochParams) Set(fd protoreflect.FieldDescriptor, value 
 		x.EpochLength = value.Int()
 	case "inference.inference.EpochParams.epoch_multiplier":
 		x.EpochMultiplier = value.Int()
-	case "inference.inference.EpochParams.epoch_new_coin":
-		x.EpochNewCoin = value.Uint()
-	case "inference.inference.EpochParams.coin_halving_interval":
-		x.CoinHalvingInterval = value.Int()
+	case "inference.inference.EpochParams.epoch_shift":
+		x.EpochShift = value.Int()
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
-		x.DefaultUnitOfComputePrice = value.Uint()
+		x.DefaultUnitOfComputePrice = value.Int()
+	case "inference.inference.EpochParams.poc_stage_duration":
+		x.PocStageDuration = value.Int()
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		x.PocExchangeDuration = value.Int()
+	case "inference.inference.EpochParams.poc_validation_delay":
+		x.PocValidationDelay = value.Int()
+	case "inference.inference.EpochParams.poc_validation_duration":
+		x.PocValidationDuration = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2126,12 +2608,18 @@ func (x *fastReflection_EpochParams) Mutable(fd protoreflect.FieldDescriptor) pr
 		panic(fmt.Errorf("field epoch_length of message inference.inference.EpochParams is not mutable"))
 	case "inference.inference.EpochParams.epoch_multiplier":
 		panic(fmt.Errorf("field epoch_multiplier of message inference.inference.EpochParams is not mutable"))
-	case "inference.inference.EpochParams.epoch_new_coin":
-		panic(fmt.Errorf("field epoch_new_coin of message inference.inference.EpochParams is not mutable"))
-	case "inference.inference.EpochParams.coin_halving_interval":
-		panic(fmt.Errorf("field coin_halving_interval of message inference.inference.EpochParams is not mutable"))
+	case "inference.inference.EpochParams.epoch_shift":
+		panic(fmt.Errorf("field epoch_shift of message inference.inference.EpochParams is not mutable"))
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
 		panic(fmt.Errorf("field default_unit_of_compute_price of message inference.inference.EpochParams is not mutable"))
+	case "inference.inference.EpochParams.poc_stage_duration":
+		panic(fmt.Errorf("field poc_stage_duration of message inference.inference.EpochParams is not mutable"))
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		panic(fmt.Errorf("field poc_exchange_duration of message inference.inference.EpochParams is not mutable"))
+	case "inference.inference.EpochParams.poc_validation_delay":
+		panic(fmt.Errorf("field poc_validation_delay of message inference.inference.EpochParams is not mutable"))
+	case "inference.inference.EpochParams.poc_validation_duration":
+		panic(fmt.Errorf("field poc_validation_duration of message inference.inference.EpochParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2149,12 +2637,18 @@ func (x *fastReflection_EpochParams) NewField(fd protoreflect.FieldDescriptor) p
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochParams.epoch_multiplier":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.EpochParams.epoch_new_coin":
-		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.EpochParams.coin_halving_interval":
+	case "inference.inference.EpochParams.epoch_shift":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.EpochParams.default_unit_of_compute_price":
-		return protoreflect.ValueOfUint64(uint64(0))
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.EpochParams.poc_stage_duration":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.EpochParams.poc_exchange_duration":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.EpochParams.poc_validation_delay":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.EpochParams.poc_validation_duration":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochParams"))
@@ -2230,14 +2724,23 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 		if x.EpochMultiplier != 0 {
 			n += 1 + runtime.Sov(uint64(x.EpochMultiplier))
 		}
-		if x.EpochNewCoin != 0 {
-			n += 1 + runtime.Sov(uint64(x.EpochNewCoin))
-		}
-		if x.CoinHalvingInterval != 0 {
-			n += 1 + runtime.Sov(uint64(x.CoinHalvingInterval))
+		if x.EpochShift != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochShift))
 		}
 		if x.DefaultUnitOfComputePrice != 0 {
 			n += 1 + runtime.Sov(uint64(x.DefaultUnitOfComputePrice))
+		}
+		if x.PocStageDuration != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocStageDuration))
+		}
+		if x.PocExchangeDuration != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocExchangeDuration))
+		}
+		if x.PocValidationDelay != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocValidationDelay))
+		}
+		if x.PocValidationDuration != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocValidationDuration))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -2268,18 +2771,33 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.DefaultUnitOfComputePrice != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultUnitOfComputePrice))
+		if x.PocValidationDuration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocValidationDuration))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.PocValidationDelay != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocValidationDelay))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.PocExchangeDuration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocExchangeDuration))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.PocStageDuration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStageDuration))
 			i--
 			dAtA[i] = 0x28
 		}
-		if x.CoinHalvingInterval != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinHalvingInterval))
+		if x.DefaultUnitOfComputePrice != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultUnitOfComputePrice))
 			i--
 			dAtA[i] = 0x20
 		}
-		if x.EpochNewCoin != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochNewCoin))
+		if x.EpochShift != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochShift))
 			i--
 			dAtA[i] = 0x18
 		}
@@ -2382,9 +2900,9 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 				}
 			case 3:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochNewCoin", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochShift", wireType)
 				}
-				x.EpochNewCoin = 0
+				x.EpochShift = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -2394,31 +2912,12 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.EpochNewCoin |= uint64(b&0x7F) << shift
+					x.EpochShift |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
 			case 4:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CoinHalvingInterval", wireType)
-				}
-				x.CoinHalvingInterval = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.CoinHalvingInterval |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DefaultUnitOfComputePrice", wireType)
 				}
@@ -2432,7 +2931,83 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.DefaultUnitOfComputePrice |= uint64(b&0x7F) << shift
+					x.DefaultUnitOfComputePrice |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStageDuration", wireType)
+				}
+				x.PocStageDuration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocStageDuration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocExchangeDuration", wireType)
+				}
+				x.PocExchangeDuration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocExchangeDuration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocValidationDelay", wireType)
+				}
+				x.PocValidationDelay = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocValidationDelay |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocValidationDuration", wireType)
+				}
+				x.PocValidationDuration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PocValidationDuration |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -2473,12 +3048,19 @@ func (x *fastReflection_EpochParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_ValidationParams                          protoreflect.MessageDescriptor
-	fd_ValidationParams_false_positive_rate      protoreflect.FieldDescriptor
-	fd_ValidationParams_min_ramp_up_measurements protoreflect.FieldDescriptor
-	fd_ValidationParams_pass_value               protoreflect.FieldDescriptor
-	fd_ValidationParams_min_validation_average   protoreflect.FieldDescriptor
-	fd_ValidationParams_max_validation_average   protoreflect.FieldDescriptor
+	md_ValidationParams                                protoreflect.MessageDescriptor
+	fd_ValidationParams_false_positive_rate            protoreflect.FieldDescriptor
+	fd_ValidationParams_min_ramp_up_measurements       protoreflect.FieldDescriptor
+	fd_ValidationParams_pass_value                     protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_average         protoreflect.FieldDescriptor
+	fd_ValidationParams_max_validation_average         protoreflect.FieldDescriptor
+	fd_ValidationParams_expiration_blocks              protoreflect.FieldDescriptor
+	fd_ValidationParams_epochs_to_max                  protoreflect.FieldDescriptor
+	fd_ValidationParams_full_validation_traffic_cutoff protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_halfway         protoreflect.FieldDescriptor
+	fd_ValidationParams_min_validation_traffic_cutoff  protoreflect.FieldDescriptor
+	fd_ValidationParams_miss_percentage_cutoff         protoreflect.FieldDescriptor
+	fd_ValidationParams_miss_requests_penalty          protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -2489,6 +3071,13 @@ func init() {
 	fd_ValidationParams_pass_value = md_ValidationParams.Fields().ByName("pass_value")
 	fd_ValidationParams_min_validation_average = md_ValidationParams.Fields().ByName("min_validation_average")
 	fd_ValidationParams_max_validation_average = md_ValidationParams.Fields().ByName("max_validation_average")
+	fd_ValidationParams_expiration_blocks = md_ValidationParams.Fields().ByName("expiration_blocks")
+	fd_ValidationParams_epochs_to_max = md_ValidationParams.Fields().ByName("epochs_to_max")
+	fd_ValidationParams_full_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("full_validation_traffic_cutoff")
+	fd_ValidationParams_min_validation_halfway = md_ValidationParams.Fields().ByName("min_validation_halfway")
+	fd_ValidationParams_min_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("min_validation_traffic_cutoff")
+	fd_ValidationParams_miss_percentage_cutoff = md_ValidationParams.Fields().ByName("miss_percentage_cutoff")
+	fd_ValidationParams_miss_requests_penalty = md_ValidationParams.Fields().ByName("miss_requests_penalty")
 }
 
 var _ protoreflect.Message = (*fastReflection_ValidationParams)(nil)
@@ -2556,33 +3145,75 @@ func (x *fastReflection_ValidationParams) Interface() protoreflect.ProtoMessage 
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_ValidationParams) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.FalsePositiveRate != float64(0) || math.Signbit(x.FalsePositiveRate) {
-		value := protoreflect.ValueOfFloat64(x.FalsePositiveRate)
+	if x.FalsePositiveRate != nil {
+		value := protoreflect.ValueOfMessage(x.FalsePositiveRate.ProtoReflect())
 		if !f(fd_ValidationParams_false_positive_rate, value) {
 			return
 		}
 	}
-	if x.MinRampUpMeasurements != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.MinRampUpMeasurements)
+	if x.MinRampUpMeasurements != int32(0) {
+		value := protoreflect.ValueOfInt32(x.MinRampUpMeasurements)
 		if !f(fd_ValidationParams_min_ramp_up_measurements, value) {
 			return
 		}
 	}
-	if x.PassValue != float64(0) || math.Signbit(x.PassValue) {
-		value := protoreflect.ValueOfFloat64(x.PassValue)
+	if x.PassValue != nil {
+		value := protoreflect.ValueOfMessage(x.PassValue.ProtoReflect())
 		if !f(fd_ValidationParams_pass_value, value) {
 			return
 		}
 	}
-	if x.MinValidationAverage != float64(0) || math.Signbit(x.MinValidationAverage) {
-		value := protoreflect.ValueOfFloat64(x.MinValidationAverage)
+	if x.MinValidationAverage != nil {
+		value := protoreflect.ValueOfMessage(x.MinValidationAverage.ProtoReflect())
 		if !f(fd_ValidationParams_min_validation_average, value) {
 			return
 		}
 	}
-	if x.MaxValidationAverage != float64(0) || math.Signbit(x.MaxValidationAverage) {
-		value := protoreflect.ValueOfFloat64(x.MaxValidationAverage)
+	if x.MaxValidationAverage != nil {
+		value := protoreflect.ValueOfMessage(x.MaxValidationAverage.ProtoReflect())
 		if !f(fd_ValidationParams_max_validation_average, value) {
+			return
+		}
+	}
+	if x.ExpirationBlocks != int64(0) {
+		value := protoreflect.ValueOfInt64(x.ExpirationBlocks)
+		if !f(fd_ValidationParams_expiration_blocks, value) {
+			return
+		}
+	}
+	if x.EpochsToMax != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EpochsToMax)
+		if !f(fd_ValidationParams_epochs_to_max, value) {
+			return
+		}
+	}
+	if x.FullValidationTrafficCutoff != int64(0) {
+		value := protoreflect.ValueOfInt64(x.FullValidationTrafficCutoff)
+		if !f(fd_ValidationParams_full_validation_traffic_cutoff, value) {
+			return
+		}
+	}
+	if x.MinValidationHalfway != nil {
+		value := protoreflect.ValueOfMessage(x.MinValidationHalfway.ProtoReflect())
+		if !f(fd_ValidationParams_min_validation_halfway, value) {
+			return
+		}
+	}
+	if x.MinValidationTrafficCutoff != int64(0) {
+		value := protoreflect.ValueOfInt64(x.MinValidationTrafficCutoff)
+		if !f(fd_ValidationParams_min_validation_traffic_cutoff, value) {
+			return
+		}
+	}
+	if x.MissPercentageCutoff != nil {
+		value := protoreflect.ValueOfMessage(x.MissPercentageCutoff.ProtoReflect())
+		if !f(fd_ValidationParams_miss_percentage_cutoff, value) {
+			return
+		}
+	}
+	if x.MissRequestsPenalty != nil {
+		value := protoreflect.ValueOfMessage(x.MissRequestsPenalty.ProtoReflect())
+		if !f(fd_ValidationParams_miss_requests_penalty, value) {
 			return
 		}
 	}
@@ -2602,15 +3233,29 @@ func (x *fastReflection_ValidationParams) Range(f func(protoreflect.FieldDescrip
 func (x *fastReflection_ValidationParams) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
-		return x.FalsePositiveRate != float64(0) || math.Signbit(x.FalsePositiveRate)
+		return x.FalsePositiveRate != nil
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
-		return x.MinRampUpMeasurements != uint32(0)
+		return x.MinRampUpMeasurements != int32(0)
 	case "inference.inference.ValidationParams.pass_value":
-		return x.PassValue != float64(0) || math.Signbit(x.PassValue)
+		return x.PassValue != nil
 	case "inference.inference.ValidationParams.min_validation_average":
-		return x.MinValidationAverage != float64(0) || math.Signbit(x.MinValidationAverage)
+		return x.MinValidationAverage != nil
 	case "inference.inference.ValidationParams.max_validation_average":
-		return x.MaxValidationAverage != float64(0) || math.Signbit(x.MaxValidationAverage)
+		return x.MaxValidationAverage != nil
+	case "inference.inference.ValidationParams.expiration_blocks":
+		return x.ExpirationBlocks != int64(0)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		return x.EpochsToMax != int64(0)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		return x.FullValidationTrafficCutoff != int64(0)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		return x.MinValidationHalfway != nil
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		return x.MinValidationTrafficCutoff != int64(0)
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		return x.MissPercentageCutoff != nil
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		return x.MissRequestsPenalty != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2628,15 +3273,29 @@ func (x *fastReflection_ValidationParams) Has(fd protoreflect.FieldDescriptor) b
 func (x *fastReflection_ValidationParams) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
-		x.FalsePositiveRate = float64(0)
+		x.FalsePositiveRate = nil
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
-		x.MinRampUpMeasurements = uint32(0)
+		x.MinRampUpMeasurements = int32(0)
 	case "inference.inference.ValidationParams.pass_value":
-		x.PassValue = float64(0)
+		x.PassValue = nil
 	case "inference.inference.ValidationParams.min_validation_average":
-		x.MinValidationAverage = float64(0)
+		x.MinValidationAverage = nil
 	case "inference.inference.ValidationParams.max_validation_average":
-		x.MaxValidationAverage = float64(0)
+		x.MaxValidationAverage = nil
+	case "inference.inference.ValidationParams.expiration_blocks":
+		x.ExpirationBlocks = int64(0)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		x.EpochsToMax = int64(0)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		x.FullValidationTrafficCutoff = int64(0)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		x.MinValidationHalfway = nil
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		x.MinValidationTrafficCutoff = int64(0)
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		x.MissPercentageCutoff = nil
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		x.MissRequestsPenalty = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2655,19 +3314,40 @@ func (x *fastReflection_ValidationParams) Get(descriptor protoreflect.FieldDescr
 	switch descriptor.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
 		value := x.FalsePositiveRate
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
 		value := x.MinRampUpMeasurements
-		return protoreflect.ValueOfUint32(value)
+		return protoreflect.ValueOfInt32(value)
 	case "inference.inference.ValidationParams.pass_value":
 		value := x.PassValue
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.ValidationParams.min_validation_average":
 		value := x.MinValidationAverage
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.ValidationParams.max_validation_average":
 		value := x.MaxValidationAverage
-		return protoreflect.ValueOfFloat64(value)
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ValidationParams.expiration_blocks":
+		value := x.ExpirationBlocks
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.epochs_to_max":
+		value := x.EpochsToMax
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		value := x.FullValidationTrafficCutoff
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		value := x.MinValidationHalfway
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		value := x.MinValidationTrafficCutoff
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		value := x.MissPercentageCutoff
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		value := x.MissRequestsPenalty
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2689,15 +3369,29 @@ func (x *fastReflection_ValidationParams) Get(descriptor protoreflect.FieldDescr
 func (x *fastReflection_ValidationParams) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
-		x.FalsePositiveRate = value.Float()
+		x.FalsePositiveRate = value.Message().Interface().(*Decimal)
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
-		x.MinRampUpMeasurements = uint32(value.Uint())
+		x.MinRampUpMeasurements = int32(value.Int())
 	case "inference.inference.ValidationParams.pass_value":
-		x.PassValue = value.Float()
+		x.PassValue = value.Message().Interface().(*Decimal)
 	case "inference.inference.ValidationParams.min_validation_average":
-		x.MinValidationAverage = value.Float()
+		x.MinValidationAverage = value.Message().Interface().(*Decimal)
 	case "inference.inference.ValidationParams.max_validation_average":
-		x.MaxValidationAverage = value.Float()
+		x.MaxValidationAverage = value.Message().Interface().(*Decimal)
+	case "inference.inference.ValidationParams.expiration_blocks":
+		x.ExpirationBlocks = value.Int()
+	case "inference.inference.ValidationParams.epochs_to_max":
+		x.EpochsToMax = value.Int()
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		x.FullValidationTrafficCutoff = value.Int()
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		x.MinValidationHalfway = value.Message().Interface().(*Decimal)
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		x.MinValidationTrafficCutoff = value.Int()
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		x.MissPercentageCutoff = value.Message().Interface().(*Decimal)
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		x.MissRequestsPenalty = value.Message().Interface().(*Decimal)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2719,15 +3413,50 @@ func (x *fastReflection_ValidationParams) Set(fd protoreflect.FieldDescriptor, v
 func (x *fastReflection_ValidationParams) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
-		panic(fmt.Errorf("field false_positive_rate of message inference.inference.ValidationParams is not mutable"))
+		if x.FalsePositiveRate == nil {
+			x.FalsePositiveRate = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.FalsePositiveRate.ProtoReflect())
+	case "inference.inference.ValidationParams.pass_value":
+		if x.PassValue == nil {
+			x.PassValue = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.PassValue.ProtoReflect())
+	case "inference.inference.ValidationParams.min_validation_average":
+		if x.MinValidationAverage == nil {
+			x.MinValidationAverage = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MinValidationAverage.ProtoReflect())
+	case "inference.inference.ValidationParams.max_validation_average":
+		if x.MaxValidationAverage == nil {
+			x.MaxValidationAverage = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MaxValidationAverage.ProtoReflect())
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		if x.MinValidationHalfway == nil {
+			x.MinValidationHalfway = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MinValidationHalfway.ProtoReflect())
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		if x.MissPercentageCutoff == nil {
+			x.MissPercentageCutoff = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MissPercentageCutoff.ProtoReflect())
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		if x.MissRequestsPenalty == nil {
+			x.MissRequestsPenalty = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.MissRequestsPenalty.ProtoReflect())
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
 		panic(fmt.Errorf("field min_ramp_up_measurements of message inference.inference.ValidationParams is not mutable"))
-	case "inference.inference.ValidationParams.pass_value":
-		panic(fmt.Errorf("field pass_value of message inference.inference.ValidationParams is not mutable"))
-	case "inference.inference.ValidationParams.min_validation_average":
-		panic(fmt.Errorf("field min_validation_average of message inference.inference.ValidationParams is not mutable"))
-	case "inference.inference.ValidationParams.max_validation_average":
-		panic(fmt.Errorf("field max_validation_average of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.expiration_blocks":
+		panic(fmt.Errorf("field expiration_blocks of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.epochs_to_max":
+		panic(fmt.Errorf("field epochs_to_max of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		panic(fmt.Errorf("field full_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		panic(fmt.Errorf("field min_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2742,15 +3471,36 @@ func (x *fastReflection_ValidationParams) Mutable(fd protoreflect.FieldDescripto
 func (x *fastReflection_ValidationParams) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.ValidationParams.false_positive_rate":
-		return protoreflect.ValueOfFloat64(float64(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.ValidationParams.min_ramp_up_measurements":
-		return protoreflect.ValueOfUint32(uint32(0))
+		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.ValidationParams.pass_value":
-		return protoreflect.ValueOfFloat64(float64(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.ValidationParams.min_validation_average":
-		return protoreflect.ValueOfFloat64(float64(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.ValidationParams.max_validation_average":
-		return protoreflect.ValueOfFloat64(float64(0))
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ValidationParams.expiration_blocks":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.epochs_to_max":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.full_validation_traffic_cutoff":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.min_validation_halfway":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.miss_percentage_cutoff":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ValidationParams.miss_requests_penalty":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -2820,20 +3570,48 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		if x.FalsePositiveRate != 0 || math.Signbit(x.FalsePositiveRate) {
-			n += 9
+		if x.FalsePositiveRate != nil {
+			l = options.Size(x.FalsePositiveRate)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.MinRampUpMeasurements != 0 {
 			n += 1 + runtime.Sov(uint64(x.MinRampUpMeasurements))
 		}
-		if x.PassValue != 0 || math.Signbit(x.PassValue) {
-			n += 9
+		if x.PassValue != nil {
+			l = options.Size(x.PassValue)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.MinValidationAverage != 0 || math.Signbit(x.MinValidationAverage) {
-			n += 9
+		if x.MinValidationAverage != nil {
+			l = options.Size(x.MinValidationAverage)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.MaxValidationAverage != 0 || math.Signbit(x.MaxValidationAverage) {
-			n += 9
+		if x.MaxValidationAverage != nil {
+			l = options.Size(x.MaxValidationAverage)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.ExpirationBlocks != 0 {
+			n += 1 + runtime.Sov(uint64(x.ExpirationBlocks))
+		}
+		if x.EpochsToMax != 0 {
+			n += 1 + runtime.Sov(uint64(x.EpochsToMax))
+		}
+		if x.FullValidationTrafficCutoff != 0 {
+			n += 1 + runtime.Sov(uint64(x.FullValidationTrafficCutoff))
+		}
+		if x.MinValidationHalfway != nil {
+			l = options.Size(x.MinValidationHalfway)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.MinValidationTrafficCutoff != 0 {
+			n += 1 + runtime.Sov(uint64(x.MinValidationTrafficCutoff))
+		}
+		if x.MissPercentageCutoff != nil {
+			l = options.Size(x.MissPercentageCutoff)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.MissRequestsPenalty != nil {
+			l = options.Size(x.MissRequestsPenalty)
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -2864,34 +3642,128 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.MaxValidationAverage != 0 || math.Signbit(x.MaxValidationAverage) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.MaxValidationAverage))))
+		if x.MissRequestsPenalty != nil {
+			encoded, err := options.Marshal(x.MissRequestsPenalty)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x29
+			dAtA[i] = 0x62
 		}
-		if x.MinValidationAverage != 0 || math.Signbit(x.MinValidationAverage) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.MinValidationAverage))))
+		if x.MissPercentageCutoff != nil {
+			encoded, err := options.Marshal(x.MissPercentageCutoff)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x21
+			dAtA[i] = 0x5a
 		}
-		if x.PassValue != 0 || math.Signbit(x.PassValue) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.PassValue))))
+		if x.MinValidationTrafficCutoff != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.MinValidationTrafficCutoff))
 			i--
-			dAtA[i] = 0x19
+			dAtA[i] = 0x50
+		}
+		if x.MinValidationHalfway != nil {
+			encoded, err := options.Marshal(x.MinValidationHalfway)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x4a
+		}
+		if x.FullValidationTrafficCutoff != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FullValidationTrafficCutoff))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.EpochsToMax != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochsToMax))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.ExpirationBlocks != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExpirationBlocks))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.MaxValidationAverage != nil {
+			encoded, err := options.Marshal(x.MaxValidationAverage)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if x.MinValidationAverage != nil {
+			encoded, err := options.Marshal(x.MinValidationAverage)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if x.PassValue != nil {
+			encoded, err := options.Marshal(x.PassValue)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x1a
 		}
 		if x.MinRampUpMeasurements != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.MinRampUpMeasurements))
 			i--
 			dAtA[i] = 0x10
 		}
-		if x.FalsePositiveRate != 0 || math.Signbit(x.FalsePositiveRate) {
-			i -= 8
-			binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(x.FalsePositiveRate))))
+		if x.FalsePositiveRate != nil {
+			encoded, err := options.Marshal(x.FalsePositiveRate)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
-			dAtA[i] = 0x9
+			dAtA[i] = 0xa
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -2943,16 +3815,41 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 1 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FalsePositiveRate", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.FalsePositiveRate = float64(math.Float64frombits(v))
+				if x.FalsePositiveRate == nil {
+					x.FalsePositiveRate = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.FalsePositiveRate); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinRampUpMeasurements", wireType)
@@ -2967,44 +3864,303 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.MinRampUpMeasurements |= uint32(b&0x7F) << shift
+					x.MinRampUpMeasurements |= int32(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
 			case 3:
-				if wireType != 1 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PassValue", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.PassValue = float64(math.Float64frombits(v))
+				if x.PassValue == nil {
+					x.PassValue = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PassValue); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			case 4:
-				if wireType != 1 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinValidationAverage", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.MinValidationAverage = float64(math.Float64frombits(v))
+				if x.MinValidationAverage == nil {
+					x.MinValidationAverage = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MinValidationAverage); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			case 5:
-				if wireType != 1 {
+				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MaxValidationAverage", wireType)
 				}
-				var v uint64
-				if (iNdEx + 8) > l {
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
-				iNdEx += 8
-				x.MaxValidationAverage = float64(math.Float64frombits(v))
+				if x.MaxValidationAverage == nil {
+					x.MaxValidationAverage = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MaxValidationAverage); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExpirationBlocks", wireType)
+				}
+				x.ExpirationBlocks = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ExpirationBlocks |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochsToMax", wireType)
+				}
+				x.EpochsToMax = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochsToMax |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FullValidationTrafficCutoff", wireType)
+				}
+				x.FullValidationTrafficCutoff = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.FullValidationTrafficCutoff |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 9:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinValidationHalfway", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.MinValidationHalfway == nil {
+					x.MinValidationHalfway = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MinValidationHalfway); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MinValidationTrafficCutoff", wireType)
+				}
+				x.MinValidationTrafficCutoff = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.MinValidationTrafficCutoff |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 11:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MissPercentageCutoff", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.MissPercentageCutoff == nil {
+					x.MissPercentageCutoff = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MissPercentageCutoff); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 12:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MissRequestsPenalty", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.MissRequestsPenalty == nil {
+					x.MissRequestsPenalty = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.MissRequestsPenalty); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -3116,8 +4272,8 @@ func (x *fastReflection_PocParams) Interface() protoreflect.ProtoMessage {
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_PocParams) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.DefaultDifficulty != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.DefaultDifficulty)
+	if x.DefaultDifficulty != int32(0) {
+		value := protoreflect.ValueOfInt32(x.DefaultDifficulty)
 		if !f(fd_PocParams_default_difficulty, value) {
 			return
 		}
@@ -3138,7 +4294,7 @@ func (x *fastReflection_PocParams) Range(f func(protoreflect.FieldDescriptor, pr
 func (x *fastReflection_PocParams) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
-		return x.DefaultDifficulty != uint32(0)
+		return x.DefaultDifficulty != int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -3156,7 +4312,7 @@ func (x *fastReflection_PocParams) Has(fd protoreflect.FieldDescriptor) bool {
 func (x *fastReflection_PocParams) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
-		x.DefaultDifficulty = uint32(0)
+		x.DefaultDifficulty = int32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -3175,7 +4331,7 @@ func (x *fastReflection_PocParams) Get(descriptor protoreflect.FieldDescriptor) 
 	switch descriptor.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
 		value := x.DefaultDifficulty
-		return protoreflect.ValueOfUint32(value)
+		return protoreflect.ValueOfInt32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -3197,7 +4353,7 @@ func (x *fastReflection_PocParams) Get(descriptor protoreflect.FieldDescriptor) 
 func (x *fastReflection_PocParams) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
-		x.DefaultDifficulty = uint32(value.Uint())
+		x.DefaultDifficulty = int32(value.Int())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -3234,7 +4390,7 @@ func (x *fastReflection_PocParams) Mutable(fd protoreflect.FieldDescriptor) prot
 func (x *fastReflection_PocParams) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.PocParams.default_difficulty":
-		return protoreflect.ValueOfUint32(uint32(0))
+		return protoreflect.ValueOfInt32(int32(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PocParams"))
@@ -3404,7 +4560,459 @@ func (x *fastReflection_PocParams) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.DefaultDifficulty |= uint32(b&0x7F) << shift
+					x.DefaultDifficulty |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_Decimal          protoreflect.MessageDescriptor
+	fd_Decimal_value    protoreflect.FieldDescriptor
+	fd_Decimal_exponent protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_params_proto_init()
+	md_Decimal = File_inference_inference_params_proto.Messages().ByName("Decimal")
+	fd_Decimal_value = md_Decimal.Fields().ByName("value")
+	fd_Decimal_exponent = md_Decimal.Fields().ByName("exponent")
+}
+
+var _ protoreflect.Message = (*fastReflection_Decimal)(nil)
+
+type fastReflection_Decimal Decimal
+
+func (x *Decimal) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_Decimal)(x)
+}
+
+func (x *Decimal) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_params_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_Decimal_messageType fastReflection_Decimal_messageType
+var _ protoreflect.MessageType = fastReflection_Decimal_messageType{}
+
+type fastReflection_Decimal_messageType struct{}
+
+func (x fastReflection_Decimal_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_Decimal)(nil)
+}
+func (x fastReflection_Decimal_messageType) New() protoreflect.Message {
+	return new(fastReflection_Decimal)
+}
+func (x fastReflection_Decimal_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_Decimal
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_Decimal) Descriptor() protoreflect.MessageDescriptor {
+	return md_Decimal
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_Decimal) Type() protoreflect.MessageType {
+	return _fastReflection_Decimal_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_Decimal) New() protoreflect.Message {
+	return new(fastReflection_Decimal)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_Decimal) Interface() protoreflect.ProtoMessage {
+	return (*Decimal)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_Decimal) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Value != int64(0) {
+		value := protoreflect.ValueOfInt64(x.Value)
+		if !f(fd_Decimal_value, value) {
+			return
+		}
+	}
+	if x.Exponent != int32(0) {
+		value := protoreflect.ValueOfInt32(x.Exponent)
+		if !f(fd_Decimal_exponent, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_Decimal) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.Decimal.value":
+		return x.Value != int64(0)
+	case "inference.inference.Decimal.exponent":
+		return x.Exponent != int32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Decimal) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.Decimal.value":
+		x.Value = int64(0)
+	case "inference.inference.Decimal.exponent":
+		x.Exponent = int32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_Decimal) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.Decimal.value":
+		value := x.Value
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Decimal.exponent":
+		value := x.Exponent
+		return protoreflect.ValueOfInt32(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Decimal) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.Decimal.value":
+		x.Value = value.Int()
+	case "inference.inference.Decimal.exponent":
+		x.Exponent = int32(value.Int())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Decimal) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.Decimal.value":
+		panic(fmt.Errorf("field value of message inference.inference.Decimal is not mutable"))
+	case "inference.inference.Decimal.exponent":
+		panic(fmt.Errorf("field exponent of message inference.inference.Decimal is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_Decimal) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.Decimal.value":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Decimal.exponent":
+		return protoreflect.ValueOfInt32(int32(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Decimal"))
+		}
+		panic(fmt.Errorf("message inference.inference.Decimal does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_Decimal) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.Decimal", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_Decimal) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_Decimal) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_Decimal) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_Decimal) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*Decimal)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.Value != 0 {
+			n += 1 + runtime.Sov(uint64(x.Value))
+		}
+		if x.Exponent != 0 {
+			n += 1 + runtime.Sov(uint64(x.Exponent))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*Decimal)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Exponent != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Exponent))
+			i--
+			dAtA[i] = 0x10
+		}
+		if x.Value != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Value))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*Decimal)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: Decimal: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: Decimal: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
+				}
+				x.Value = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Value |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Exponent", wireType)
+				}
+				x.Exponent = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Exponent |= int32(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -3522,13 +5130,17 @@ type GenesisOnlyParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	TotalSupply             int64  `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
-	OriginatorSupply        int64  `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
-	TopRewardAmount         int64  `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
-	StandardRewardAmount    int64  `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
-	PreProgrammedSaleAmount int64  `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
-	TopRewards              int32  `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
-	SupplyDenom             string `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
+	TotalSupply              int64  `protobuf:"varint,1,opt,name=total_supply,json=totalSupply,proto3" json:"total_supply,omitempty"`
+	OriginatorSupply         int64  `protobuf:"varint,2,opt,name=originator_supply,json=originatorSupply,proto3" json:"originator_supply,omitempty"`
+	TopRewardAmount          int64  `protobuf:"varint,3,opt,name=top_reward_amount,json=topRewardAmount,proto3" json:"top_reward_amount,omitempty"`
+	StandardRewardAmount     int64  `protobuf:"varint,4,opt,name=standard_reward_amount,json=standardRewardAmount,proto3" json:"standard_reward_amount,omitempty"`
+	PreProgrammedSaleAmount  int64  `protobuf:"varint,5,opt,name=pre_programmed_sale_amount,json=preProgrammedSaleAmount,proto3" json:"pre_programmed_sale_amount,omitempty"`
+	TopRewards               int32  `protobuf:"varint,6,opt,name=top_rewards,json=topRewards,proto3" json:"top_rewards,omitempty"`
+	SupplyDenom              string `protobuf:"bytes,7,opt,name=supply_denom,json=supplyDenom,proto3" json:"supply_denom,omitempty"`
+	TopRewardPeriod          int64  `protobuf:"varint,8,opt,name=top_reward_period,json=topRewardPeriod,proto3" json:"top_reward_period,omitempty"`
+	TopRewardPayouts         int64  `protobuf:"varint,9,opt,name=top_reward_payouts,json=topRewardPayouts,proto3" json:"top_reward_payouts,omitempty"`
+	TopRewardPayoutsPerMiner int64  `protobuf:"varint,10,opt,name=top_reward_payouts_per_miner,json=topRewardPayoutsPerMiner,proto3" json:"top_reward_payouts_per_miner,omitempty"`
+	TopRewardMaxDuration     int64  `protobuf:"varint,11,opt,name=top_reward_max_duration,json=topRewardMaxDuration,proto3" json:"top_reward_max_duration,omitempty"`
 }
 
 func (x *GenesisOnlyParams) Reset() {
@@ -3600,14 +5212,44 @@ func (x *GenesisOnlyParams) GetSupplyDenom() string {
 	return ""
 }
 
+func (x *GenesisOnlyParams) GetTopRewardPeriod() int64 {
+	if x != nil {
+		return x.TopRewardPeriod
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardPayouts() int64 {
+	if x != nil {
+		return x.TopRewardPayouts
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardPayoutsPerMiner() int64 {
+	if x != nil {
+		return x.TopRewardPayoutsPerMiner
+	}
+	return 0
+}
+
+func (x *GenesisOnlyParams) GetTopRewardMaxDuration() int64 {
+	if x != nil {
+		return x.TopRewardMaxDuration
+	}
+	return 0
+}
+
 type TokenomicsParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	SubsidyReductionInterval float64 `protobuf:"fixed64,1,opt,name=subsidy_reduction_interval,json=subsidyReductionInterval,proto3" json:"subsidy_reduction_interval,omitempty"`
-	SubsidyReductionAmount   float32 `protobuf:"fixed32,2,opt,name=subsidy_reduction_amount,json=subsidyReductionAmount,proto3" json:"subsidy_reduction_amount,omitempty"`
-	CurrentSubsidyPercentage float32 `protobuf:"fixed32,3,opt,name=current_subsidy_percentage,json=currentSubsidyPercentage,proto3" json:"current_subsidy_percentage,omitempty"`
+	SubsidyReductionInterval *Decimal `protobuf:"bytes,1,opt,name=subsidy_reduction_interval,json=subsidyReductionInterval,proto3" json:"subsidy_reduction_interval,omitempty"`
+	SubsidyReductionAmount   *Decimal `protobuf:"bytes,2,opt,name=subsidy_reduction_amount,json=subsidyReductionAmount,proto3" json:"subsidy_reduction_amount,omitempty"`
+	CurrentSubsidyPercentage *Decimal `protobuf:"bytes,3,opt,name=current_subsidy_percentage,json=currentSubsidyPercentage,proto3" json:"current_subsidy_percentage,omitempty"`
+	TopRewardAllowedFailure  *Decimal `protobuf:"bytes,4,opt,name=top_reward_allowed_failure,json=topRewardAllowedFailure,proto3" json:"top_reward_allowed_failure,omitempty"`
+	TopMinerPocQualification int64    `protobuf:"varint,5,opt,name=top_miner_poc_qualification,json=topMinerPocQualification,proto3" json:"top_miner_poc_qualification,omitempty"`
 }
 
 func (x *TokenomicsParams) Reset() {
@@ -3630,23 +5272,37 @@ func (*TokenomicsParams) Descriptor() ([]byte, []int) {
 	return file_inference_inference_params_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *TokenomicsParams) GetSubsidyReductionInterval() float64 {
+func (x *TokenomicsParams) GetSubsidyReductionInterval() *Decimal {
 	if x != nil {
 		return x.SubsidyReductionInterval
 	}
-	return 0
+	return nil
 }
 
-func (x *TokenomicsParams) GetSubsidyReductionAmount() float32 {
+func (x *TokenomicsParams) GetSubsidyReductionAmount() *Decimal {
 	if x != nil {
 		return x.SubsidyReductionAmount
 	}
-	return 0
+	return nil
 }
 
-func (x *TokenomicsParams) GetCurrentSubsidyPercentage() float32 {
+func (x *TokenomicsParams) GetCurrentSubsidyPercentage() *Decimal {
 	if x != nil {
 		return x.CurrentSubsidyPercentage
+	}
+	return nil
+}
+
+func (x *TokenomicsParams) GetTopRewardAllowedFailure() *Decimal {
+	if x != nil {
+		return x.TopRewardAllowedFailure
+	}
+	return nil
+}
+
+func (x *TokenomicsParams) GetTopMinerPocQualification() int64 {
+	if x != nil {
+		return x.TopMinerPocQualification
 	}
 	return 0
 }
@@ -3656,11 +5312,14 @@ type EpochParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	EpochLength               int64  `protobuf:"varint,1,opt,name=epoch_length,json=epochLength,proto3" json:"epoch_length,omitempty"`
-	EpochMultiplier           int64  `protobuf:"varint,2,opt,name=epoch_multiplier,json=epochMultiplier,proto3" json:"epoch_multiplier,omitempty"`
-	EpochNewCoin              uint64 `protobuf:"varint,3,opt,name=epoch_new_coin,json=epochNewCoin,proto3" json:"epoch_new_coin,omitempty"`
-	CoinHalvingInterval       int64  `protobuf:"varint,4,opt,name=coin_halving_interval,json=coinHalvingInterval,proto3" json:"coin_halving_interval,omitempty"`
-	DefaultUnitOfComputePrice uint64 `protobuf:"varint,5,opt,name=default_unit_of_compute_price,json=defaultUnitOfComputePrice,proto3" json:"default_unit_of_compute_price,omitempty"`
+	EpochLength               int64 `protobuf:"varint,1,opt,name=epoch_length,json=epochLength,proto3" json:"epoch_length,omitempty"`
+	EpochMultiplier           int64 `protobuf:"varint,2,opt,name=epoch_multiplier,json=epochMultiplier,proto3" json:"epoch_multiplier,omitempty"`
+	EpochShift                int64 `protobuf:"varint,3,opt,name=epoch_shift,json=epochShift,proto3" json:"epoch_shift,omitempty"`
+	DefaultUnitOfComputePrice int64 `protobuf:"varint,4,opt,name=default_unit_of_compute_price,json=defaultUnitOfComputePrice,proto3" json:"default_unit_of_compute_price,omitempty"`
+	PocStageDuration          int64 `protobuf:"varint,5,opt,name=poc_stage_duration,json=pocStageDuration,proto3" json:"poc_stage_duration,omitempty"`
+	PocExchangeDuration       int64 `protobuf:"varint,6,opt,name=poc_exchange_duration,json=pocExchangeDuration,proto3" json:"poc_exchange_duration,omitempty"`
+	PocValidationDelay        int64 `protobuf:"varint,7,opt,name=poc_validation_delay,json=pocValidationDelay,proto3" json:"poc_validation_delay,omitempty"`
+	PocValidationDuration     int64 `protobuf:"varint,8,opt,name=poc_validation_duration,json=pocValidationDuration,proto3" json:"poc_validation_duration,omitempty"`
 }
 
 func (x *EpochParams) Reset() {
@@ -3697,23 +5356,44 @@ func (x *EpochParams) GetEpochMultiplier() int64 {
 	return 0
 }
 
-func (x *EpochParams) GetEpochNewCoin() uint64 {
+func (x *EpochParams) GetEpochShift() int64 {
 	if x != nil {
-		return x.EpochNewCoin
+		return x.EpochShift
 	}
 	return 0
 }
 
-func (x *EpochParams) GetCoinHalvingInterval() int64 {
-	if x != nil {
-		return x.CoinHalvingInterval
-	}
-	return 0
-}
-
-func (x *EpochParams) GetDefaultUnitOfComputePrice() uint64 {
+func (x *EpochParams) GetDefaultUnitOfComputePrice() int64 {
 	if x != nil {
 		return x.DefaultUnitOfComputePrice
+	}
+	return 0
+}
+
+func (x *EpochParams) GetPocStageDuration() int64 {
+	if x != nil {
+		return x.PocStageDuration
+	}
+	return 0
+}
+
+func (x *EpochParams) GetPocExchangeDuration() int64 {
+	if x != nil {
+		return x.PocExchangeDuration
+	}
+	return 0
+}
+
+func (x *EpochParams) GetPocValidationDelay() int64 {
+	if x != nil {
+		return x.PocValidationDelay
+	}
+	return 0
+}
+
+func (x *EpochParams) GetPocValidationDuration() int64 {
+	if x != nil {
+		return x.PocValidationDuration
 	}
 	return 0
 }
@@ -3723,11 +5403,18 @@ type ValidationParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	FalsePositiveRate     float64 `protobuf:"fixed64,1,opt,name=false_positive_rate,json=falsePositiveRate,proto3" json:"false_positive_rate,omitempty"`
-	MinRampUpMeasurements uint32  `protobuf:"varint,2,opt,name=min_ramp_up_measurements,json=minRampUpMeasurements,proto3" json:"min_ramp_up_measurements,omitempty"`
-	PassValue             float64 `protobuf:"fixed64,3,opt,name=pass_value,json=passValue,proto3" json:"pass_value,omitempty"`
-	MinValidationAverage  float64 `protobuf:"fixed64,4,opt,name=min_validation_average,json=minValidationAverage,proto3" json:"min_validation_average,omitempty"`
-	MaxValidationAverage  float64 `protobuf:"fixed64,5,opt,name=max_validation_average,json=maxValidationAverage,proto3" json:"max_validation_average,omitempty"`
+	FalsePositiveRate           *Decimal `protobuf:"bytes,1,opt,name=false_positive_rate,json=falsePositiveRate,proto3" json:"false_positive_rate,omitempty"`
+	MinRampUpMeasurements       int32    `protobuf:"varint,2,opt,name=min_ramp_up_measurements,json=minRampUpMeasurements,proto3" json:"min_ramp_up_measurements,omitempty"`
+	PassValue                   *Decimal `protobuf:"bytes,3,opt,name=pass_value,json=passValue,proto3" json:"pass_value,omitempty"`
+	MinValidationAverage        *Decimal `protobuf:"bytes,4,opt,name=min_validation_average,json=minValidationAverage,proto3" json:"min_validation_average,omitempty"`
+	MaxValidationAverage        *Decimal `protobuf:"bytes,5,opt,name=max_validation_average,json=maxValidationAverage,proto3" json:"max_validation_average,omitempty"`
+	ExpirationBlocks            int64    `protobuf:"varint,6,opt,name=expiration_blocks,json=expirationBlocks,proto3" json:"expiration_blocks,omitempty"`
+	EpochsToMax                 int64    `protobuf:"varint,7,opt,name=epochs_to_max,json=epochsToMax,proto3" json:"epochs_to_max,omitempty"`
+	FullValidationTrafficCutoff int64    `protobuf:"varint,8,opt,name=full_validation_traffic_cutoff,json=fullValidationTrafficCutoff,proto3" json:"full_validation_traffic_cutoff,omitempty"`
+	MinValidationHalfway        *Decimal `protobuf:"bytes,9,opt,name=min_validation_halfway,json=minValidationHalfway,proto3" json:"min_validation_halfway,omitempty"`
+	MinValidationTrafficCutoff  int64    `protobuf:"varint,10,opt,name=min_validation_traffic_cutoff,json=minValidationTrafficCutoff,proto3" json:"min_validation_traffic_cutoff,omitempty"`
+	MissPercentageCutoff        *Decimal `protobuf:"bytes,11,opt,name=miss_percentage_cutoff,json=missPercentageCutoff,proto3" json:"miss_percentage_cutoff,omitempty"`
+	MissRequestsPenalty         *Decimal `protobuf:"bytes,12,opt,name=miss_requests_penalty,json=missRequestsPenalty,proto3" json:"miss_requests_penalty,omitempty"`
 }
 
 func (x *ValidationParams) Reset() {
@@ -3750,39 +5437,88 @@ func (*ValidationParams) Descriptor() ([]byte, []int) {
 	return file_inference_inference_params_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *ValidationParams) GetFalsePositiveRate() float64 {
+func (x *ValidationParams) GetFalsePositiveRate() *Decimal {
 	if x != nil {
 		return x.FalsePositiveRate
 	}
-	return 0
+	return nil
 }
 
-func (x *ValidationParams) GetMinRampUpMeasurements() uint32 {
+func (x *ValidationParams) GetMinRampUpMeasurements() int32 {
 	if x != nil {
 		return x.MinRampUpMeasurements
 	}
 	return 0
 }
 
-func (x *ValidationParams) GetPassValue() float64 {
+func (x *ValidationParams) GetPassValue() *Decimal {
 	if x != nil {
 		return x.PassValue
 	}
-	return 0
+	return nil
 }
 
-func (x *ValidationParams) GetMinValidationAverage() float64 {
+func (x *ValidationParams) GetMinValidationAverage() *Decimal {
 	if x != nil {
 		return x.MinValidationAverage
 	}
-	return 0
+	return nil
 }
 
-func (x *ValidationParams) GetMaxValidationAverage() float64 {
+func (x *ValidationParams) GetMaxValidationAverage() *Decimal {
 	if x != nil {
 		return x.MaxValidationAverage
 	}
+	return nil
+}
+
+func (x *ValidationParams) GetExpirationBlocks() int64 {
+	if x != nil {
+		return x.ExpirationBlocks
+	}
 	return 0
+}
+
+func (x *ValidationParams) GetEpochsToMax() int64 {
+	if x != nil {
+		return x.EpochsToMax
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetFullValidationTrafficCutoff() int64 {
+	if x != nil {
+		return x.FullValidationTrafficCutoff
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetMinValidationHalfway() *Decimal {
+	if x != nil {
+		return x.MinValidationHalfway
+	}
+	return nil
+}
+
+func (x *ValidationParams) GetMinValidationTrafficCutoff() int64 {
+	if x != nil {
+		return x.MinValidationTrafficCutoff
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetMissPercentageCutoff() *Decimal {
+	if x != nil {
+		return x.MissPercentageCutoff
+	}
+	return nil
+}
+
+func (x *ValidationParams) GetMissRequestsPenalty() *Decimal {
+	if x != nil {
+		return x.MissRequestsPenalty
+	}
+	return nil
 }
 
 type PocParams struct {
@@ -3790,7 +5526,7 @@ type PocParams struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	DefaultDifficulty uint32 `protobuf:"varint,1,opt,name=default_difficulty,json=defaultDifficulty,proto3" json:"default_difficulty,omitempty"`
+	DefaultDifficulty int32 `protobuf:"varint,1,opt,name=default_difficulty,json=defaultDifficulty,proto3" json:"default_difficulty,omitempty"`
 }
 
 func (x *PocParams) Reset() {
@@ -3813,9 +5549,52 @@ func (*PocParams) Descriptor() ([]byte, []int) {
 	return file_inference_inference_params_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *PocParams) GetDefaultDifficulty() uint32 {
+func (x *PocParams) GetDefaultDifficulty() int32 {
 	if x != nil {
 		return x.DefaultDifficulty
+	}
+	return 0
+}
+
+type Decimal struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Value    int64 `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
+	Exponent int32 `protobuf:"varint,2,opt,name=exponent,proto3" json:"exponent,omitempty"`
+}
+
+func (x *Decimal) Reset() {
+	*x = Decimal{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_params_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *Decimal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Decimal) ProtoMessage() {}
+
+// Deprecated: Use Decimal.ProtoReflect.Descriptor instead.
+func (*Decimal) Descriptor() ([]byte, []int) {
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Decimal) GetValue() int64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *Decimal) GetExponent() int32 {
+	if x != nil {
+		return x.Exponent
 	}
 	return 0
 }
@@ -3852,7 +5631,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x52, 0x10, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x50, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x3a, 0x25, 0xe8, 0xa0, 0x1f, 0x01, 0x8a, 0xe7, 0xb0, 0x2a, 0x1c, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x78, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0xc6, 0x02, 0x0a, 0x11, 0x47, 0x65,
+	0x63, 0x65, 0x2f, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x22, 0x97, 0x04, 0x0a, 0x11, 0x47, 0x65,
 	0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
 	0x21, 0x0a, 0x0c, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x75, 0x70, 0x70,
@@ -3873,69 +5652,147 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x01, 0x28, 0x05, 0x52, 0x0a, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x73, 0x12,
 	0x21, 0x0a, 0x0c, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x64, 0x65, 0x6e, 0x6f, 0x6d, 0x18,
 	0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x44, 0x65, 0x6e,
-	0x6f, 0x6d, 0x22, 0xce, 0x01, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63,
-	0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x3c, 0x0a, 0x1a, 0x73, 0x75, 0x62, 0x73, 0x69,
-	0x64, 0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e, 0x74,
-	0x65, 0x72, 0x76, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x18, 0x73, 0x75, 0x62,
-	0x73, 0x69, 0x64, 0x79, 0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x6e, 0x74,
-	0x65, 0x72, 0x76, 0x61, 0x6c, 0x12, 0x38, 0x0a, 0x18, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79,
-	0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e,
-	0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x02, 0x52, 0x16, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79,
-	0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12,
-	0x3c, 0x0a, 0x1a, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x75, 0x62, 0x73, 0x69,
-	0x64, 0x79, 0x5f, 0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x18, 0x03, 0x20,
-	0x01, 0x28, 0x02, 0x52, 0x18, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x53, 0x75, 0x62, 0x73,
-	0x69, 0x64, 0x79, 0x50, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0xfd, 0x01, 0x0a, 0x0b, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x61, 0x72,
-	0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6c, 0x65, 0x6e,
-	0x67, 0x74, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x4c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x12, 0x29, 0x0a, 0x10, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
-	0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x0f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65,
-	0x72, 0x12, 0x24, 0x0a, 0x0e, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6e, 0x65, 0x77, 0x5f, 0x63,
-	0x6f, 0x69, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x4e, 0x65, 0x77, 0x43, 0x6f, 0x69, 0x6e, 0x12, 0x32, 0x0a, 0x15, 0x63, 0x6f, 0x69, 0x6e, 0x5f,
-	0x68, 0x61, 0x6c, 0x76, 0x69, 0x6e, 0x67, 0x5f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x63, 0x6f, 0x69, 0x6e, 0x48, 0x61, 0x6c, 0x76,
-	0x69, 0x6e, 0x67, 0x49, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x12, 0x40, 0x0a, 0x1d, 0x64,
-	0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x5f, 0x6f, 0x66, 0x5f, 0x63,
-	0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x04, 0x52, 0x19, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f,
-	0x66, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x3a, 0x04, 0xe8,
-	0xa0, 0x1f, 0x01, 0x22, 0x8c, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x66, 0x61, 0x6c, 0x73,
-	0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x01, 0x52, 0x11, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x50, 0x6f, 0x73, 0x69,
-	0x74, 0x69, 0x76, 0x65, 0x52, 0x61, 0x74, 0x65, 0x12, 0x37, 0x0a, 0x18, 0x6d, 0x69, 0x6e, 0x5f,
-	0x72, 0x61, 0x6d, 0x70, 0x5f, 0x75, 0x70, 0x5f, 0x6d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d,
-	0x65, 0x6e, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x15, 0x6d, 0x69, 0x6e, 0x52,
-	0x61, 0x6d, 0x70, 0x55, 0x70, 0x4d, 0x65, 0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74,
-	0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x01, 0x52, 0x09, 0x70, 0x61, 0x73, 0x73, 0x56, 0x61, 0x6c, 0x75, 0x65,
-	0x12, 0x34, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x01,
-	0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41,
-	0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x12, 0x34, 0x0a, 0x16, 0x6d, 0x61, 0x78, 0x5f, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65,
-	0x18, 0x05, 0x20, 0x01, 0x28, 0x01, 0x52, 0x14, 0x6d, 0x61, 0x78, 0x56, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x3a, 0x04, 0xe8, 0xa0,
-	0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
-	0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69, 0x66, 0x66, 0x69,
-	0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11, 0x64, 0x65, 0x66,
-	0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x3a, 0x04,
-	0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
-	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
-	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
-	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6f, 0x6d, 0x12, 0x2a, 0x0a, 0x11, 0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64,
+	0x5f, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x74,
+	0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x12, 0x2c,
+	0x0a, 0x12, 0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x70, 0x61, 0x79,
+	0x6f, 0x75, 0x74, 0x73, 0x18, 0x09, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x74, 0x6f, 0x70, 0x52,
+	0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x61, 0x79, 0x6f, 0x75, 0x74, 0x73, 0x12, 0x3e, 0x0a, 0x1c,
+	0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x70, 0x61, 0x79, 0x6f, 0x75,
+	0x74, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6d, 0x69, 0x6e, 0x65, 0x72, 0x18, 0x0a, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x18, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x50, 0x61, 0x79,
+	0x6f, 0x75, 0x74, 0x73, 0x50, 0x65, 0x72, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x12, 0x35, 0x0a, 0x17,
+	0x74, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x6d, 0x61, 0x78, 0x5f, 0x64,
+	0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x74,
+	0x6f, 0x70, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x4d, 0x61, 0x78, 0x44, 0x75, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x22, 0xc2, 0x03, 0x0a, 0x10, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69,
+	0x63, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x5a, 0x0a, 0x1a, 0x73, 0x75, 0x62, 0x73,
+	0x69, 0x64, 0x79, 0x5f, 0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x6e,
+	0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x18, 0x73, 0x75, 0x62, 0x73,
+	0x69, 0x64, 0x79, 0x52, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x49, 0x6e, 0x74, 0x65,
+	0x72, 0x76, 0x61, 0x6c, 0x12, 0x56, 0x0a, 0x18, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79, 0x5f,
+	0x72, 0x65, 0x64, 0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63,
+	0x69, 0x6d, 0x61, 0x6c, 0x52, 0x16, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79, 0x52, 0x65, 0x64,
+	0x75, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x5a, 0x0a, 0x1a,
+	0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79, 0x5f,
+	0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x18,
+	0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x53, 0x75, 0x62, 0x73, 0x69, 0x64, 0x79, 0x50, 0x65,
+	0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x12, 0x59, 0x0a, 0x1a, 0x74, 0x6f, 0x70, 0x5f,
+	0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x5f, 0x66,
+	0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x17, 0x74, 0x6f, 0x70, 0x52,
+	0x65, 0x77, 0x61, 0x72, 0x64, 0x41, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x46, 0x61, 0x69, 0x6c,
+	0x75, 0x72, 0x65, 0x12, 0x3d, 0x0a, 0x1b, 0x74, 0x6f, 0x70, 0x5f, 0x6d, 0x69, 0x6e, 0x65, 0x72,
+	0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x71, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x74, 0x6f, 0x70, 0x4d, 0x69, 0x6e,
+	0x65, 0x72, 0x50, 0x6f, 0x63, 0x51, 0x75, 0x61, 0x6c, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x90, 0x03, 0x0a, 0x0b, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x70, 0x6f, 0x63,
+	0x68, 0x5f, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x4c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x12, 0x29, 0x0a, 0x10, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x5f, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x4d, 0x75, 0x6c, 0x74,
+	0x69, 0x70, 0x6c, 0x69, 0x65, 0x72, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
+	0x73, 0x68, 0x69, 0x66, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x53, 0x68, 0x69, 0x66, 0x74, 0x12, 0x40, 0x0a, 0x1d, 0x64, 0x65, 0x66, 0x61, 0x75,
+	0x6c, 0x74, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x5f, 0x6f, 0x66, 0x5f, 0x63, 0x6f, 0x6d, 0x70, 0x75,
+	0x74, 0x65, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x19,
+	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x55, 0x6e, 0x69, 0x74, 0x4f, 0x66, 0x43, 0x6f, 0x6d,
+	0x70, 0x75, 0x74, 0x65, 0x50, 0x72, 0x69, 0x63, 0x65, 0x12, 0x2c, 0x0a, 0x12, 0x70, 0x6f, 0x63,
+	0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18,
+	0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x44,
+	0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x32, 0x0a, 0x15, 0x70, 0x6f, 0x63, 0x5f, 0x65,
+	0x78, 0x63, 0x68, 0x61, 0x6e, 0x67, 0x65, 0x5f, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x45, 0x78, 0x63, 0x68, 0x61,
+	0x6e, 0x67, 0x65, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x30, 0x0a, 0x14, 0x70,
+	0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x64, 0x65,
+	0x6c, 0x61, 0x79, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x12, 0x70, 0x6f, 0x63, 0x56, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x6c, 0x61, 0x79, 0x12, 0x36, 0x0a,
+	0x17, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
+	0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x15,
+	0x70, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x75, 0x72,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xd7, 0x06, 0x0a, 0x10,
+	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
+	0x12, 0x4c, 0x0a, 0x13, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69,
+	0x76, 0x65, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x11, 0x66, 0x61, 0x6c,
+	0x73, 0x65, 0x50, 0x6f, 0x73, 0x69, 0x74, 0x69, 0x76, 0x65, 0x52, 0x61, 0x74, 0x65, 0x12, 0x37,
+	0x0a, 0x18, 0x6d, 0x69, 0x6e, 0x5f, 0x72, 0x61, 0x6d, 0x70, 0x5f, 0x75, 0x70, 0x5f, 0x6d, 0x65,
+	0x61, 0x73, 0x75, 0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05,
+	0x52, 0x15, 0x6d, 0x69, 0x6e, 0x52, 0x61, 0x6d, 0x70, 0x55, 0x70, 0x4d, 0x65, 0x61, 0x73, 0x75,
+	0x72, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x12, 0x3b, 0x0a, 0x0a, 0x70, 0x61, 0x73, 0x73, 0x5f,
+	0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x09, 0x70, 0x61, 0x73, 0x73, 0x56,
+	0x61, 0x6c, 0x75, 0x65, 0x12, 0x52, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x18, 0x04,
+	0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d,
+	0x61, 0x6c, 0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x12, 0x52, 0x0a, 0x16, 0x6d, 0x61, 0x78, 0x5f,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x61, 0x76, 0x65, 0x72, 0x61,
+	0x67, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44,
+	0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x14, 0x6d, 0x61, 0x78, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x41, 0x76, 0x65, 0x72, 0x61, 0x67, 0x65, 0x12, 0x2b, 0x0a, 0x11,
+	0x65, 0x78, 0x70, 0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b,
+	0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x70, 0x69, 0x72, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x73, 0x12, 0x22, 0x0a, 0x0d, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x73, 0x5f, 0x74, 0x6f, 0x5f, 0x6d, 0x61, 0x78, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x73, 0x54, 0x6f, 0x4d, 0x61, 0x78, 0x12, 0x43, 0x0a,
+	0x1e, 0x66, 0x75, 0x6c, 0x6c, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x5f, 0x74, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x5f, 0x63, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x18,
+	0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1b, 0x66, 0x75, 0x6c, 0x6c, 0x56, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63, 0x43, 0x75, 0x74, 0x6f,
+	0x66, 0x66, 0x12, 0x52, 0x0a, 0x16, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x68, 0x61, 0x6c, 0x66, 0x77, 0x61, 0x79, 0x18, 0x09, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c,
+	0x52, 0x14, 0x6d, 0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x48,
+	0x61, 0x6c, 0x66, 0x77, 0x61, 0x79, 0x12, 0x41, 0x0a, 0x1d, 0x6d, 0x69, 0x6e, 0x5f, 0x76, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x72, 0x61, 0x66, 0x66, 0x69, 0x63,
+	0x5f, 0x63, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x03, 0x52, 0x1a, 0x6d,
+	0x69, 0x6e, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x72, 0x61, 0x66,
+	0x66, 0x69, 0x63, 0x43, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x12, 0x52, 0x0a, 0x16, 0x6d, 0x69, 0x73,
+	0x73, 0x5f, 0x70, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x63, 0x75, 0x74,
+	0x6f, 0x66, 0x66, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x14, 0x6d, 0x69, 0x73, 0x73, 0x50, 0x65, 0x72,
+	0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x43, 0x75, 0x74, 0x6f, 0x66, 0x66, 0x12, 0x50, 0x0a,
+	0x15, 0x6d, 0x69, 0x73, 0x73, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x5f, 0x70,
+	0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x13, 0x6d, 0x69, 0x73, 0x73,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x50, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x3a,
+	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69,
+	0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x05, 0x52, 0x11,
+	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x44, 0x69, 0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74,
+	0x79, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x41, 0x0a, 0x07, 0x44, 0x65, 0x63, 0x69, 0x6d,
+	0x61, 0x6c, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x03, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x1a, 0x0a, 0x08, 0x65, 0x78, 0x70, 0x6f,
+	0x6e, 0x65, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x08, 0x65, 0x78, 0x70, 0x6f,
+	0x6e, 0x65, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63,
+	0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
+	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
+	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
+	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -3950,7 +5807,7 @@ func file_inference_inference_params_proto_rawDescGZIP() []byte {
 	return file_inference_inference_params_proto_rawDescData
 }
 
-var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_inference_inference_params_proto_goTypes = []interface{}{
 	(*Params)(nil),            // 0: inference.inference.Params
 	(*GenesisOnlyParams)(nil), // 1: inference.inference.GenesisOnlyParams
@@ -3958,17 +5815,29 @@ var file_inference_inference_params_proto_goTypes = []interface{}{
 	(*EpochParams)(nil),       // 3: inference.inference.EpochParams
 	(*ValidationParams)(nil),  // 4: inference.inference.ValidationParams
 	(*PocParams)(nil),         // 5: inference.inference.PocParams
+	(*Decimal)(nil),           // 6: inference.inference.Decimal
 }
 var file_inference_inference_params_proto_depIdxs = []int32{
-	3, // 0: inference.inference.Params.epoch_params:type_name -> inference.inference.EpochParams
-	4, // 1: inference.inference.Params.validation_params:type_name -> inference.inference.ValidationParams
-	5, // 2: inference.inference.Params.poc_params:type_name -> inference.inference.PocParams
-	2, // 3: inference.inference.Params.tokenomics_params:type_name -> inference.inference.TokenomicsParams
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	3,  // 0: inference.inference.Params.epoch_params:type_name -> inference.inference.EpochParams
+	4,  // 1: inference.inference.Params.validation_params:type_name -> inference.inference.ValidationParams
+	5,  // 2: inference.inference.Params.poc_params:type_name -> inference.inference.PocParams
+	2,  // 3: inference.inference.Params.tokenomics_params:type_name -> inference.inference.TokenomicsParams
+	6,  // 4: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
+	6,  // 5: inference.inference.TokenomicsParams.subsidy_reduction_amount:type_name -> inference.inference.Decimal
+	6,  // 6: inference.inference.TokenomicsParams.current_subsidy_percentage:type_name -> inference.inference.Decimal
+	6,  // 7: inference.inference.TokenomicsParams.top_reward_allowed_failure:type_name -> inference.inference.Decimal
+	6,  // 8: inference.inference.ValidationParams.false_positive_rate:type_name -> inference.inference.Decimal
+	6,  // 9: inference.inference.ValidationParams.pass_value:type_name -> inference.inference.Decimal
+	6,  // 10: inference.inference.ValidationParams.min_validation_average:type_name -> inference.inference.Decimal
+	6,  // 11: inference.inference.ValidationParams.max_validation_average:type_name -> inference.inference.Decimal
+	6,  // 12: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
+	6,  // 13: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
+	6,  // 14: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }
@@ -4049,6 +5918,18 @@ func file_inference_inference_params_proto_init() {
 				return nil
 			}
 		}
+		file_inference_inference_params_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*Decimal); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -4056,7 +5937,7 @@ func file_inference_inference_params_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_params_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

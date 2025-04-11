@@ -4,6 +4,8 @@ import (
 	"context"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
+	"decentralized-api/logging"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -11,11 +13,11 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
 	"log"
-	"log/slog"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -33,12 +35,12 @@ type InferenceCosmosClient struct {
 	Context context.Context
 }
 
-func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.Config) (*InferenceCosmosClient, error) {
+func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
 	var client *InferenceCosmosClient
 	var err error
-	slog.Info("Connecting to cosmos sdk node", "config", config, "height", config.CurrentHeight)
+	logging.Info("Connecting to cosmos sdk node", types.System, "config", config, "height", config.GetHeight())
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.ChainNode)
+		client, err = NewInferenceCosmosClient(ctx, addressPrefix, config.GetChainNodeConfig())
 		if err == nil {
 			return client, nil
 		}
@@ -109,15 +111,17 @@ type CosmosMessageClient interface {
 	ReportValidation(transaction *inference.MsgValidation) error
 	SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error
 	SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error
-	SubmitPoC(transaction *inference.MsgSubmitPoC) error
 	SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error
 	SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
+	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
+	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
+	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTransaction(msg sdk.Msg) error
+	SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error)
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
@@ -147,39 +151,40 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 
 func (icc *InferenceCosmosClient) StartInference(transaction *inference.MsgStartInference) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) FinishInference(transaction *inference.MsgFinishInference) error {
 	transaction.Creator = icc.Address
 	transaction.ExecutedBy = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) ReportValidation(transaction *inference.MsgValidation) error {
 	transaction.Creator = icc.Address
-	slog.Info("Validation: Reporting validation", "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
-	return icc.SendTransaction(transaction)
+	logging.Info("Reporting validation", types.Validation, "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitNewParticipant(transaction *inference.MsgSubmitNewParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inference.MsgSubmitNewUnfundedParticipant) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
-}
-
-func (icc *InferenceCosmosClient) SubmitPoC(transaction *inference.MsgSubmitPoC) error {
-	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) ClaimRewards(transaction *inference.MsgClaimRewards) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address string) ([]sdk.Coin, error) {
@@ -188,22 +193,76 @@ func (icc *InferenceCosmosClient) BankBalances(ctx context.Context, address stri
 
 func (icc *InferenceCosmosClient) SubmitPocBatch(transaction *inference.MsgSubmitPocBatch) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCValidation(transaction *inference.MsgSubmitPocValidation) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitSeed(transaction *inference.MsgSubmitSeed) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error {
 	transaction.Creator = icc.Address
-	return icc.SendTransaction(transaction)
+	_, err := icc.SendTransaction(transaction)
+	return err
+}
+
+func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	transactionAppliedResult, err := icc.Client.WaitForTx(icc.Context, result.TxHash)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
+		return nil, err
+	}
+
+	msg := inference.MsgCreateTrainingTaskResponse{}
+	err = ParseMsgResponse[*inference.MsgCreateTrainingTaskResponse](transactionAppliedResult.TxResult.Data, 0, &msg)
+	if err != nil {
+		logging.Error("Failed to parse message response", types.Messages, "error", err)
+		return nil, err
+	}
+
+	return &msg, err
+}
+
+func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgClaimTrainingTaskForAssignmentResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
+func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgAssignTrainingTaskResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -235,15 +294,15 @@ func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx c
 	unsignedTx.SetGasLimit(1000000000)
 	unsignedTx.SetFeeAmount(sdk.Coins{})
 	name := c.Account.Name
-	slog.Debug("Signing transaction", "name", name)
+	logging.Debug("Signing transaction", types.Messages, "name", name)
 	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
 	if err != nil {
-		slog.Error("Failed to sign transaction", "error", err)
+		logging.Error("Failed to sign transaction", types.Messages, "error", err)
 		return nil, err
 	}
 	txBytes, err := c.Client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
-		slog.Error("Failed to encode transaction", "error", err)
+		logging.Error("Failed to encode transaction", types.Messages, "error", err)
 		return nil, err
 	}
 	return txBytes, nil
@@ -252,47 +311,51 @@ func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx c
 func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 	address, err := c.Account.Record.GetAddress()
 	if err != nil {
-		slog.Error("Failed to get account address", "error", err)
+		logging.Error("Failed to get account address", types.Messages, "error", err)
 		return nil, err
 	}
 	accountNumber, sequence, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
 	if err != nil {
-		slog.Error("Failed to get account number and sequence", "error", err)
+		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
 		return nil, err
 	}
 	if int64(sequence) <= highestSequence {
-		slog.Info("Sequence is lower than highest sequence", "sequence", sequence, "highestSequence", highestSequence)
+		logging.Info("Sequence is lower than highest sequence", types.Messages, "sequence", sequence, "highestSequence", highestSequence)
 		sequence = uint64(highestSequence + 1)
 	}
-	slog.Debug("Transaction sequence", "sequence", sequence, "accountNumber", accountNumber)
+	logging.Debug("Transaction sequence", types.Messages, "sequence", sequence, "accountNumber", accountNumber)
 	factory := c.Client.TxFactory.
 		WithSequence(sequence).
 		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0)
 	return &factory, nil
 }
 
-func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) error {
+func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error) {
 	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
 	defer sendTransactionMutex.Unlock()
 
-	slog.Debug("Start Broadcast", "id", id)
+	logging.Debug("Start Broadcast", types.Messages, "id", id)
 	response, err := icc.BroadcastMessage(icc.Context, msg)
-	slog.Debug("Finish broadcast", "id", id)
+	logging.Debug("Finish broadcast", types.Messages, "id", id)
 	if err != nil {
-		slog.Error("Failed to broadcast transaction", "error", err)
-		return err
+		logging.Error("Failed to broadcast transaction", types.Messages, "error", err)
+		return response, err
 	}
-	slog.Debug("Transaction broadcast successfully", "response", response.Data)
+	logging.Debug("Transaction broadcast successfully", types.Messages, "response", response.Data)
 	if response.Code != 0 {
-		slog.Error("Transaction failed", "response", response)
+		logging.Error("Transaction failed", types.Messages, "response", response)
 	}
-	return nil
+	return response, nil
 }
 
 func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {
 	return icc.NewUpgradeQueryClient().CurrentPlan(icc.Context, &upgradetypes.QueryCurrentPlanRequest{})
+}
+
+func (icc *InferenceCosmosClient) GetPartialUpgrades() (*types.QueryAllPartialUpgradeResponse, error) {
+	return icc.NewInferenceQueryClient().PartialUpgradeAll(icc.Context, &types.QueryAllPartialUpgradeRequest{})
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
@@ -310,4 +373,49 @@ func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, err
 		return nil, err
 	}
 	return &resp.Executor, nil
+}
+
+func ParseMsgFromTxResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex int, dstMsg T) error {
+	rawData, err := base64.StdEncoding.DecodeString(txResp.Data)
+	if err != nil {
+		return fmt.Errorf("failed to base64-decode TxResponse.Data: %w", err)
+	}
+
+	return ParseMsgResponse(rawData, msgIndex, dstMsg)
+}
+
+func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) error {
+	var txMsgData sdk.TxMsgData
+	if err := proto.Unmarshal(data, &txMsgData); err != nil {
+		logging.Error("Failed to unmarshal TxMsgData", types.Messages, "error", err, "data", data)
+		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
+	}
+
+	logging.Info("Found messages", types.Messages, "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
+	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
+		logging.Error("Message index out of range", types.Messages, "msgIndex", msgIndex, "len(messages)", len(txMsgData.MsgResponses))
+		return fmt.Errorf(
+			"message index %d out of range: got %d responses",
+			msgIndex, len(txMsgData.MsgResponses),
+		)
+	}
+
+	anyResp := txMsgData.MsgResponses[msgIndex]
+
+	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
+		logging.Error("Failed to unmarshal response", types.Messages, "error", err, "msgIndex", msgIndex, "response", anyResp.Value)
+		return fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
+	}
+
+	return nil
+}
+
+func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.Client, txHash string, dstMsg T) error {
+	transactionAppliedResult, err := client.WaitForTx(ctx, txHash)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
+		return err
+	}
+
+	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
 }

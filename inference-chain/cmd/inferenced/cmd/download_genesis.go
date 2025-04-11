@@ -1,21 +1,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"github.com/productscience/inference/internal/rpc"
 	"os"
 
 	"github.com/spf13/cobra"
 )
-
-type genesisResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int    `json:"id"`
-	Result  struct {
-		Genesis json.RawMessage `json:"genesis"`
-	} `json:"result"`
-}
 
 // DownloadGenesisCommand returns the Cobra command for downloading a genesis file
 func DownloadGenesisCommand() *cobra.Command {
@@ -40,27 +31,14 @@ func DownloadGenesisCommand() *cobra.Command {
 }
 
 func downloadGenesis(nodeAddress, outputFile string) error {
-	url := fmt.Sprintf("%s/genesis", nodeAddress)
-
-	resp, err := http.Get(url)
+	genesis, err := rpc.DownloadGenesis(nodeAddress)
 	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received non-OK HTTP status: %s", resp.Status)
-	}
-
-	var genResp genesisResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return fmt.Errorf("failed to decode genesis JSON: %w", err)
+		return fmt.Errorf("failed to download genesis %w", err)
 	}
 
 	// FIXME: explain 0644
-	if err := os.WriteFile(outputFile, genResp.Result.Genesis, 0644); err != nil {
+	if err := os.WriteFile(outputFile, genesis, 0644); err != nil {
 		return fmt.Errorf("failed to write genesis file: %w", err)
 	}
-
 	return nil
 }

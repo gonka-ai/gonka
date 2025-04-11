@@ -7,11 +7,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const DefaultMaxTokens = 2048
+const DefaultMaxTokens = 5000
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	k.LogInfo("StartInference", "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
+	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
 	_, found := k.GetInference(ctx, msg.InferenceId)
 	if found {
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
@@ -38,7 +38,9 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		StartBlockHeight:    ctx.BlockHeight(),
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-		MaxTokens: DefaultMaxTokens,
+		MaxTokens:   DefaultMaxTokens,
+		AssignedTo:  msg.AssignedTo,
+		NodeVersion: msg.NodeVersion,
 	}
 	escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
 	if err != nil {
@@ -46,6 +48,20 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 	inference.EscrowAmount = escrowAmount
 	k.SetInference(ctx, inference)
+	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
+	k.SetInferenceTimeout(ctx, types.InferenceTimeout{
+		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),
+		InferenceId:      inference.InferenceId,
+	})
+	k.LogInfo("Inference Timeout Set:", types.Inferences, "InferenceId", inference.InferenceId, "ExpirationHeight", inference.StartBlockHeight+10)
+
+	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
+	} else {
+		currentEpochGroup.GroupData.NumberOfRequests++
+		k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
+	}
 
 	return &types.MsgStartInferenceResponse{
 		InferenceIndex: msg.InferenceId,

@@ -14,18 +14,42 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "20",
-          "default_unit_of_compute_price": "100"
+          "epoch_length": "1000",
+          "epoch_multiplier": "1",
+          "epoch_shift": "985",
+          "default_unit_of_compute_price": "100",
+          "poc_stage_duration": "4",
+          "poc_exchange_duration": "1",
+          "poc_validation_delay": "1",
+          "poc_validation_duration": "2"
+        },
+        "validation_params": {
+          "expiration_blocks": "3",
+          "min_validation_average": {
+            "value": "1",
+            "exponent": -2
+          },
+          "max_validation_average": {
+            "value": "1",
+            "exponent": 0
+          },
+          "epochs_to_max": "100",
+          "full_validation_traffic_cutoff": "100",
+          "min_validation_halfway": {
+            "value": "5",
+            "exponent": -2
+          },
+          "min_validation_traffic_cutoff": "10"
         }
       },
       "genesis_only_params": {
         "total_supply": "1000",
-        "originator_supply": "10",
-        "top_reward_amount": "10",
-        "standard_reward_amount": "200",
-        "pre_programmed_sale_amount": "20",
+        "originator_supply": "160",
+        "top_reward_amount": "120",
+        "standard_reward_amount": "600",
+        "pre_programmed_sale_amount": "120",
         "top_rewards": 3,
-        "supply_denom": "micoin"
+        "supply_denom": "mcicoin"
       },
       "model_list": [
         {"proposed_by": "genesis", "id": "AGI", "units_of_compute_per_token": 100},

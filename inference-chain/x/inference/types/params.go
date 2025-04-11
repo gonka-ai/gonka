@@ -18,15 +18,21 @@ func NewParams() Params {
 }
 
 const million = 1_000_000
+const year = 365 * 24 * 60 * 60
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
-		TotalSupply:          1_000 * million,
-		OriginatorSupply:     160 * million,
-		TopRewardAmount:      120 * million,
-		TopRewards:           3,
-		SupplyDenom:          NativeCoin,
-		StandardRewardAmount: 600 * million,
+		TotalSupply:              1_000 * million,
+		OriginatorSupply:         160 * million,
+		TopRewardAmount:          120 * million,
+		PreProgrammedSaleAmount:  120 * million,
+		TopRewards:               3,
+		SupplyDenom:              NativeCoin,
+		StandardRewardAmount:     600 * million,
+		TopRewardPeriod:          year,
+		TopRewardPayouts:         12,
+		TopRewardPayoutsPerMiner: 4,
+		TopRewardMaxDuration:     year * 4,
 	}
 }
 
@@ -34,25 +40,38 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 func DefaultParams() Params {
 	return Params{
 		EpochParams: &EpochParams{
-			EpochLength:         40,
-			EpochMultiplier:     1,
-			EpochNewCoin:        1_048_576,
-			CoinHalvingInterval: 100,
+			EpochLength:               40,
+			EpochMultiplier:           1,
+			EpochShift:                0,
+			DefaultUnitOfComputePrice: 100,
+			PocStageDuration:          10,
+			PocExchangeDuration:       2,
+			PocValidationDelay:        2,
+			PocValidationDuration:     6,
 		},
 		ValidationParams: &ValidationParams{
-			FalsePositiveRate:     0.05,
-			MinRampUpMeasurements: 10,
-			PassValue:             0.99,
-			MinValidationAverage:  0.1,
-			MaxValidationAverage:  1.0,
+			FalsePositiveRate:           DecimalFromFloat(0.05),
+			MinRampUpMeasurements:       10,
+			PassValue:                   DecimalFromFloat(0.99),
+			MinValidationAverage:        DecimalFromFloat(0.01),
+			MaxValidationAverage:        DecimalFromFloat(1.0),
+			ExpirationBlocks:            20,
+			EpochsToMax:                 30,
+			FullValidationTrafficCutoff: 10000,
+			MinValidationHalfway:        DecimalFromFloat(0.05),
+			MinValidationTrafficCutoff:  100,
+			MissPercentageCutoff:        DecimalFromFloat(0.01),
+			MissRequestsPenalty:         DecimalFromFloat(1.0),
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,
 		},
 		TokenomicsParams: &TokenomicsParams{
-			SubsidyReductionInterval: 0.05,
-			SubsidyReductionAmount:   0.20,
-			CurrentSubsidyPercentage: 0.90,
+			SubsidyReductionInterval: DecimalFromFloat(0.05),
+			SubsidyReductionAmount:   DecimalFromFloat(0.20),
+			CurrentSubsidyPercentage: DecimalFromFloat(0.90),
+			TopRewardAllowedFailure:  DecimalFromFloat(0.10),
+			TopMinerPocQualification: 10,
 		},
 	}
 }
@@ -73,10 +92,31 @@ func (p Params) Validate() error {
 // ReduceSubsidyPercentage This produces the exact table we expect, as outlined in the whitepaper
 // We round to 4 decimal places, and we use decimal to avoid floating point errors
 func (p *TokenomicsParams) ReduceSubsidyPercentage() *TokenomicsParams {
-	csp := decimal.NewFromFloat32(p.CurrentSubsidyPercentage)
-	sra := decimal.NewFromFloat32(p.SubsidyReductionAmount)
-	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra))
-	f, _ := newCSP.Round(4).Float64()
-	p.CurrentSubsidyPercentage = float32(f)
+	csp := p.CurrentSubsidyPercentage.ToDecimal()
+	sra := p.SubsidyReductionAmount.ToDecimal()
+	newCSP := csp.Mul(decimal.NewFromFloat(1).Sub(sra)).Round(4)
+	p.CurrentSubsidyPercentage = &Decimal{Value: newCSP.CoefficientInt64(), Exponent: newCSP.Exponent()}
 	return p
+}
+
+func (d *Decimal) ToDecimal() decimal.Decimal {
+	return decimal.New(d.Value, d.Exponent)
+}
+
+func (d *Decimal) ToFloat() float64 {
+	return d.ToDecimal().InexactFloat64()
+}
+
+func (d *Decimal) ToFloat32() float32 {
+	return float32(d.ToDecimal().InexactFloat64())
+}
+
+func DecimalFromFloat(f float64) *Decimal {
+	d := decimal.NewFromFloat(f)
+	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
+}
+
+func DecimalFromFloat32(f float32) *Decimal {
+	d := decimal.NewFromFloat32(f)
+	return &Decimal{Value: d.CoefficientInt64(), Exponent: d.Exponent()}
 }

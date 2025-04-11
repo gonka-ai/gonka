@@ -4,14 +4,22 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	cosmosclient "decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/poc"
+	"decentralized-api/internal/server"
+	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/participant_registration"
+	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 	"log"
-	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,7 +36,6 @@ func main() {
 
 		return
 	}
-
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
@@ -43,34 +50,72 @@ func main() {
 		"cosmos",
 		10,
 		5*time.Second,
-		config.GetConfig(),
+		config,
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	nodeBroker := broker.NewBroker()
-	nodes := config.GetConfig().Nodes
+	nodeBroker := broker.NewBroker(recorder)
+	nodes := config.GetNodes()
 	for _, node := range nodes {
-		loadNodeToBroker(nodeBroker, &node)
+		server.LoadNodeToBroker(nodeBroker, &node)
 	}
 
 	params, err := getParams(context.Background(), *recorder)
 	if err != nil {
-		slog.Error("Failed to get params", "error", err)
+		logging.Error("Failed to get params", types.System, "error", err)
 		return
 	}
 
-	if err := cosmosclient.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
-		slog.Error("Failed to register participant", "error", err)
+	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
+		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
 
-	go func() {
-		StartEventListener(nodeBroker, *recorder, config, &params.Params)
-	}()
+	pubKey, err := recorder.Account.Record.GetPubKey()
+	if err != nil {
+		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
+		return
+	}
+	pubKeyString := utils.PubKeyToHexString(pubKey)
 
-	StartInferenceServerWrapper(nodeBroker, recorder, config)
+	logging.Debug("Initializing PoC orchestrator",
+		types.PoC, "name", recorder.Account.Name,
+		"address", recorder.Address,
+		"pubkey", pubKeyString)
+
+	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
+
+	logging.Info("PoC orchestrator initialized", types.PoC, "pocOrchestrator", pocOrchestrator)
+	go pocOrchestrator.Run()
+
+	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
+		pubKeyString,
+		nodeBroker,
+		config.GetApiConfig().PoCCallbackUrl,
+		config.GetChainNodeConfig().Url,
+		recorder,
+		&params.Params,
+	)
+	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
+
+	tendermintClient := cosmosclient.TendermintClient{
+		ChainNodeUrl: config.GetChainNodeConfig().Url,
+	}
+	// FIXME: What context to pass?
+	ctx := context.Background()
+	training.NewAssigner(recorder, &tendermintClient, ctx)
+	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
+
+	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	// TODO: propagate trainingExecutor
+	go listener.Start(context.Background())
+
+	// TODO: propagagte trainingExecutor
+	s := server.NewServer(nodeBroker, config, validator, recorder, trainingExecutor)
+	s.Start()
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
@@ -86,4 +131,26 @@ func returnStatus(config *apiconfig.ConfigManager) {
 	}
 	fmt.Println(string(jsonData))
 	os.Exit(0)
+}
+
+func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCosmosClient) (*types.QueryParamsResponse, error) {
+	var params *types.QueryParamsResponse
+	var err error
+	for i := 0; i < 10; i++ {
+		params, err = transactionRecorder.NewInferenceQueryClient().Params(ctx, &types.QueryParamsRequest{})
+		if err == nil {
+			return params, nil
+		}
+
+		if strings.HasPrefix(err.Error(), "rpc error: code = Unknown desc = inference is not ready") {
+			logging.Info("Inference not ready, retrying...", types.System, "attempt", i+1, "error", err)
+			time.Sleep(2 * time.Second) // Try a longer wait for specific inference delays
+			continue
+		}
+		// If not an RPC error, log and return early
+		logging.Error("Failed to get chain params", types.System, "error", err)
+		return nil, err
+	}
+	logging.Error("Exhausted all retries to get chain params", types.System, "error", err)
+	return nil, err
 }

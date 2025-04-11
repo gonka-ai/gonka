@@ -160,18 +160,18 @@ func NewMockLogger() *MockLogger {
 	}
 }
 
-func (l *MockLogger) LogInfo(msg string, keyvals ...interface{}) {
+func (l *MockLogger) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "info", Keyvals: keyvals})
 }
 
-func (l *MockLogger) LogError(msg string, keyvals ...interface{}) {
+func (l *MockLogger) LogError(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "error", Keyvals: keyvals})
 }
 
-func (l *MockLogger) LogWarn(msg string, keyvals ...interface{}) {
+func (l *MockLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "warn", Keyvals: keyvals})
 }
 
-func (l *MockLogger) LogDebug(msg string, keyvals ...interface{}) {
+func (l *MockLogger) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "debug", Keyvals: keyvals})
 }

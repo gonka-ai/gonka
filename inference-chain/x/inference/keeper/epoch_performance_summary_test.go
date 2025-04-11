@@ -1,0 +1,67 @@
+package keeper_test
+
+import (
+	"context"
+	"strconv"
+	"testing"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/testutil/nullify"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
+)
+
+// Prevent strconv unused error
+var _ = strconv.IntSize
+
+func createNEpochPerformanceSummary(keeper keeper.Keeper, ctx context.Context, n int) []types.EpochPerformanceSummary {
+	items := make([]types.EpochPerformanceSummary, n)
+	for i := range items {
+		items[i].EpochStartHeight = uint64(i)
+		items[i].ParticipantId = strconv.Itoa(i)
+
+		keeper.SetEpochPerformanceSummary(ctx, items[i])
+	}
+	return items
+}
+
+func TestEpochPerformanceSummaryGet(t *testing.T) {
+	keeper, ctx := keepertest.InferenceKeeper(t)
+	items := createNEpochPerformanceSummary(keeper, ctx, 10)
+	for _, item := range items {
+		rst, found := keeper.GetEpochPerformanceSummary(ctx,
+			item.EpochStartHeight,
+			item.ParticipantId,
+		)
+		require.True(t, found)
+		require.Equal(t,
+			nullify.Fill(&item),
+			nullify.Fill(&rst),
+		)
+	}
+}
+func TestEpochPerformanceSummaryRemove(t *testing.T) {
+	keeper, ctx := keepertest.InferenceKeeper(t)
+	items := createNEpochPerformanceSummary(keeper, ctx, 10)
+	for _, item := range items {
+		keeper.RemoveEpochPerformanceSummary(ctx,
+			item.EpochStartHeight,
+			item.ParticipantId,
+		)
+		_, found := keeper.GetEpochPerformanceSummary(ctx,
+			item.EpochStartHeight,
+			item.ParticipantId,
+		)
+		require.False(t, found)
+	}
+}
+
+func TestEpochPerformanceSummaryGetAll(t *testing.T) {
+	keeper, ctx := keepertest.InferenceKeeper(t)
+	items := createNEpochPerformanceSummary(keeper, ctx, 10)
+	require.ElementsMatch(t,
+		nullify.Fill(items),
+		nullify.Fill(keeper.GetAllEpochPerformanceSummary(ctx)),
+	)
+}

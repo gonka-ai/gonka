@@ -21,9 +21,6 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgValidation{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgSubmitPoC{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitNewUnfundedParticipant{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
@@ -49,6 +46,21 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgRegisterModel{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgCreateTrainingTask{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSubmitHardwareDiff{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgClaimTrainingTaskForAssignment{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgAssignTrainingTask{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgCreatePartialUpgrade{},
 	)
 	// this line is used by starport scaffolding # 3
 

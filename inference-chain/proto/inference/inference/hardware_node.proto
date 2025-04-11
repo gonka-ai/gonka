@@ -1,0 +1,33 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE InferenceNode struct in decentralized-api!!!
+message HardwareNodes {
+  string participant = 1;
+  repeated HardwareNode hardware_nodes = 2;
+}
+
+message HardwareNode {
+  string local_id = 1;
+  HardwareNodeStatus status = 2;
+  repeated string models = 3;
+  repeated Hardware hardware = 4;
+  string host = 5;
+  string port = 6;
+}
+
+enum HardwareNodeStatus {
+  UNKNOWN = 0;
+  INFERENCE = 1;
+  POC = 2;
+  TRAINING = 3;
+  STOPPED = 4;
+  FAILED = 5;
+}
+
+message Hardware {
+  string type = 1;
+  uint32 count = 2;
+}

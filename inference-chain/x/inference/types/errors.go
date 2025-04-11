@@ -27,4 +27,8 @@ var (
 	ErrClaimSignatureInvalid                 = sdkerrors.Register(ModuleName, 1116, "claim signature invalid")
 	ErrValidationsMissed                     = sdkerrors.Register(ModuleName, 1117, "validations missed")
 	ErrTokenomicsNotFound                    = sdkerrors.Register(ModuleName, 1118, "tokenomics not found")
+	ErrCannotMintNegativeCoins               = sdkerrors.Register(ModuleName, 1119, "cannot mint negative coins")
+	ErrTrainingTaskNotFound                    = sdkerrors.Register(ModuleName, 1120, "training task not found")
+	ErrTrainingTaskAlreadyClaimedForAssignment = sdkerrors.Register(ModuleName, 1121, "training task already claimed for assignment")
+	ErrTrainingTaskAlreadyAssigned             = sdkerrors.Register(ModuleName, 1122, "training task already assigned")
 )

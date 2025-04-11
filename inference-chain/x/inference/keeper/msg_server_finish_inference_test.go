@@ -79,7 +79,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.Equal(t, types.Participant{
 		Index:             testutil.Executor,
 		Address:           testutil.Executor,
-		Reputation:        0,
 		Weight:            -1,
 		JoinTime:          ctx2.BlockTime().UnixMilli(),
 		JoinHeight:        ctx2.BlockHeight(),
@@ -87,16 +86,10 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		InferenceUrl:      "url",
 		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
-		PromptTokenCount: map[string]uint64{
-			"model1": 10,
-			"model2": 0,
+		CoinBalance:       30 * keeper.PerTokenCost,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 1,
 		},
-		CompletionTokenCount: map[string]uint64{
-			"model1": 20,
-			"model2": 0,
-		},
-		CoinBalance:    30 * keeper.PerTokenCost,
-		InferenceCount: uint64(1),
 	}, participantState)
 }
 

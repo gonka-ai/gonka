@@ -12,6 +12,7 @@ import java.net.URL
 
 @Disabled
 class StreamedInferenceTests : TestermintTest() {
+
     @Test
     fun test() {
         val pairs = getLocalInferencePairs(inferenceConfig)

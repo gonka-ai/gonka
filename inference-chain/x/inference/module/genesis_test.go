@@ -65,6 +65,52 @@ func TestGenesis(t *testing.T) {
 			TotalRefunded:  99,
 			TotalBurned:    5,
 		},
+		TopMinerList: []types.TopMiner{
+			{
+				Address: "0",
+			},
+			{
+				Address: "1",
+			},
+		},
+		InferenceTimeoutList: []types.InferenceTimeout{
+			{
+				ExpirationHeight: 0,
+				InferenceId:      "0",
+			},
+			{
+				ExpirationHeight: 1,
+				InferenceId:      "1",
+			},
+		},
+		InferenceValidationDetailsList: []types.InferenceValidationDetails{
+			{
+				EpochId:     0,
+				InferenceId: "0",
+			},
+			{
+				EpochId:     1,
+				InferenceId: "1",
+			},
+		},
+		EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
+			{
+				EpochStartHeight: 0,
+				ParticipantId:    "0",
+			},
+			{
+				EpochStartHeight: 1,
+				ParticipantId:    "1",
+			},
+		},
+		PartialUpgradeList: []types.PartialUpgrade{
+			{
+				Height: 0,
+			},
+			{
+				Height: 1,
+			},
+		},
 		// this line is used by starport scaffolding # genesis/test/state
 	}
 
@@ -101,5 +147,10 @@ func TestGenesis(t *testing.T) {
 	require.ElementsMatch(t, genesisState.SettleAmountList, got.SettleAmountList)
 	require.ElementsMatch(t, genesisState.EpochGroupValidationsList, got.EpochGroupValidationsList)
 	require.Equal(t, genesisState.TokenomicsData, got.TokenomicsData)
+	require.ElementsMatch(t, genesisState.TopMinerList, got.TopMinerList)
+	require.ElementsMatch(t, genesisState.InferenceTimeoutList, got.InferenceTimeoutList)
+	require.ElementsMatch(t, genesisState.InferenceValidationDetailsList, got.InferenceValidationDetailsList)
+	require.ElementsMatch(t, genesisState.EpochPerformanceSummaryList, got.EpochPerformanceSummaryList)
+	require.ElementsMatch(t, genesisState.PartialUpgradeList, got.PartialUpgradeList)
 	// this line is used by starport scaffolding # genesis/test/assert
 }

@@ -50,7 +50,7 @@ func getPricing(w http.ResponseWriter, cosmosClient cosmosclient.CosmosMessageCl
 
 	models := make([]model.ModelPriceDto, len(modelsResponse.Model))
 	for i, m := range modelsResponse.Model {
-		pricePerToken := m.UnitsOfComputePerToken * unitOfComputePrice
+		pricePerToken := m.UnitsOfComputePerToken * uint64(unitOfComputePrice)
 		models[i] = model.ModelPriceDto{
 			Id:                     m.Id,
 			UnitsOfComputePerToken: m.UnitsOfComputePerToken,
@@ -59,7 +59,7 @@ func getPricing(w http.ResponseWriter, cosmosClient cosmosclient.CosmosMessageCl
 	}
 
 	var responseBody = &model.PricingDto{
-		Price:  unitOfComputePrice,
+		Price:  uint64(unitOfComputePrice),
 		Models: models,
 	}
 

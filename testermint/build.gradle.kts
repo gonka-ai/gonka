@@ -19,6 +19,7 @@ dependencies {
     implementation("org.tinylog:tinylog-impl:2.8.0-M1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.10")
+    implementation("org.reflections:reflections:0.10.2")
     testImplementation(kotlin("test"))
     // Add AssertJ for fluent assertions
     testImplementation("org.assertj:assertj-core:3.26.3")
@@ -26,7 +27,17 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        val includeTags = System.getProperty("includeTags")
+        val excludeTags = System.getProperty("excludeTags")
+        if (includeTags != null) {
+            includeTags(*includeTags.split(",").toTypedArray())
+        }
+        if (excludeTags != null) {
+            excludeTags(*excludeTags.split(",").toTypedArray())
+        }
+    }
+
 }
 kotlin {
     jvmToolchain(19)

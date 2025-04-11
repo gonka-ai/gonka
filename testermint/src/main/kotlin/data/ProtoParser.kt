@@ -1,5 +1,6 @@
 package com.productscience.data
 
+import org.tinylog.Logger
 import kotlin.reflect.*
 import kotlin.reflect.full.primaryConstructor
 
@@ -108,9 +109,10 @@ fun <T : Any> mapToDataClass(map: Map<String, Any>, klass: KClass<T>): T {
     val constructor = klass.primaryConstructor
         ?: throw IllegalArgumentException("No primary constructor for ${klass.simpleName}")
     val args = mutableMapOf<KParameter, Any?>()
-
+    Logger.info("Calling constructor for ${klass.simpleName} with ${constructor.parameters.size} parameters", "")
     // For each constructor parameter, try to find a matching key in the map.
     for (param in constructor.parameters) {
+        Logger.info("Parameter: ${param.name}", "")
         // Parameter name (likely in camelCase)
         val camelName = param.name ?: continue
 
@@ -130,8 +132,8 @@ fun <T : Any> mapToDataClass(map: Map<String, Any>, klass: KClass<T>): T {
         } else if (value != null) {
             args[param] = convertValue(value, param.type)
         } else {
-            // If no value is found, we'll leave it as null so that default values (if any) are used.
-            args[param] = null
+            // If no value is found, use JVM default value for primitive types
+            args[param] = getJvmDefaultValue(param.type)
         }
     }
     return constructor.callBy(args)
@@ -155,19 +157,26 @@ fun convertValue(value: Any, expectedType: KType): Any {
     }
 }
 
+// Get JVM default value based on type
+fun getJvmDefaultValue(type: KType): Any? {
+    return when (type.classifier) {
+        Int::class -> 0
+        Double::class -> 0.0
+        Float::class -> 0.0f
+        Long::class -> 0L
+        Boolean::class -> false
+        else -> null
+    }
+}
+
 // ---------------------
 // Example data classes (using camelCase)
 
 fun main() {
+    val input2 = """{epoch_params:{epoch_length:10 epoch_multiplier:1 epoch_shift:1 default_unit_of_compute_price:100 poc_stage_duration:2 poc_exchange_duration:1 poc_validation_delay:1 poc_validation_duration:2} validation_params:{false_positive_rate:0.05 min_ramp_up_measurements:10 pass_value:0.99 min_validation_average:0.01 max_validation_average:1 expiration_blocks:3 epochs_to_max:100 full_validation_traffic_cutoff:100 min_validation_halfway:0.05 min_validation_traffic_cutoff:10 miss_percentage_cutoff:0.01 miss_requests_penalty:1} poc_params:{default_difficulty:5} tokenomics_params:{subsidy_reduction_interval:0.05 subsidy_reduction_amount:0.2 current_subsidy_percentage:0.9 top_reward_allowed_failure:0.1 top_miner_poc_qualification:10}}"""
     // Note: the input keys are in snake_case.
-    val input = """
-        {
-          epoch_params:{epoch_length:20  epoch_multiplier:1  epoch_new_coin:1048576  coin_halving_interval:100}  
-          validation_params:{false_positive_rate:0.05  min_ramp_up_measurements:10  pass_value:0.99  min_validation_average:0.1  max_validation_average:1}  
-          poc_params:{default_difficulty:5}  
-          tokenomics_params:{subsidy_reduction_interval:0.05  subsidy_reduction_amount:0.2  current_subsidy_percentage:0.9}
-        }
-    """.trimIndent()
+    val input = """{epoch_params:{epoch_length:2000  epoch_multiplier:1  default_unit_of_compute_price:100}  validation_params:{false_positive_rate:0.05  min_ramp_up_measurements:10  pass_value:0.99  min_validation_average:0.01  max_validation_average:1  expiration_blocks:20  epochs_to_max:100  full_validation_traffic_cutoff:100  min_validation_halfway:0.05  min_validation_traffic_cutoff:10  miss_percentage_cutoff:0.01  miss_requests_penalty:1}  poc_params:{default_difficulty:5}   tokenomics_params:{subsidy_reduction_interval:0.05  subsidy_reduction_amount:0.2  current_subsidy_percentage:0.9  top_reward_allowed_failure:0.1  top_miner_poc_qualification:10}}
+""".trimIndent()
 
     val params: InferenceParams = parseProto(input)
 

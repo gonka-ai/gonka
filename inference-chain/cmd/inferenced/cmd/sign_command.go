@@ -35,7 +35,6 @@ func SignatureCommands() *cobra.Command {
 		GetPayloadVerifyCommand(),
 		PostSignedRequest(),
 	)
-
 	return cmd
 }
 
@@ -71,6 +70,9 @@ func verifyPayload(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	cmd.Printf("Address: %s\n", address)
+
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		return err
@@ -115,10 +117,13 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	addr, err2 := getAddress(cmd, context)
-	if err2 != nil {
-		return err2
+
+	addr, err := getAddress(cmd, context)
+	if err != nil {
+		return err
 	}
+
+	cmd.Printf("Address: %s\n", addr)
 
 	signatureString, err := getSignature(bytes, addr, context)
 	if err != nil {
@@ -126,8 +131,6 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	cmd.Printf("Signature: %s\n", signatureString)
-	// Get the account address from the account name
-	// Sign the payload
 	return nil
 }
 
@@ -136,7 +139,6 @@ func getSignature(inputBytes []byte, addr sdk.AccAddress, context client.Context
 	if err != nil {
 		return "", err
 	}
-	// Hash the bytes to readable string
 	return base64.StdEncoding.EncodeToString(outputBytes), nil
 }
 
@@ -145,55 +147,41 @@ func getAddress(cmd *cobra.Command, context client.Context) (sdk.AccAddress, err
 	if err != nil {
 		return nil, err
 	}
-	var addr sdk.AccAddress
-	if accountAddress == "" {
-		list, _ := context.Keyring.List()
-		for _, key := range list {
-			address, err := key.GetAddress()
-			if err != nil {
-				return nil, err
-			}
-			if key.GetLocal() != nil && !strings.HasPrefix(key.Name, "POOL_") {
-				addr = address
-			}
-		}
-	} else {
-		addr2, err2 := sdk.AccAddressFromBech32(accountAddress)
-		if err2 != nil {
-			return nil, err2
-		}
-		addr = addr2
+
+	if accountAddress != "" {
+		return sdk.AccAddressFromBech32(accountAddress)
 	}
-	cmd.Println("Address: " + addr.String())
-	return addr, nil
+
+	list, _ := context.Keyring.List()
+	for _, key := range list {
+		address, err := key.GetAddress()
+		if err != nil {
+			return nil, err
+		}
+		if key.GetLocal() != nil && !strings.HasPrefix(key.Name, "POOL_") {
+			return address, nil
+		}
+	}
+	return nil, errors.New("no local address found")
 }
 
 func getInputBytes(cmd *cobra.Command, args []string) ([]byte, error) {
-	var bytes []byte
 	filename, err := cmd.Flags().GetString(File)
 	if err != nil {
 		return nil, err
 	}
-	if filename != "" {
-		// Read the file
-		if filename == "-" {
-			// Read from stdin
-			bytes, err = io.ReadAll(os.Stdin)
-		} else {
-			// Read from file
-			bytes, err = os.ReadFile(filename)
-		}
-	} else {
-		// Read from args
+
+	switch filename {
+	case "":
 		if len(args) == 0 {
 			return nil, errors.New("no text provided")
 		}
-		bytes = []byte(args[0])
+		return []byte(args[0]), nil
+	case "-":
+		return io.ReadAll(os.Stdin)
+	default:
+		return os.ReadFile(filename)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
 }
 
 func PostSignedRequest() *cobra.Command {
@@ -222,10 +210,12 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 	}
 
 	context := client.GetClientContextFromCmd(cmd)
-	addr, err2 := getAddress(cmd, context)
-	if err2 != nil {
-		return err2
+	addr, err := getAddress(cmd, context)
+	if err != nil {
+		return err
 	}
+
+	cmd.Printf("Address: %s\n", addr)
 
 	signatureString, err := getSignature(inputBytes, addr, context)
 	if err != nil {
@@ -233,29 +223,26 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 	}
 
 	cmd.Printf("Signature: %s\n", signatureString)
-
 	return sendSignedRequest(cmd, nodeAddress, inputBytes, signatureString, addr)
 }
 
 func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) error {
 	url := nodeAddress + "/v1/chat/completions"
 
-	// Create a new request
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return err
 	}
 
-	// Set the required headers
 	cmd.Printf("Sending POST request to %s\n", url)
 	cmd.Printf("Authorization: %s\n", signature)
 	cmd.Printf("X-Requester-Address: %s\n", requesterAddress.String())
 
+	// TODO use constants from decentralized-api/utils here
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", signature)
 	req.Header.Set("X-Requester-Address", requesterAddress.String())
 
-	// Send the request
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -284,6 +271,5 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 
 		cmd.Println(string(bodyBytes))
 	}
-
 	return nil
 }

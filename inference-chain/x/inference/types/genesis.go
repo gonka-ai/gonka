@@ -10,12 +10,17 @@ const DefaultIndex uint64 = 1
 // DefaultGenesis returns the default genesis state
 func DefaultGenesis() *GenesisState {
 	return &GenesisState{
-		InferenceList:             []Inference{},
-		ParticipantList:           []Participant{},
-		EpochGroupDataList:        []EpochGroupData{},
-		SettleAmountList:          []SettleAmount{},
-		EpochGroupValidationsList: []EpochGroupValidations{},
-		TokenomicsData:            &TokenomicsData{},
+		InferenceList:                  []Inference{},
+		ParticipantList:                []Participant{},
+		EpochGroupDataList:             []EpochGroupData{},
+		SettleAmountList:               []SettleAmount{},
+		EpochGroupValidationsList:      []EpochGroupValidations{},
+		TokenomicsData:                 &TokenomicsData{},
+		TopMinerList:                   []TopMiner{},
+		InferenceTimeoutList:           []InferenceTimeout{},
+		InferenceValidationDetailsList: []InferenceValidationDetails{},
+		EpochPerformanceSummaryList:    []EpochPerformanceSummary{},
+		PartialUpgradeList:             []PartialUpgrade{},
 		// this line is used by starport scaffolding # genesis/types/default
 		Params:            DefaultParams(),
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
@@ -74,6 +79,56 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("duplicated index for epochGroupValidations")
 		}
 		epochGroupValidationsIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in topMiner
+	topMinerIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.TopMinerList {
+		index := string(TopMinerKey(elem.Address))
+		if _, ok := topMinerIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for topMiner")
+		}
+		topMinerIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in inferenceTimeout
+	inferenceTimeoutIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.InferenceTimeoutList {
+		index := string(InferenceTimeoutKey(elem.ExpirationHeight, elem.InferenceId))
+		if _, ok := inferenceTimeoutIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for inferenceTimeout")
+		}
+		inferenceTimeoutIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in inferenceValidationDetails
+	inferenceValidationDetailsIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.InferenceValidationDetailsList {
+		index := string(InferenceValidationDetailsKey(elem.EpochId, elem.InferenceId))
+		if _, ok := inferenceValidationDetailsIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for inferenceValidationDetails")
+		}
+		inferenceValidationDetailsIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in epochPerformanceSummary
+	epochPerformanceSummaryIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.EpochPerformanceSummaryList {
+		index := string(EpochPerformanceSummaryKey(elem.ParticipantId, elem.EpochStartHeight))
+		if _, ok := epochPerformanceSummaryIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for epochPerformanceSummary")
+		}
+		epochPerformanceSummaryIndexMap[index] = struct{}{}
+	}
+	// Check for duplicated index in partialUpgrade
+	partialUpgradeIndexMap := make(map[string]struct{})
+
+	for _, elem := range gs.PartialUpgradeList {
+		index := string(PartialUpgradeKey(elem.Height))
+		if _, ok := partialUpgradeIndexMap[index]; ok {
+			return fmt.Errorf("duplicated index for partialUpgrade")
+		}
+		partialUpgradeIndexMap[index] = struct{}{}
 	}
 	// this line is used by starport scaffolding # genesis/types/validate
 

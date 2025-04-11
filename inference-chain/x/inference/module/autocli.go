@@ -40,13 +40,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "index"}},
 				},
 				{
-					RpcMethod:      "GetInferencesWithExecutors",
-					Use:            "get-inferences-with-executors [ids]",
-					Short:          "Query get-inferences-with-executors",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}},
-				},
-
-				{
 					RpcMethod:      "GetRandomExecutor",
 					Use:            "get-random-executor",
 					Short:          "Query get-random-executor",
@@ -132,6 +125,129 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
+				{
+					RpcMethod: "TopMinerAll",
+					Use:       "list-top-miner",
+					Short:     "List all top_miner",
+				},
+				{
+					RpcMethod:      "TopMiner",
+					Use:            "show-top-miner [id]",
+					Short:          "Shows a top_miner",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
+				},
+				{
+					RpcMethod: "InferenceTimeoutAll",
+					Use:       "list-inference-timeout",
+					Short:     "List all inference_timeout",
+				},
+				{
+					RpcMethod:      "InferenceTimeout",
+					Use:            "show-inference-timeout [id]",
+					Short:          "Shows a inference_timeout",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "expirationHeight"}, {ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "TrainingTask",
+					Use:            "training-task",
+					Short:          "Query trainingTask",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "HardwareNodesAll",
+					Use:            "hardware-nodes-all",
+					Short:          "Query hardware-nodes-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod: "InferenceValidationDetailsAll",
+					Use:       "list-inference-validation-details",
+					Short:     "List all inference_validation_details",
+				},
+				{
+					RpcMethod:      "InferenceValidationDetails",
+					Use:            "show-inference-validation-details [id]",
+					Short:          "Shows a inference_validation_details",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochId"}, {ProtoField: "inferenceId"}},
+				},
+				{
+					RpcMethod:      "GetInferenceValidationParameters",
+					Use:            "get-inference-validation-parameters [ids] [requester]",
+					Short:          "Query GetInferenceValidationParameters",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "ids"}, {ProtoField: "requester"}},
+				},
+
+				{
+					RpcMethod: "EpochPerformanceSummaryAll",
+					Use:       "list-epoch-performance-summary",
+					Short:     "List all epoch_performance_summary",
+				},
+				{
+					RpcMethod:      "EpochPerformanceSummary",
+					Use:            "show-epoch-performance-summary [id]",
+					Short:          "Shows a epoch_performance_summary",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epochStartHeight"}, {ProtoField: "participantId"}},
+				},
+				{
+					RpcMethod:      "GetParticipantCurrentStats",
+					Use:            "get-participant-current-stats [participant-id]",
+					Short:          "Query get_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participantId"}},
+				},
+
+				{
+					RpcMethod:      "GetAllParticipantCurrentStats",
+					Use:            "get-all-participant-current-stats",
+					Short:          "Query get_all_participant_current_stats",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "GetMinimumValidationAverage",
+					Use:            "get-minimum-validation-average",
+					Short:          "Query get_minimum_validation_average",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "QueuedTrainingTasks",
+					Use:            "queued-training-tasks",
+					Short:          "Query queued-training-tasks",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "TrainingTaskAll",
+					Use:            "training-task-all",
+					Short:          "Query training-task-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "InProgressTrainingTasks",
+					Use:            "in-progress-training-tasks",
+					Short:          "Query in-progress-training-tasks",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod: "PartialUpgradeAll",
+					Use:       "list-partial-upgrade",
+					Short:     "List all partial_upgrade",
+				},
+				{
+					RpcMethod:      "PartialUpgrade",
+					Use:            "show-partial-upgrade [id]",
+					Short:          "Shows a partial_upgrade",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -166,12 +282,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "validation [id] [inference-id] [response-payload] [response-hash] [value]",
 					Short:          "Send a validation tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inference_id"}, {ProtoField: "response_payload"}, {ProtoField: "response_hash"}, {ProtoField: "value"}},
-				},
-				{
-					RpcMethod:      "SubmitPoC",
-					Use:            "submit-poc [block-height] [nonce]",
-					Short:          "Send a submit-poc tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "block_height"}, {ProtoField: "nonce"}},
 				},
 				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
@@ -220,6 +330,36 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "submit-unit-of-compute-price-proposal [price]",
 					Short:          "Send a submit-unit-of-compute-price-proposal tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "price"}},
+				},
+				{
+					RpcMethod:      "CreateTrainingTask",
+					Use:            "create-training-task",
+					Short:          "Send a createTrainingTask tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "SubmitHardwareDiff",
+					Use:            "submit-hardware-diff",
+					Short:          "Send a SubmitHardwareDiff tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "ClaimTrainingTaskForAssignment",
+					Use:            "claim-training-task-for-assignment",
+					Short:          "Send a claim-training-task-for-assignment tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "AssignTrainingTask",
+					Use:            "assign-training-task",
+					Short:          "Send a assign-training-task tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "CreatePartialUpgrade",
+					Use:            "create-partial-upgrade [height] [node-version] [api-binaries-json]",
+					Short:          "Send a create_partial_upgrade tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

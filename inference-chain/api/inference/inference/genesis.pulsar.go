@@ -320,17 +320,277 @@ func (x *_GenesisState_9_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_GenesisState_10_list)(nil)
+
+type _GenesisState_10_list struct {
+	list *[]*TopMiner
+}
+
+func (x *_GenesisState_10_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_10_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_10_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TopMiner)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_10_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*TopMiner)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_10_list) AppendMutable() protoreflect.Value {
+	v := new(TopMiner)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_10_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_10_list) NewElement() protoreflect.Value {
+	v := new(TopMiner)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_10_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_11_list)(nil)
+
+type _GenesisState_11_list struct {
+	list *[]*InferenceTimeout
+}
+
+func (x *_GenesisState_11_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_11_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_11_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*InferenceTimeout)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_11_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*InferenceTimeout)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_11_list) AppendMutable() protoreflect.Value {
+	v := new(InferenceTimeout)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_11_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_11_list) NewElement() protoreflect.Value {
+	v := new(InferenceTimeout)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_11_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_12_list)(nil)
+
+type _GenesisState_12_list struct {
+	list *[]*InferenceValidationDetails
+}
+
+func (x *_GenesisState_12_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_12_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_12_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*InferenceValidationDetails)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_12_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*InferenceValidationDetails)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_12_list) AppendMutable() protoreflect.Value {
+	v := new(InferenceValidationDetails)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_12_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_12_list) NewElement() protoreflect.Value {
+	v := new(InferenceValidationDetails)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_12_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_13_list)(nil)
+
+type _GenesisState_13_list struct {
+	list *[]*EpochPerformanceSummary
+}
+
+func (x *_GenesisState_13_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_13_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_13_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochPerformanceSummary)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_13_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*EpochPerformanceSummary)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_13_list) AppendMutable() protoreflect.Value {
+	v := new(EpochPerformanceSummary)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_13_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_13_list) NewElement() protoreflect.Value {
+	v := new(EpochPerformanceSummary)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_13_list) IsValid() bool {
+	return x.list != nil
+}
+
+var _ protoreflect.List = (*_GenesisState_14_list)(nil)
+
+type _GenesisState_14_list struct {
+	list *[]*PartialUpgrade
+}
+
+func (x *_GenesisState_14_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_14_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_14_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*PartialUpgrade)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_14_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*PartialUpgrade)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_14_list) AppendMutable() protoreflect.Value {
+	v := new(PartialUpgrade)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_14_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_14_list) NewElement() protoreflect.Value {
+	v := new(PartialUpgrade)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_14_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_GenesisState                              protoreflect.MessageDescriptor
-	fd_GenesisState_params                       protoreflect.FieldDescriptor
-	fd_GenesisState_genesis_only_params          protoreflect.FieldDescriptor
-	fd_GenesisState_inference_list               protoreflect.FieldDescriptor
-	fd_GenesisState_participant_list             protoreflect.FieldDescriptor
-	fd_GenesisState_epoch_group_data_list        protoreflect.FieldDescriptor
-	fd_GenesisState_settle_amount_list           protoreflect.FieldDescriptor
-	fd_GenesisState_epoch_group_validations_list protoreflect.FieldDescriptor
-	fd_GenesisState_tokenomics_data              protoreflect.FieldDescriptor
-	fd_GenesisState_model_list                   protoreflect.FieldDescriptor
+	md_GenesisState                                protoreflect.MessageDescriptor
+	fd_GenesisState_params                         protoreflect.FieldDescriptor
+	fd_GenesisState_genesis_only_params            protoreflect.FieldDescriptor
+	fd_GenesisState_inference_list                 protoreflect.FieldDescriptor
+	fd_GenesisState_participant_list               protoreflect.FieldDescriptor
+	fd_GenesisState_epoch_group_data_list          protoreflect.FieldDescriptor
+	fd_GenesisState_settle_amount_list             protoreflect.FieldDescriptor
+	fd_GenesisState_epoch_group_validations_list   protoreflect.FieldDescriptor
+	fd_GenesisState_tokenomics_data                protoreflect.FieldDescriptor
+	fd_GenesisState_model_list                     protoreflect.FieldDescriptor
+	fd_GenesisState_top_miner_list                 protoreflect.FieldDescriptor
+	fd_GenesisState_inference_timeout_list         protoreflect.FieldDescriptor
+	fd_GenesisState_inferenceValidationDetailsList protoreflect.FieldDescriptor
+	fd_GenesisState_epochPerformanceSummaryList    protoreflect.FieldDescriptor
+	fd_GenesisState_partialUpgradeList             protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -345,6 +605,11 @@ func init() {
 	fd_GenesisState_epoch_group_validations_list = md_GenesisState.Fields().ByName("epoch_group_validations_list")
 	fd_GenesisState_tokenomics_data = md_GenesisState.Fields().ByName("tokenomics_data")
 	fd_GenesisState_model_list = md_GenesisState.Fields().ByName("model_list")
+	fd_GenesisState_top_miner_list = md_GenesisState.Fields().ByName("top_miner_list")
+	fd_GenesisState_inference_timeout_list = md_GenesisState.Fields().ByName("inference_timeout_list")
+	fd_GenesisState_inferenceValidationDetailsList = md_GenesisState.Fields().ByName("inferenceValidationDetailsList")
+	fd_GenesisState_epochPerformanceSummaryList = md_GenesisState.Fields().ByName("epochPerformanceSummaryList")
+	fd_GenesisState_partialUpgradeList = md_GenesisState.Fields().ByName("partialUpgradeList")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisState)(nil)
@@ -466,6 +731,36 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if len(x.TopMinerList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_10_list{list: &x.TopMinerList})
+		if !f(fd_GenesisState_top_miner_list, value) {
+			return
+		}
+	}
+	if len(x.InferenceTimeoutList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_11_list{list: &x.InferenceTimeoutList})
+		if !f(fd_GenesisState_inference_timeout_list, value) {
+			return
+		}
+	}
+	if len(x.InferenceValidationDetailsList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_12_list{list: &x.InferenceValidationDetailsList})
+		if !f(fd_GenesisState_inferenceValidationDetailsList, value) {
+			return
+		}
+	}
+	if len(x.EpochPerformanceSummaryList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_13_list{list: &x.EpochPerformanceSummaryList})
+		if !f(fd_GenesisState_epochPerformanceSummaryList, value) {
+			return
+		}
+	}
+	if len(x.PartialUpgradeList) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_14_list{list: &x.PartialUpgradeList})
+		if !f(fd_GenesisState_partialUpgradeList, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -499,6 +794,16 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.TokenomicsData != nil
 	case "inference.inference.GenesisState.model_list":
 		return len(x.ModelList) != 0
+	case "inference.inference.GenesisState.top_miner_list":
+		return len(x.TopMinerList) != 0
+	case "inference.inference.GenesisState.inference_timeout_list":
+		return len(x.InferenceTimeoutList) != 0
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		return len(x.InferenceValidationDetailsList) != 0
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		return len(x.EpochPerformanceSummaryList) != 0
+	case "inference.inference.GenesisState.partialUpgradeList":
+		return len(x.PartialUpgradeList) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -533,6 +838,16 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 		x.TokenomicsData = nil
 	case "inference.inference.GenesisState.model_list":
 		x.ModelList = nil
+	case "inference.inference.GenesisState.top_miner_list":
+		x.TopMinerList = nil
+	case "inference.inference.GenesisState.inference_timeout_list":
+		x.InferenceTimeoutList = nil
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		x.InferenceValidationDetailsList = nil
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		x.EpochPerformanceSummaryList = nil
+	case "inference.inference.GenesisState.partialUpgradeList":
+		x.PartialUpgradeList = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -594,6 +909,36 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 		}
 		listValue := &_GenesisState_9_list{list: &x.ModelList}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.GenesisState.top_miner_list":
+		if len(x.TopMinerList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_10_list{})
+		}
+		listValue := &_GenesisState_10_list{list: &x.TopMinerList}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.GenesisState.inference_timeout_list":
+		if len(x.InferenceTimeoutList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_11_list{})
+		}
+		listValue := &_GenesisState_11_list{list: &x.InferenceTimeoutList}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		if len(x.InferenceValidationDetailsList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_12_list{})
+		}
+		listValue := &_GenesisState_12_list{list: &x.InferenceValidationDetailsList}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		if len(x.EpochPerformanceSummaryList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_13_list{})
+		}
+		listValue := &_GenesisState_13_list{list: &x.EpochPerformanceSummaryList}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.GenesisState.partialUpgradeList":
+		if len(x.PartialUpgradeList) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_14_list{})
+		}
+		listValue := &_GenesisState_14_list{list: &x.PartialUpgradeList}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -644,6 +989,26 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 		lv := value.List()
 		clv := lv.(*_GenesisState_9_list)
 		x.ModelList = *clv.list
+	case "inference.inference.GenesisState.top_miner_list":
+		lv := value.List()
+		clv := lv.(*_GenesisState_10_list)
+		x.TopMinerList = *clv.list
+	case "inference.inference.GenesisState.inference_timeout_list":
+		lv := value.List()
+		clv := lv.(*_GenesisState_11_list)
+		x.InferenceTimeoutList = *clv.list
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		lv := value.List()
+		clv := lv.(*_GenesisState_12_list)
+		x.InferenceValidationDetailsList = *clv.list
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		lv := value.List()
+		clv := lv.(*_GenesisState_13_list)
+		x.EpochPerformanceSummaryList = *clv.list
+	case "inference.inference.GenesisState.partialUpgradeList":
+		lv := value.List()
+		clv := lv.(*_GenesisState_14_list)
+		x.PartialUpgradeList = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -715,6 +1080,36 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 		}
 		value := &_GenesisState_9_list{list: &x.ModelList}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.GenesisState.top_miner_list":
+		if x.TopMinerList == nil {
+			x.TopMinerList = []*TopMiner{}
+		}
+		value := &_GenesisState_10_list{list: &x.TopMinerList}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.GenesisState.inference_timeout_list":
+		if x.InferenceTimeoutList == nil {
+			x.InferenceTimeoutList = []*InferenceTimeout{}
+		}
+		value := &_GenesisState_11_list{list: &x.InferenceTimeoutList}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		if x.InferenceValidationDetailsList == nil {
+			x.InferenceValidationDetailsList = []*InferenceValidationDetails{}
+		}
+		value := &_GenesisState_12_list{list: &x.InferenceValidationDetailsList}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		if x.EpochPerformanceSummaryList == nil {
+			x.EpochPerformanceSummaryList = []*EpochPerformanceSummary{}
+		}
+		value := &_GenesisState_13_list{list: &x.EpochPerformanceSummaryList}
+		return protoreflect.ValueOfList(value)
+	case "inference.inference.GenesisState.partialUpgradeList":
+		if x.PartialUpgradeList == nil {
+			x.PartialUpgradeList = []*PartialUpgrade{}
+		}
+		value := &_GenesisState_14_list{list: &x.PartialUpgradeList}
+		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -755,6 +1150,21 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.GenesisState.model_list":
 		list := []*Model{}
 		return protoreflect.ValueOfList(&_GenesisState_9_list{list: &list})
+	case "inference.inference.GenesisState.top_miner_list":
+		list := []*TopMiner{}
+		return protoreflect.ValueOfList(&_GenesisState_10_list{list: &list})
+	case "inference.inference.GenesisState.inference_timeout_list":
+		list := []*InferenceTimeout{}
+		return protoreflect.ValueOfList(&_GenesisState_11_list{list: &list})
+	case "inference.inference.GenesisState.inferenceValidationDetailsList":
+		list := []*InferenceValidationDetails{}
+		return protoreflect.ValueOfList(&_GenesisState_12_list{list: &list})
+	case "inference.inference.GenesisState.epochPerformanceSummaryList":
+		list := []*EpochPerformanceSummary{}
+		return protoreflect.ValueOfList(&_GenesisState_13_list{list: &list})
+	case "inference.inference.GenesisState.partialUpgradeList":
+		list := []*PartialUpgrade{}
+		return protoreflect.ValueOfList(&_GenesisState_14_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -872,6 +1282,36 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if len(x.TopMinerList) > 0 {
+			for _, e := range x.TopMinerList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.InferenceTimeoutList) > 0 {
+			for _, e := range x.InferenceTimeoutList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.InferenceValidationDetailsList) > 0 {
+			for _, e := range x.InferenceValidationDetailsList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.EpochPerformanceSummaryList) > 0 {
+			for _, e := range x.EpochPerformanceSummaryList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
+		if len(x.PartialUpgradeList) > 0 {
+			for _, e := range x.PartialUpgradeList {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -900,6 +1340,86 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.PartialUpgradeList) > 0 {
+			for iNdEx := len(x.PartialUpgradeList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.PartialUpgradeList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x72
+			}
+		}
+		if len(x.EpochPerformanceSummaryList) > 0 {
+			for iNdEx := len(x.EpochPerformanceSummaryList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.EpochPerformanceSummaryList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x6a
+			}
+		}
+		if len(x.InferenceValidationDetailsList) > 0 {
+			for iNdEx := len(x.InferenceValidationDetailsList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.InferenceValidationDetailsList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x62
+			}
+		}
+		if len(x.InferenceTimeoutList) > 0 {
+			for iNdEx := len(x.InferenceTimeoutList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.InferenceTimeoutList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x5a
+			}
+		}
+		if len(x.TopMinerList) > 0 {
+			for iNdEx := len(x.TopMinerList) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.TopMinerList[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x52
+			}
 		}
 		if len(x.ModelList) > 0 {
 			for iNdEx := len(x.ModelList) - 1; iNdEx >= 0; iNdEx-- {
@@ -1400,6 +1920,176 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 10:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TopMinerList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.TopMinerList = append(x.TopMinerList, &TopMiner{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.TopMinerList[len(x.TopMinerList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 11:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceTimeoutList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.InferenceTimeoutList = append(x.InferenceTimeoutList, &InferenceTimeout{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.InferenceTimeoutList[len(x.InferenceTimeoutList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 12:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InferenceValidationDetailsList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.InferenceValidationDetailsList = append(x.InferenceValidationDetailsList, &InferenceValidationDetails{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.InferenceValidationDetailsList[len(x.InferenceValidationDetailsList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 13:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochPerformanceSummaryList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.EpochPerformanceSummaryList = append(x.EpochPerformanceSummaryList, &EpochPerformanceSummary{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EpochPerformanceSummaryList[len(x.EpochPerformanceSummaryList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 14:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PartialUpgradeList", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.PartialUpgradeList = append(x.PartialUpgradeList, &PartialUpgrade{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.PartialUpgradeList[len(x.PartialUpgradeList)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1455,15 +2145,20 @@ type GenesisState struct {
 	unknownFields protoimpl.UnknownFields
 
 	// params defines all the parameters of the module.
-	Params                    *Params                  `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
-	GenesisOnlyParams         *GenesisOnlyParams       `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
-	InferenceList             []*Inference             `protobuf:"bytes,3,rep,name=inference_list,json=inferenceList,proto3" json:"inference_list,omitempty"`
-	ParticipantList           []*Participant           `protobuf:"bytes,4,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
-	EpochGroupDataList        []*EpochGroupData        `protobuf:"bytes,5,rep,name=epoch_group_data_list,json=epochGroupDataList,proto3" json:"epoch_group_data_list,omitempty"`
-	SettleAmountList          []*SettleAmount          `protobuf:"bytes,6,rep,name=settle_amount_list,json=settleAmountList,proto3" json:"settle_amount_list,omitempty"`
-	EpochGroupValidationsList []*EpochGroupValidations `protobuf:"bytes,7,rep,name=epoch_group_validations_list,json=epochGroupValidationsList,proto3" json:"epoch_group_validations_list,omitempty"`
-	TokenomicsData            *TokenomicsData          `protobuf:"bytes,8,opt,name=tokenomics_data,json=tokenomicsData,proto3" json:"tokenomics_data,omitempty"`
-	ModelList                 []*Model                 `protobuf:"bytes,9,rep,name=model_list,json=modelList,proto3" json:"model_list,omitempty"`
+	Params                         *Params                       `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
+	GenesisOnlyParams              *GenesisOnlyParams            `protobuf:"bytes,2,opt,name=genesis_only_params,json=genesisOnlyParams,proto3" json:"genesis_only_params,omitempty"`
+	InferenceList                  []*Inference                  `protobuf:"bytes,3,rep,name=inference_list,json=inferenceList,proto3" json:"inference_list,omitempty"`
+	ParticipantList                []*Participant                `protobuf:"bytes,4,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
+	EpochGroupDataList             []*EpochGroupData             `protobuf:"bytes,5,rep,name=epoch_group_data_list,json=epochGroupDataList,proto3" json:"epoch_group_data_list,omitempty"`
+	SettleAmountList               []*SettleAmount               `protobuf:"bytes,6,rep,name=settle_amount_list,json=settleAmountList,proto3" json:"settle_amount_list,omitempty"`
+	EpochGroupValidationsList      []*EpochGroupValidations      `protobuf:"bytes,7,rep,name=epoch_group_validations_list,json=epochGroupValidationsList,proto3" json:"epoch_group_validations_list,omitempty"`
+	TokenomicsData                 *TokenomicsData               `protobuf:"bytes,8,opt,name=tokenomics_data,json=tokenomicsData,proto3" json:"tokenomics_data,omitempty"`
+	ModelList                      []*Model                      `protobuf:"bytes,9,rep,name=model_list,json=modelList,proto3" json:"model_list,omitempty"`
+	TopMinerList                   []*TopMiner                   `protobuf:"bytes,10,rep,name=top_miner_list,json=topMinerList,proto3" json:"top_miner_list,omitempty"`
+	InferenceTimeoutList           []*InferenceTimeout           `protobuf:"bytes,11,rep,name=inference_timeout_list,json=inferenceTimeoutList,proto3" json:"inference_timeout_list,omitempty"`
+	InferenceValidationDetailsList []*InferenceValidationDetails `protobuf:"bytes,12,rep,name=inferenceValidationDetailsList,proto3" json:"inferenceValidationDetailsList,omitempty"`
+	EpochPerformanceSummaryList    []*EpochPerformanceSummary    `protobuf:"bytes,13,rep,name=epochPerformanceSummaryList,proto3" json:"epochPerformanceSummaryList,omitempty"`
+	PartialUpgradeList             []*PartialUpgrade             `protobuf:"bytes,14,rep,name=partialUpgradeList,proto3" json:"partialUpgradeList,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -1549,6 +2244,41 @@ func (x *GenesisState) GetModelList() []*Model {
 	return nil
 }
 
+func (x *GenesisState) GetTopMinerList() []*TopMiner {
+	if x != nil {
+		return x.TopMinerList
+	}
+	return nil
+}
+
+func (x *GenesisState) GetInferenceTimeoutList() []*InferenceTimeout {
+	if x != nil {
+		return x.InferenceTimeoutList
+	}
+	return nil
+}
+
+func (x *GenesisState) GetInferenceValidationDetailsList() []*InferenceValidationDetails {
+	if x != nil {
+		return x.InferenceValidationDetailsList
+	}
+	return nil
+}
+
+func (x *GenesisState) GetEpochPerformanceSummaryList() []*EpochPerformanceSummary {
+	if x != nil {
+		return x.EpochPerformanceSummaryList
+	}
+	return nil
+}
+
+func (x *GenesisState) GetPartialUpgradeList() []*PartialUpgrade {
+	if x != nil {
+		return x.PartialUpgradeList
+	}
+	return nil
+}
+
 var File_inference_inference_genesis_proto protoreflect.FileDescriptor
 
 var file_inference_inference_genesis_proto_rawDesc = []byte{
@@ -1578,68 +2308,114 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x2e, 0x70, 0x72, 0x6f,
 	0x74, 0x6f, 0x1a, 0x1f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x22, 0x88, 0x06, 0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53,
-	0x74, 0x61, 0x74, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d,
-	0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x06, 0x70, 0x61,
-	0x72, 0x61, 0x6d, 0x73, 0x12, 0x61, 0x0a, 0x13, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x5f,
-	0x6f, 0x6e, 0x6c, 0x79, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f,
-	0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8,
-	0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x11, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c,
-	0x79, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x4b, 0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
-	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x4c, 0x69, 0x73, 0x74, 0x12, 0x51, 0x0a, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x20,
+	0x6f, 0x74, 0x6f, 0x1a, 0x23, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x74, 0x6f, 0x70, 0x5f, 0x6d, 0x69, 0x6e,
+	0x65, 0x72, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x2b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x2e,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x36, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
+	0x64, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x33, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x70, 0x65, 0x72, 0x66, 0x6f, 0x72, 0x6d,
+	0x61, 0x6e, 0x63, 0x65, 0x5f, 0x73, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79, 0x2e, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x1a, 0x29, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x5f,
+	0x75, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x86, 0x0a,
+	0x0a, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12, 0x3e,
+	0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
-	0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,
-	0x61, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x5c, 0x0a, 0x15, 0x65, 0x70, 0x6f, 0x63, 0x68,
-	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x5f, 0x6c, 0x69, 0x73, 0x74,
-	0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f,
-	0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f,
-	0x00, 0x52, 0x12, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74,
-	0x61, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x55, 0x0a, 0x12, 0x73, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x5f,
-	0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28,
-	0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41, 0x6d,
-	0x6f, 0x75, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x10, 0x73, 0x65, 0x74, 0x74,
-	0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x71, 0x0a, 0x1c,
-	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x07, 0x20, 0x03,
-	0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72,
-	0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x42, 0x04,
-	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x19, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
-	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x12,
-	0x4c, 0x0a, 0x0f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x5f, 0x64, 0x61,
-	0x74, 0x61, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54,
-	0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x52, 0x0e, 0x74,
-	0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x12, 0x3f, 0x0a,
-	0x0a, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x09, 0x20, 0x03, 0x28,
-	0x0b, 0x32, 0x1a, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x42, 0x04, 0xc8,
-	0xde, 0x1f, 0x00, 0x52, 0x09, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x42, 0xba,
-	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65,
-	0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
-	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f,
+	0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x61,
+	0x0a, 0x13, 0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x5f, 0x70,
+	0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72,
+	0x61, 0x6d, 0x73, 0x42, 0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x11,
+	0x67, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x50, 0x61, 0x72, 0x61, 0x6d,
+	0x73, 0x12, 0x4b, 0x0a, 0x0e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x6c,
+	0x69, 0x73, 0x74, 0x18, 0x03, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1e, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52,
+	0x0d, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x51,
+	0x0a, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x6c, 0x69,
+	0x73, 0x74, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x20, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50,
+	0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
+	0x52, 0x0f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x4c, 0x69, 0x73,
+	0x74, 0x12, 0x5c, 0x0a, 0x15, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70,
+	0x5f, 0x64, 0x61, 0x74, 0x61, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b,
+	0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
+	0x70, 0x44, 0x61, 0x74, 0x61, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x12, 0x65, 0x70, 0x6f,
+	0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x69, 0x73, 0x74, 0x12,
+	0x55, 0x0a, 0x12, 0x73, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x42, 0x04,
+	0xc8, 0xde, 0x1f, 0x00, 0x52, 0x10, 0x73, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x41, 0x6d, 0x6f, 0x75,
+	0x6e, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x71, 0x0a, 0x1c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f,
+	0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2a, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c,
+	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x19,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x4c, 0x0a, 0x0f, 0x74, 0x6f, 0x6b,
+	0x65, 0x6e, 0x6f, 0x6d, 0x69, 0x63, 0x73, 0x5f, 0x64, 0x61, 0x74, 0x61, 0x18, 0x08, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d,
+	0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x52, 0x0e, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x6f, 0x6d,
+	0x69, 0x63, 0x73, 0x44, 0x61, 0x74, 0x61, 0x12, 0x3f, 0x0a, 0x0a, 0x6d, 0x6f, 0x64, 0x65, 0x6c,
+	0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x09, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x09, 0x6d,
+	0x6f, 0x64, 0x65, 0x6c, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x49, 0x0a, 0x0e, 0x74, 0x6f, 0x70, 0x5f,
+	0x6d, 0x69, 0x6e, 0x65, 0x72, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x0a, 0x20, 0x03, 0x28, 0x0b,
+	0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x54, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x0c, 0x74, 0x6f, 0x70, 0x4d, 0x69, 0x6e, 0x65, 0x72, 0x4c,
+	0x69, 0x73, 0x74, 0x12, 0x61, 0x0a, 0x16, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x5f, 0x6c, 0x69, 0x73, 0x74, 0x18, 0x0b, 0x20,
+	0x03, 0x28, 0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00,
+	0x52, 0x14, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x54, 0x69, 0x6d, 0x65, 0x6f,
+	0x75, 0x74, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x7d, 0x0a, 0x1e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74,
+	0x61, 0x69, 0x6c, 0x73, 0x4c, 0x69, 0x73, 0x74, 0x18, 0x0c, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2f,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x56, 0x61,
+	0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x42,
+	0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x1e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c,
+	0x73, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x74, 0x0a, 0x1b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x65,
+	0x72, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x6e, 0x63, 0x65, 0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79,
+	0x4c, 0x69, 0x73, 0x74, 0x18, 0x0d, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x65, 0x72, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x6e, 0x63,
+	0x65, 0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x1b,
+	0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x65, 0x72, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x6e, 0x63, 0x65,
+	0x53, 0x75, 0x6d, 0x6d, 0x61, 0x72, 0x79, 0x4c, 0x69, 0x73, 0x74, 0x12, 0x59, 0x0a, 0x12, 0x70,
+	0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x4c, 0x69, 0x73,
+	0x74, 0x18, 0x0e, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x61,
+	0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x42, 0x04, 0xc8, 0xde,
+	0x1f, 0x00, 0x52, 0x12, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c, 0x55, 0x70, 0x67, 0x72, 0x61,
+	0x64, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1656,32 +2432,42 @@ func file_inference_inference_genesis_proto_rawDescGZIP() []byte {
 
 var file_inference_inference_genesis_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_inference_inference_genesis_proto_goTypes = []interface{}{
-	(*GenesisState)(nil),          // 0: inference.inference.GenesisState
-	(*Params)(nil),                // 1: inference.inference.Params
-	(*GenesisOnlyParams)(nil),     // 2: inference.inference.GenesisOnlyParams
-	(*Inference)(nil),             // 3: inference.inference.Inference
-	(*Participant)(nil),           // 4: inference.inference.Participant
-	(*EpochGroupData)(nil),        // 5: inference.inference.EpochGroupData
-	(*SettleAmount)(nil),          // 6: inference.inference.SettleAmount
-	(*EpochGroupValidations)(nil), // 7: inference.inference.EpochGroupValidations
-	(*TokenomicsData)(nil),        // 8: inference.inference.TokenomicsData
-	(*Model)(nil),                 // 9: inference.inference.Model
+	(*GenesisState)(nil),               // 0: inference.inference.GenesisState
+	(*Params)(nil),                     // 1: inference.inference.Params
+	(*GenesisOnlyParams)(nil),          // 2: inference.inference.GenesisOnlyParams
+	(*Inference)(nil),                  // 3: inference.inference.Inference
+	(*Participant)(nil),                // 4: inference.inference.Participant
+	(*EpochGroupData)(nil),             // 5: inference.inference.EpochGroupData
+	(*SettleAmount)(nil),               // 6: inference.inference.SettleAmount
+	(*EpochGroupValidations)(nil),      // 7: inference.inference.EpochGroupValidations
+	(*TokenomicsData)(nil),             // 8: inference.inference.TokenomicsData
+	(*Model)(nil),                      // 9: inference.inference.Model
+	(*TopMiner)(nil),                   // 10: inference.inference.TopMiner
+	(*InferenceTimeout)(nil),           // 11: inference.inference.InferenceTimeout
+	(*InferenceValidationDetails)(nil), // 12: inference.inference.InferenceValidationDetails
+	(*EpochPerformanceSummary)(nil),    // 13: inference.inference.EpochPerformanceSummary
+	(*PartialUpgrade)(nil),             // 14: inference.inference.PartialUpgrade
 }
 var file_inference_inference_genesis_proto_depIdxs = []int32{
-	1, // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
-	2, // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
-	3, // 2: inference.inference.GenesisState.inference_list:type_name -> inference.inference.Inference
-	4, // 3: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
-	5, // 4: inference.inference.GenesisState.epoch_group_data_list:type_name -> inference.inference.EpochGroupData
-	6, // 5: inference.inference.GenesisState.settle_amount_list:type_name -> inference.inference.SettleAmount
-	7, // 6: inference.inference.GenesisState.epoch_group_validations_list:type_name -> inference.inference.EpochGroupValidations
-	8, // 7: inference.inference.GenesisState.tokenomics_data:type_name -> inference.inference.TokenomicsData
-	9, // 8: inference.inference.GenesisState.model_list:type_name -> inference.inference.Model
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	1,  // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
+	2,  // 1: inference.inference.GenesisState.genesis_only_params:type_name -> inference.inference.GenesisOnlyParams
+	3,  // 2: inference.inference.GenesisState.inference_list:type_name -> inference.inference.Inference
+	4,  // 3: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
+	5,  // 4: inference.inference.GenesisState.epoch_group_data_list:type_name -> inference.inference.EpochGroupData
+	6,  // 5: inference.inference.GenesisState.settle_amount_list:type_name -> inference.inference.SettleAmount
+	7,  // 6: inference.inference.GenesisState.epoch_group_validations_list:type_name -> inference.inference.EpochGroupValidations
+	8,  // 7: inference.inference.GenesisState.tokenomics_data:type_name -> inference.inference.TokenomicsData
+	9,  // 8: inference.inference.GenesisState.model_list:type_name -> inference.inference.Model
+	10, // 9: inference.inference.GenesisState.top_miner_list:type_name -> inference.inference.TopMiner
+	11, // 10: inference.inference.GenesisState.inference_timeout_list:type_name -> inference.inference.InferenceTimeout
+	12, // 11: inference.inference.GenesisState.inferenceValidationDetailsList:type_name -> inference.inference.InferenceValidationDetails
+	13, // 12: inference.inference.GenesisState.epochPerformanceSummaryList:type_name -> inference.inference.EpochPerformanceSummary
+	14, // 13: inference.inference.GenesisState.partialUpgradeList:type_name -> inference.inference.PartialUpgrade
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_genesis_proto_init() }
@@ -1697,6 +2483,11 @@ func file_inference_inference_genesis_proto_init() {
 	file_inference_inference_epoch_group_validations_proto_init()
 	file_inference_inference_tokenomics_data_proto_init()
 	file_inference_inference_model_proto_init()
+	file_inference_inference_top_miner_proto_init()
+	file_inference_inference_inference_timeout_proto_init()
+	file_inference_inference_inference_validation_details_proto_init()
+	file_inference_inference_epoch_performance_summary_proto_init()
+	file_inference_inference_partial_upgrade_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_inference_inference_genesis_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GenesisState); i {
