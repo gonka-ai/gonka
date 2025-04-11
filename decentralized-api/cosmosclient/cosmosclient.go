@@ -116,6 +116,8 @@ type CosmosMessageClient interface {
 	SubmitSeed(transaction *inference.MsgSubmitSeed) error
 	ClaimRewards(transaction *inference.MsgClaimRewards) error
 	CreateTrainingTask(transaction *inference.MsgCreateTrainingTask) (*inference.MsgCreateTrainingTaskResponse, error)
+	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
+	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -235,6 +237,32 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	}
 
 	return &msg, err
+}
+
+func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgClaimTrainingTaskForAssignmentResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
+func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := inference.MsgAssignTrainingTaskResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}
@@ -359,11 +387,13 @@ func ParseMsgFromTxResponse[T proto.Message](txResp *sdk.TxResponse, msgIndex in
 func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) error {
 	var txMsgData sdk.TxMsgData
 	if err := proto.Unmarshal(data, &txMsgData); err != nil {
+		logging.Error("Failed to unmarshal TxMsgData", types.Messages, "error", err, "data", data)
 		return fmt.Errorf("failed to unmarshal TxMsgData: %w", err)
 	}
 
 	logging.Info("Found messages", types.Messages, "len(messages)", len(txMsgData.MsgResponses), "messages", txMsgData.MsgResponses)
 	if msgIndex < 0 || msgIndex >= len(txMsgData.MsgResponses) {
+		logging.Error("Message index out of range", types.Messages, "msgIndex", msgIndex, "len(messages)", len(txMsgData.MsgResponses))
 		return fmt.Errorf(
 			"message index %d out of range: got %d responses",
 			msgIndex, len(txMsgData.MsgResponses),
@@ -373,8 +403,19 @@ func ParseMsgResponse[T proto.Message](data []byte, msgIndex int, dstMsg T) erro
 	anyResp := txMsgData.MsgResponses[msgIndex]
 
 	if err := proto.Unmarshal(anyResp.Value, dstMsg); err != nil {
+		logging.Error("Failed to unmarshal response", types.Messages, "error", err, "msgIndex", msgIndex, "response", anyResp.Value)
 		return fmt.Errorf("failed to unmarshal response at index %d: %w", msgIndex, err)
 	}
 
 	return nil
+}
+
+func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.Client, txHash string, dstMsg T) error {
+	transactionAppliedResult, err := client.WaitForTx(ctx, txHash)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
+		return err
+	}
+
+	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
 }

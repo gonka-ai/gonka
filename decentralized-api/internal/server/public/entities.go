@@ -90,6 +90,11 @@ type TrainingDatasetsDto struct {
 	Test  string `json:"test"`
 }
 
+type LockTrainingNodesDto struct {
+	TrainingTaskId uint64   `json:"training_task_id"`
+	NodeIds        []string `json:"node_ids"`
+}
+
 type ProofVerificationRequest struct {
 	Value    string               `json:"value"`
 	AppHash  string               `json:"app_hash"`

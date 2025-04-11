@@ -152,6 +152,14 @@ data class ApplicationAPI(val url: String, override val config: ApplicationConfi
         return postRawJson("v1/tx", json)
     }
 
+    fun startTrainingTask(training: StartTrainingDto): String = wrapLog("StartTrainingTask", true) {
+        postWithStringResponse("v1/training/tasks", training)
+    }
+
+    fun getTrainingTask(taskId: ULong): String = wrapLog("GetTrainingTask", true) {
+        get("v1/training/tasks/$taskId")
+    }
+
     inline fun <reified Out: Any> get(path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))

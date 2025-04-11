@@ -14,6 +14,7 @@ import (
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
+	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
@@ -102,14 +103,23 @@ func main() {
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
+	tendermintClient := cosmosclient.TendermintClient{
+		ChainNodeUrl: config.GetChainNodeConfig().Url,
+	}
+	// FIXME: What context to pass?
+	ctx := context.Background()
+	training.NewAssigner(recorder, &tendermintClient, ctx)
+	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
+
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 
 	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder)
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
@@ -122,7 +132,6 @@ func main() {
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)
 
-	ctx := context.Background()
 	<-ctx.Done()
 }
 

@@ -5,28 +5,32 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/training"
 	"github.com/labstack/echo/v4"
 	"net/http"
 )
 
 type Server struct {
-	e             *echo.Echo
-	nodeBroker    *broker.Broker
-	configManager *apiconfig.ConfigManager
-	recorder      cosmosclient.CosmosMessageClient
+	e                *echo.Echo
+	nodeBroker       *broker.Broker
+	configManager    *apiconfig.ConfigManager
+	recorder         cosmosclient.CosmosMessageClient
+	trainingExecutor *training.Executor
 }
 
 // TODO: think about rate limits
 func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	recorder cosmosclient.CosmosMessageClient) *Server {
+	recorder cosmosclient.CosmosMessageClient,
+	trainingExecutor *training.Executor) *Server {
 	e := echo.New()
 	s := &Server{
-		e:             e,
-		nodeBroker:    nodeBroker,
-		configManager: configManager,
-		recorder:      recorder,
+		e:                e,
+		nodeBroker:       nodeBroker,
+		configManager:    configManager,
+		recorder:         recorder,
+		trainingExecutor: trainingExecutor,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -41,8 +45,10 @@ func NewServer(
 	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
-	g.POST("training-jobs", s.postTrainingJob)
-	g.GET("training-jobs/:id", s.getTrainingJob)
+	g.POST("training/tasks", s.postTrainingTask)
+	g.GET("training/tasks", s.getTrainingTasks)
+	g.GET("training/tasks/:id", s.getTrainingTask)
+	g.POST("training/lock-nodes", s.lockTrainingNodes)
 
 	g.POST("verify-proof", s.postVerifyProof)
 	g.POST("verify-block", s.postVerifyBlock)
