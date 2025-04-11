@@ -1,0 +1,72 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "POW",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/state"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "state": "POW"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "INFERENCE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/state"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "state": "INFERENCE"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "TRAIN",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/state"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "state": "TRAIN"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "STOPPED",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/state"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "state": "STOPPED"
+        }
+      }
+    }
+  ]
+}

@@ -50,9 +50,12 @@ const (
 	Query_TrainingTask_FullMethodName                     = "/inference.inference.Query/TrainingTask"
 	Query_HardwareNodes_FullMethodName                    = "/inference.inference.Query/HardwareNodes"
 	Query_HardwareNodesAll_FullMethodName                 = "/inference.inference.Query/HardwareNodesAll"
+	Query_QueuedTrainingTasks_FullMethodName              = "/inference.inference.Query/QueuedTrainingTasks"
+	Query_TrainingTaskAll_FullMethodName                  = "/inference.inference.Query/TrainingTaskAll"
 	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
 	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
 	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
+	Query_InProgressTrainingTasks_FullMethodName          = "/inference.inference.Query/InProgressTrainingTasks"
 	Query_PartialUpgrade_FullMethodName                   = "/inference.inference.Query/PartialUpgrade"
 	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
 )
@@ -114,12 +117,18 @@ type QueryClient interface {
 	HardwareNodes(ctx context.Context, in *QueryHardwareNodesRequest, opts ...grpc.CallOption) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(ctx context.Context, in *QueryHardwareNodesAllRequest, opts ...grpc.CallOption) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of QueuedTrainingTasks items.
+	QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error)
+	// Queries a list of TrainingTaskAll items.
+	TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error)
 	// Queries a list of GetParticipantCurrentStats items.
 	GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error)
 	// Queries a list of GetAllParticipantCurrentStats items.
 	GetAllParticipantCurrentStats(ctx context.Context, in *QueryGetAllParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of InProgressTrainingTasks items.
+	InProgressTrainingTasks(ctx context.Context, in *QueryInProgressTrainingTasksRequest, opts ...grpc.CallOption) (*QueryInProgressTrainingTasksResponse, error)
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(ctx context.Context, in *QueryGetPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(ctx context.Context, in *QueryAllPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryAllPartialUpgradeResponse, error)
@@ -412,6 +421,24 @@ func (c *queryClient) HardwareNodesAll(ctx context.Context, in *QueryHardwareNod
 	return out, nil
 }
 
+func (c *queryClient) QueuedTrainingTasks(ctx context.Context, in *QueryQueuedTrainingTasksRequest, opts ...grpc.CallOption) (*QueryQueuedTrainingTasksResponse, error) {
+	out := new(QueryQueuedTrainingTasksResponse)
+	err := c.cc.Invoke(ctx, Query_QueuedTrainingTasks_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainingTaskAll(ctx context.Context, in *QueryTrainingTaskAllRequest, opts ...grpc.CallOption) (*QueryTrainingTaskAllResponse, error) {
+	out := new(QueryTrainingTaskAllResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingTaskAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) GetParticipantCurrentStats(ctx context.Context, in *QueryGetParticipantCurrentStatsRequest, opts ...grpc.CallOption) (*QueryGetParticipantCurrentStatsResponse, error) {
 	out := new(QueryGetParticipantCurrentStatsResponse)
 	err := c.cc.Invoke(ctx, Query_GetParticipantCurrentStats_FullMethodName, in, out, opts...)
@@ -433,6 +460,15 @@ func (c *queryClient) GetAllParticipantCurrentStats(ctx context.Context, in *Que
 func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error) {
 	out := new(QueryGetMinimumValidationAverageResponse)
 	err := c.cc.Invoke(ctx, Query_GetMinimumValidationAverage_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) InProgressTrainingTasks(ctx context.Context, in *QueryInProgressTrainingTasksRequest, opts ...grpc.CallOption) (*QueryInProgressTrainingTasksResponse, error) {
+	out := new(QueryInProgressTrainingTasksResponse)
+	err := c.cc.Invoke(ctx, Query_InProgressTrainingTasks_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -514,12 +550,18 @@ type QueryServer interface {
 	HardwareNodes(context.Context, *QueryHardwareNodesRequest) (*QueryHardwareNodesResponse, error)
 	// Queries a list of HardwareNodesAll items.
 	HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error)
+	// Queries a list of QueuedTrainingTasks items.
+	QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error)
+	// Queries a list of TrainingTaskAll items.
+	TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error)
 	// Queries a list of GetParticipantCurrentStats items.
 	GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error)
 	// Queries a list of GetAllParticipantCurrentStats items.
 	GetAllParticipantCurrentStats(context.Context, *QueryGetAllParticipantCurrentStatsRequest) (*QueryGetAllParticipantCurrentStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
+	// Queries a list of InProgressTrainingTasks items.
+	InProgressTrainingTasks(context.Context, *QueryInProgressTrainingTasksRequest) (*QueryInProgressTrainingTasksResponse, error)
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error)
@@ -623,6 +665,12 @@ func (UnimplementedQueryServer) HardwareNodes(context.Context, *QueryHardwareNod
 func (UnimplementedQueryServer) HardwareNodesAll(context.Context, *QueryHardwareNodesAllRequest) (*QueryHardwareNodesAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HardwareNodesAll not implemented")
 }
+func (UnimplementedQueryServer) QueuedTrainingTasks(context.Context, *QueryQueuedTrainingTasksRequest) (*QueryQueuedTrainingTasksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method QueuedTrainingTasks not implemented")
+}
+func (UnimplementedQueryServer) TrainingTaskAll(context.Context, *QueryTrainingTaskAllRequest) (*QueryTrainingTaskAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingTaskAll not implemented")
+}
 func (UnimplementedQueryServer) GetParticipantCurrentStats(context.Context, *QueryGetParticipantCurrentStatsRequest) (*QueryGetParticipantCurrentStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetParticipantCurrentStats not implemented")
 }
@@ -631,6 +679,9 @@ func (UnimplementedQueryServer) GetAllParticipantCurrentStats(context.Context, *
 }
 func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
+}
+func (UnimplementedQueryServer) InProgressTrainingTasks(context.Context, *QueryInProgressTrainingTasksRequest) (*QueryInProgressTrainingTasksResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InProgressTrainingTasks not implemented")
 }
 func (UnimplementedQueryServer) PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PartialUpgrade not implemented")
@@ -1209,6 +1260,42 @@ func _Query_HardwareNodesAll_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_QueuedTrainingTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryQueuedTrainingTasksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).QueuedTrainingTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_QueuedTrainingTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).QueuedTrainingTasks(ctx, req.(*QueryQueuedTrainingTasksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainingTaskAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingTaskAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingTaskAll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingTaskAll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingTaskAll(ctx, req.(*QueryTrainingTaskAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_GetParticipantCurrentStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetParticipantCurrentStatsRequest)
 	if err := dec(in); err != nil {
@@ -1259,6 +1346,24 @@ func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).GetMinimumValidationAverage(ctx, req.(*QueryGetMinimumValidationAverageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_InProgressTrainingTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryInProgressTrainingTasksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InProgressTrainingTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InProgressTrainingTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InProgressTrainingTasks(ctx, req.(*QueryInProgressTrainingTasksRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1431,6 +1536,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_HardwareNodesAll_Handler,
 		},
 		{
+			MethodName: "QueuedTrainingTasks",
+			Handler:    _Query_QueuedTrainingTasks_Handler,
+		},
+		{
+			MethodName: "TrainingTaskAll",
+			Handler:    _Query_TrainingTaskAll_Handler,
+		},
+		{
 			MethodName: "GetParticipantCurrentStats",
 			Handler:    _Query_GetParticipantCurrentStats_Handler,
 		},
@@ -1441,6 +1554,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMinimumValidationAverage",
 			Handler:    _Query_GetMinimumValidationAverage_Handler,
+		},
+		{
+			MethodName: "InProgressTrainingTasks",
+			Handler:    _Query_InProgressTrainingTasks_Handler,
 		},
 		{
 			MethodName: "PartialUpgrade",

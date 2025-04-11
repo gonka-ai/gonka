@@ -1,4 +1,6 @@
 {
+  "scenarioName": "ModelState",
+  "requiredScenarioState": "POW",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/pow/init/validate"
