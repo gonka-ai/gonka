@@ -87,9 +87,12 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port           int    `koanf:"port"`
-	PoCCallbackUrl string `koanf:"poc_callback_url"`
-	PublicUrl      string `koanf:"public_url"`
+	Port             int    `koanf:"port"`
+	PoCCallbackUrl   string `koanf:"poc_callback_url"`
+	PublicUrl        string `koanf:"public_url"`
+	PublicServerPort int    `koanf:"public_server_port"`
+	MLServerPort     int    `koanf:"ml_server_port"`
+	AdminServerPort  int    `koanf:"admin_server_port"`
 }
 
 type ChainNodeConfig struct {
@@ -108,16 +111,16 @@ type KeyConfig struct {
 
 // IF YOU CHANGE ANY OF THESE STRUCTURES BE SURE TO CHANGE HardwareNode proto in inference-chain!!!
 type InferenceNodeConfig struct {
-	Host             string     `koanf:"host" json:"host"`
-	InferenceSegment string     `koanf:"inference_segment" json:"inference_segment"`
-	InferencePort    int        `koanf:"inference_port" json:"inference_port"`
-	PoCSegment       string     `koanf:"poc_segment" json:"poc_segment"`
-	PoCPort          int        `koanf:"poc_port" json:"poc_port"`
-	Models        map[string]ModelConfig `koanf:"models" json:"models"`
-	Id               string     `koanf:"id" json:"id"`
-	MaxConcurrent    int        `koanf:"max_concurrent" json:"max_concurrent"`
-	Hardware         []Hardware `koanf:"hardware" json:"hardware"`
-	Version          string     `koanf:"version" json:"version"`
+	Host             string                 `koanf:"host" json:"host"`
+	InferenceSegment string                 `koanf:"inference_segment" json:"inference_segment"`
+	InferencePort    int                    `koanf:"inference_port" json:"inference_port"`
+	PoCSegment       string                 `koanf:"poc_segment" json:"poc_segment"`
+	PoCPort          int                    `koanf:"poc_port" json:"poc_port"`
+	Models           map[string]ModelConfig `koanf:"models" json:"models"`
+	Id               string                 `koanf:"id" json:"id"`
+	MaxConcurrent    int                    `koanf:"max_concurrent" json:"max_concurrent"`
+	Hardware         []Hardware             `koanf:"hardware" json:"hardware"`
+	Version          string                 `koanf:"version" json:"version"`
 }
 
 type ModelConfig struct {
