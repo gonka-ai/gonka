@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/server/public"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
@@ -21,13 +22,10 @@ import (
 )
 
 func participantExistsWithWait(recorder cosmosclient.CosmosMessageClient, chainNodeUrl string) (bool, error) {
-	// Create RPC client
 	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
 	if err != nil {
 		return false, fmt.Errorf("failed to create tendermint RPC client: %w", err)
 	}
-
-	// Wait for chain to start
 	if err := waitForFirstBlock(client, 1*time.Minute); err != nil {
 		return false, fmt.Errorf("chain failed to start: %w", err)
 	}
@@ -127,18 +125,6 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	return recorder.SubmitNewParticipant(msg)
 }
 
-// FIXME: duplicating code, temp solution to avoid cycle import:
-//
-//	api > cosmosclient > api
-type submitUnfundedNewParticipantDto struct {
-	Address      string   `json:"address"`
-	Url          string   `json:"url"`
-	Models       []string `json:"models"`
-	ValidatorKey string   `json:"validator_key"`
-	PubKey       string   `json:"pub_key"`
-	WorkerKey    string   `json:"worker_key"`
-}
-
 func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
 	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
 		logging.Info("Participant already exists, skipping registration", types.Participants)
@@ -179,7 +165,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		"PubKey", pubKeyString,
 	)
 
-	requestBody := submitUnfundedNewParticipantDto{
+	requestBody := public.SubmitUnfundedNewParticipantDto{
 		Address:      address,
 		Url:          configManager.GetApiConfig().PublicUrl,
 		Models:       uniqueModelsList,

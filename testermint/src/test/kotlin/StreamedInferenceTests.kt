@@ -44,15 +44,4 @@ class StreamedInferenceTests : TestermintTest() {
         val output = instance.node.exec(listOf("inferenced", "query", "inference", "show-inference", inferenceId))
         println(output)
     }
-
-    @Test
-    fun runValidation() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
-
-        println(instance.node.getAddress())
-        println(instance.api.url)
-
-        instance.api.runValidation("4cd1f41d-0afd-4186-8d4a-c78b50c302af")
-    }
 }

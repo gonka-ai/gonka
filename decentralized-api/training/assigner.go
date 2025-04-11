@@ -2,7 +2,6 @@ package training
 
 import (
 	"context"
-	"decentralized-api/api/model"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/utils"
 	"fmt"
@@ -405,9 +404,14 @@ func findHighestContributingCandidate(candidates []candidateNode, selected []boo
 	return bestCandidateIdx
 }
 
+type lockTrainingNodesDto struct {
+	TrainingTaskId uint64   `json:"training_task_id"`
+	NodeIds        []string `json:"node_ids"`
+}
+
 func confirmAvailability(client *http.Client, participantUrl string, taskId uint64, nodeIds []string) error {
 	url := participantUrl + "/v1/training/lock-nodes"
-	payload := model.LockTrainingNodesDto{
+	payload := lockTrainingNodesDto{
 		TrainingTaskId: taskId,
 		NodeIds:        nodeIds,
 	}
