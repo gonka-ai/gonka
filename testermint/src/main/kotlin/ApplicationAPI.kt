@@ -168,11 +168,13 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
     }
 
     fun startTrainingTask(training: StartTrainingDto): String = wrapLog("StartTrainingTask", true) {
-        postWithStringResponse("v1/training/tasks", training)
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        postWithStringResponse(url, "v1/training/tasks", training)
     }
 
     fun getTrainingTask(taskId: ULong): String = wrapLog("GetTrainingTask", true) {
-        get("v1/training/tasks/$taskId")
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/training/tasks/$taskId")
     }
 
     inline fun <reified Out: Any> get(url: String, path: String): Out {
