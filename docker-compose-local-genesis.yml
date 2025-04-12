@@ -15,6 +15,9 @@ services:
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
+      - "9090:9090"
+      - "9091:9091"
+      - "1317:1317"
 
   api:
     container_name: ${KEY_NAME}-api
