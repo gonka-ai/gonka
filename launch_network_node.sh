@@ -38,11 +38,6 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$PORT" ]; then
-  echo "PORT is not set"
-  exit 1
-fi
-
 if [ -z "$WIREMOCK_PORT" ]; then
   WIREMOCK_PORT=$((PORT + 10))
   echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"

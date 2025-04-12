@@ -37,11 +37,6 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
-if [ -z "$PORT" ]; then
-  echo "PORT is not set"
-  exit 1
-fi
-
 if [ -z "$PUBLIC_IP" ]; then
   echo "PUBLIC_IP is not set"
   exit 1

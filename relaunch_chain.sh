@@ -30,11 +30,6 @@ if [ -z "$KEY_NAME" ]; then
   exit 1
 fi
 
-if [ -z "$PORT" ]; then
-  echo "PORT is not set"
-  exit 1
-fi
-
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
 
