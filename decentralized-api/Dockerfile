@@ -19,6 +19,9 @@ RUN apt-get update && \
     apt-get install -y make gcc build-essential git && \
     rm -rf /var/lib/apt/lists/*
 
+RUN wget -O /lib/libwasmvm.x86_64.so https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm.x86_64.so \
+    && echo "b0c3b761e5f00e45bdafebcfe9c03bd703b88b3f535c944ca8e27ef9b891cd10 /lib/libwasmvm.x86_64.so" | sha256sum -c
+
 COPY inference-chain/ /app/inference-chain
 
 WORKDIR /app/decentralized-api
@@ -57,6 +60,7 @@ COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
 COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
+COPY --from=builder /lib/libwasmvm.x86_64.so /lib/libwasmvm.x86_64.so
 
 ENV API_CONFIG_PATH=/root/api-config.yaml
 

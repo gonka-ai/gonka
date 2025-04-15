@@ -89,13 +89,10 @@ var (
 		group.ModuleName,
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
-
 		// chain modules
 		inferencemoduletypes.ModuleName,
-
 		// now ensure wasm is included in init genesis:
 		wasmtypes.ModuleName,
-
 		// starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -165,7 +162,6 @@ var (
 		stakingtypes.BondedPoolName,
 		stakingtypes.NotBondedPoolName,
 		nft.ModuleName,
-		wasmtypes.ModuleName,
 		// gov can receive funds
 	}
 
@@ -225,8 +221,10 @@ var (
 				Config: appconfig.WrapAny(&paramsmodulev1.Module{}),
 			},
 			{
-				Name:   "tx",
-				Config: appconfig.WrapAny(&txconfigv1.Config{}),
+				Name: "tx",
+				Config: appconfig.WrapAny(&txconfigv1.Config{
+					SkipAnteHandler: true,
+				}),
 			},
 			{
 				Name:   genutiltypes.ModuleName,

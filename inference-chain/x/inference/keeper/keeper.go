@@ -5,9 +5,9 @@ import (
 
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -25,6 +25,7 @@ type (
 		// should be the x/gov module account.
 		authority     string
 		AccountKeeper types.AccountKeeper
+		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
 	}
 )
 
@@ -39,7 +40,7 @@ func NewKeeper(
 	validatorSet types.ValidatorSet,
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
-
+	getWasmKeeper func() wasmkeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -56,12 +57,18 @@ func NewKeeper(
 		validatorSet:  validatorSet,
 		Staking:       staking,
 		AccountKeeper: accountKeeper,
+		getWasmKeeper: getWasmKeeper,
 	}
 }
 
 // GetAuthority returns the module's authority.
 func (k Keeper) GetAuthority() string {
 	return k.authority
+}
+
+// GetWasmKeeper returns the WASM keeper
+func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
+	return k.getWasmKeeper()
 }
 
 // Logger returns a module-specific logger.

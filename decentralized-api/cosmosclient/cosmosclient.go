@@ -2,12 +2,19 @@ package cosmosclient
 
 import (
 	"context"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -17,12 +24,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
-	"log"
-	"os/user"
-	"path/filepath"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
 	"github.com/productscience/inference/x/inference/types"
@@ -119,6 +120,7 @@ type CosmosMessageClient interface {
 	ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error)
 	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
+	BridgeExchange(transaction *types.MsgBridgeExchange) error
 	NewInferenceQueryClient() types.QueryClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error)
@@ -263,6 +265,12 @@ func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgA
 	response := inference.MsgAssignTrainingTaskResponse{}
 	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
 	return &response, err
+}
+
+func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExchange) error {
+	transaction.Validator = icc.Address
+	_, err := icc.SendTransaction(transaction)
+	return err
 }
 
 var sendTransactionMutex sync.Mutex = sync.Mutex{}

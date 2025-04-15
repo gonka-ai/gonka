@@ -18,6 +18,13 @@ RUN apt-get update && \
     apt-get install -y make gcc build-essential git && \
     rm -rf /var/lib/apt/lists/*
 
+RUN wget -O /lib/libwasmvm.x86_64.so https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm.x86_64.so \
+    && echo "b0c3b761e5f00e45bdafebcfe9c03bd703b88b3f535c944ca8e27ef9b891cd10 /lib/libwasmvm.x86_64.so" | sha256sum -c
+
+RUN wget -O /root/cw20_base.wasm \
+    https://github.com/CosmWasm/cw-plus/releases/download/v2.0.0/cw20_base.wasm \
+    && echo "4d8e90dd340993033f1b9e8e3a3ee7f8673c582ca9bcdd8c8cf3c7470d6537d5 /root/cw20_base.wasm" | sha256sum -c
+
 WORKDIR /app/inference-chain
 
 COPY inference-chain/go.mod inference-chain/go.sum ./
@@ -68,6 +75,8 @@ COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
+COPY --from=builder /lib/libwasmvm.x86_64.so /lib/libwasmvm.x86_64.so
+COPY --from=builder /root/cw20_base.wasm /root/cw20_base.wasm
 
 RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
 

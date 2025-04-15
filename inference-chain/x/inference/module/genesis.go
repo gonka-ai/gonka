@@ -40,6 +40,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
 	}
 
+	k.SetContractsParams(ctx, genState.ContractsParams)
+
 	k.SetGenesisOnlyParams(ctx, &genState.GenesisOnlyParams)
 
 	// Set all the topMiner

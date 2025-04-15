@@ -17,6 +17,7 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
+
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -26,6 +27,7 @@ import (
 	"github.com/productscience/inference/app"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
+
 	"io"
 	"log"
 	"log/slog"
@@ -44,7 +46,15 @@ type Server struct {
 	configManager      *apiconfig.ConfigManager
 	inferenceValidator *validation.InferenceValidator
 	recorder           cosmos_client.CosmosMessageClient
-	trainingExecutor *training.Executor
+	trainingExecutor   *training.Executor
+}
+
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Received request", "method", r.Method, "path", r.URL.Path)
+		slog.Debug("Request headers", "headers", r.Header)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func NewServer(
@@ -59,13 +69,18 @@ func NewServer(
 		configManager:      configManager,
 		recorder:           recorder,
 		inferenceValidator: inferenceValidator,
-		trainingExecutor: executor,
+		trainingExecutor:   executor,
 	}
 }
 
 func (s *Server) Start() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	logging.Debug("StartInferenceServerWrapper", types.Server)
+
+	// Initialize bridge transaction queue
+	transactionQueue = NewBridgeTransactionQueue()
+	// Start background processor for finalized transactions
+	go processFinalizedTransactions(s.recorder)
 
 	mux := http.NewServeMux()
 	cdc := getCodec()
@@ -128,6 +143,23 @@ func (s *Server) Start() {
 		writer.Write([]byte("{\"status\": \"ok\"}")) // TODO handle error??
 	})
 
+	mux.HandleFunc("/v1/bridge", func(w http.ResponseWriter, r *http.Request) {
+		// Branch based on HTTP method
+		switch r.Method {
+		case http.MethodPost:
+			handleBridgePost(w, r, s.recorder)
+		case http.MethodPatch:
+			handleBridgePatch(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Add endpoint for bridge queue status
+	mux.HandleFunc("/v1/bridge/status", func(w http.ResponseWriter, r *http.Request) {
+		handleBridgeStatus(w, r)
+	})
+
 	addr := fmt.Sprintf(":%d", s.configManager.GetApiConfig().Port)
 
 	logging.Info("Starting the server", types.Server, "address", addr)
@@ -138,7 +170,7 @@ func (s *Server) Start() {
 
 func getCodec() *codec.ProtoCodec {
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
-	app.RegisterIBC(interfaceRegistry)
+	app.RegisterLegacyModules(interfaceRegistry)
 
 	// Register interfaces used in your types
 	types.RegisterInterfaces(interfaceRegistry)
@@ -923,4 +955,303 @@ func getValueOrDefault[K comparable, V any](m map[K]V, key K, defaultValue V) V 
 		return value
 	}
 	return defaultValue
+}
+
+func handleBridgePost(w http.ResponseWriter, r *http.Request, recorder cosmos_client.CosmosMessageClient) {
+	var bridgeTx BridgeTransaction
+	if err := json.NewDecoder(r.Body).Decode(&bridgeTx); err != nil {
+		logging.Error("Failed to decode bridge transaction", types.Server, "error", err)
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if bridgeTx.OriginChain == "" || bridgeTx.ContractAddress == "" ||
+		bridgeTx.OwnerAddress == "" || bridgeTx.Amount == "" || bridgeTx.BlockNumber == "" ||
+		bridgeTx.ReceiptIndex == "" || bridgeTx.ReceiptsRoot == "" {
+		http.Error(w, "All fields are required: chain, contract, owner, amount, blockNumber, receiptIndex, receiptsRoot", http.StatusBadRequest)
+		return
+	}
+
+	logging.Info("Received bridge transaction",
+		types.Server,
+		"chain", bridgeTx.OriginChain,
+		"contract", bridgeTx.ContractAddress,
+		"owner", bridgeTx.OwnerAddress,
+		"amount", bridgeTx.Amount,
+		"blockNumber", bridgeTx.BlockNumber,
+		"receiptIndex", bridgeTx.ReceiptIndex,
+		"receiptsRoot", bridgeTx.ReceiptsRoot)
+
+	// Add to the queue
+	txIndex := transactionQueue.Add(bridgeTx)
+
+	// Return success response
+	response := map[string]string{
+		"status":  "pending",
+		"message": "Bridge transaction queued for processing",
+		"txIndex": txIndex,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleBridgePatch(w http.ResponseWriter, r *http.Request) {
+	var finData BlockFinalizationData
+	if err := json.NewDecoder(r.Body).Decode(&finData); err != nil {
+		logging.Error("Failed to decode finalization data", types.Server, "error", err)
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if finData.BlockNumber == "" || finData.ReceiptsRoot == "" {
+		http.Error(w, "All fields are required: blockNumber, receiptsRoot", http.StatusBadRequest)
+		return
+	}
+
+	logging.Info("Received block finalization data",
+		types.Server,
+		"blockNumber", finData.BlockNumber,
+		"receiptsRoot", finData.ReceiptsRoot)
+
+	// Count transactions in the specified block before processing
+	pendingTx := transactionQueue.GetPendingTransactions()
+	blockTxCount := 0
+	finalizedCount := 0
+	for _, tx := range pendingTx {
+		if tx.Transaction.BlockNumber == finData.BlockNumber {
+			blockTxCount++
+			if tx.BlockFinalized {
+				finalizedCount++
+			}
+		}
+	}
+
+	// Mark matching transactions as finalized and remove invalid ones
+	transactionQueue.MarkAsFinalized(finData.BlockNumber, finData.ReceiptsRoot)
+
+	// Log information about the background processing
+	logging.Info("Block finalization scheduled. Cosmos transactions will be processed in background.",
+		types.Server,
+		"blockNumber", finData.BlockNumber,
+		"transactionsInBlock", blockTxCount,
+		"alreadyFinalized", finalizedCount,
+		"backgroundProcessDelay", "30 seconds maximum")
+
+	// Return success response with more details
+	response := map[string]interface{}{
+		"status":            "success",
+		"message":           "Block finalization data processed",
+		"blockNumber":       finData.BlockNumber,
+		"receiptRoot":       finData.ReceiptsRoot,
+		"receiptsInBlock":   blockTxCount,
+		"totalPendingCount": len(pendingTx),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// processFinalizedTransactions periodically checks for finalized transactions and processes them
+func processFinalizedTransactions(recorder cosmos_client.CosmosMessageClient) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	logging.Info("Background transaction processor started",
+		types.Server,
+		"checkInterval", "30 seconds",
+		"startTime", time.Now().Format(time.RFC3339))
+
+	for range ticker.C {
+		currentTime := time.Now()
+		logging.Info("Background processor checking for finalized transactions",
+			types.Server,
+			"checkTime", currentTime.Format(time.RFC3339))
+
+		pendingTx := transactionQueue.GetPendingTransactions()
+		finalizedCount := 0
+		for _, tx := range pendingTx {
+			if tx.BlockFinalized {
+				finalizedCount++
+			}
+		}
+
+		if finalizedCount == 0 {
+			logging.Debug("No finalized transactions to process", types.Server)
+			continue
+		}
+
+		logging.Info("Processing finalized transactions",
+			types.Server,
+			"finalizedCount", finalizedCount,
+			"totalPending", len(pendingTx))
+
+		// Process up to 10 transactions at a time
+		processedCount := 0
+		successCount := 0
+		errorCount := 0
+
+		for i := 0; i < 10; i++ {
+			tx, found := transactionQueue.GetNextFinalizedTransaction()
+			if !found {
+				break
+			}
+
+			processedCount++
+
+			logging.Info("Processing finalized transaction",
+				types.Server,
+				"blockNumber", tx.BlockNumber,
+				"receiptIndex", tx.ReceiptIndex,
+				"receiptsRoot", tx.ReceiptsRoot)
+
+			if err := handleBridgeTransaction(tx, recorder); err != nil {
+				logging.Error("Failed to process finalized transaction",
+					types.Server,
+					"error", err,
+					"blockNumber", tx.BlockNumber,
+					"receiptIndex", tx.ReceiptIndex)
+				errorCount++
+			} else {
+				successCount++
+				logging.Info("Successfully sent bridge transaction to Cosmos",
+					types.Server,
+					"blockNumber", tx.BlockNumber,
+					"receiptIndex", tx.ReceiptIndex,
+					"receiptsRoot", tx.ReceiptsRoot)
+			}
+		}
+
+		if processedCount > 0 {
+			logging.Info("Completed processing batch of finalized transactions",
+				types.Server,
+				"processed", processedCount,
+				"successful", successCount,
+				"errors", errorCount,
+				"remainingFinalized", finalizedCount-processedCount,
+				"processingTime", time.Since(currentTime).String())
+		}
+	}
+}
+
+// handleBridgeTransaction processes a validated bridge transaction by submitting it to the Cosmos chain
+func handleBridgeTransaction(req BridgeTransaction, recorder cosmos_client.CosmosMessageClient) error {
+	// Validate required fields
+	if req.OriginChain == "" || req.ContractAddress == "" ||
+		req.OwnerAddress == "" || req.Amount == "" || req.BlockNumber == "" ||
+		req.ReceiptIndex == "" || req.ReceiptsRoot == "" {
+		return fmt.Errorf("all fields are required: chain, contract, owner, amount, blockNumber, receiptIndex, receiptsRoot")
+	}
+
+	logging.Info("Processing bridge transaction",
+		types.Server,
+		"originChain", req.OriginChain,
+		"contractAddress", req.ContractAddress,
+		"ownerAddress", req.OwnerAddress,
+		"amount", req.Amount,
+		"blockNumber", req.BlockNumber,
+		"receiptIndex", req.ReceiptIndex,
+		"receiptsRoot", req.ReceiptsRoot)
+
+	// Create message with fields for the chain
+	msg := &types.MsgBridgeExchange{
+		Validator:       recorder.GetAddress(),
+		OriginChain:     req.OriginChain,
+		ContractAddress: req.ContractAddress,
+		OwnerAddress:    req.OwnerAddress,
+		Amount:          req.Amount,
+		BlockNumber:     req.BlockNumber,
+		ReceiptIndex:    req.ReceiptIndex,
+		ReceiptsRoot:    req.ReceiptsRoot,
+	}
+
+	return recorder.BridgeExchange(msg)
+}
+
+// handleBridgeStatus returns information about the pending transactions queue
+func handleBridgeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pendingTx := transactionQueue.GetPendingTransactions()
+
+	// Group transactions by block number and receipts root
+	blockGroups := make(map[string]int)
+	rootGroups := make(map[string]int)
+
+	// For each block number, track unique receipts roots to identify potential conflicts
+	blockRoots := make(map[string]map[string]int)
+
+	for _, tx := range pendingTx {
+		blockNum := tx.Transaction.BlockNumber
+		receiptsRoot := tx.Transaction.ReceiptsRoot
+
+		// Count by block number
+		blockGroups[blockNum]++
+
+		// Count by receipts root
+		rootGroups[receiptsRoot]++
+
+		// Track roots per block
+		if _, exists := blockRoots[blockNum]; !exists {
+			blockRoots[blockNum] = make(map[string]int)
+		}
+		blockRoots[blockNum][receiptsRoot]++
+	}
+
+	// Identify blocks with conflicting receipts
+	conflictBlocks := make([]map[string]interface{}, 0)
+	for blockNum, roots := range blockRoots {
+		if len(roots) > 1 {
+			// This block has multiple different receipts roots - potential conflict
+			rootCounts := make(map[string]int)
+			for root, count := range roots {
+				rootCounts[root] = count
+			}
+
+			conflictBlocks = append(conflictBlocks, map[string]interface{}{
+				"blockNumber": blockNum,
+				"rootCounts":  rootCounts,
+			})
+		}
+	}
+
+	// Count finalized vs non-finalized transactions
+	finalizedCount := 0
+	for _, tx := range pendingTx {
+		if tx.BlockFinalized {
+			finalizedCount++
+		}
+	}
+
+	response := map[string]interface{}{
+		"total":             len(pendingTx),
+		"finalized":         finalizedCount,
+		"pending":           len(pendingTx) - finalizedCount,
+		"blockGroups":       blockGroups,
+		"receiptRootGroups": rootGroups,
+		"conflictingBlocks": conflictBlocks,
+		"oldestTransaction": time.Time{},
+	}
+
+	// Find oldest transaction
+	if len(pendingTx) > 0 {
+		oldest := pendingTx[0].SubmittedAt
+		for _, tx := range pendingTx {
+			if tx.SubmittedAt.Before(oldest) {
+				oldest = tx.SubmittedAt
+			}
+		}
+		response["oldestTransaction"] = oldest
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }

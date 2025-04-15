@@ -63,6 +63,11 @@ fi
 echo "Configure node"
 echo "Current directory: $(pwd)"
 
+# Create a reusable function for this filtering
+filter_cw20_code() {
+  jq 'walk(if type == "object" and has("cw20_code") then del(.cw20_code) else . end)'
+}
+
 # Init the chain:
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination
@@ -71,7 +76,8 @@ $APP_NAME init \
   --overwrite \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
-  my-nod
+  my-node 2>&1 | filter_cw20_code || true
+
 $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
@@ -104,18 +110,18 @@ TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2}
  else
      echo "Node will sync WITHOUT snapshots"
  fi
- 
+
 echo "Setting up overrides for config.toml"
  # Process CONFIG_ environment variables
  for var in $(env | grep '^CONFIG_'); do
     # Extract key and value
     key=${var%%=*}
     value=${var#*=}
-    
+
     # Remove CONFIG_ prefix and transform __ to .
     config_key=${key#CONFIG_}
     config_key=${config_key//__/.}
-    
+
     echo "Setting config: $config_key = $value"
     $APP_NAME config set config "$config_key" "$value" --skip-validate
  done
@@ -131,7 +137,9 @@ $APP_NAME keys add "$KEY_NAME" --keyring-backend $KEYRING_BACKEND --keyring-dir 
 # Need to join network? Or is that solely from the compose file?
 GENESIS_FILE="./.inference/genesis.json"
 $APP_NAME download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
-cat $GENESIS_FILE
+
+cat $GENESIS_FILE | filter_cw20_code | jq '.'
+
 echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
 

@@ -82,7 +82,7 @@ import (
 	// starport scaffolding # stargate/app/moduleImport
 
 	// WASM
-	"github.com/CosmWasm/wasmd/x/wasm"
+
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
@@ -145,12 +145,14 @@ type App struct {
 	ScopedICAControllerKeeper capabilitykeeper.ScopedKeeper
 	ScopedICAHostKeeper       capabilitykeeper.ScopedKeeper
 
+	// Wasm
+	WasmKeeper       wasmkeeper.Keeper
+	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
+	//ContractKeeper   *wasmkeeper.PermissionedKeeper
+
 	// custom module keepers
 	InferenceKeeper inferencemodulekeeper.Keeper
 	// starport scaffolding # stargate/app/keeperDeclaration
-
-	// Manually added WASM keeper
-	WasmKeeper wasmkeeper.Keeper
 
 	// Simulation manager
 	sm *module.SimulationManager
@@ -174,54 +176,6 @@ func getGovProposalHandlers() []govclient.ProposalHandler {
 	return govProposalHandlers
 }
 
-// ProvideWasmKeeper manually constructs the WASM keeper with minimal IBC/distribution
-// (passed as nil), so it compiles but won't enable advanced features in WASM.
-func ProvideWasmKeeper(app *App) (*wasmkeeper.Keeper, error) {
-	storeKey := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
-
-	if err := app.RegisterStores(
-		storeKey,
-	); err != nil {
-		return nil, err
-	}
-	// The store key for WASM
-	if storeKey == nil {
-		return nil, fmt.Errorf("wasm store key not found")
-	}
-
-	// Build a store service from that key
-	storeService := runtime.NewKVStoreService(storeKey)
-	wasmConfig := wasmtypes.DefaultWasmConfig()
-
-	// Typically the "authority" is the x/gov module address
-	authority := authtypes.NewModuleAddress(govtypes.ModuleName).String()
-
-	// Capabilities string: can be "iterator,staking", or "all", etc.
-	availableCapabilities := "iterator,staking"
-
-	// Construct the keeper with minimal stubs for advanced features
-	k := wasmkeeper.NewKeeper(
-		app.appCodec,
-		storeService,
-		app.AccountKeeper,
-		app.BankKeeper,
-		*app.StakingKeeper,
-		nil, // DistributionKeeper
-		nil, // ICS4Wrapper
-		nil, // ChannelKeeper
-		nil, // PortKeeper
-		nil, // CapabilityKeeper
-		nil, // ICS20TransferPortSource
-		nil, // MessageRouter
-		nil, // GRPCQueryRouter
-		filepath.Join(DefaultNodeHome, "wasm"),
-		wasmConfig,
-		availableCapabilities,
-		authority,
-	)
-	return &k, nil
-}
-
 // AppConfig provides the app config using depinject
 func AppConfig() depinject.Config {
 	return depinject.Configs(
@@ -243,6 +197,7 @@ func New(
 	traceStore io.Writer,
 	loadLatest bool,
 	appOpts servertypes.AppOptions,
+	wasmOpts []wasmkeeper.Option,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) (*App, error) {
 	var (
@@ -256,6 +211,7 @@ func New(
 				appOpts,
 				app.GetIBCKeeper,
 				app.GetCapabilityScopedKeeper,
+				app.GetWasmKeeper,
 				logger,
 			),
 		)
@@ -293,37 +249,24 @@ func New(
 	// Build the base application
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
-	// Manually provide the WASM keeper
-	wasmK, err := ProvideWasmKeeper(app)
-	if err != nil {
-		return nil, err
-	}
-	app.WasmKeeper = *wasmK
-
-	wasmModule := wasm.NewAppModule(
-		app.appCodec,
-		&app.WasmKeeper,
-		app.StakingKeeper,
-		app.AccountKeeper,
-		app.BankKeeper,
-		nil,
-		app.GetSubspace(wasmtypes.ModuleName),
-	)
-	if err := app.RegisterModules(
-		wasmModule,
-	); err != nil {
-		return nil, err
-	}
-	wasmModule.RegisterInterfaces(app.interfaceRegistry)
-
-	// If you have custom IBC modules to register, do so
-	if err := app.registerIBCModules(appOpts); err != nil {
-		return nil, err
-	}
+	// register legacy modules
+	wasmConfig := app.registerLegacyModules(appOpts, wasmOpts)
 
 	// Register streaming if needed
 	if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {
 		return nil, err
+	}
+
+	// must be before Loading version
+	// requires the snapshot store to be created and registered as a BaseAppOption
+	// see cmd/wasmd/root.go: 206 - 214 approx
+	if manager := app.SnapshotManager(); manager != nil {
+		err := manager.RegisterExtensions(
+			wasmkeeper.NewWasmSnapshotter(app.CommitMultiStore(), &app.WasmKeeper),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register snapshot extension: %w", err)
+		}
 	}
 
 	// Register invariants
@@ -339,7 +282,10 @@ func New(
 		),
 	}
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
+
 	app.sm.RegisterStoreDecoders()
+
+	app.setAnteHandler(app.txConfig, wasmConfig, app.GetKey(wasmtypes.StoreKey))
 
 	// Setup upgrade handlers if needed
 	app.setupUpgradeHandlers()
@@ -356,14 +302,13 @@ func New(
 		return nil, err
 	}
 
-	if err := checkWasmKeeperWorks(app); err != nil {
-		return nil, fmt.Errorf("Wasm keeper check failed: %w", err)
-	}
+	if loadLatest {
+		ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
 
-	ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
-
-	if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
+		if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
+		}
+		ctx.Logger().Info("WASM keeper check: pinned codes enumerated successfully. Keeper is functional.")
 	}
 
 	return app, nil
@@ -430,6 +375,11 @@ func (app *App) GetSubspace(moduleName string) paramstypes.Subspace {
 // GetIBCKeeper returns the IBC keeper
 func (app *App) GetIBCKeeper() *ibckeeper.Keeper {
 	return app.IBCKeeper
+}
+
+// GetWasmKeeper returns the Wasm keeper.
+func (app *App) GetWasmKeeper() wasmkeeper.Keeper {
+	return app.WasmKeeper
 }
 
 // GetCapabilityScopedKeeper returns the scoped capability keeper for a module
