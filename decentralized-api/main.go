@@ -138,7 +138,7 @@ func main() {
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MlGrpcServerPort)
 	logging.Info("start training server on addr", types.Server, "addr", addr)
 	grpcServer := grpc.NewServer()
-	trainingServer := training.NewServer()
+	trainingServer := training.NewServer(recorder)
 	networknodev1.RegisterNetworkNodeServiceServer(grpcServer, trainingServer)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
