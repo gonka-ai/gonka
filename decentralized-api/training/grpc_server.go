@@ -62,21 +62,26 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *networknodev1.SetStore
 }
 
 func (s *Server) GetStoreRecord(ctx context.Context, req *networknodev1.GetStoreRecordRequest) (*networknodev1.GetStoreRecordResponse, error) {
-	// Add your logic here
-	// For example:
-	// s.mu.RLock()
-	// value, exists := s.store[req.Key]
-	// s.mu.RUnlock()
-	// if !exists {
-	//     return nil, status.Error(codes.NotFound, "key not found")
-	// }
-
 	logging.Info("GetStoreRecord called", types.Training, "key", req.Key)
+
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
+	request := &types.QueryTrainingKvRecordRequest{
+		TaskId:      999, // PRTODO: add task id to request
+		Participant: s.cosmosClient.GetAddress(),
+		Key:         req.Key,
+	}
+	resp, err := queryClient.TrainingKvRecord(ctx, request)
+	if err != nil {
+		logging.Error("Failed to get training kv record", types.Training, "error", err)
+		return nil, err
+	}
+
+	logging.Info("GetStoreRecord response", types.Training, "record", resp.Record)
 
 	return &networknodev1.GetStoreRecordResponse{
 		Record: &networknodev1.Record{
-			Key:   req.Key,
-			Value: "example value", // Replace with actual value
+			Key:   resp.Record.Key,
+			Value: resp.Record.Value,
 		},
 	}, nil
 }
