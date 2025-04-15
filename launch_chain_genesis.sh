@@ -37,12 +37,17 @@ if [ -z "$NODE_CONFIG" ]; then
   exit 1
 fi
 
+if [ -z "$PUBLIC_SERVER_PORT" ]; then
+  echo "PUBLIC_SERVER_PORT is not set"
+  exit 1
+fi
+
 if [ -z "$PUBLIC_IP" ]; then
   echo "PUBLIC_IP is not set"
   exit 1
 fi
 
-export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PORT"
+export DAPI_API__PUBLIC_URL="http://$PUBLIC_IP:$PUBLIC_SERVER_PORT"
 echo "DAPI_API__PUBLIC_URL=$DAPI_API__PUBLIC_URL"
 
 if [ "$mode" == "local" ]; then
