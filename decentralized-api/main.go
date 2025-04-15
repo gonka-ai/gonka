@@ -10,6 +10,9 @@ import (
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
+	networknodev1 "github.com/product-science/chain-protos/go/network_node/v1"
+	"google.golang.org/grpc"
+	"net"
 
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
@@ -131,6 +134,23 @@ func main() {
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)
+
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().TrainingGrpcServerPort)
+	logging.Info("start training server on addr", types.Server, "addr", addr)
+	grpcServer := grpc.NewServer()
+	trainingServer := training.NewServer()
+	networknodev1.RegisterNetworkNodeServiceServer(grpcServer, trainingServer)
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+
+	logging.Info("Servers started", types.Server, "addr", addr)
 
 	<-ctx.Done()
 }
