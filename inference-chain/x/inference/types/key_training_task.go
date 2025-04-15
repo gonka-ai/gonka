@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"strconv"
 )
 
@@ -15,6 +16,8 @@ const (
 
 	// Set of training tasks IDs that are being processed at the moment
 	InProgressTrainingTaskKeyPrefix = "TrainingTask/inProgress/value/"
+
+	TrainingTaskKvRecordKeyPrefix = "TrainingTask/kvRecord/value/"
 )
 
 func TrainingTaskKey(taskId uint64) []byte {
@@ -36,4 +39,8 @@ func QueuedTrainingTaskFullKey(taskId uint64) []byte {
 func InProgressTrainingTaskFullKey(taskId uint64) []byte {
 	key := InProgressTrainingTaskKeyPrefix + strconv.FormatUint(taskId, 10)
 	return StringKey(key)
+}
+
+func TrainingTaskKVRecordKey(taskId uint64, participant string, key string) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s/%s/value", taskId, participant, key))
 }

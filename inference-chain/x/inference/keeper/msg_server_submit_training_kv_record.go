@@ -10,8 +10,14 @@ import (
 func (k msgServer) SubmitTrainingKvRecord(goCtx context.Context, msg *types.MsgSubmitTrainingKvRecord) (*types.MsgSubmitTrainingKvRecordResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Handling the message
-	_ = ctx
+	// PRTODO: check participant and training task exists?
+	record := types.TrainingTaskKVRecord{
+		TaskId:      msg.TaskId,
+		Participant: msg.Creator,
+		Key:         msg.Key,
+		Value:       msg.Value,
+	}
+	k.SetTrainingKVRecord(ctx, &record)
 
 	return &types.MsgSubmitTrainingKvRecordResponse{}, nil
 }
