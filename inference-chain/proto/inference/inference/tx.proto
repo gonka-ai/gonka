@@ -38,6 +38,7 @@ service Msg {
   rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade            ) returns (MsgCreatePartialUpgradeResponse            );
   rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
   rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
+  rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -241,8 +242,8 @@ message MsgClaimTrainingTaskForAssignmentResponse {}
 
 message MsgAssignTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  uint64 task_id = 2;
+           string               creator   = 1;
+           uint64               task_id   = 2;
   repeated TrainingTaskAssignee assignees = 3;
 }
 
@@ -250,11 +251,22 @@ message MsgAssignTrainingTaskResponse {}
 
 message MsgCreatePartialUpgrade {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority         = 1;
+  string authority       = 1;
   uint64 height          = 2;
   string nodeVersion     = 3;
   string apiBinariesJson = 4;
 }
 
 message MsgCreatePartialUpgradeResponse {}
+
+message MsgSubmitTrainingKvRecord {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator     = 1;
+  uint64 taskId      = 2;
+  string participant = 3;
+  string key         = 4;
+  string value       = 5;
+}
+
+message MsgSubmitTrainingKvRecordResponse {}
 

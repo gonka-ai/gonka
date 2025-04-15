@@ -99,6 +99,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgCreatePartialUpgrade int = 100
 
+	opWeightMsgSubmitTrainingKvRecord = "op_weight_msg_submit_training_kv_record"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSubmitTrainingKvRecord int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -320,6 +324,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgSubmitTrainingKvRecord int
+	simState.AppParams.GetOrGenerate(opWeightMsgSubmitTrainingKvRecord, &weightMsgSubmitTrainingKvRecord, nil,
+		func(_ *rand.Rand) {
+			weightMsgSubmitTrainingKvRecord = defaultWeightMsgSubmitTrainingKvRecord
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgSubmitTrainingKvRecord,
+		inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -469,6 +484,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgCreatePartialUpgrade,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgSubmitTrainingKvRecord,
+			defaultWeightMsgSubmitTrainingKvRecord,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

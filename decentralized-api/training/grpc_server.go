@@ -2,28 +2,21 @@ package training
 
 import (
 	"context"
+	cosmosclient "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	networknodev1 "github.com/product-science/chain-protos/go/network_node/v1"
+	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// Server implements the NetworkNodeService interface
 type Server struct {
 	networknodev1.UnimplementedNetworkNodeServiceServer
-	// Add any fields you need for your server state here
-	// For example:
-	// store    map[string]string
-	// nodes    map[string]bool
-	// mu       sync.RWMutex
+	cosmosClient cosmosclient.CosmosMessageClient
 }
 
-// NewServer creates a new Server instance
-func NewServer() *Server {
+func NewServer(cosmosClient cosmosclient.CosmosMessageClient) *Server {
 	return &Server{
-		// Initialize your server state here
-		// For example:
-		// store: make(map[string]string),
-		// nodes: make(map[string]bool),
+		cosmosClient: cosmosClient,
 	}
 }
 
@@ -36,12 +29,33 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *networknodev1.SetStore
 		}, nil
 	}
 
-	// Add your logic here
-	// For example:
-	// s.mu.Lock()
-	// s.store[req.Record.Key] = req.Record.Value
-	// s.mu.Unlock()
 	logging.Info("SetStoreRecord called", types.Training, "key", req.Record.Key, "value", req.Record.Value)
+
+	msg := &inference.MsgSubmitTrainingKvRecord{
+		Creator:     s.cosmosClient.GetAddress(),
+		Participant: s.cosmosClient.GetAddress(),
+		TaskId:      999, // PRTODO: add task id to request
+		Key:         req.Record.Key,
+		Value:       req.Record.Value,
+	}
+	txResponse, err := s.cosmosClient.SendTransaction(msg)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Training, "error", err)
+		return &networknodev1.SetStoreRecordResponse{
+			Status: networknodev1.StoreRecordStatusEnum_SET_RECORD_ERROR,
+		}, err
+	}
+
+	response := inference.MsgSubmitTrainingKvRecordResponse{}
+	if err = cosmosclient.WaitForResponse(*s.cosmosClient.GetContext(), s.cosmosClient.GetCosmosClient(), txResponse.TxHash, &response); err != nil {
+		logging.Error("Failed to get transaction response", types.Training, "error", err)
+		return &networknodev1.SetStoreRecordResponse{
+			Status: networknodev1.StoreRecordStatusEnum_SET_RECORD_ERROR,
+		}, err
+	}
+
+	logging.Info("MsgSubmitTrainingKvRecordResponse received", types.Training)
+
 	return &networknodev1.SetStoreRecordResponse{
 		Status: networknodev1.StoreRecordStatusEnum_SET_RECORD_OK,
 	}, nil

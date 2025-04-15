@@ -125,6 +125,7 @@ type CosmosMessageClient interface {
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
+	GetCosmosClient() *cosmosclient.Client
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -137,6 +138,10 @@ func (icc *InferenceCosmosClient) GetAddress() string {
 
 func (icc *InferenceCosmosClient) GetAccount() *cosmosaccount.Account {
 	return icc.Account
+}
+
+func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
+	return icc.Client
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
