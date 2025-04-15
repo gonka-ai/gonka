@@ -248,6 +248,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a partial_upgrade",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
 				},
+				{
+					RpcMethod:      "TrainingKvRecord",
+					Use:            "training-kv-record [task-id] [participant] [key]",
+					Short:          "Query training-kv-record",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}, {ProtoField: "key"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
