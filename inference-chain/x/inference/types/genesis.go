@@ -8,8 +8,7 @@ import (
 const DefaultIndex uint64 = 1
 
 // DefaultGenesis returns the default genesis state
-func DefaultGenesis(mockContracts bool) *GenesisState {
-
+func GenerateGenesis(mockContracts bool) *GenesisState {
 	var contractsParams ContractsParams
 	if mockContracts {
 		contractsParams = ContractsParams{
@@ -37,6 +36,14 @@ func DefaultGenesis(mockContracts bool) *GenesisState {
 		GenesisOnlyParams: DefaultGenesisOnlyParams(),
 		ContractsParams:   contractsParams,
 	}
+}
+
+func MockedGenesis() *GenesisState {
+	return GenerateGenesis(true)
+}
+
+func DefaultGenesis() *GenesisState {
+	return GenerateGenesis(true)
 }
 
 // Validate performs basic genesis state validation returning an error upon any
