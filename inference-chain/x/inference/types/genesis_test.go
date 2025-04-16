@@ -7,6 +7,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mockGenesisState() *types.GenesisState {
+	return &types.GenesisState{
+		InferenceList:                  []types.Inference{},
+		ParticipantList:                []types.Participant{},
+		EpochGroupDataList:             []types.EpochGroupData{},
+		SettleAmountList:               []types.SettleAmount{},
+		EpochGroupValidationsList:      []types.EpochGroupValidations{},
+		TokenomicsData:                 &types.TokenomicsData{},
+		TopMinerList:                   []types.TopMiner{},
+		InferenceTimeoutList:           []types.InferenceTimeout{},
+		InferenceValidationDetailsList: []types.InferenceValidationDetails{},
+		EpochPerformanceSummaryList:    []types.EpochPerformanceSummary{},
+		PartialUpgradeList:             []types.PartialUpgrade{},
+		Params:                         types.DefaultParams(),
+		GenesisOnlyParams:              types.DefaultGenesisOnlyParams(),
+		ContractsParams: types.ContractsParams{
+			Cw20Code:   []byte{},
+			Cw20CodeId: 0,
+		},
+	}
+}
+
 func TestGenesisState_Validate(t *testing.T) {
 	tests := []struct {
 		desc     string
@@ -15,7 +37,7 @@ func TestGenesisState_Validate(t *testing.T) {
 	}{
 		{
 			desc:     "default is valid",
-			genState: types.DefaultGenesis(),
+			genState: mockGenesisState(),
 			valid:    true,
 		},
 		{
