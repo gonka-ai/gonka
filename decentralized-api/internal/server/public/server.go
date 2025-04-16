@@ -60,6 +60,14 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.POST("bridge", s.postBridge)
+	g.PATCH("bridge", s.patchBridge)
+	g.GET("bridge/status", s.getBridgeStatus)
+
+	// Initialize bridge transaction queue
+	transactionQueue = NewBridgeTransactionQueue()
+
 	return s
 }
 
