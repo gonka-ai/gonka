@@ -1,14 +1,11 @@
-package server
+package public
 
 import (
-	"bytes"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"errors"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/x/inference/types"
-	"io"
-	"net/http"
 )
 
 func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
@@ -27,13 +24,4 @@ func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
 		return errors.New("invalid signature")
 	}
 	return nil
-}
-
-func readRequestBody(r *http.Request) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r.Body); err != nil {
-		return nil, err
-	}
-	defer r.Body.Close()
-	return buf.Bytes(), nil
 }

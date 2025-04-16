@@ -46,10 +46,23 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         attachDockerLogs(dockerClient, name, "node", it.id)
         attachDockerLogs(dockerClient, name, "api", matchingApi.id)
 
+        val portMap = matchingApi.ports.associateBy { it.privatePort }
+
+        val apiUrls = mapOf(
+            SERVER_TYPE_PUBLIC to "http://${portMap[9000]?.ip}:${portMap[9000]?.publicPort}",
+            SERVER_TYPE_ML     to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
+            SERVER_TYPE_ADMIN  to "http://${portMap[9200]?.ip}:${portMap[9200]?.publicPort}"
+        )
+
         Logger.info("Creating local inference pair for $name")
+        Logger.info("API URLs for ${matchingApi.names.first()}:")
+        Logger.info("  $SERVER_TYPE_PUBLIC: ${apiUrls[SERVER_TYPE_PUBLIC]}")
+        Logger.info("  $SERVER_TYPE_ML: ${apiUrls[SERVER_TYPE_ML]}")
+        Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
+
         LocalInferencePair(
             ApplicationCLI(it.id, configWithName),
-            ApplicationAPI("http://${matchingApi.ports[0].ip}:${matchingApi.ports[0].publicPort}", configWithName),
+            ApplicationAPI(apiUrls, configWithName),
             matchingMock?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name,
             config

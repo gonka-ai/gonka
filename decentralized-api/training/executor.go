@@ -2,7 +2,6 @@ package training
 
 import (
 	"context"
-	"decentralized-api/api/model"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
@@ -35,8 +34,8 @@ func NewExecutor(ctx context.Context, nodeBroker *broker.Broker, cosmosClient co
 	return e
 }
 
-func (e Executor) PreassignTask(nodes model.LockTrainingNodesDto) error {
-	command := broker.NewLockNodesForTrainingCommand(nodes.NodeIds)
+func (e Executor) PreassignTask(taskId uint64, nodeIds []string) error {
+	command := broker.NewLockNodesForTrainingCommand(nodeIds)
 	err := e.broker.QueueMessage(command)
 	if err != nil {
 		return err
@@ -45,7 +44,7 @@ func (e Executor) PreassignTask(nodes model.LockTrainingNodesDto) error {
 	success := <-command.Response
 
 	if success {
-		e.tasks[nodes.TrainingTaskId] = struct{}{}
+		e.tasks[taskId] = struct{}{}
 		return nil
 	} else {
 		return errors.New("failed to lock nodes")
