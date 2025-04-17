@@ -86,28 +86,28 @@ func (el *EventListener) Start(ctx context.Context) {
 
 	go el.startSyncStatusChecker()
 
-	eventChan := make(chan *chainevents.JSONRPCResponse, 10000)
-	defer close(eventChan)
-	el.processEvents(ctx, eventChan)
+	mainEventQueue := NewUnboundedQueue[*chainevents.JSONRPCResponse]()
+	defer mainEventQueue.Close()
+	el.processEvents(ctx, mainEventQueue)
 
-	blockEventChan := make(chan *chainevents.JSONRPCResponse, 100)
-	defer close(blockEventChan)
-	el.processBlockEvents(ctx, blockEventChan)
+	blockEventQueue := NewUnboundedQueue[*chainevents.JSONRPCResponse]()
+	defer blockEventQueue.Close()
+	el.processBlockEvents(ctx, blockEventQueue)
 
-	el.listen(ctx, blockEventChan, eventChan)
+	el.listen(ctx, blockEventQueue, mainEventQueue)
 }
 
 func worker(
 	ctx context.Context,
-	eventChan chan *chainevents.JSONRPCResponse,
-	processEvent func(event *chainevents.JSONRPCResponse),
+	eventQueue *UnboundedQueue[*chainevents.JSONRPCResponse],
+	processEvent func(event *chainevents.JSONRPCResponse, workerName string),
 	workerName string) {
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case event, ok := <-eventChan:
+			case event, ok := <-eventQueue.Out:
 				if !ok {
 					logging.Warn(workerName+": event channel is closed", types.System)
 					return
@@ -115,28 +115,28 @@ func worker(
 				if event == nil {
 					logging.Error(workerName+": received nil chain event", types.System)
 				} else {
-					processEvent(event)
+					processEvent(event, workerName)
 				}
 			}
 		}
 	}()
 }
 
-func (el *EventListener) processEvents(ctx context.Context, eventChan chan *chainevents.JSONRPCResponse) {
+func (el *EventListener) processEvents(ctx context.Context, mainQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	const numWorkers = 10
 	for i := 0; i < numWorkers; i++ {
-		worker(ctx, eventChan, el.processEvent, "process_events_"+strconv.Itoa(i))
+		worker(ctx, mainQueue, el.processEvent, "process_events_"+strconv.Itoa(i))
 	}
 }
 
-func (el *EventListener) processBlockEvents(ctx context.Context, blockEventChan chan *chainevents.JSONRPCResponse) {
+func (el *EventListener) processBlockEvents(ctx context.Context, blockQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	const numWorkers = 2
 	for i := 0; i < numWorkers; i++ {
-		worker(ctx, blockEventChan, el.processEvent, "process_block_events")
+		worker(ctx, blockQueue, el.processEvent, "process_block_events")
 	}
 }
 
-func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan chan *chainevents.JSONRPCResponse) {
+func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *UnboundedQueue[*chainevents.JSONRPCResponse]) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,12 +175,17 @@ func (el *EventListener) listen(ctx context.Context, blockEventChan, eventChan c
 
 			if event.Result.Data.Type == newBlockEventType {
 				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
-				blockEventChan <- &event
+				blockQueue.In <- &event
 				continue
 			}
 
 			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
-			eventChan <- &event
+			select {
+			case mainQueue.In <- &event:
+				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+			default:
+				logging.Warn("Event channel full, dropping event", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+			}
 		}
 	}
 }
@@ -212,23 +217,23 @@ func (el *EventListener) updateNodeSyncStatus(status bool) {
 }
 
 // processEvent is the worker function that processes a JSONRPCResponse event.
-func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse) {
+func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, workerName string) {
 	switch event.Result.Data.Type {
 	case newBlockEventType:
-		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type)
+		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		if el.isNodeSynced() {
 			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
-		el.handleMessage(event)
+		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
 	}
 }
 
-func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
-	if waitForEventHeight(event, el.configManager) {
+func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
+	if waitForEventHeight(event, el.configManager, name) {
 		return
 	}
 
@@ -241,7 +246,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	}
 
 	action := actions[0]
-	logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action)
+	logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
@@ -285,7 +290,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse) {
 	}
 }
 
-func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.ConfigManager) bool {
+func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apiconfig.ConfigManager, name string) bool {
 	heightString := event.Result.Events["tx.height"][0]
 	expectedHeight, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
@@ -293,7 +298,7 @@ func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apico
 		return true
 	}
 	for currentConfig.GetHeight() < expectedHeight {
-		logging.Info("Height race condition! Waiting for height to catch up", types.EventProcessing, "currentHeight", currentConfig.GetHeight(), "expectedHeight", expectedHeight, "id", event.ID)
+		logging.Info("Height race condition! Waiting for height to catch up", types.EventProcessing, "currentHeight", currentConfig.GetHeight(), "expectedHeight", expectedHeight, "worker", name)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
