@@ -217,6 +217,27 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod:      "QueuedTrainingTasks",
+					Use:            "queued-training-tasks",
+					Short:          "Query queued-training-tasks",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "TrainingTaskAll",
+					Use:            "training-task-all",
+					Short:          "Query training-task-all",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
+					RpcMethod:      "InProgressTrainingTasks",
+					Use:            "in-progress-training-tasks",
+					Short:          "Query in-progress-training-tasks",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+
+				{
 					RpcMethod: "PartialUpgradeAll",
 					Use:       "list-partial-upgrade",
 					Short:     "List all partial_upgrade",
@@ -320,6 +341,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod:      "SubmitHardwareDiff",
 					Use:            "submit-hardware-diff",
 					Short:          "Send a SubmitHardwareDiff tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "ClaimTrainingTaskForAssignment",
+					Use:            "claim-training-task-for-assignment",
+					Short:          "Send a claim-training-task-for-assignment tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "AssignTrainingTask",
+					Use:            "assign-training-task",
+					Short:          "Send a assign-training-task tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{

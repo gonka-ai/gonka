@@ -60,6 +60,6 @@ ENV API_CONFIG_PATH=/root/api-config.yaml
 
 RUN chmod +x /root/init-docker.sh
 
-EXPOSE 8080
+EXPOSE 9000
 
 CMD ["sh", "./init-docker.sh"]

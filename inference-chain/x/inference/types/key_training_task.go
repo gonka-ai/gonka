@@ -17,6 +17,10 @@ const (
 	InProgressTrainingTaskKeyPrefix = "TrainingTask/inProgress/value/"
 )
 
+func TrainingTaskKey(taskId uint64) []byte {
+	return StringKey(strconv.FormatUint(taskId, 10))
+}
+
 func TrainingTaskFullKey(taskId uint64) []byte {
 	key := TrainingTaskKeyPrefix + strconv.FormatUint(taskId, 10)
 	return StringKey(key)

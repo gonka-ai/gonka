@@ -7,10 +7,14 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
-	"decentralized-api/internal/server"
+	adminserver "decentralized-api/internal/server/admin"
+	mlserver "decentralized-api/internal/server/mlnode"
+	pserver "decentralized-api/internal/server/public"
+
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
 	"decentralized-api/participant_registration"
+	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
@@ -58,7 +62,7 @@ func main() {
 	nodeBroker := broker.NewBroker(recorder)
 	nodes := config.GetNodes()
 	for _, node := range nodes {
-		server.LoadNodeToBroker(nodeBroker, &node)
+		nodeBroker.LoadNodeToBroker(&node)
 	}
 
 	params, err := getParams(context.Background(), *recorder)
@@ -99,12 +103,36 @@ func main() {
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
+	tendermintClient := cosmosclient.TendermintClient{
+		ChainNodeUrl: config.GetChainNodeConfig().Url,
+	}
+	// FIXME: What context to pass?
+	ctx := context.Background()
+	training.NewAssigner(recorder, &tendermintClient, ctx)
+	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
+
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 
-	s := server.NewServer(nodeBroker, config, validator, recorder)
-	s.Start()
+	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
+	logging.Info("start public server on addr", types.Server, "addr", addr)
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor)
+	publicServer.Start(addr)
+
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
+	logging.Info("start ml server on addr", types.Server, "addr", addr)
+	mlServer := mlserver.NewServer(recorder)
+	mlServer.Start(addr)
+
+	addr = fmt.Sprintf(":%v", config.GetApiConfig().AdminServerPort)
+	logging.Info("start admin server on addr", types.Server, "addr", addr)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
+	adminServer.Start(addr)
+
+	<-ctx.Done()
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {

@@ -54,6 +54,12 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgSubmitHardwareDiff{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgClaimTrainingTaskForAssignment{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgAssignTrainingTask{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgCreatePartialUpgrade{},
 	)
 	// this line is used by starport scaffolding # 3
