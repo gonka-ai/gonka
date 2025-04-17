@@ -12,10 +12,11 @@ type UnboundedQueue[T any] struct {
 	Out <-chan T // Receive-only channel for consumers
 
 	// Private implementation details
-	input  chan T
-	output chan T
-	done   chan struct{}
-	wg     sync.WaitGroup
+	input     chan T
+	output    chan T
+	done      chan struct{}
+	wg        sync.WaitGroup
+	closeOnce sync.Once // Ensures Close is only executed once
 }
 
 // NewUnboundedQueue creates a new unbounded queue that exposes channels
@@ -82,11 +83,11 @@ func (q *UnboundedQueue[T]) Size() int {
 }
 
 // Close shuts down the queue and waits for the manager to exit
+// This method is idempotent and can be safely called multiple times
 func (q *UnboundedQueue[T]) Close() {
-	defer func() {
-		_ = recover() // Ignore panic from closing already closed channels
-	}()
-	close(q.done)
-	close(q.input) // Stop accepting new items
-	q.wg.Wait()    // Wait for the manager to finish
+	q.closeOnce.Do(func() {
+		close(q.done)
+		close(q.input) // Stop accepting new items
+		q.wg.Wait()    // Wait for the manager to finish
+	})
 }

@@ -341,9 +341,18 @@ func TestEmptyQueueBehavior(t *testing.T) {
 	}
 }
 
+func TestCloseQueueTwice(t *testing.T) {
+	q := NewUnboundedQueue[int]()
+
+	// Close the queue twice
+	q.Close()
+	q.Close()
+
+	// No panic should occur
+}
+
 func TestQueueMemoryManagement(t *testing.T) {
 	q := NewUnboundedQueue[int]()
-	defer q.Close()
 
 	const (
 		producerCount    = 4
