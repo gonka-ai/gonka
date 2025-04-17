@@ -19,7 +19,7 @@ public data class Pubkey2(
 
 class Pubkey2Deserializer : JsonDeserializer<Pubkey2> {
     override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): Pubkey2 {
-        val jsonObject = JsonParser.parseString(json.asString).asJsonObject
+        val jsonObject = json as? JsonObject ?: JsonParser.parseString(json.asString).asJsonObject
         val type = jsonObject.get("@type").asString
         val key = jsonObject.get("key").asString
         return Pubkey2(type, key)
