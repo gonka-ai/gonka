@@ -6,12 +6,14 @@ import com.productscience.getInferenceResult
 import com.productscience.inferenceRequest
 import com.productscience.initCluster
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
@@ -21,7 +23,7 @@ class ValidationTests : TestermintTest() {
         val (_, genesis) = initCluster()
         genesis.waitForFirstValidators()
 
-        val statuses = runParallelInferences(genesis, 100)
+        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
         Logger.info("Statuses: $statuses")
 
         // Some will be validated, some will not.
@@ -115,15 +117,19 @@ class ValidationTests : TestermintTest() {
     }
 }
 
+
 fun runParallelInferences(
     genesis: LocalInferencePair,
     count: Int,
     waitForBlocks: Int = 20,
+    maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
 ): List<Int> = runBlocking {
     // Launch coroutines with async and collect the deferred results
+
+    val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
     val requests = List(count) { i ->
-        async(Dispatchers.Default) { // specify a dispatcher for parallelism
-            Logger.warn("Starting request $i")
+        async(limitedDispatcher) {
+        Logger.warn("Starting request $i")
             genesis.makeInferenceRequest(inferenceRequest)
         }
     }
