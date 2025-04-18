@@ -44,3 +44,7 @@ func InProgressTrainingTaskFullKey(taskId uint64) []byte {
 func TrainingTaskKVRecordKey(taskId uint64, participant string, key string) []byte {
 	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s/%s/value", taskId, participant, key))
 }
+
+func TrainingTaskKVParticipantRecordsKey(taskId uint64, participant string) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s", taskId, participant))
+}

@@ -16,8 +16,17 @@ func (k Keeper) ListTrainingKvRecordKeys(goCtx context.Context, req *types.Query
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	response, err := k.ListTrainingKVRecords(ctx, req.TaskId, req.Participant)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
-	return &types.QueryListTrainingKvRecordKeysResponse{}, nil
+	keys := make([]string, len(response))
+	for i, record := range response {
+		keys[i] = record.Key
+	}
+
+	return &types.QueryListTrainingKvRecordKeysResponse{
+		Keys: keys,
+	}, nil
 }
