@@ -191,6 +191,14 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "params"))
     }
 
+    fun getValidators(): ValidatorsResponse = wrapLog("getValidators", false) {
+        execAndParse(listOf("query", "staking", "validators"))
+    }
+
+    fun getCometValidators(): CometValidatorsResponse = wrapLog("getCometValidators", false) {
+        execAndParse(listOf("query", "comet-validator-set"))
+    }
+
     data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
 
     fun getTokenomics(): TokenomicsWrapper = wrapLog("getTokenomics", false) {
@@ -336,6 +344,18 @@ data class ApplicationCLI(
             }
         }
         error("Transaction not processed after $maxWait attempts")
+    }
+
+    fun getValidatorAddress():String {
+        return exec(listOf(config.execName, "comet", "show-address"))[0]
+    }
+
+    fun getValidatorInfo(): Pubkey2 = wrapLog("getValidatorInfo", infoLevel = false) {
+        execAndParse(listOf("comet", "show-validator"), includeOutputFlag = false)
+    }
+
+    fun getGovernanceProposals(): GovernanceProposals = wrapLog("getGovernanceProposals", infoLevel = false) {
+        execAndParse(listOf("query", "gov", "proposals"))
     }
 
 }

@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/shopspring/decimal"
 )
@@ -86,6 +87,54 @@ func validateEpochParams(i interface{}) error {
 
 // Validate validates the set of params
 func (p Params) Validate() error {
+	if p.EpochParams == nil {
+		return fmt.Errorf("epoch params cannot be nil")
+	}
+	if p.ValidationParams == nil {
+		return fmt.Errorf("validation params cannot be nil")
+	}
+	if p.PocParams == nil {
+		return fmt.Errorf("poc params cannot be nil")
+	}
+	if p.TokenomicsParams == nil {
+		return fmt.Errorf("tokenomics params cannot be nil")
+	}
+
+	if p.ValidationParams.FalsePositiveRate == nil {
+		return fmt.Errorf("false positive rate cannot be nil")
+	}
+	if p.ValidationParams.PassValue == nil {
+		return fmt.Errorf("pass value cannot be nil")
+	}
+	if p.ValidationParams.MinValidationAverage == nil {
+		return fmt.Errorf("min validation average cannot be nil")
+	}
+	if p.ValidationParams.MaxValidationAverage == nil {
+		return fmt.Errorf("max validation average cannot be nil")
+	}
+	if p.ValidationParams.MinValidationHalfway == nil {
+		return fmt.Errorf("min validation halfway cannot be nil")
+	}
+	if p.ValidationParams.MissPercentageCutoff == nil {
+		return fmt.Errorf("miss percentage cutoff cannot be nil")
+	}
+	if p.ValidationParams.MissRequestsPenalty == nil {
+		return fmt.Errorf("miss requests penalty cannot be nil")
+	}
+
+	if p.TokenomicsParams.SubsidyReductionInterval == nil {
+		return fmt.Errorf("subsidy reduction interval cannot be nil")
+	}
+	if p.TokenomicsParams.SubsidyReductionAmount == nil {
+		return fmt.Errorf("subsidy reduction amount cannot be nil")
+	}
+	if p.TokenomicsParams.CurrentSubsidyPercentage == nil {
+		return fmt.Errorf("current subsidy percentage cannot be nil")
+	}
+	if p.TokenomicsParams.TopRewardAllowedFailure == nil {
+		return fmt.Errorf("top reward allowed failure cannot be nil")
+	}
+
 	return nil
 }
 

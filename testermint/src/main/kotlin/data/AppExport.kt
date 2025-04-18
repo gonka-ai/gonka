@@ -63,6 +63,8 @@ data class TokenomicsParams(
     val subsidyReductionInterval: Decimal,
     val subsidyReductionAmount: Decimal,
     val currentSubsidyPercentage: Decimal,
+    val topRewardAllowedFailure: Decimal,
+    val topMinerPocQualification: Long,
 )
 
 data class EpochParams(
@@ -116,6 +118,7 @@ data class ValidationParams(
     val minValidationHalfway: Decimal,
     val minValidationTrafficCutoff: Long,
     val missPercentageCutoff: Decimal,
+    val missRequestsPenalty: Decimal,
 )
 
 data class PocParams(
