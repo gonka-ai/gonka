@@ -255,6 +255,13 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}, {ProtoField: "key"}},
 				},
 
+				{
+					RpcMethod:      "ListTrainingKvRecordKeys",
+					Use:            "list-training-kv-record-keys [task-id] [participant]",
+					Short:          "Query list-training-kv-record-keys",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

@@ -7,6 +7,8 @@ import (
 	networknodev1 "github.com/product-science/chain-protos/go/network_node/v1"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Server struct {
@@ -14,6 +16,19 @@ type Server struct {
 	cosmosClient cosmosclient.CosmosMessageClient
 }
 
+/*
+	grpcurl -plaintext \
+	  -protoset network_node.pb \
+	  -d '{"record":{"key":"foo","value":"bar"}}' \
+	  localhost:9003 \
+	  network_node.v1.NetworkNodeService/SetStoreRecord
+
+	grpcurl -plaintext \
+	  -protoset network_node.pb \
+	  -d '{"key":"some‑key"}' \
+	  localhost:9003 \
+	  network_node.v1.NetworkNodeService/GetStoreRecord
+*/
 func NewServer(cosmosClient cosmosclient.CosmosMessageClient) *Server {
 	return &Server{
 		cosmosClient: cosmosClient,
@@ -84,4 +99,42 @@ func (s *Server) GetStoreRecord(ctx context.Context, req *networknodev1.GetStore
 			Value: resp.Record.Value,
 		},
 	}, nil
+}
+
+func (s *Server) ListStoreKeys(ctx context.Context, req *networknodev1.StoreListKeysRequest) (*networknodev1.StoreListKeysResponse, error) {
+	logging.Info("ListStoreKeys called", types.Training, "key")
+
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
+
+	resp, err := queryClient.ListTrainingKvRecordKeys(ctx, &types.QueryListTrainingKvRecordKeysRequest{
+		TaskId:      999, // PRTODO: add task id to request
+		Participant: s.cosmosClient.GetAddress(),
+	})
+	if err != nil {
+		logging.Error("Failed to get training kv record keys", types.Training, "error", err)
+		return nil, err
+	}
+
+	return &networknodev1.StoreListKeysResponse{
+		Keys: resp.Keys,
+	}, nil
+}
+
+func (s *Server) JoinTraining(context.Context, *networknodev1.JoinTrainingRequest) (*networknodev1.MLNodeTrainStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
+}
+func (s *Server) GetJoinTrainingStatus(context.Context, *networknodev1.JoinTrainingRequest) (*networknodev1.MLNodeTrainStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
+}
+func (s *Server) SendHeartbeat(context.Context, *networknodev1.HeartbeatRequest) (*networknodev1.HeartbeatResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
+}
+func (s *Server) GetAliveNodes(context.Context, *networknodev1.GetAliveNodesRequest) (*networknodev1.GetAliveNodesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
+}
+func (s *Server) SetBarrier(context.Context, *networknodev1.SetBarrierRequest) (*networknodev1.SetBarrierResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
+}
+func (s *Server) GetBarrierStatus(context.Context, *networknodev1.GetBarrierStatusRequest) (*networknodev1.GetBarrierStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBarrierStatus not implemented")
 }

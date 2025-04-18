@@ -250,6 +250,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{participant}/{key}";
   
   }
+  
+  // Queries a list of ListTrainingKvRecordKeys items.
+  rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}/{participant}";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -593,5 +599,14 @@ message QueryTrainingKvRecordRequest {
 
 message QueryTrainingKvRecordResponse {
   TrainingTaskKVRecord record = 1;
+}
+
+message QueryListTrainingKvRecordKeysRequest {
+  uint64 taskId      = 1;
+  string participant = 2;
+}
+
+message QueryListTrainingKvRecordKeysResponse {
+  repeated string keys = 1;
 }
 
