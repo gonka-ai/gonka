@@ -39,6 +39,7 @@ service Msg {
   rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
   rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
   rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
+  rpc JoinTraining                     (MsgJoinTraining                    ) returns (MsgJoinTrainingResponse                    );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -269,4 +270,11 @@ message MsgSubmitTrainingKvRecord {
 }
 
 message MsgSubmitTrainingKvRecordResponse {}
+
+message MsgJoinTraining {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+}
+
+message MsgJoinTrainingResponse {}
 

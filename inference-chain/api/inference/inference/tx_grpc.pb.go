@@ -39,6 +39,7 @@ const (
 	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
 	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
 	Msg_SubmitTrainingKvRecord_FullMethodName           = "/inference.inference.Msg/SubmitTrainingKvRecord"
+	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
 )
 
 // MsgClient is the client API for Msg service.
@@ -67,6 +68,7 @@ type MsgClient interface {
 	ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 	AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error)
 	SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error)
+	JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error)
 }
 
 type msgClient struct {
@@ -257,6 +259,15 @@ func (c *msgClient) SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTra
 	return out, nil
 }
 
+func (c *msgClient) JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error) {
+	out := new(MsgJoinTrainingResponse)
+	err := c.cc.Invoke(ctx, Msg_JoinTraining_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -283,6 +294,7 @@ type MsgServer interface {
 	ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 	AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error)
 	SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error)
+	JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -349,6 +361,9 @@ func (UnimplementedMsgServer) AssignTrainingTask(context.Context, *MsgAssignTrai
 }
 func (UnimplementedMsgServer) SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitTrainingKvRecord not implemented")
+}
+func (UnimplementedMsgServer) JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -723,6 +738,24 @@ func _Msg_SubmitTrainingKvRecord_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_JoinTraining_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgJoinTraining)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).JoinTraining(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_JoinTraining_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).JoinTraining(ctx, req.(*MsgJoinTraining))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -809,6 +842,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitTrainingKvRecord",
 			Handler:    _Msg_SubmitTrainingKvRecord_Handler,
+		},
+		{
+			MethodName: "JoinTraining",
+			Handler:    _Msg_JoinTraining_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
