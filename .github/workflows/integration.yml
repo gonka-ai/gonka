@@ -38,7 +38,7 @@ jobs:
         run: sudo make build-docker
 
       - name: Run Tests
-        run: sudo make run-sanity
+        run: sudo make run-tests
 
       - name: Archive Test Logs
         if: always()
