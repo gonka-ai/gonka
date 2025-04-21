@@ -42,7 +42,7 @@ type RunMembershipService interface {
 	RerankIfSomeNodesLeft(ctx context.Context, epoch int) error
 }
 
-type RunMembership struct {
+type RunManager struct {
 	mu               sync.Mutex
 	runId            string
 	store            TrainingRunStore
@@ -52,13 +52,13 @@ type RunMembership struct {
 	heartbeatTimeout time.Duration
 }
 
-func NewRunMembership(
+func NewRunManager(
 	runId string,
 	store TrainingRunStore,
 	minNodes, maxNodes int,
 	joinTimeout, heartbeatTimeout time.Duration,
-) *RunMembership {
-	return &RunMembership{
+) *RunManager {
+	return &RunManager{
 		runId:            runId,
 		store:            store,
 		minNodes:         minNodes,
@@ -68,7 +68,7 @@ func NewRunMembership(
 	}
 }
 
-func (rm *RunMembership) Join(ctx context.Context, nodeID string, epoch int) error {
+func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -109,7 +109,7 @@ func (rm *RunMembership) Join(ctx context.Context, nodeID string, epoch int) err
 	if es == nil {
 		es = &EpochState{Records: make(map[string]*MembershipRecord)}
 	}
-	es.Records[nodeID] = &MembershipRecord{
+	es.Records[nodeId] = &MembershipRecord{
 		LastHeartbeat: time.Now(),
 		Rank:          -1,
 	}
@@ -121,7 +121,7 @@ func (rm *RunMembership) Join(ctx context.Context, nodeID string, epoch int) err
 	return rm.finishIfNeededNoLock(ctx)
 }
 
-func (rm *RunMembership) Heartbeat(ctx context.Context, nodeID string, epoch int) error {
+func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -142,7 +142,7 @@ func (rm *RunMembership) Heartbeat(ctx context.Context, nodeID string, epoch int
 }
 
 // GetEpochActiveNodes returns all nodes with heartbeat within heartbeatTimeout.
-func (rm *RunMembership) GetEpochActiveNodes(ctx context.Context, epoch int) ([]string, error) {
+func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int) ([]string, error) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -162,7 +162,7 @@ func (rm *RunMembership) GetEpochActiveNodes(ctx context.Context, epoch int) ([]
 }
 
 // AssignRank assigns ranks 0..N-1 to all active nodes in the current epoch.
-func (rm *RunMembership) AssignRank(ctx context.Context) error {
+func (rm *RunManager) AssignRank(ctx context.Context) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -198,7 +198,7 @@ func (rm *RunMembership) AssignRank(ctx context.Context) error {
 }
 
 // FinishIfNeeded is the exported version of finishIfNeededNoLock.
-func (rm *RunMembership) FinishIfNeeded(ctx context.Context) error {
+func (rm *RunManager) FinishIfNeeded(ctx context.Context) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	return rm.finishIfNeededNoLock(ctx)
@@ -206,7 +206,7 @@ func (rm *RunMembership) FinishIfNeeded(ctx context.Context) error {
 
 // finishIfNeededNoLock checks join/timeout conditions and assigns rank if ready.
 // **Caller must hold rm.mu.**
-func (rm *RunMembership) finishIfNeededNoLock(ctx context.Context) error {
+func (rm *RunManager) finishIfNeededNoLock(ctx context.Context) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
@@ -230,7 +230,7 @@ func (rm *RunMembership) finishIfNeededNoLock(ctx context.Context) error {
 }
 
 // RerankIfSomeNodesLeft is now exported.
-func (rm *RunMembership) RerankIfSomeNodesLeft(ctx context.Context, epoch int) error {
+func (rm *RunManager) RerankIfSomeNodesLeft(ctx context.Context, epoch int) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	return rm.rerankIfSomeNodesLeftNoLock(ctx, epoch)
@@ -238,7 +238,7 @@ func (rm *RunMembership) RerankIfSomeNodesLeft(ctx context.Context, epoch int) e
 
 // rerankIfSomeNodesLeftNoLock handles re‑ranking when nodes drop out.
 // **Caller must hold rm.mu.**
-func (rm *RunMembership) rerankIfSomeNodesLeftNoLock(ctx context.Context, epoch int) error {
+func (rm *RunManager) rerankIfSomeNodesLeftNoLock(ctx context.Context, epoch int) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err

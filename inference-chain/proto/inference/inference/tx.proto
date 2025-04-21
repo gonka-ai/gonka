@@ -274,6 +274,9 @@ message MsgSubmitTrainingKvRecordResponse {}
 message MsgJoinTraining {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
+  string node_id = 2;
+  string run_id = 3;
+  int32 epoch = 4;
 }
 
 message MsgJoinTrainingResponse {}
