@@ -87,6 +87,7 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) *SettleParameters {
 }
 
 func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) error {
+	k.LogInfo("SettleAccounts", types.Settle, "pocBlockHeight", pocBlockHeight)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	participants, err := k.ParticipantAll(ctx, &types.QueryAllParticipantRequest{})
@@ -113,7 +114,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		k.LogError("Error getting settle amounts", types.Settle, "error", err)
 		return err
 	}
-	err = k.MintRewardCoins(ctx, subsidyResult.Amount)
+	err = k.MintRewardCoins(ctx, subsidyResult.Amount, "subsidy")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
 		return err
@@ -146,8 +147,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 			continue
 		}
 		participant.EpochsCompleted += 1
+		k.LogBalance(participant.Address, 0-participant.CoinBalance, 0, "paid")
 		participant.CoinBalance = 0
-		k.LogInfo("Participant CoinBalance reset", types.Payments, "address", participant.Address)
+		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
 		k.SetEpochPerformanceSummary(ctx,
 			types.EpochPerformanceSummary{
 				EpochStartHeight:      pocBlockHeight,
@@ -166,7 +168,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
 		if found {
 			// No claim, burn it!
-			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()))
+			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()), "no_claim:"+amount.Settle.Participant)
 			if err != nil {
 				k.LogError("Error burning coins", types.Settle, "error", err)
 			}

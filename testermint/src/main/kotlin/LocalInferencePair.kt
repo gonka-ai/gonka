@@ -6,14 +6,7 @@ import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.data.AppState
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.PubKey
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Instant
@@ -50,8 +43,8 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 
         val apiUrls = mapOf(
             SERVER_TYPE_PUBLIC to "http://${portMap[9000]?.ip}:${portMap[9000]?.publicPort}",
-            SERVER_TYPE_ML     to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
-            SERVER_TYPE_ADMIN  to "http://${portMap[9200]?.ip}:${portMap[9200]?.publicPort}"
+            SERVER_TYPE_ML to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
+            SERVER_TYPE_ADMIN to "http://${portMap[9200]?.ip}:${portMap[9200]?.publicPort}"
         )
 
         Logger.info("Creating local inference pair for $name")
@@ -138,7 +131,7 @@ data class LocalInferencePair(
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null
-): HasConfig {
+) : HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
         val validatorInfo = status.validatorInfo
@@ -170,8 +163,15 @@ data class LocalInferencePair(
         return node.getStatus().syncInfo.latestBlockHeight
     }
 
-    fun waitForNextSettle() {
-        this.node.waitForMinimumBlock(getNextSettleBlock())
+    fun changePoc(newPoc: Long) {
+        this.mock?.setPocResponse(newPoc)
+        this.waitForStage(EpochStage.START_OF_POC)
+        // CometBFT validators have a 1 block delay
+        this.waitForStage(EpochStage.START_OF_POC, 2)
+    }
+    fun waitForStage(stage: EpochStage, offset: Int = 1) {
+        this.node.waitForMinimumBlock(getNextStage(stage) + offset,
+            "stage $stage" + if (offset > 0) "+$offset)" else "")
     }
 
     fun waitForBlock(maxBlocks: Int, condition: (LocalInferencePair) -> Boolean) {
@@ -189,18 +189,17 @@ data class LocalInferencePair(
         error("Block $targetBlock reached without condition passing")
     }
 
-    fun getNextSettleBlock(): Long {
+    fun getNextStage(stage: EpochStage): Long {
         if (this.mostRecentParams == null) {
             this.getParams()
         }
         val epochParams = this.mostRecentParams?.epochParams!!
         val currentHeight = this.getCurrentBlockHeight()
         val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
-        val nextSettle = currentHeight + blocksTillEpoch + epochParams.getSetNewValidatorsStage() + 1
-        return if (nextSettle - epochParams.epochLength > currentHeight)
-            nextSettle - epochParams.epochLength
-        else
-            nextSettle
+        val nextStage = currentHeight + blocksTillEpoch + epochParams.getStage(stage) + 1
+        return if (nextStage - epochParams.epochLength > currentHeight)
+            nextStage - epochParams.epochLength
+        else nextStage
     }
 
     fun waitForFirstBlock() {
@@ -222,9 +221,9 @@ data class LocalInferencePair(
         if (epochParams.epochLength > 500) {
             error("Epoch length is too long for testing")
         }
-        val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
+        val epochFinished = epochParams.epochLength + epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
-        this.node.waitForMinimumBlock(epochFinished)
+        this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
@@ -354,7 +353,7 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName:String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

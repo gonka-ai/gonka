@@ -69,6 +69,14 @@ func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
+func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
+	k.Logger().Info("TransactionAudit", "to", to, "from", from, "amount", amount, "memo", memo)
+}
+
+func (k Keeper) LogBalance(address string, change int64, result int64, memo string) {
+	k.Logger().Info("BalanceAudit", "address", address, "change", change, "result", result, "memo", memo)
+}
+
 func (k Keeper) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	k.Logger().Info(msg, append(keyvals, "subsystem", subSystem.String())...)
 }

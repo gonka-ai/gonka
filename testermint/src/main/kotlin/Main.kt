@@ -157,22 +157,6 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     return highestFunded
 }
 
-private fun fundUnfunded(
-    unfunded: List<LocalInferencePair>,
-    highestFunded: LocalInferencePair,
-) {
-    for (pair in unfunded) {
-        highestFunded.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
-        highestFunded.node.waitForNextBlock()
-    }
-    val fundingHeight = highestFunded.node.getStatus().syncInfo.latestBlockHeight
-
-    unfunded.forEach {
-        it.node.waitForMinimumBlock(fundingHeight + 1L)
-        it.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
-    }
-}
-
 private fun addUnfundedDirectly(
     unfunded: List<LocalInferencePair>,
     currentParticipants: List<Participant>,

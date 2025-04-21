@@ -119,16 +119,17 @@ data class ApplicationCLI(
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long) {
+    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
         wrapLog("waitForMinimumBlock", false) {
-            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight }, "block height $minBlockHeight")
+            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight },
+                "$waitingFor:block height $minBlockHeight")
         }
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
         wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
-            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
+            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait, "$blocksToWait blocks")
         }
     }
 

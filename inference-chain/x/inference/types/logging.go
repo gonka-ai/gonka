@@ -22,6 +22,7 @@ const (
 	Server          = 16
 	Training        = 17
 	Stages          = 18
+	Balances        = 19
 )
 
 func (s SubSystem) String() string {
@@ -62,6 +63,8 @@ func (s SubSystem) String() string {
 		return "Server"
 	case Stages:
 		return "Stages"
+	case Balances:
+		return "Balances"
 	default:
 		return "Unknown"
 	}

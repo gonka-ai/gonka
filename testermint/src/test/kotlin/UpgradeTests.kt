@@ -45,13 +45,14 @@ class UpgradeTests : TestermintTest() {
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
-        genesis.node.waitForMinimumBlock(upgradeBlock)
+        genesis.node.waitForMinimumBlock(upgradeBlock, "upgradeBlock")
     }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.MINUTES)
     fun partialUpgrade() {
         val (cluster, genesis) = initCluster(reboot = true)
+        genesis.markNeedsReboot()
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
         val newSegment = "/newVersion"
@@ -91,7 +92,7 @@ class UpgradeTests : TestermintTest() {
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
-        genesis.node.waitForMinimumBlock(effectiveHeight + 10)
+        genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
