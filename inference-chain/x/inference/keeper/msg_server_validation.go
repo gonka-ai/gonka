@@ -89,7 +89,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 				worker.CoinBalance += adjustment.WorkAdjustment
 				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
 				k.LogInfo("Adjusting worker CoinBalance for validation", types.Balances, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
-				k.LogBalance(worker.Address, adjustment.WorkAdjustment, executor.CoinBalance, "share_validation_worker:"+inference.InferenceId)
+				k.LogBalance(worker.Address, adjustment.WorkAdjustment, worker.CoinBalance, "share_validation_worker:"+inference.InferenceId)
 				k.SetParticipant(ctx, worker)
 			}
 		}
