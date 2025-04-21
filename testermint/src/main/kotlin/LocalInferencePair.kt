@@ -2,6 +2,7 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.Container
+import com.github.dockerjava.api.model.ContainerPort
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.LogConfig
 import com.github.dockerjava.api.model.Volume
@@ -42,9 +43,9 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val portMap = apiContainer.ports.associateBy { it.privatePort }
         Logger.info("Container ports: $portMap")
         val apiUrls = mapOf(
-            SERVER_TYPE_PUBLIC to "http://${portMap[9000]?.ip}:${portMap[9000]?.publicPort}",
-            SERVER_TYPE_ML to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
-            SERVER_TYPE_ADMIN to "http://${portMap[9200]?.ip}:${portMap[9200]?.publicPort}"
+            SERVER_TYPE_PUBLIC to getUrlForPrivatePort(portMap, 9000),
+            SERVER_TYPE_ML to getUrlForPrivatePort(portMap, 9100),
+            SERVER_TYPE_ADMIN to getUrlForPrivatePort(portMap, 9200)
         )
 
         Logger.info("Creating local inference pair for $name")
@@ -61,6 +62,11 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
             config
         )
     }
+}
+
+private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 
 private fun Container.getMappedPort(internalPort: Int) =
