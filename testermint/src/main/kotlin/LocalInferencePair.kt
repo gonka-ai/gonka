@@ -26,21 +26,21 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.wireMockImageName }
-    return nodes.mapNotNull {
-        val nameMatch = nameExtractor.find(it.names.first())
+    return nodes.mapNotNull { chainContainer ->
+        val nameMatch = nameExtractor.find(chainContainer.names.first())
         if (nameMatch == null) {
-            Logger.warn("Container does not match expected name format: ${it.names.first()}")
+            Logger.warn("Container does not match expected name format: ${chainContainer.names.first()}")
             return@mapNotNull null
         }
         val name = nameMatch.groupValues[1]
-        val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
-        val matchingMock: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
+        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
+        val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
-        attachDockerLogs(dockerClient, name, "node", it.id)
-        attachDockerLogs(dockerClient, name, "api", matchingApi.id)
+        attachDockerLogs(dockerClient, name, "node", chainContainer.id)
+        attachDockerLogs(dockerClient, name, "api", apiContainer.id)
 
-        val portMap = matchingApi.ports.associateBy { it.privatePort }
-
+        val portMap = apiContainer.ports.associateBy { it.privatePort }
+        Logger.info("Container ports: $portMap")
         val apiUrls = mapOf(
             SERVER_TYPE_PUBLIC to "http://${portMap[9000]?.ip}:${portMap[9000]?.publicPort}",
             SERVER_TYPE_ML to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
@@ -48,15 +48,15 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
 
         Logger.info("Creating local inference pair for $name")
-        Logger.info("API URLs for ${matchingApi.names.first()}:")
+        Logger.info("API URLs for ${apiContainer.names.first()}:")
         Logger.info("  $SERVER_TYPE_PUBLIC: ${apiUrls[SERVER_TYPE_PUBLIC]}")
         Logger.info("  $SERVER_TYPE_ML: ${apiUrls[SERVER_TYPE_ML]}")
         Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
 
         LocalInferencePair(
-            ApplicationCLI(it.id, configWithName),
+            ApplicationCLI(chainContainer.id, configWithName),
             ApplicationAPI(apiUrls, configWithName),
-            matchingMock?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
+            mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name,
             config
         )

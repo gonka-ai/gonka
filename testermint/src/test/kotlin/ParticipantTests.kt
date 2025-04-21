@@ -6,6 +6,7 @@ import com.productscience.data.UpdateParams
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 class ParticipantTests : TestermintTest() {
@@ -65,6 +66,7 @@ class ParticipantTests : TestermintTest() {
     }
 
     @Test
+    @Tag("sanity")
     fun `stage tests`() {
         val (cluster, genesis) = initCluster()
         EpochStage.entries.forEach { stage ->

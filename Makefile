@@ -39,4 +39,7 @@ check-docker:
 run-tests:
 	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
 
+run-sanity:
+	@cd testermint && ./gradlew test --tests "*" -DincludeTags=sanity
+
 test-blockchain: check-docker run-blockchain-tests
