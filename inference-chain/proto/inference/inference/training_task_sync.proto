@@ -9,3 +9,13 @@ message TrainingTaskKVRecord {
   string key = 3;
   string value = 4;
 }
+
+// TODO: rename, it's not really a heartbeat
+message TrainingTaskHeartbeat {
+  uint64 task_id = 1;
+  string participant = 2;
+  string node_id = 3;
+  int32 epoch = 4;
+  int64 block_height = 5;
+  int64 block_time = 6;
+}
