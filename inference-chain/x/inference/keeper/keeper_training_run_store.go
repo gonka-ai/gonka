@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/training"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -31,20 +30,16 @@ func (k *TrainingRunStore) SaveRunState(ctx context.Context, state *types.Traini
 	return nil
 }
 
-func (k *TrainingRunStore) GetEpochState(ctx context.Context, runId uint64, epoch int32) (*training.EpochState, error) {
-	hehe, err := k.keeper.GetTrainingTaskNodeActivityAtEpoch(sdk.UnwrapSDKContext(ctx), runId, epoch)
+func (k *TrainingRunStore) GetEpochState(ctx context.Context, runId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error) {
+	activity, err := k.keeper.GetTrainingTaskNodeActivityAtEpoch(sdk.UnwrapSDKContext(ctx), runId, epoch)
 	if err != nil {
 		return nil, err
 	}
 
-	epochState := &training.EpochState{
-		Epoch:    epoch,
-		Activity: hehe,
-	}
-	return epochState, nil
+	return activity, nil
 }
 
-func (k *TrainingRunStore) SaveEpochState(ctx context.Context, runId uint64, epoch int32, state *training.EpochState) error {
+func (k *TrainingRunStore) SaveEpochState(ctx context.Context, runId uint64, epoch int32, state []*types.TrainingTaskNodeEpochActivity) error {
 	//TODO implement me
 	panic("implement me")
 }

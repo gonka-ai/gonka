@@ -180,6 +180,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	if err != nil {
 		return err
 	}
+	// PRTODO: TODO: do some kind of merge function for existing activity + new activity
 	if es == nil {
 		es = []*types.TrainingTaskNodeEpochActivity{
 			{
@@ -189,6 +190,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 				Epoch:       epoch,
 				BlockHeight: block.height,
 				BlockTime:   block.timestamp.Unix(),
+				Rank:        -1, // FIXME: what's here???
 			},
 		}
 	} else {
