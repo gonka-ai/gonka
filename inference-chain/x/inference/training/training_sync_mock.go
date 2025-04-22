@@ -156,7 +156,7 @@ func (m *MockRunStore) GetParticipantActivity(ctx context.Context, runId uint64,
 	}
 
 	// Mimic keeper behavior: return error if not found
-	return nil, fmt.Errorf("activity not found for runId: %d, epoch: %d, participant: %s, nodeId: %s", runId, epoch, participant, nodeId)
+	return nil, nil
 }
 
 func (m *MockRunStore) SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) {

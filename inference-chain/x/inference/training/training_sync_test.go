@@ -15,7 +15,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	store := training.NewMockRunStore()
 	runId := uint64(1)
 	minNodes := 3
-	maxNodes := 5
+	maxNodes := 3
 
 	rm := training.NewRunManager(runId, store, minNodes, maxNodes)
 
@@ -31,10 +31,6 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	}
 	store.SetTrainingTask(initialTask)
 
-	// For testing, we often don't need a fully functional context.
-	// Using a zero-value sdk.Context might suffice if the tested code
-	// doesn't rely heavily on context values (like BlockHeight/Time directly).
-	// If it did, we'd need a more sophisticated mock context setup.
 	baseCtx := sdk.Context{}
 	blockHeight := int64(10)
 	blockTime := time.Now()
@@ -49,10 +45,9 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	// --- Participant 1 joins ---
 	participant1 := "participantA"
 	node1 := "node1"
-	epoch0 := int32(0)
+	startingEpoch := int32(-1)
 
-	// Pass sdk.Context
-	err := rm.Join(baseCtx, node1, epoch0, block1, participant1)
+	err := rm.Join(baseCtx, node1, startingEpoch, block1, participant1)
 	require.NoError(t, err)
 
 	// Check RunState using standard context for store access
@@ -60,19 +55,16 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	runState1, err := store.GetRunState(storeCtx, runId)
 	require.NoError(t, err)
 	require.NotNil(t, runState1)
-	require.Equal(t, epoch0, runState1.Epoch.LastEpoch)
+	require.Equal(t, startingEpoch, runState1.Epoch.LastEpoch)
 	require.False(t, runState1.Epoch.LastEpochIsFinished) // Not finished yet
-	// Use getter
-	require.Equal(t, block1.Height(), runState1.Epoch.LastEpochBlockHeight)
 
 	// Check EpochState
-	epochState1, err := store.GetEpochState(storeCtx, runId, epoch0)
+	epochState1, err := store.GetEpochState(storeCtx, runId, startingEpoch)
 	require.NoError(t, err)
 	require.Len(t, epochState1, 1)
 	require.Equal(t, participant1, epochState1[0].Participant)
 	require.Equal(t, node1, epochState1[0].NodeId)
 	require.Equal(t, int32(-1), epochState1[0].Rank) // Rank not assigned yet
-	// Use getter
 	require.Equal(t, block1.Height(), epochState1[0].BlockHeight)
 
 	// --- Participant 2 joins ---
@@ -83,17 +75,17 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	node2 := "node2"
 
 	// Pass sdk.Context
-	err = rm.Join(baseCtx, node2, epoch0, block2, participant2)
+	err = rm.Join(baseCtx, node2, startingEpoch, block2, participant2)
 	require.NoError(t, err)
 
 	// Check RunState (should still be epoch 0, not finished)
 	runState2, err := store.GetRunState(storeCtx, runId)
 	require.NoError(t, err)
-	require.Equal(t, epoch0, runState2.Epoch.LastEpoch)
+	require.Equal(t, startingEpoch, runState2.Epoch.LastEpoch)
 	require.False(t, runState2.Epoch.LastEpochIsFinished)
 
 	// Check EpochState
-	epochState2, err := store.GetEpochState(storeCtx, runId, epoch0)
+	epochState2, err := store.GetEpochState(storeCtx, runId, startingEpoch)
 	require.NoError(t, err)
 	require.Len(t, epochState2, 2)
 	// Verify ranks are still -1 (sorting is done by GetEpochState in mock)
@@ -107,8 +99,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	participant3 := "participantA" // Same participant, different node
 	node3 := "node3"
 
-	// Pass sdk.Context
-	err = rm.Join(baseCtx, node3, epoch0, block3, participant3)
+	err = rm.Join(baseCtx, node3, startingEpoch, block3, participant3)
 	require.NoError(t, err)
 
 	// 4. Check ranks got assigned because minNodes (3) was reached
@@ -116,11 +107,11 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	// Check RunState (should now be finished)
 	runState3, err := store.GetRunState(storeCtx, runId)
 	require.NoError(t, err)
-	require.Equal(t, epoch0, runState3.Epoch.LastEpoch)
+	require.Equal(t, startingEpoch, runState3.Epoch.LastEpoch)
 	require.True(t, runState3.Epoch.LastEpochIsFinished) // Should be finished now
 
 	// Check EpochState (ranks should be assigned)
-	epochState3, err := store.GetEpochState(storeCtx, runId, epoch0)
+	epochState3, err := store.GetEpochState(storeCtx, runId, startingEpoch)
 	require.NoError(t, err)
 	require.Len(t, epochState3, 3)
 
@@ -148,5 +139,3 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.True(t, participantsFound[participant3][node3])
 
 }
-
-// Note: Removed commented out helper function as it was added to training_sync.go

@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -45,10 +44,7 @@ func (k *TrainingRunStore) SaveEpochState(ctx context.Context, runId uint64, epo
 }
 
 func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error) {
-	activity, found := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
-	if !found {
-		return nil, fmt.Errorf("activity not found for runId: %d, epoch: %d, participant: %s, nodeId: %s", runId, epoch, participant, nodeId)
-	}
+	activity, _ := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
 	return activity, nil
 }
 

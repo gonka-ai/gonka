@@ -170,7 +170,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	}
 
 	lastEpoch := rs.Epoch.LastEpoch
-	if epoch < 0 {
+	if epoch < -1 {
 		return fmt.Errorf("bad request. invalid epoch %d", epoch)
 	}
 	if epoch < lastEpoch {
@@ -192,30 +192,27 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 		}
 	}
 
-	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
+	activity, err := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
 	if err != nil {
 		return err
 	}
 	// PRTODO: TODO: do some kind of merge function for existing activity + new activity
-	if es == nil {
-		es = []*types.TrainingTaskNodeEpochActivity{
-			{
-				TaskId:      rm.runId,
-				Participant: participant,
-				NodeId:      nodeId,
-				Epoch:       epoch,
-				BlockHeight: block.height,
-				BlockTime:   block.timestamp.Unix(),
-				Rank:        -1, // FIXME: what's here???
-			},
+	if activity == nil {
+		activity = &types.TrainingTaskNodeEpochActivity{
+			TaskId:      rm.runId,
+			Participant: participant,
+			NodeId:      nodeId,
+			Epoch:       epoch,
+			BlockHeight: block.height,
+			BlockTime:   block.timestamp.Unix(),
+			Rank:        -1, // FIXME: what's here???
 		}
 	} else {
-		// TODO: modify existing of smth
+		activity.BlockTime = block.timestamp.Unix()
+		activity.BlockHeight = block.height
 	}
 
-	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es); err != nil {
-		return err
-	}
+	rm.store.SaveParticipantActivity(ctx, activity)
 
 	return rm.FinishIfNeeded(ctx, block)
 }
@@ -236,7 +233,6 @@ func (rm *RunManager) Heartbeat(ctx sdk.Context, nodeId string, epoch int32, blo
 	return rm.FinishIfNeeded(ctx, block)
 }
 
-// GetEpochActiveNodes returns all nodes with heartbeat within heartbeatTimeout.
 func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, currentBlock BlockInfo) ([]NodeId, error) {
 	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
@@ -250,7 +246,7 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, curr
 	var active []NodeId
 	for nodeId, rec := range es.Activity {
 		blockDiff := currentBlock.height - rec.BlockHeight
-		if blockDiff >= rm.heartbeatTimeout {
+		if blockDiff <= rm.heartbeatTimeout {
 			active = append(active, nodeId)
 		}
 	}
@@ -286,12 +282,12 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 	}
 
 	// PRTODO: FIXME: insepct this, something strange here for now
-	for _, nodeID := range active {
+	for i, nodeID := range active {
 		key := NodeId{
 			Participant: nodeID.Participant,
 			NodeId:      nodeID.NodeId,
 		}
-		es.Activity[key].Rank = -1 // FIXME
+		es.Activity[key].Rank = int32(i)
 	}
 	rs.Epoch.LastEpochIsFinished = true
 
