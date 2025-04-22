@@ -311,6 +311,7 @@ data class LocalInferencePair(
 
     fun runProposal(cluster: LocalCluster, proposal: GovernanceMessage, noVoters: List<String> = emptyList()): String =
         wrapLog("runProposal", true) {
+            logSection("Submitting and funding proposal")
             val govParams = this.node.getGovParams().params
             val minDeposit = govParams.minDeposit.first().amount
             val proposalId = this.submitGovernanceProposal(
@@ -325,11 +326,10 @@ data class LocalInferencePair(
                     )
                 )
             ).getProposalId()!!
-            val depositResponse = this.makeGovernanceDeposit(proposalId, minDeposit)
-            println("DEPOSIT:\n" + depositResponse)
+            this.makeGovernanceDeposit(proposalId, minDeposit)
+            logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
             cluster.allPairs.forEach {
-                val response2 = it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
-                println("VOTE:\n" + response2)
+                it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
             }
             proposalId
         }

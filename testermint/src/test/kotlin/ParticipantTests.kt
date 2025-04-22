@@ -15,7 +15,9 @@ class ParticipantTests : TestermintTest() {
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
         val startStats = genesis.node.getParticipantCurrentStats()
+        logSection("Running inferences")
         runParallelInferences(genesis, 10)
+        logSection("verifying reputation increase")
         val endStats = genesis.node.getParticipantCurrentStats()
 
         val statsPairs = startStats.participantCurrentStats.zip(endStats.participantCurrentStats)
@@ -28,6 +30,7 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `traffic basis decreases minimum average validation`() {
         val (_, genesis) = initCluster()
+        logSection("Making sure traffic basis is low")
         var startMin = genesis.node.getMinimumValidationAverage()
         if (startMin.trafficBasis >= 10) {
             // Wait for current and previous values to no longer apply
@@ -36,10 +39,12 @@ class ParticipantTests : TestermintTest() {
         }
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Running inferences")
         runParallelInferences(genesis, 50, waitForBlocks = 1)
         genesis.waitForBlock(2) {
             it.node.getMinimumValidationAverage().minimumValidationAverage < startMin.minimumValidationAverage
         }
+        logSection("verifying traffic basis decrease")
         val stopMin = genesis.node.getMinimumValidationAverage()
         assertThat(stopMin.minimumValidationAverage).isLessThan(startMin.minimumValidationAverage)
     }
@@ -49,10 +54,12 @@ class ParticipantTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         genesis.markNeedsReboot()
         val zeroParticipant = cluster.joinPairs.first()
+        logSection("Setting ${zeroParticipant.name} to 0 power")
         val zeroParticipantKey = zeroParticipant.node.getValidatorInfo()
         val participants = genesis.api.getParticipants()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         zeroParticipant.changePoc(0)
+        logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
             it.consensusPubkey.value == zeroParticipantKey.key
@@ -84,19 +91,19 @@ class ParticipantTests : TestermintTest() {
             val nextStage = genesis.getNextStage(stage)
             println("Next Stage: $stage block: $nextStage")
         }
-
-
     }
 
     @Test
     fun `power to zero and back again restores validator`() {
         val (cluster, genesis) = initCluster()
         val zeroParticipant = cluster.joinPairs.first()
+        logSection("Setting ${zeroParticipant.name} to 0 power")
         val zeroParticipantKey = zeroParticipant.node.getValidatorInfo()
         val participants = genesis.api.getParticipants()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.markNeedsReboot()
         zeroParticipant.changePoc(0)
+        logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
             it.consensusPubkey.value == zeroParticipantKey.key
@@ -109,8 +116,10 @@ class ParticipantTests : TestermintTest() {
         }
         assertThat(cometValidators.validators).hasSize(2)
 
+        logSection("Setting ${zeroParticipant.name} back to 15 power")
         zeroParticipant.changePoc(15)
 
+        logSection("Confirming ${zeroParticipant.name} is back in validators")
         val validatorsAfterRejoin = genesis.node.getValidators()
         val rejoinedValidator = validatorsAfterRejoin.validators.first {
             it.consensusPubkey.value == zeroParticipantKey.key
@@ -153,8 +162,10 @@ class ParticipantTests : TestermintTest() {
                 expirationBlocks = params.validationParams.expirationBlocks + 1
             )
         )
+        logSection("Submitting Proposal")
         genesis.runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = cluster.joinPairs.map { it.name })
         genesis.node.waitForNextBlock(5)
+        logSection("Verifying Fail")
         val newParams = genesis.getParams()
         assertThat(newParams.validationParams).isEqualTo(params.validationParams)
     }
@@ -188,6 +199,7 @@ class ParticipantTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         val join1 = cluster.joinPairs.first()
         val join2 = cluster.joinPairs.last()
+        logSection("Setting ${join1.name} to 0 power")
         genesis.mock?.setPocResponse(11)
         join2.mock?.setPocResponse(12)
         join1.mock?.setPocResponse(0)
@@ -196,6 +208,7 @@ class ParticipantTests : TestermintTest() {
         genesis.node.waitForNextBlock(2)
         // At the end of this, genesis has 11 votes, join2 has 12 and join1 should have 0
         // Thus, a vote proposed by genesis and voted NO by join2 should fail
+        logSection("Submitting Proposal")
         val params = genesis.getParams()
         val modifiedParams = params.copy(
             validationParams = params.validationParams.copy(
@@ -204,6 +217,7 @@ class ParticipantTests : TestermintTest() {
         )
         val proposalId = genesis.runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = listOf(join2.name))
         genesis.node.waitForNextBlock(5)
+        logSection("Verifying Fail")
         val newParams = genesis.getParams()
         assertThat(newParams.validationParams).isEqualTo(params.validationParams)
         val paramsProposal = genesis.node.getGovernanceProposals().proposals.first {
@@ -217,14 +231,18 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `change a participants power`() {
         val (_, genesis) = initCluster(reboot = true)
+        logSection("Changing ${genesis.name} power to 11")
         genesis.changePoc(11)
+        logSection("Verifying change")
         val validators = genesis.node.getValidators()
         val genesisKey = genesis.node.getValidatorInfo().key
         val genesisValidator = validators.validators.first { it.consensusPubkey.value == genesisKey }
         val tokensAfterChange = genesisValidator.tokens
 
+        logSection("Changing ${genesis.name} power back to 10")
         genesis.changePoc(10)
 
+        logSection("Verifying change back")
         val updatedValidators = genesis.node.getValidators()
         val updatedGenesisValidator = updatedValidators.validators.first { it.consensusPubkey.value == genesisKey }
         assertThat(updatedGenesisValidator.tokens).isEqualTo(10)

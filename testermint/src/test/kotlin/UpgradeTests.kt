@@ -52,6 +52,7 @@ class UpgradeTests : TestermintTest() {
     fun partialUpgrade() {
         val (cluster, genesis) = initCluster(reboot = true)
         genesis.markNeedsReboot()
+        logSection("Verifying current inference hits right endpoint")
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
         val newSegment = "/newVersion"
@@ -67,33 +68,16 @@ class UpgradeTests : TestermintTest() {
         }
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
-        val govParams = genesis.node.getGovParams().params
-        val minDeposit = govParams.minDeposit.first().amount
-        val result: TxResponse = genesis.submitGovernanceProposal(
-            GovernanceProposal(
-                metadata = "https://www.yahoo.com",
-                deposit = "${minDeposit}${inferenceConfig.denom}",
-                title = "Test Proposal",
-                summary = "Test Proposal Summary",
-                expedited = false,
-                listOf(
-                    CreatePartialUpgrade(
-                        height = effectiveHeight.toString(),
-                        nodeVersion = newVersion,
-                        apiBinariesJson = ""
-                    )
-                )
+        val proposalId = genesis.runProposal(cluster,
+            CreatePartialUpgrade(
+                height = effectiveHeight.toString(),
+                nodeVersion = newVersion,
+                apiBinariesJson = ""
             )
         )
-        val proposalId = result.getProposalId()!!
-        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
-        Logger.info("DEPOSIT:\n{}", depositResponse)
-        cluster.joinPairs.forEach {
-            val response2 = it.voteOnProposal(proposalId, "yes")
-            assertThat(response2).isNotNull()
-            println("VOTE:\n" + response2)
-        }
+        logSection("Waiting for upgrade to be effective")
         genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
+        logSection("Verifying new inference hits right endpoint")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
