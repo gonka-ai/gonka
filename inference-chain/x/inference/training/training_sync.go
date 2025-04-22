@@ -1,4 +1,4 @@
-package membership
+package training
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type EpochState struct {
 	Records map[string]*MembershipRecord
 }
 
-type TrainingRunStore interface {
+type RunStore interface {
 	GetRunState(ctx context.Context, runId string) (*RunState, error)
 	SaveRunState(ctx context.Context, runId string, state *RunState) error
 
@@ -45,7 +45,7 @@ type RunMembershipService interface {
 type RunManager struct {
 	mu               sync.Mutex
 	runId            string
-	store            TrainingRunStore
+	store            RunStore
 	minNodes         int
 	maxNodes         int
 	joinTimeout      time.Duration
@@ -54,7 +54,7 @@ type RunManager struct {
 
 func NewRunManager(
 	runId string,
-	store TrainingRunStore,
+	store RunStore,
 	minNodes, maxNodes int,
 	joinTimeout, heartbeatTimeout time.Duration,
 ) *RunManager {
