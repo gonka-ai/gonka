@@ -49,6 +49,10 @@ func TrainingTaskKVParticipantRecordsKey(taskId uint64, participant string) []by
 	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s", taskId, participant))
 }
 
-func TrainingTaskHeartbeatPrefix(taskId uint64, epoch int32, participant string, nodeId int32) []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d/%s/%d", taskId, epoch, participant, nodeId))
+func TrainingTaskNodeEpochActivityKey(taskId uint64, epoch int32, participant string, nodeId string) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d/%s/%s", taskId, epoch, participant, nodeId))
+}
+
+func TrainingTaskNodeEpochActivityEpochPrefix(taskId uint64, epoch int32) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d", taskId, epoch))
 }

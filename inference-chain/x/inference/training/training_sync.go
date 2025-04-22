@@ -23,7 +23,8 @@ type RunState struct {
 
 // EpochState holds per‑epoch membership info.
 type EpochState struct {
-	Records map[string]*MembershipRecord
+	Epoch    int32
+	Activity []*types.TrainingTaskNodeEpochActivity
 }
 
 type RunStore interface {
@@ -32,11 +33,13 @@ type RunStore interface {
 
 	GetEpochState(ctx context.Context, runId uint64, epoch int32) (*EpochState, error)
 	SaveEpochState(ctx context.Context, runId uint64, epoch int32, state *EpochState) error
+	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error)
+	SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) error
 }
 
 // RunMembershipService is the public API.
 type RunMembershipService interface {
-	Join(ctx context.Context, nodeId string, epoch int32) error
+	Join(ctx context.Context, nodeId string, epoch int32, participant string) error
 	Heartbeat(ctx context.Context, nodeId string, epoch int32) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32) ([]string, error)
 	AssignRank(ctx context.Context) error
@@ -85,7 +88,7 @@ func NewBlockInfo(ctx sdk.Context) BlockInfo {
 	}
 }
 
-func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, blockInfo BlockInfo) error {
+func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, blockInfo BlockInfo, participant string) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
@@ -122,12 +125,23 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, bloc
 		return err
 	}
 	if es == nil {
-		es = &EpochState{Records: make(map[string]*MembershipRecord)}
+		es = &EpochState{
+			Epoch: epoch,
+			Activity: []*types.TrainingTaskNodeEpochActivity{
+				{
+					TaskId:      rm.runId,
+					Participant: participant,
+					NodeId:      nodeId,
+					Epoch:       epoch,
+					BlockHeight: blockInfo.height,
+					BlockTime:   blockInfo.timestamp.Unix(),
+				},
+			},
+		}
+	} else {
+		// TODO: modify existing of smth
 	}
-	es.Records[nodeId] = &MembershipRecord{
-		LastHeartbeat: time.Now(),
-		Rank:          -1,
-	}
+
 	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es); err != nil {
 		return err
 	}
@@ -135,17 +149,18 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, bloc
 	return rm.FinishIfNeeded(ctx)
 }
 
-func (rm *RunManager) Heartbeat(ctx context.Context, nodeId string, epoch int32) error {
-	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
+func (rm *RunManager) Heartbeat(ctx context.Context, nodeId string, epoch int32, blockInfo BlockInfo) error {
+	activity, err := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, "", nodeId)
 	if err != nil {
+		// PRTODO: find a way to log errors here
+		// So here it probably means not joined in epoch or smth
 		return err
 	}
-	rec, ok := es.Records[nodeId]
-	if !ok {
-		return fmt.Errorf("node %s not joined in epoch %d", nodeId, epoch)
-	}
-	rec.LastHeartbeat = time.Now()
-	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es); err != nil {
+
+	activity.BlockTime = blockInfo.height
+	activity.BlockTime = blockInfo.timestamp.UnixMilli() // PRTODO: FIXME: think of a way for converting timestamps
+
+	if err := rm.store.SaveParticipantActivity(ctx, activity); err != nil {
 		return err
 	}
 
@@ -160,7 +175,7 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32) ([]s
 	}
 	now := time.Now()
 	var active []string
-	for id, rec := range es.Records {
+	for id, rec := range es.Activity {
 		if now.Sub(rec.LastHeartbeat) <= rm.heartbeatTimeout {
 			active = append(active, id)
 		}
@@ -192,7 +207,7 @@ func (rm *RunManager) AssignRank(ctx context.Context) error {
 		return err
 	}
 	for rank, nodeID := range active {
-		es.Records[nodeID].Rank = rank
+		es.Activity[nodeID].Rank = rank
 	}
 	rs.Epoch.LastEpochIsFinished = true
 
@@ -247,7 +262,7 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32) er
 	}
 	// collect originally ranked nodes
 	var original []string
-	for id, rec := range es.Records {
+	for id, rec := range es.Activity {
 		if rec.Rank != -1 {
 			original = append(original, id)
 		}
@@ -273,11 +288,11 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32) er
 	}
 	if len(survivors) < len(original) {
 		for rank, nodeID := range survivors {
-			es.Records[nodeID].Rank = rank
+			es.Activity[nodeID].Rank = rank
 		}
 		for _, nodeID := range original {
 			if !aliveMap[nodeID] {
-				es.Records[nodeID].Rank = -1
+				es.Activity[nodeID].Rank = -1
 			}
 		}
 		return rm.store.SaveEpochState(ctx, rm.runId, epoch, es)
