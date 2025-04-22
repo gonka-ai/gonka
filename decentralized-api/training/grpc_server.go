@@ -8,6 +8,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"strconv"
 )
 
 type Server struct {
@@ -45,10 +46,16 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *types.SetStoreRecordRe
 
 	logging.Info("SetStoreRecord called", types.Training, "key", req.Record.Key, "value", req.Record.Value)
 
+	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
+	if err != nil {
+		logging.Error("Failed to parse task id", types.Training, "error", err)
+		return nil, err
+	}
+
 	msg := &inference.MsgSubmitTrainingKvRecord{
 		Creator:     s.cosmosClient.GetAddress(),
 		Participant: s.cosmosClient.GetAddress(),
-		TaskId:      999, // PRTODO: add task id to request
+		TaskId:      taskId,
 		Key:         req.Record.Key,
 		Value:       req.Record.Value,
 	}
@@ -78,12 +85,18 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *types.SetStoreRecordRe
 func (s *Server) GetStoreRecord(ctx context.Context, req *types.GetStoreRecordRequest) (*types.GetStoreRecordResponse, error) {
 	logging.Info("GetStoreRecord called", types.Training, "key", req.Key)
 
-	queryClient := s.cosmosClient.NewInferenceQueryClient()
+	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
+	if err != nil {
+		logging.Error("Failed to parse task id", types.Training, "error", err)
+		return nil, err
+	}
+
 	request := &types.QueryTrainingKvRecordRequest{
-		TaskId:      999, // PRTODO: add task id to request
+		TaskId:      taskId,
 		Participant: s.cosmosClient.GetAddress(),
 		Key:         req.Key,
 	}
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	resp, err := queryClient.TrainingKvRecord(ctx, request)
 	if err != nil {
 		logging.Error("Failed to get training kv record", types.Training, "error", err)
@@ -103,10 +116,15 @@ func (s *Server) GetStoreRecord(ctx context.Context, req *types.GetStoreRecordRe
 func (s *Server) ListStoreKeys(ctx context.Context, req *types.StoreListKeysRequest) (*types.StoreListKeysResponse, error) {
 	logging.Info("ListStoreKeys called", types.Training, "key")
 
-	queryClient := s.cosmosClient.NewInferenceQueryClient()
+	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
+	if err != nil {
+		logging.Error("Failed to parse task id", types.Training, "error", err)
+		return nil, err
+	}
 
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	resp, err := queryClient.ListTrainingKvRecordKeys(ctx, &types.QueryListTrainingKvRecordKeysRequest{
-		TaskId:      999, // PRTODO: add task id to request
+		TaskId:      taskId,
 		Participant: s.cosmosClient.GetAddress(),
 	})
 	if err != nil {
