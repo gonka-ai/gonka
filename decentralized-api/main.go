@@ -10,6 +10,7 @@ import (
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
+	"github.com/productscience/inference/api/inference/inference"
 	"google.golang.org/grpc"
 	"net"
 
@@ -138,7 +139,7 @@ func main() {
 	logging.Info("start training server on addr", types.Server, "addr", addr)
 	grpcServer := grpc.NewServer()
 	trainingServer := training.NewServer(recorder)
-	types.RegisterNetworkNodeServiceServer(grpcServer, trainingServer)
+	inference.RegisterNetworkNodeServiceServer(grpcServer, trainingServer)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)

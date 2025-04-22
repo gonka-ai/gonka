@@ -12,20 +12,20 @@ import (
 )
 
 type Server struct {
-	types.UnimplementedNetworkNodeServiceServer
+	inference.UnimplementedNetworkNodeServiceServer
 	cosmosClient cosmosclient.CosmosMessageClient
 }
 
 /*
 	grpcurl -plaintext \
 	  -protoset network_node.pb \
-	  -d '{"record":{"key":"foo","value":"bar"}}' \
+	  -d '{"run_id": "1", "record":{"key":"foo","value":"bar"}}' \
 	  localhost:9003 \
 	  network_node.v1.NetworkNodeService/SetStoreRecord
 
 	grpcurl -plaintext \
 	  -protoset network_node.pb \
-	  -d '{"key":"some‑key"}' \
+	  -d '{"run_id": "1", "key":"some‑key"}' \
 	  localhost:9003 \
 	  network_node.v1.NetworkNodeService/GetStoreRecord
 */
@@ -37,10 +37,10 @@ func NewServer(cosmosClient cosmosclient.CosmosMessageClient) *Server {
 
 // Implement a few key methods first:
 
-func (s *Server) SetStoreRecord(ctx context.Context, req *types.SetStoreRecordRequest) (*types.SetStoreRecordResponse, error) {
+func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreRecordRequest) (*inference.SetStoreRecordResponse, error) {
 	if req.Record == nil {
-		return &types.SetStoreRecordResponse{
-			Status: types.StoreRecordStatusEnum_SET_RECORD_ERROR,
+		return &inference.SetStoreRecordResponse{
+			Status: inference.StoreRecordStatusEnum_SET_RECORD_ERROR,
 		}, nil
 	}
 
@@ -62,27 +62,27 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *types.SetStoreRecordRe
 	txResponse, err := s.cosmosClient.SendTransaction(msg)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
-		return &types.SetStoreRecordResponse{
-			Status: types.StoreRecordStatusEnum_SET_RECORD_ERROR,
+		return &inference.SetStoreRecordResponse{
+			Status: inference.StoreRecordStatusEnum_SET_RECORD_ERROR,
 		}, err
 	}
 
 	response := inference.MsgSubmitTrainingKvRecordResponse{}
 	if err = cosmosclient.WaitForResponse(*s.cosmosClient.GetContext(), s.cosmosClient.GetCosmosClient(), txResponse.TxHash, &response); err != nil {
 		logging.Error("Failed to get transaction response", types.Training, "error", err)
-		return &types.SetStoreRecordResponse{
-			Status: types.StoreRecordStatusEnum_SET_RECORD_ERROR,
+		return &inference.SetStoreRecordResponse{
+			Status: inference.StoreRecordStatusEnum_SET_RECORD_ERROR,
 		}, err
 	}
 
 	logging.Info("MsgSubmitTrainingKvRecordResponse received", types.Training)
 
-	return &types.SetStoreRecordResponse{
-		Status: types.StoreRecordStatusEnum_SET_RECORD_OK,
+	return &inference.SetStoreRecordResponse{
+		Status: inference.StoreRecordStatusEnum_SET_RECORD_OK,
 	}, nil
 }
 
-func (s *Server) GetStoreRecord(ctx context.Context, req *types.GetStoreRecordRequest) (*types.GetStoreRecordResponse, error) {
+func (s *Server) GetStoreRecord(ctx context.Context, req *inference.GetStoreRecordRequest) (*inference.GetStoreRecordResponse, error) {
 	logging.Info("GetStoreRecord called", types.Training, "key", req.Key)
 
 	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
@@ -105,15 +105,15 @@ func (s *Server) GetStoreRecord(ctx context.Context, req *types.GetStoreRecordRe
 
 	logging.Info("GetStoreRecord response", types.Training, "record", resp.Record)
 
-	return &types.GetStoreRecordResponse{
-		Record: &types.Record{
+	return &inference.GetStoreRecordResponse{
+		Record: &inference.Record{
 			Key:   resp.Record.Key,
 			Value: resp.Record.Value,
 		},
 	}, nil
 }
 
-func (s *Server) ListStoreKeys(ctx context.Context, req *types.StoreListKeysRequest) (*types.StoreListKeysResponse, error) {
+func (s *Server) ListStoreKeys(ctx context.Context, req *inference.StoreListKeysRequest) (*inference.StoreListKeysResponse, error) {
 	logging.Info("ListStoreKeys called", types.Training, "key")
 
 	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
@@ -132,26 +132,26 @@ func (s *Server) ListStoreKeys(ctx context.Context, req *types.StoreListKeysRequ
 		return nil, err
 	}
 
-	return &types.StoreListKeysResponse{
+	return &inference.StoreListKeysResponse{
 		Keys: resp.Keys,
 	}, nil
 }
 
-func (s *Server) JoinTraining(context.Context, *types.JoinTrainingRequest) (*types.MLNodeTrainStatus, error) {
+func (s *Server) JoinTraining(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
 }
-func (s *Server) GetJoinTrainingStatus(context.Context, *types.JoinTrainingRequest) (*types.MLNodeTrainStatus, error) {
+func (s *Server) GetJoinTrainingStatus(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
 }
-func (s *Server) SendHeartbeat(context.Context, *types.HeartbeatRequest) (*types.HeartbeatResponse, error) {
+func (s *Server) SendHeartbeat(context.Context, *inference.HeartbeatRequest) (*inference.HeartbeatResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
 }
-func (s *Server) GetAliveNodes(context.Context, *types.GetAliveNodesRequest) (*types.GetAliveNodesResponse, error) {
+func (s *Server) GetAliveNodes(context.Context, *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
 }
-func (s *Server) SetBarrier(context.Context, *types.SetBarrierRequest) (*types.SetBarrierResponse, error) {
+func (s *Server) SetBarrier(context.Context, *inference.SetBarrierRequest) (*inference.SetBarrierResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
 }
-func (s *Server) GetBarrierStatus(context.Context, *types.GetBarrierStatusRequest) (*types.GetBarrierStatusResponse, error) {
+func (s *Server) GetBarrierStatus(context.Context, *inference.GetBarrierStatusRequest) (*inference.GetBarrierStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBarrierStatus not implemented")
 }
