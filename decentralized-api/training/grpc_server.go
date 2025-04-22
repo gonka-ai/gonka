@@ -66,20 +66,12 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 		Key:         req.Record.Key,
 		Value:       req.Record.Value,
 	}
-	txResponse, err := s.cosmosClient.SendTransaction(msg)
+	response := inference.MsgSubmitTrainingKvRecordResponse{}
+
+	err = cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, msg, &response)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
-		return &inference.SetStoreRecordResponse{
-			Status: inference.StoreRecordStatusEnum_SET_RECORD_ERROR,
-		}, err
-	}
-
-	response := inference.MsgSubmitTrainingKvRecordResponse{}
-	if err = cosmosclient.WaitForResponse(*s.cosmosClient.GetContext(), s.cosmosClient.GetCosmosClient(), txResponse.TxHash, &response); err != nil {
-		logging.Error("Failed to get transaction response", types.Training, "error", err)
-		return &inference.SetStoreRecordResponse{
-			Status: inference.StoreRecordStatusEnum_SET_RECORD_ERROR,
-		}, err
+		return nil, err
 	}
 
 	logging.Info("MsgSubmitTrainingKvRecordResponse received", types.Training)
@@ -144,9 +136,21 @@ func (s *Server) ListStoreKeys(ctx context.Context, req *inference.StoreListKeys
 	}, nil
 }
 
-func (s *Server) JoinTraining(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
+func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
+	msg := inference.MsgJoinTraining{
+		Creator: s.cosmosClient.GetAddress(),
+		Req:     req,
+	}
+	resp := inference.MsgJoinTrainingResponse{}
+	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Training, "error", err)
+		return nil, err
+	}
+
+	return resp.Status, nil
 }
+
 func (s *Server) GetJoinTrainingStatus(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
 }

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package inference.inference;
 
-option go_package = "github.com/product-science/chain-protos/go/network_node/v1;network_nodev1";
+option go_package = "github.com/productscience/inference/x/inference/types";
 
 service NetworkNodeService {
   rpc JoinTraining(JoinTrainingRequest) returns (MLNodeTrainStatus);

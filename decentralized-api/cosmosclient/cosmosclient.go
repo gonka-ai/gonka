@@ -424,3 +424,19 @@ func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.
 
 	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
 }
+
+func SendTransactionBlocking[In proto.Message, Out proto.Message](ctx context.Context, msgClient CosmosMessageClient, msg In, dstMsg Out) error {
+	txResponse, err := msgClient.SendTransaction(msg)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err)
+		return err
+	}
+
+	err = WaitForResponse(ctx, msgClient.GetCosmosClient(), txResponse.TxHash, dstMsg)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
+		return err
+	}
+
+	return err
+}
