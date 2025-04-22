@@ -281,7 +281,7 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 		return err
 	}
 
-	// PRTODO: FIXME: insepct this, something strange here for now
+	// PRTODO: FIXME: insepct this, fix sorting
 	for i, nodeID := range active {
 		key := NodeId{
 			Participant: nodeID.Participant,
