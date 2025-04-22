@@ -138,9 +138,24 @@ func (s *Server) GetJoinTrainingStatus(context.Context, *inference.JoinTrainingR
 	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
 }
 
-func (s *Server) SendHeartbeat(context.Context, *inference.HeartbeatRequest) (*inference.HeartbeatResponse, error) {
+func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequest) (*inference.HeartbeatResponse, error) {
+	logging.Info("SendHeartbeat called", types.Training, "req", req)
+
 	// TODO: executor.Heartbeat(...)
-	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
+	// TODO: probably call it unconditionally. Even if transaction fails
+
+	msg := inference.MsgTrainingHeartbeat{
+		Creator: s.cosmosClient.GetAddress(),
+		Req:     req,
+	}
+	resp := inference.MsgTrainingHeartbeatResponse{}
+	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Training, "error", err)
+		return nil, err
+	}
+
+	return resp.Resp, nil
 }
 
 func (s *Server) GetAliveNodes(context.Context, *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {

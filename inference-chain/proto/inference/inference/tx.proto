@@ -41,6 +41,7 @@ service Msg {
   rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
   rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
   rpc JoinTraining                     (MsgJoinTraining                    ) returns (MsgJoinTrainingResponse                    );
+  rpc TrainingHeartbeat                (MsgTrainingHeartbeat               ) returns (MsgTrainingHeartbeatResponse               );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -274,10 +275,20 @@ message MsgSubmitTrainingKvRecordResponse {}
 
 message MsgJoinTraining {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  JoinTrainingRequest req = 2;
+  string              creator = 1;
+  JoinTrainingRequest req     = 2;
 }
 
 message MsgJoinTrainingResponse {
   MLNodeTrainStatus status = 1;
+}
+
+message MsgTrainingHeartbeat {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  HeartbeatRequest req = 2;
+}
+
+message MsgTrainingHeartbeatResponse {
+  HeartbeatResponse resp = 1;
 }

@@ -40,6 +40,7 @@ const (
 	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
 	Msg_SubmitTrainingKvRecord_FullMethodName           = "/inference.inference.Msg/SubmitTrainingKvRecord"
 	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
+	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
 )
 
 // MsgClient is the client API for Msg service.
@@ -69,6 +70,7 @@ type MsgClient interface {
 	AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error)
 	SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error)
 	JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error)
+	TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error)
 }
 
 type msgClient struct {
@@ -268,6 +270,15 @@ func (c *msgClient) JoinTraining(ctx context.Context, in *MsgJoinTraining, opts 
 	return out, nil
 }
 
+func (c *msgClient) TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error) {
+	out := new(MsgTrainingHeartbeatResponse)
+	err := c.cc.Invoke(ctx, Msg_TrainingHeartbeat_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -295,6 +306,7 @@ type MsgServer interface {
 	AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error)
 	SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error)
 	JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error)
+	TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -364,6 +376,9 @@ func (UnimplementedMsgServer) SubmitTrainingKvRecord(context.Context, *MsgSubmit
 }
 func (UnimplementedMsgServer) JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
+}
+func (UnimplementedMsgServer) TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingHeartbeat not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -756,6 +771,24 @@ func _Msg_JoinTraining_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_TrainingHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgTrainingHeartbeat)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).TrainingHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_TrainingHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).TrainingHeartbeat(ctx, req.(*MsgTrainingHeartbeat))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -846,6 +879,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JoinTraining",
 			Handler:    _Msg_JoinTraining_Handler,
+		},
+		{
+			MethodName: "TrainingHeartbeat",
+			Handler:    _Msg_TrainingHeartbeat_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
