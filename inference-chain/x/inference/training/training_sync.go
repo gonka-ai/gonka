@@ -254,9 +254,7 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, curr
 	return active, nil
 }
 
-// AssignRank assigns ranks 0...N-1 to all active nodes in the current epoch.
 func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
-	// load run state
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
