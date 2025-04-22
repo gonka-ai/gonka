@@ -29,7 +29,7 @@ interface HasConfig {
             mapOf(
                 "operation" to operation,
                 "pair" to config.pairName,
-                "source" to "testermint"
+                "source" to "test"
             )
         ) {
             if (infoLevel) {
@@ -54,9 +54,8 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
 
     override fun onNext(frame: Frame) = logContext(
         mapOf(
-            "operation" to type,
             "pair" to name,
-            "source" to "container",
+            "source" to type,
             "blockHeight" to currentHeight.toString()
         )
     ) {

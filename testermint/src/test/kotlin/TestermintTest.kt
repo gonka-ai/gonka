@@ -22,6 +22,7 @@ open class TestermintTest {
         val displayName = testInfo.testClass.get().simpleName + "-" + testInfo.displayName.trimEnd('(', ')')
         ThreadContext.put("test", displayName)
         ThreadContext.put("pair", "none")
+        ThreadContext.put("source", "test")
         ThreadContext.put("operation", "init")
         TestFilesWriter.currentTest = displayName
         Logger.warn("Starting test:{}", displayName)
@@ -38,7 +39,7 @@ open class TestermintTest {
                 logContext(
                     mapOf(
                         "operation" to "assertion",
-                        "source" to "testermint"
+                        "source" to "test"
                     )
                 ) {
                     Logger.info("Test assertion={}", it)

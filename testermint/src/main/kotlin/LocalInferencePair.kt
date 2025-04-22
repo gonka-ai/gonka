@@ -38,7 +38,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
         attachDockerLogs(dockerClient, name, "node", chainContainer.id)
-        attachDockerLogs(dockerClient, name, "api", apiContainer.id)
+        attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
 
         val portMap = apiContainer.ports.associateBy { it.privatePort }
         Logger.info("Container ports: $portMap")
