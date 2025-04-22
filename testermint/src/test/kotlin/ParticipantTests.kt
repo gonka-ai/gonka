@@ -5,6 +5,7 @@ import com.productscience.data.GovernanceProposal
 import com.productscience.data.UpdateParams
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
+import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -133,9 +134,12 @@ class ParticipantTests : TestermintTest() {
                 expirationBlocks = params.validationParams.expirationBlocks + 1
             )
         )
-        runProposal(cluster, UpdateParams(params = modifiedParams))
+        logSection("Submitting Proposal")
+        genesis.runProposal(cluster, UpdateParams(params = modifiedParams))
         genesis.markNeedsReboot()
+        logSection("Waiting for Proposal to Pass")
         genesis.node.waitForNextBlock(5)
+        logSection("Verifying Pass")
         val newParams = genesis.getParams()
         assertThat(newParams.validationParams).isEqualTo(modifiedParams.validationParams)
     }
@@ -149,7 +153,7 @@ class ParticipantTests : TestermintTest() {
                 expirationBlocks = params.validationParams.expirationBlocks + 1
             )
         )
-        runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = cluster.joinPairs.map { it.name })
+        genesis.runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = cluster.joinPairs.map { it.name })
         genesis.node.waitForNextBlock(5)
         val newParams = genesis.getParams()
         assertThat(newParams.validationParams).isEqualTo(params.validationParams)
@@ -168,7 +172,7 @@ class ParticipantTests : TestermintTest() {
             )
         )
         val proposalId =
-            runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = cluster.joinPairs.map { it.name })
+            genesis.runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = cluster.joinPairs.map { it.name })
         genesis.node.waitForNextBlock(5)
         val proposals = genesis.node.getGovernanceProposals()
         println(proposals)
@@ -198,7 +202,7 @@ class ParticipantTests : TestermintTest() {
                 expirationBlocks = params.validationParams.expirationBlocks + 1
             )
         )
-        val proposalId = runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = listOf(join2.name))
+        val proposalId = genesis.runProposal(cluster, UpdateParams(params = modifiedParams), noVoters = listOf(join2.name))
         genesis.node.waitForNextBlock(5)
         val newParams = genesis.getParams()
         assertThat(newParams.validationParams).isEqualTo(params.validationParams)
@@ -212,7 +216,7 @@ class ParticipantTests : TestermintTest() {
 
     @Test
     fun `change a participants power`() {
-        val (cluster, genesis) = initCluster(reboot = true)
+        val (_, genesis) = initCluster(reboot = true)
         genesis.changePoc(11)
         val validators = genesis.node.getValidators()
         val genesisKey = genesis.node.getValidatorInfo().key
@@ -226,28 +230,4 @@ class ParticipantTests : TestermintTest() {
         assertThat(updatedGenesisValidator.tokens).isEqualTo(10)
         assertThat(tokensAfterChange).isEqualTo(11)
     }
-}
-
-fun runProposal(cluster: LocalCluster, proposal: GovernanceMessage, noVoters: List<String> = emptyList()): String {
-    val genesis = cluster.genesis
-    val proposalId = genesis.submitGovernanceProposal(
-        GovernanceProposal(
-            metadata = "http://www.yahoo.com",
-            deposit = "${minDeposit}${inferenceConfig.denom}",
-            title = "Extend the expiration blocks",
-            summary = "some inferences are taking a very long time to respond to, we need a longer expiration",
-            expedited = false,
-            messages = listOf(
-                proposal
-            )
-        )
-    ).getProposalId()!!
-    val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
-    println("DEPOSIT:\n" + depositResponse)
-    cluster.allPairs.forEach {
-        val response2 = it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
-        assertThat(response2).isNotNull()
-        println("VOTE:\n" + response2)
-    }
-    return proposalId
 }

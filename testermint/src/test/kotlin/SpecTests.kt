@@ -50,6 +50,12 @@ class TxMessageSerializationTests {
         val message = CreatePartialUpgrade("creator", "50", "v1", "")
         println(gsonCamelCase.toJson(message))
     }
+
+    @Test
+    fun `duration`() {
+        val duration = Duration.parse("PT48h0m0s")
+        assertThat(duration.toDays()).isEqualTo(2)
+    }
 }
 
 

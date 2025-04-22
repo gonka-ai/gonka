@@ -188,6 +188,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
+    fun getGovParams(): GovState = wrapLog("getGovParams", false) {
+        execAndParse(listOf("query", "gov", "params"))
+    }
+
     fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
         execAndParse(listOf("query", "inference", "params"))
     }
@@ -288,7 +292,7 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
-    fun writeFileToContainer(content: String, fileName: String) {
+    fun writeFileToContainer(content: String, fileName: String) = wrapLog("writeFileToContainer", false) {
         try {
             // Write content using echo command
             val writeCommand = listOf(

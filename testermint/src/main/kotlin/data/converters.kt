@@ -27,13 +27,7 @@ class DurationDeserializer : JsonDeserializer<Duration> {
         val durationString = json.asString
         if (durationString.isBlank()) return Duration.ZERO
 
-        return when {
-            durationString.endsWith("s") -> Duration.ofSeconds(durationString.removeSuffix("s").toLong())
-            durationString.endsWith("m") -> Duration.ofMinutes(durationString.removeSuffix("m").toLong())
-            durationString.endsWith("h") -> Duration.ofHours(durationString.removeSuffix("h").toLong())
-            durationString.endsWith("d") -> Duration.ofDays(durationString.removeSuffix("d").toLong())
-            else -> throw IllegalArgumentException("Invalid duration format: $durationString")
-        }
+        return Duration.parse("PT${durationString}")
     }
 }
 

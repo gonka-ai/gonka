@@ -219,10 +219,12 @@ fun initCluster(
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
+    logSection("Cluster Discovery")
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
     val cluster = setupLocalCluster(joinCount, config, reboot || rebootFlagOn)
     Thread.sleep(50000)
     try {
+        logSection("Found cluster, initializing")
         initialize(cluster.allPairs)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
@@ -231,8 +233,10 @@ fun initCluster(
             throw e
         }
         Logger.error(e, "Error initializing cluser, retrying")
+        logSection("Exception during cluster initialization, retrying")
         return initCluster(joinCount, config, reboot = true)
     }
+    logSection("Cluster Initialized")
     return cluster to cluster.genesis
 }
 
@@ -242,6 +246,7 @@ fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean
         return currentCluster
     } else {
         if (!reboot) {
+            logSection("Cluster does not match config, rebooting")
             Logger.info("Current cluster does not match config, rebooting", "")
         }
         initializeCluster(joinCount, config)

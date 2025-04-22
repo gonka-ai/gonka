@@ -1,18 +1,16 @@
 import com.productscience.TestFilesWriter
 import com.productscience.logContext
+import com.productscience.logSection
 import org.assertj.core.api.Assertions
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInfo
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.extension.ExtensionContext
-import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.api.extension.TestWatcher
 import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
-import java.util.Optional
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @ExtendWith(LogTestWatcher::class)
@@ -23,9 +21,9 @@ open class TestermintTest {
         ThreadContext.put("test", displayName)
         ThreadContext.put("pair", "none")
         ThreadContext.put("source", "test")
-        ThreadContext.put("operation", "init")
+        ThreadContext.put("operation", "base")
         TestFilesWriter.currentTest = displayName
-        Logger.warn("Starting test:{}", displayName)
+        logSection("Test started: $displayName")
     }
 
     companion object {
@@ -55,14 +53,14 @@ var loggingStarted = false
 
 class LogTestWatcher : TestWatcher {
     override fun testSuccessful(context: ExtensionContext) {
-        Logger.warn("Test successful:{}", context.displayName)
+        logSection("Test passed: ${context.displayName}")
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testSuccessful(context)
     }
 
     override fun testFailed(context: ExtensionContext, cause: Throwable) {
-        Logger.error(cause, "Test failed:{}", context.displayName)
+        logSection("Test failed: ${context.displayName}")
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testFailed(context, cause)

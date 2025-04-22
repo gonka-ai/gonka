@@ -146,3 +146,6 @@ class ExecCaptureOutput : ResultCallback.Adapter<Frame>() {
     }
 }
 
+fun logSection(name: String) {
+    Logger.info("TestSection:$name")
+}

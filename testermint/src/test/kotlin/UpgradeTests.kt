@@ -10,8 +10,6 @@ import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
 import java.util.concurrent.TimeUnit
 
-val minDeposit = 10000000L
-
 class UpgradeTests : TestermintTest() {
     @Test
     @Tag("unstable")
@@ -38,7 +36,8 @@ class UpgradeTests : TestermintTest() {
             assert(false)
             return
         }
-        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
+        val govParams = genesis.node.getGovParams().params
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, govParams.minDeposit.first().amount)
         println("DEPOSIT:\n" + depositResponse)
         pairs.forEach {
             val response2 = it.voteOnProposal(proposalId, "yes")
@@ -68,6 +67,8 @@ class UpgradeTests : TestermintTest() {
         }
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
+        val govParams = genesis.node.getGovParams().params
+        val minDeposit = govParams.minDeposit.first().amount
         val result: TxResponse = genesis.submitGovernanceProposal(
             GovernanceProposal(
                 metadata = "https://www.yahoo.com",

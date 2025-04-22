@@ -1,11 +1,7 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.ContainerPort
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
@@ -55,11 +51,11 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
 
         LocalInferencePair(
-            ApplicationCLI(chainContainer.id, configWithName),
-            ApplicationAPI(apiUrls, configWithName),
-            mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
-            name,
-            config
+            node = ApplicationCLI(chainContainer.id, configWithName),
+            api = ApplicationAPI(apiUrls, configWithName),
+            mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
+            name = name,
+            config = configWithName
         )
     }
 }
@@ -175,9 +171,12 @@ data class LocalInferencePair(
         // CometBFT validators have a 1 block delay
         this.waitForStage(EpochStage.START_OF_POC, 2)
     }
+
     fun waitForStage(stage: EpochStage, offset: Int = 1) {
-        this.node.waitForMinimumBlock(getNextStage(stage) + offset,
-            "stage $stage" + if (offset > 0) "+$offset)" else "")
+        this.node.waitForMinimumBlock(
+            getNextStage(stage) + offset,
+            "stage $stage" + if (offset > 0) "+$offset)" else ""
+        )
     }
 
     fun waitForBlock(maxBlocks: Int, condition: (LocalInferencePair) -> Boolean) {
@@ -309,6 +308,31 @@ data class LocalInferencePair(
             )
         )
     }
+
+    fun runProposal(cluster: LocalCluster, proposal: GovernanceMessage, noVoters: List<String> = emptyList()): String =
+        wrapLog("runProposal", true) {
+            val govParams = this.node.getGovParams().params
+            val minDeposit = govParams.minDeposit.first().amount
+            val proposalId = this.submitGovernanceProposal(
+                GovernanceProposal(
+                    metadata = "http://www.yahoo.com",
+                    deposit = "${minDeposit}${inferenceConfig.denom}",
+                    title = "Extend the expiration blocks",
+                    summary = "some inferences are taking a very long time to respond to, we need a longer expiration",
+                    expedited = false,
+                    messages = listOf(
+                        proposal
+                    )
+                )
+            ).getProposalId()!!
+            val depositResponse = this.makeGovernanceDeposit(proposalId, minDeposit)
+            println("DEPOSIT:\n" + depositResponse)
+            cluster.allPairs.forEach {
+                val response2 = it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
+                println("VOTE:\n" + response2)
+            }
+            proposalId
+        }
 
     fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
         val depositor = this.node.getKeys()[0].address
