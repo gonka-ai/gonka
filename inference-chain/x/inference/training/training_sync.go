@@ -78,8 +78,8 @@ type BlockInfo struct {
 	timestamp time.Time
 }
 
-func NewBlockInfo(ctx sdk.Context) *BlockInfo {
-	return &BlockInfo{
+func NewBlockInfo(ctx sdk.Context) BlockInfo {
+	return BlockInfo{
 		height:    ctx.BlockHeight(),
 		timestamp: ctx.BlockTime(),
 	}
@@ -117,7 +117,6 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, bloc
 		}
 	}
 
-	// --- upsert record in epoch state ---
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return err

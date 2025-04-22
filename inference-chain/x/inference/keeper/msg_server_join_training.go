@@ -18,8 +18,7 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 		20,
 	)
 
-	ctx.BlockTime()
-	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch)
+	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch, training.NewBlockInfo(ctx))
 	if err != nil {
 		k.LogError("Failed to join training", types.Training, "error", err)
 		return nil, err
