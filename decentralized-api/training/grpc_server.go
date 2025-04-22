@@ -18,21 +18,23 @@ type Server struct {
 
 /*
 	grpcurl -plaintext \
-	  -protoset network_node.pb \
 	  localhost:9003 \
 	  list
 
 	grpcurl -plaintext \
-	  -protoset network_node.pb \
 	  -d '{"run_id": "1", "record":{"key":"foo","value":"bar"}}' \
 	  localhost:9003 \
-	  network_node.v1.NetworkNodeService/SetStoreRecord
+	  inference.inference.NetworkNodeService/SetStoreRecord
 
 	grpcurl -plaintext \
-	  -protoset network_node.pb \
-	  -d '{"run_id": "1", "key":"some‑key"}' \
+	  -d '{"run_id": "1", "key":"foo"}' \
 	  localhost:9003 \
-	  network_node.v1.NetworkNodeService/GetStoreRecord
+	  inference.inference.NetworkNodeService/GetStoreRecord
+
+	grpcurl -plaintext \
+	  -d '{"run_id": "1"}' \
+	  localhost:9003 \
+	  inference.inference.NetworkNodeService/ListStoreKeys
 */
 func NewServer(cosmosClient cosmosclient.CosmosMessageClient) *Server {
 	return &Server{

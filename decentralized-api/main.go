@@ -12,6 +12,7 @@ import (
 	pserver "decentralized-api/internal/server/public"
 	"github.com/productscience/inference/api/inference/inference"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 	"net"
 
 	"decentralized-api/internal/validation"
@@ -140,6 +141,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	trainingServer := training.NewServer(recorder)
 	inference.RegisterNetworkNodeServiceServer(grpcServer, trainingServer)
+	reflection.Register(grpcServer)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
