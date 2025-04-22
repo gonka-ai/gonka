@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 )
 
@@ -43,7 +42,6 @@ type RunMembershipService interface {
 }
 
 type RunManager struct {
-	mu               sync.Mutex
 	runId            string
 	store            RunStore
 	minNodes         int
@@ -73,9 +71,6 @@ func NewRunManager(
 }
 
 func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
 	// --- load or init run state ---
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
@@ -126,9 +121,6 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int) error 
 }
 
 func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return err
@@ -147,9 +139,6 @@ func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int) e
 
 // GetEpochActiveNodes returns all nodes with heartbeat within heartbeatTimeout.
 func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int) ([]string, error) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return nil, err
@@ -165,11 +154,8 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int) ([]str
 	return active, nil
 }
 
-// AssignRank assigns ranks 0..N-1 to all active nodes in the current epoch.
+// AssignRank assigns ranks 0...N-1 to all active nodes in the current epoch.
 func (rm *RunManager) AssignRank(ctx context.Context) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
 	// load run state
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
@@ -203,8 +189,6 @@ func (rm *RunManager) AssignRank(ctx context.Context) error {
 
 // FinishIfNeeded is the exported version of finishIfNeededNoLock.
 func (rm *RunManager) FinishIfNeeded(ctx context.Context) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
 	return rm.finishIfNeededNoLock(ctx)
 }
 
@@ -235,8 +219,6 @@ func (rm *RunManager) finishIfNeededNoLock(ctx context.Context) error {
 
 // RerankIfSomeNodesLeft is now exported.
 func (rm *RunManager) RerankIfSomeNodesLeft(ctx context.Context, epoch int) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
 	return rm.rerankIfSomeNodesLeftNoLock(ctx, epoch)
 }
 
