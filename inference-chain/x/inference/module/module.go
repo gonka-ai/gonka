@@ -464,7 +464,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	return ModuleOutputs{
 		InferenceKeeper: k,
 		Module:          m,
-		Hooks:           stakingtypes.StakingHooksWrapper{StakingHooks: StakingHooksLogger{}},
 	}
 }
 
