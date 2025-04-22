@@ -10,7 +10,7 @@ import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
-import "network_node/v1/network_node.proto";
+import "inference/inference/network_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -278,8 +278,7 @@ message MsgJoinTraining {
   string node_id = 2;
   string run_id = 3;
   int32 epoch = 4;
-  network_node.v1.JoinTrainingRequest req = 5;
+  JoinTrainingRequest req = 5;
 }
 
 message MsgJoinTrainingResponse {}
-
