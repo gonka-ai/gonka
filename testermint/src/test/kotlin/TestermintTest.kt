@@ -61,6 +61,7 @@ class LogTestWatcher : TestWatcher {
 
     override fun testFailed(context: ExtensionContext, cause: Throwable) {
         logSection("Test failed: ${context.displayName}")
+        Logger.error(cause, "Test failed:{}", context.displayName)
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testFailed(context, cause)

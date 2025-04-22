@@ -78,6 +78,8 @@ class UpgradeTests : TestermintTest() {
         logSection("Waiting for upgrade to be effective")
         genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
         logSection("Verifying new inference hits right endpoint")
+        val proposals = genesis.node.getGovernanceProposals()
+        Logger.info("Proposals: $proposals", "")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }

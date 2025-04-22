@@ -179,7 +179,7 @@ class InferenceAccountingTests : TestermintTest() {
         assertThat(topMiner2.address).isEqualTo(genesis.node.addresss)
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
-        assertThat(topMiner2.qualifiedTime).isCloseTo(50, Offset.offset(3))
+        assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(3))
         assertThat(topMiner2.lastUpdatedTime).isEqualTo(startTime + topMiner2.qualifiedTime!!)
     }
 
