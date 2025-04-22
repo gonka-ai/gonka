@@ -98,7 +98,7 @@ class ValidationTests : TestermintTest() {
         logSection("Waiting for removal")
         genesis.node.waitForNextBlock(10)
         val participants = genesis.api.getParticipants()
-        participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
+        participants.forEach { Logger.warn("Participant: $it") }
     }
 
     @Test
