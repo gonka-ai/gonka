@@ -19,7 +19,7 @@ func (k msgServer) TrainingHeartbeat(goCtx context.Context, msg *types.MsgTraini
 		20,
 	)
 
-	err := runManager.Heartbeat(ctx, msg.Req.NodeId, msg.Req.GlobalEpoch)
+	err := runManager.Heartbeat(ctx, msg.Req.NodeId, msg.Req.GlobalEpoch, training.NewBlockInfo(ctx))
 	if err != nil {
 		k.LogError("Failed to send heartbeat", types.Training, "error", err)
 		return nil, err
