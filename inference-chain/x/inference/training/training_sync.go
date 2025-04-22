@@ -3,6 +3,8 @@ package training
 import (
 	"context"
 	"fmt"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/types"
 	"sort"
 	"time"
 )
@@ -12,6 +14,7 @@ type MembershipRecord struct {
 	Rank          int
 }
 
+// TODO: delet this
 type RunState struct {
 	LastEpoch          int
 	LastEpochTimestamp time.Time
@@ -24,25 +27,25 @@ type EpochState struct {
 }
 
 type RunStore interface {
-	GetRunState(ctx context.Context, runId string) (*RunState, error)
-	SaveRunState(ctx context.Context, runId string, state *RunState) error
+	GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, error)
+	SaveRunState(ctx context.Context, state *types.TrainingTask) error
 
-	GetEpochState(ctx context.Context, runId string, epoch int) (*EpochState, error)
-	SaveEpochState(ctx context.Context, runId string, epoch int, state *EpochState) error
+	GetEpochState(ctx context.Context, runId uint64, epoch int32) (*EpochState, error)
+	SaveEpochState(ctx context.Context, runId uint64, epoch int32, state *EpochState) error
 }
 
 // RunMembershipService is the public API.
 type RunMembershipService interface {
-	Join(ctx context.Context, nodeID string, epoch int) error
-	Heartbeat(ctx context.Context, nodeID string, epoch int) error
-	GetEpochActiveNodes(ctx context.Context, epoch int) ([]string, error)
+	Join(ctx context.Context, nodeId string, epoch int32) error
+	Heartbeat(ctx context.Context, nodeId string, epoch int32) error
+	GetEpochActiveNodes(ctx context.Context, epoch int32) ([]string, error)
 	AssignRank(ctx context.Context) error
 	FinishIfNeeded(ctx context.Context) error
-	RerankIfSomeNodesLeft(ctx context.Context, epoch int) error
+	RerankIfSomeNodesLeft(ctx context.Context, epoch int32) error
 }
 
 type RunManager struct {
-	runId            string
+	runId            uint64
 	store            RunStore
 	minNodes         int
 	maxNodes         int
@@ -56,7 +59,7 @@ const (
 )
 
 func NewRunManager(
-	runId string,
+	runId uint64,
 	store RunStore,
 	minNodes, maxNodes int,
 ) *RunManager {
@@ -70,32 +73,46 @@ func NewRunManager(
 	}
 }
 
-func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int) error {
-	// --- load or init run state ---
+type BlockInfo struct {
+	height    int64
+	timestamp time.Time
+}
+
+func NewBlockInfo(ctx sdk.Context) *BlockInfo {
+	return &BlockInfo{
+		height:    ctx.BlockHeight(),
+		timestamp: ctx.BlockTime(),
+	}
+}
+
+func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, blockInfo BlockInfo) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
 	}
 	if rs == nil {
-		rs = &RunState{
-			LastEpoch:      -1,
-			FinishedEpochs: make(map[int]bool),
-		}
+		return fmt.Errorf("run %d not found", rm.runId)
 	}
 
-	// epoch sanity checks
-	if epoch < rs.LastEpoch {
-		return fmt.Errorf("joining outdated epoch %d, last is %d", epoch, rs.LastEpoch)
+	lastEpoch := rs.Epoch.LastEpoch
+	if epoch < 0 {
+		return fmt.Errorf("bad request. invalid epoch %d", epoch)
 	}
-	if epoch == rs.LastEpoch && rs.FinishedEpochs[epoch] {
+	if epoch < lastEpoch {
+		return fmt.Errorf("joining outdated epoch %d, last is %d", epoch, lastEpoch)
+	}
+	if epoch == lastEpoch && rs.Epoch.LastEpochIsFinished {
 		return fmt.Errorf("joining epoch %d after finish", epoch)
 	}
 
-	// new epoch: reset timestamp
-	if epoch > rs.LastEpoch {
-		rs.LastEpoch = epoch
-		rs.LastEpochTimestamp = time.Now()
-		if err := rm.store.SaveRunState(ctx, rm.runId, rs); err != nil {
+	// new epoch
+	if epoch > lastEpoch {
+		rs.Epoch.LastEpoch = epoch
+		rs.Epoch.LastEpochIsFinished = false
+		rs.Epoch.LastEpochBlockHeight = blockInfo.height
+		rs.Epoch.LastEpochTimestamp = blockInfo.timestamp.Unix()
+
+		if err := rm.store.SaveRunState(ctx, rs); err != nil {
 			return err
 		}
 	}
@@ -116,11 +133,10 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int) error 
 		return err
 	}
 
-	// maybe finish this epoch
-	return rm.finishIfNeededNoLock(ctx)
+	return rm.FinishIfNeeded(ctx)
 }
 
-func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int) error {
+func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int32) error {
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return err
@@ -134,11 +150,11 @@ func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int) e
 		return err
 	}
 
-	return rm.finishIfNeededNoLock(ctx)
+	return rm.FinishIfNeeded(ctx)
 }
 
 // GetEpochActiveNodes returns all nodes with heartbeat within heartbeatTimeout.
-func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int) ([]string, error) {
+func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32) ([]string, error) {
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return nil, err
@@ -161,7 +177,7 @@ func (rm *RunManager) AssignRank(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	epoch := rs.LastEpoch
+	epoch := rs.Epoch.LastEpoch
 
 	active, err := rm.GetEpochActiveNodes(ctx, epoch)
 	if err != nil {
@@ -179,27 +195,21 @@ func (rm *RunManager) AssignRank(ctx context.Context) error {
 	for rank, nodeID := range active {
 		es.Records[nodeID].Rank = rank
 	}
-	rs.FinishedEpochs[epoch] = true
+	rs.Epoch.LastEpochIsFinished = true
 
 	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es); err != nil {
 		return err
 	}
-	return rm.store.SaveRunState(ctx, rm.runId, rs)
+	return rm.store.SaveRunState(ctx, rs)
 }
 
 // FinishIfNeeded is the exported version of finishIfNeededNoLock.
 func (rm *RunManager) FinishIfNeeded(ctx context.Context) error {
-	return rm.finishIfNeededNoLock(ctx)
-}
-
-// finishIfNeededNoLock checks join/timeout conditions and assigns rank if ready.
-// **Caller must hold rm.mu.**
-func (rm *RunManager) finishIfNeededNoLock(ctx context.Context) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
 	}
-	epoch := rs.LastEpoch
+	epoch := rs.Epoch.LastEpoch
 
 	active, err := rm.GetEpochActiveNodes(ctx, epoch)
 	if err != nil {
@@ -208,7 +218,8 @@ func (rm *RunManager) finishIfNeededNoLock(ctx context.Context) error {
 	joined := len(active)
 	now := time.Now()
 	enough := joined == rm.maxNodes
-	enoughTimeout := joined >= rm.minNodes && now.Sub(rs.LastEpochTimestamp) > rm.joinTimeout
+	// PRTODO: FIXME: don't even use now or time
+	enoughTimeout := joined >= rm.minNodes && now.Sub(time.UnixMilli(rs.Epoch.LastEpochTimestamp)) > rm.joinTimeout
 
 	if !(enough || enoughTimeout) {
 		return nil
@@ -217,20 +228,18 @@ func (rm *RunManager) finishIfNeededNoLock(ctx context.Context) error {
 	return rm.AssignRank(ctx)
 }
 
-// RerankIfSomeNodesLeft is now exported.
-func (rm *RunManager) RerankIfSomeNodesLeft(ctx context.Context, epoch int) error {
-	return rm.rerankIfSomeNodesLeftNoLock(ctx, epoch)
-}
-
-// rerankIfSomeNodesLeftNoLock handles re‑ranking when nodes drop out.
-// **Caller must hold rm.mu.**
-func (rm *RunManager) rerankIfSomeNodesLeftNoLock(ctx context.Context, epoch int) error {
+func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32) error {
 	rs, err := rm.store.GetRunState(ctx, rm.runId)
 	if err != nil {
 		return err
 	}
-	if !rs.FinishedEpochs[epoch] {
+
+	if epoch == rs.Epoch.LastEpoch && !rs.Epoch.LastEpochIsFinished {
 		return fmt.Errorf("epoch %d not finished", epoch)
+	} else if epoch > rs.Epoch.LastEpoch {
+		return fmt.Errorf("Unexpected epoch received in rerank not finished. epoch = %d. lastEpoch = %d", epoch, rs.Epoch.LastEpoch)
+	} else if epoch < rs.Epoch.LastEpoch {
+		// TODO: log epoch
 	}
 
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)

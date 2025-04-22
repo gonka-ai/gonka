@@ -24,11 +24,9 @@ service NetworkNodeService {
   rpc ListStoreKeys(StoreListKeysRequest) returns (StoreListKeysResponse);
 }
 
-// FIXME: IS run_id the same as task_id? Is it the same for all nodes in a run?
-// FIXME: change type to uint64 for run_id
 message JoinTrainingRequest {
   string node_id = 1;
-  string run_id = 2;
+  uint64 run_id = 2;
   int32 epoch = 3;
 }
 
@@ -49,7 +47,7 @@ enum MLNodeTrainStatusEnum {
 
 message HeartbeatRequest {
   string node_id = 1;
-  string run_id = 2;
+  uint64 run_id = 2;
   int32 local_rank = 3;
   double timestamp = 4;
   int32 step = 5;
@@ -66,7 +64,7 @@ enum HeartbeatStatusEnum {
 }
 
 message GetAliveNodesRequest {
-  string run_id = 1;
+  uint64 run_id = 1;
   int32 epoch = 2;
 }
 
@@ -77,7 +75,7 @@ message GetAliveNodesResponse {
 message SetBarrierRequest {
   string barrier_id = 1;
   string node_id = 2;
-  string run_id = 3;
+  uint64 run_id = 3;
   int32 epoch = 4;
 }
 
@@ -92,7 +90,7 @@ enum BarrierStatusEnum {
 
 message GetBarrierStatusRequest {
   string barrier_id = 1;
-  string run_id = 2;
+  uint64 run_id = 2;
   int32 epoch = 3;
 }
 
@@ -103,7 +101,7 @@ message GetBarrierStatusResponse {
 }
 
 message SetStoreRecordRequest {
-  string run_id = 1;
+  uint64 run_id = 1;
   Record record = 2;
 }
 
@@ -122,7 +120,7 @@ enum StoreRecordStatusEnum {
 }
 
 message GetStoreRecordRequest {
-  string run_id = 1;
+  uint64 run_id = 1;
   string key = 2;
 }
 
@@ -131,7 +129,7 @@ message GetStoreRecordResponse {
 }
 
 message StoreListKeysRequest {
-  string run_id = 1;
+  uint64 run_id = 1;
 }
 
 message StoreListKeysResponse {

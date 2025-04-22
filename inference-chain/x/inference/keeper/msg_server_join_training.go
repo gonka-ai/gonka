@@ -9,7 +9,6 @@ import (
 
 func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTraining) (*types.MsgJoinTrainingResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	_ = ctx
 
 	store := NewKeeperTrainingRunStore(k.Keeper)
 	runManager := training.NewRunManager(
@@ -19,12 +18,10 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 		20,
 	)
 
-	err := runManager.Join(ctx, msg.Req.NodeId, int(msg.Req.Epoch))
+	ctx.BlockTime()
+	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch)
 	if err != nil {
-		return nil, err
-	}
-	err = runManager.FinishIfNeeded(ctx)
-	if err != nil {
+		k.LogError("Failed to join training", types.Training, "error", err)
 		return nil, err
 	}
 

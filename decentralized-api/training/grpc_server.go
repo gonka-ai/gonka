@@ -8,12 +8,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"strconv"
 )
 
 type Server struct {
 	inference.UnimplementedNetworkNodeServiceServer
 	cosmosClient cosmosclient.CosmosMessageClient
+	executor     *Executor
 }
 
 /*
@@ -36,9 +36,10 @@ type Server struct {
 	  localhost:9003 \
 	  inference.inference.NetworkNodeService/ListStoreKeys
 */
-func NewServer(cosmosClient cosmosclient.CosmosMessageClient) *Server {
+func NewServer(cosmosClient cosmosclient.CosmosMessageClient, executor *Executor) *Server {
 	return &Server{
 		cosmosClient: cosmosClient,
+		executor:     executor,
 	}
 }
 
@@ -53,22 +54,16 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 
 	logging.Info("SetStoreRecord called", types.Training, "key", req.Record.Key, "value", req.Record.Value)
 
-	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
-	if err != nil {
-		logging.Error("Failed to parse task id", types.Training, "error", err)
-		return nil, err
-	}
-
 	msg := &inference.MsgSubmitTrainingKvRecord{
 		Creator:     s.cosmosClient.GetAddress(),
 		Participant: s.cosmosClient.GetAddress(),
-		TaskId:      taskId,
+		TaskId:      req.RunId,
 		Key:         req.Record.Key,
 		Value:       req.Record.Value,
 	}
 	response := inference.MsgSubmitTrainingKvRecordResponse{}
 
-	err = cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, msg, &response)
+	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, msg, &response)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -84,14 +79,8 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 func (s *Server) GetStoreRecord(ctx context.Context, req *inference.GetStoreRecordRequest) (*inference.GetStoreRecordResponse, error) {
 	logging.Info("GetStoreRecord called", types.Training, "key", req.Key)
 
-	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
-	if err != nil {
-		logging.Error("Failed to parse task id", types.Training, "error", err)
-		return nil, err
-	}
-
 	request := &types.QueryTrainingKvRecordRequest{
-		TaskId:      taskId,
+		TaskId:      req.RunId,
 		Participant: s.cosmosClient.GetAddress(),
 		Key:         req.Key,
 	}
@@ -115,15 +104,9 @@ func (s *Server) GetStoreRecord(ctx context.Context, req *inference.GetStoreReco
 func (s *Server) ListStoreKeys(ctx context.Context, req *inference.StoreListKeysRequest) (*inference.StoreListKeysResponse, error) {
 	logging.Info("ListStoreKeys called", types.Training, "key")
 
-	taskId, err := strconv.ParseUint(req.RunId, 10, 64)
-	if err != nil {
-		logging.Error("Failed to parse task id", types.Training, "error", err)
-		return nil, err
-	}
-
 	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	resp, err := queryClient.ListTrainingKvRecordKeys(ctx, &types.QueryListTrainingKvRecordKeysRequest{
-		TaskId:      taskId,
+		TaskId:      req.RunId,
 		Participant: s.cosmosClient.GetAddress(),
 	})
 	if err != nil {
@@ -154,9 +137,12 @@ func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRe
 func (s *Server) GetJoinTrainingStatus(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
 }
+
 func (s *Server) SendHeartbeat(context.Context, *inference.HeartbeatRequest) (*inference.HeartbeatResponse, error) {
+	// TODO: executor.Heartbeat(...)
 	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
 }
+
 func (s *Server) GetAliveNodes(context.Context, *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
 }

@@ -100,8 +100,8 @@ func (x *fastReflection_JoinTrainingRequest) Range(f func(protoreflect.FieldDesc
 			return
 		}
 	}
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_JoinTrainingRequest_run_id, value) {
 			return
 		}
@@ -130,7 +130,7 @@ func (x *fastReflection_JoinTrainingRequest) Has(fd protoreflect.FieldDescriptor
 	case "inference.inference.JoinTrainingRequest.node_id":
 		return x.NodeId != ""
 	case "inference.inference.JoinTrainingRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.JoinTrainingRequest.epoch":
 		return x.Epoch != int32(0)
 	default:
@@ -152,7 +152,7 @@ func (x *fastReflection_JoinTrainingRequest) Clear(fd protoreflect.FieldDescript
 	case "inference.inference.JoinTrainingRequest.node_id":
 		x.NodeId = ""
 	case "inference.inference.JoinTrainingRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.JoinTrainingRequest.epoch":
 		x.Epoch = int32(0)
 	default:
@@ -176,7 +176,7 @@ func (x *fastReflection_JoinTrainingRequest) Get(descriptor protoreflect.FieldDe
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.JoinTrainingRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.JoinTrainingRequest.epoch":
 		value := x.Epoch
 		return protoreflect.ValueOfInt32(value)
@@ -203,7 +203,7 @@ func (x *fastReflection_JoinTrainingRequest) Set(fd protoreflect.FieldDescriptor
 	case "inference.inference.JoinTrainingRequest.node_id":
 		x.NodeId = value.Interface().(string)
 	case "inference.inference.JoinTrainingRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.JoinTrainingRequest.epoch":
 		x.Epoch = int32(value.Int())
 	default:
@@ -248,7 +248,7 @@ func (x *fastReflection_JoinTrainingRequest) NewField(fd protoreflect.FieldDescr
 	case "inference.inference.JoinTrainingRequest.node_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.JoinTrainingRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.JoinTrainingRequest.epoch":
 		return protoreflect.ValueOfInt32(int32(0))
 	default:
@@ -324,9 +324,8 @@ func (x *fastReflection_JoinTrainingRequest) ProtoMethods() *protoiface.Methods 
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.Epoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.Epoch))
@@ -365,12 +364,10 @@ func (x *fastReflection_JoinTrainingRequest) ProtoMethods() *protoiface.Methods 
 			i--
 			dAtA[i] = 0x18
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = 0x10
 		}
 		if len(x.NodeId) > 0 {
 			i -= len(x.NodeId)
@@ -461,10 +458,10 @@ func (x *fastReflection_JoinTrainingRequest) ProtoMethods() *protoiface.Methods 
 				x.NodeId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 2:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -474,24 +471,11 @@ func (x *fastReflection_JoinTrainingRequest) ProtoMethods() *protoiface.Methods 
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 3:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
@@ -1326,8 +1310,8 @@ func (x *fastReflection_HeartbeatRequest) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_HeartbeatRequest_run_id, value) {
 			return
 		}
@@ -1374,7 +1358,7 @@ func (x *fastReflection_HeartbeatRequest) Has(fd protoreflect.FieldDescriptor) b
 	case "inference.inference.HeartbeatRequest.node_id":
 		return x.NodeId != ""
 	case "inference.inference.HeartbeatRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.HeartbeatRequest.local_rank":
 		return x.LocalRank != int32(0)
 	case "inference.inference.HeartbeatRequest.timestamp":
@@ -1402,7 +1386,7 @@ func (x *fastReflection_HeartbeatRequest) Clear(fd protoreflect.FieldDescriptor)
 	case "inference.inference.HeartbeatRequest.node_id":
 		x.NodeId = ""
 	case "inference.inference.HeartbeatRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.HeartbeatRequest.local_rank":
 		x.LocalRank = int32(0)
 	case "inference.inference.HeartbeatRequest.timestamp":
@@ -1432,7 +1416,7 @@ func (x *fastReflection_HeartbeatRequest) Get(descriptor protoreflect.FieldDescr
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.HeartbeatRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.HeartbeatRequest.local_rank":
 		value := x.LocalRank
 		return protoreflect.ValueOfInt32(value)
@@ -1468,7 +1452,7 @@ func (x *fastReflection_HeartbeatRequest) Set(fd protoreflect.FieldDescriptor, v
 	case "inference.inference.HeartbeatRequest.node_id":
 		x.NodeId = value.Interface().(string)
 	case "inference.inference.HeartbeatRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.HeartbeatRequest.local_rank":
 		x.LocalRank = int32(value.Int())
 	case "inference.inference.HeartbeatRequest.timestamp":
@@ -1525,7 +1509,7 @@ func (x *fastReflection_HeartbeatRequest) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.HeartbeatRequest.node_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.HeartbeatRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.HeartbeatRequest.local_rank":
 		return protoreflect.ValueOfInt32(int32(0))
 	case "inference.inference.HeartbeatRequest.timestamp":
@@ -1607,9 +1591,8 @@ func (x *fastReflection_HeartbeatRequest) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.LocalRank != 0 {
 			n += 1 + runtime.Sov(uint64(x.LocalRank))
@@ -1673,12 +1656,10 @@ func (x *fastReflection_HeartbeatRequest) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x18
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = 0x10
 		}
 		if len(x.NodeId) > 0 {
 			i -= len(x.NodeId)
@@ -1769,10 +1750,10 @@ func (x *fastReflection_HeartbeatRequest) ProtoMethods() *protoiface.Methods {
 				x.NodeId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 2:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1782,24 +1763,11 @@ func (x *fastReflection_HeartbeatRequest) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 3:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field LocalRank", wireType)
@@ -2385,8 +2353,8 @@ func (x *fastReflection_GetAliveNodesRequest) Interface() protoreflect.ProtoMess
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_GetAliveNodesRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_GetAliveNodesRequest_run_id, value) {
 			return
 		}
@@ -2413,7 +2381,7 @@ func (x *fastReflection_GetAliveNodesRequest) Range(f func(protoreflect.FieldDes
 func (x *fastReflection_GetAliveNodesRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.GetAliveNodesRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.GetAliveNodesRequest.epoch":
 		return x.Epoch != int32(0)
 	default:
@@ -2433,7 +2401,7 @@ func (x *fastReflection_GetAliveNodesRequest) Has(fd protoreflect.FieldDescripto
 func (x *fastReflection_GetAliveNodesRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.GetAliveNodesRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.GetAliveNodesRequest.epoch":
 		x.Epoch = int32(0)
 	default:
@@ -2454,7 +2422,7 @@ func (x *fastReflection_GetAliveNodesRequest) Get(descriptor protoreflect.FieldD
 	switch descriptor.FullName() {
 	case "inference.inference.GetAliveNodesRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.GetAliveNodesRequest.epoch":
 		value := x.Epoch
 		return protoreflect.ValueOfInt32(value)
@@ -2479,7 +2447,7 @@ func (x *fastReflection_GetAliveNodesRequest) Get(descriptor protoreflect.FieldD
 func (x *fastReflection_GetAliveNodesRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.GetAliveNodesRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.GetAliveNodesRequest.epoch":
 		x.Epoch = int32(value.Int())
 	default:
@@ -2520,7 +2488,7 @@ func (x *fastReflection_GetAliveNodesRequest) Mutable(fd protoreflect.FieldDescr
 func (x *fastReflection_GetAliveNodesRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.GetAliveNodesRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.GetAliveNodesRequest.epoch":
 		return protoreflect.ValueOfInt32(int32(0))
 	default:
@@ -2592,9 +2560,8 @@ func (x *fastReflection_GetAliveNodesRequest) ProtoMethods() *protoiface.Methods
 		var n int
 		var l int
 		_ = l
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.Epoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.Epoch))
@@ -2633,12 +2600,10 @@ func (x *fastReflection_GetAliveNodesRequest) ProtoMethods() *protoiface.Methods
 			i--
 			dAtA[i] = 0x10
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0xa
+			dAtA[i] = 0x8
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -2690,10 +2655,10 @@ func (x *fastReflection_GetAliveNodesRequest) ProtoMethods() *protoiface.Methods
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -2703,24 +2668,11 @@ func (x *fastReflection_GetAliveNodesRequest) ProtoMethods() *protoiface.Methods
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 2:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
@@ -3349,8 +3301,8 @@ func (x *fastReflection_SetBarrierRequest) Range(f func(protoreflect.FieldDescri
 			return
 		}
 	}
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_SetBarrierRequest_run_id, value) {
 			return
 		}
@@ -3381,7 +3333,7 @@ func (x *fastReflection_SetBarrierRequest) Has(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.SetBarrierRequest.node_id":
 		return x.NodeId != ""
 	case "inference.inference.SetBarrierRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.SetBarrierRequest.epoch":
 		return x.Epoch != int32(0)
 	default:
@@ -3405,7 +3357,7 @@ func (x *fastReflection_SetBarrierRequest) Clear(fd protoreflect.FieldDescriptor
 	case "inference.inference.SetBarrierRequest.node_id":
 		x.NodeId = ""
 	case "inference.inference.SetBarrierRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.SetBarrierRequest.epoch":
 		x.Epoch = int32(0)
 	default:
@@ -3432,7 +3384,7 @@ func (x *fastReflection_SetBarrierRequest) Get(descriptor protoreflect.FieldDesc
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.SetBarrierRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.SetBarrierRequest.epoch":
 		value := x.Epoch
 		return protoreflect.ValueOfInt32(value)
@@ -3461,7 +3413,7 @@ func (x *fastReflection_SetBarrierRequest) Set(fd protoreflect.FieldDescriptor, 
 	case "inference.inference.SetBarrierRequest.node_id":
 		x.NodeId = value.Interface().(string)
 	case "inference.inference.SetBarrierRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.SetBarrierRequest.epoch":
 		x.Epoch = int32(value.Int())
 	default:
@@ -3510,7 +3462,7 @@ func (x *fastReflection_SetBarrierRequest) NewField(fd protoreflect.FieldDescrip
 	case "inference.inference.SetBarrierRequest.node_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.SetBarrierRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.SetBarrierRequest.epoch":
 		return protoreflect.ValueOfInt32(int32(0))
 	default:
@@ -3590,9 +3542,8 @@ func (x *fastReflection_SetBarrierRequest) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.Epoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.Epoch))
@@ -3631,12 +3582,10 @@ func (x *fastReflection_SetBarrierRequest) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x20
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0x1a
+			dAtA[i] = 0x18
 		}
 		if len(x.NodeId) > 0 {
 			i -= len(x.NodeId)
@@ -3766,10 +3715,10 @@ func (x *fastReflection_SetBarrierRequest) ProtoMethods() *protoiface.Methods {
 				x.NodeId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 3:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -3779,24 +3728,11 @@ func (x *fastReflection_SetBarrierRequest) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 4:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
@@ -4341,8 +4277,8 @@ func (x *fastReflection_GetBarrierStatusRequest) Range(f func(protoreflect.Field
 			return
 		}
 	}
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_GetBarrierStatusRequest_run_id, value) {
 			return
 		}
@@ -4371,7 +4307,7 @@ func (x *fastReflection_GetBarrierStatusRequest) Has(fd protoreflect.FieldDescri
 	case "inference.inference.GetBarrierStatusRequest.barrier_id":
 		return x.BarrierId != ""
 	case "inference.inference.GetBarrierStatusRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.GetBarrierStatusRequest.epoch":
 		return x.Epoch != int32(0)
 	default:
@@ -4393,7 +4329,7 @@ func (x *fastReflection_GetBarrierStatusRequest) Clear(fd protoreflect.FieldDesc
 	case "inference.inference.GetBarrierStatusRequest.barrier_id":
 		x.BarrierId = ""
 	case "inference.inference.GetBarrierStatusRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.GetBarrierStatusRequest.epoch":
 		x.Epoch = int32(0)
 	default:
@@ -4417,7 +4353,7 @@ func (x *fastReflection_GetBarrierStatusRequest) Get(descriptor protoreflect.Fie
 		return protoreflect.ValueOfString(value)
 	case "inference.inference.GetBarrierStatusRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.GetBarrierStatusRequest.epoch":
 		value := x.Epoch
 		return protoreflect.ValueOfInt32(value)
@@ -4444,7 +4380,7 @@ func (x *fastReflection_GetBarrierStatusRequest) Set(fd protoreflect.FieldDescri
 	case "inference.inference.GetBarrierStatusRequest.barrier_id":
 		x.BarrierId = value.Interface().(string)
 	case "inference.inference.GetBarrierStatusRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.GetBarrierStatusRequest.epoch":
 		x.Epoch = int32(value.Int())
 	default:
@@ -4489,7 +4425,7 @@ func (x *fastReflection_GetBarrierStatusRequest) NewField(fd protoreflect.FieldD
 	case "inference.inference.GetBarrierStatusRequest.barrier_id":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.GetBarrierStatusRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.GetBarrierStatusRequest.epoch":
 		return protoreflect.ValueOfInt32(int32(0))
 	default:
@@ -4565,9 +4501,8 @@ func (x *fastReflection_GetBarrierStatusRequest) ProtoMethods() *protoiface.Meth
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.Epoch != 0 {
 			n += 1 + runtime.Sov(uint64(x.Epoch))
@@ -4606,12 +4541,10 @@ func (x *fastReflection_GetBarrierStatusRequest) ProtoMethods() *protoiface.Meth
 			i--
 			dAtA[i] = 0x18
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = 0x10
 		}
 		if len(x.BarrierId) > 0 {
 			i -= len(x.BarrierId)
@@ -4702,10 +4635,10 @@ func (x *fastReflection_GetBarrierStatusRequest) ProtoMethods() *protoiface.Meth
 				x.BarrierId = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 2:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -4715,24 +4648,11 @@ func (x *fastReflection_GetBarrierStatusRequest) ProtoMethods() *protoiface.Meth
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 3:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
@@ -5523,8 +5443,8 @@ func (x *fastReflection_SetStoreRecordRequest) Interface() protoreflect.ProtoMes
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_SetStoreRecordRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_SetStoreRecordRequest_run_id, value) {
 			return
 		}
@@ -5551,7 +5471,7 @@ func (x *fastReflection_SetStoreRecordRequest) Range(f func(protoreflect.FieldDe
 func (x *fastReflection_SetStoreRecordRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.SetStoreRecordRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.SetStoreRecordRequest.record":
 		return x.Record != nil
 	default:
@@ -5571,7 +5491,7 @@ func (x *fastReflection_SetStoreRecordRequest) Has(fd protoreflect.FieldDescript
 func (x *fastReflection_SetStoreRecordRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.SetStoreRecordRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.SetStoreRecordRequest.record":
 		x.Record = nil
 	default:
@@ -5592,7 +5512,7 @@ func (x *fastReflection_SetStoreRecordRequest) Get(descriptor protoreflect.Field
 	switch descriptor.FullName() {
 	case "inference.inference.SetStoreRecordRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.SetStoreRecordRequest.record":
 		value := x.Record
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
@@ -5617,7 +5537,7 @@ func (x *fastReflection_SetStoreRecordRequest) Get(descriptor protoreflect.Field
 func (x *fastReflection_SetStoreRecordRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.SetStoreRecordRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.SetStoreRecordRequest.record":
 		x.Record = value.Message().Interface().(*Record)
 	default:
@@ -5661,7 +5581,7 @@ func (x *fastReflection_SetStoreRecordRequest) Mutable(fd protoreflect.FieldDesc
 func (x *fastReflection_SetStoreRecordRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.SetStoreRecordRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.SetStoreRecordRequest.record":
 		m := new(Record)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
@@ -5734,9 +5654,8 @@ func (x *fastReflection_SetStoreRecordRequest) ProtoMethods() *protoiface.Method
 		var n int
 		var l int
 		_ = l
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.Record != nil {
 			l = options.Size(x.Record)
@@ -5785,12 +5704,10 @@ func (x *fastReflection_SetStoreRecordRequest) ProtoMethods() *protoiface.Method
 			i--
 			dAtA[i] = 0x12
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0xa
+			dAtA[i] = 0x8
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -5842,10 +5759,10 @@ func (x *fastReflection_SetStoreRecordRequest) ProtoMethods() *protoiface.Method
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -5855,24 +5772,11 @@ func (x *fastReflection_SetStoreRecordRequest) ProtoMethods() *protoiface.Method
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 2:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Record", wireType)
@@ -6910,8 +6814,8 @@ func (x *fastReflection_GetStoreRecordRequest) Interface() protoreflect.ProtoMes
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_GetStoreRecordRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_GetStoreRecordRequest_run_id, value) {
 			return
 		}
@@ -6938,7 +6842,7 @@ func (x *fastReflection_GetStoreRecordRequest) Range(f func(protoreflect.FieldDe
 func (x *fastReflection_GetStoreRecordRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.GetStoreRecordRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	case "inference.inference.GetStoreRecordRequest.key":
 		return x.Key != ""
 	default:
@@ -6958,7 +6862,7 @@ func (x *fastReflection_GetStoreRecordRequest) Has(fd protoreflect.FieldDescript
 func (x *fastReflection_GetStoreRecordRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.GetStoreRecordRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	case "inference.inference.GetStoreRecordRequest.key":
 		x.Key = ""
 	default:
@@ -6979,7 +6883,7 @@ func (x *fastReflection_GetStoreRecordRequest) Get(descriptor protoreflect.Field
 	switch descriptor.FullName() {
 	case "inference.inference.GetStoreRecordRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.GetStoreRecordRequest.key":
 		value := x.Key
 		return protoreflect.ValueOfString(value)
@@ -7004,7 +6908,7 @@ func (x *fastReflection_GetStoreRecordRequest) Get(descriptor protoreflect.Field
 func (x *fastReflection_GetStoreRecordRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.GetStoreRecordRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	case "inference.inference.GetStoreRecordRequest.key":
 		x.Key = value.Interface().(string)
 	default:
@@ -7045,7 +6949,7 @@ func (x *fastReflection_GetStoreRecordRequest) Mutable(fd protoreflect.FieldDesc
 func (x *fastReflection_GetStoreRecordRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.GetStoreRecordRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.GetStoreRecordRequest.key":
 		return protoreflect.ValueOfString("")
 	default:
@@ -7117,9 +7021,8 @@ func (x *fastReflection_GetStoreRecordRequest) ProtoMethods() *protoiface.Method
 		var n int
 		var l int
 		_ = l
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		l = len(x.Key)
 		if l > 0 {
@@ -7161,12 +7064,10 @@ func (x *fastReflection_GetStoreRecordRequest) ProtoMethods() *protoiface.Method
 			i--
 			dAtA[i] = 0x12
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0xa
+			dAtA[i] = 0x8
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -7218,10 +7119,10 @@ func (x *fastReflection_GetStoreRecordRequest) ProtoMethods() *protoiface.Method
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -7231,24 +7132,11 @@ func (x *fastReflection_GetStoreRecordRequest) ProtoMethods() *protoiface.Method
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			case 2:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Key", wireType)
@@ -7827,8 +7715,8 @@ func (x *fastReflection_StoreListKeysRequest) Interface() protoreflect.ProtoMess
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_StoreListKeysRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.RunId != "" {
-		value := protoreflect.ValueOfString(x.RunId)
+	if x.RunId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.RunId)
 		if !f(fd_StoreListKeysRequest_run_id, value) {
 			return
 		}
@@ -7849,7 +7737,7 @@ func (x *fastReflection_StoreListKeysRequest) Range(f func(protoreflect.FieldDes
 func (x *fastReflection_StoreListKeysRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.StoreListKeysRequest.run_id":
-		return x.RunId != ""
+		return x.RunId != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.StoreListKeysRequest"))
@@ -7867,7 +7755,7 @@ func (x *fastReflection_StoreListKeysRequest) Has(fd protoreflect.FieldDescripto
 func (x *fastReflection_StoreListKeysRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.StoreListKeysRequest.run_id":
-		x.RunId = ""
+		x.RunId = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.StoreListKeysRequest"))
@@ -7886,7 +7774,7 @@ func (x *fastReflection_StoreListKeysRequest) Get(descriptor protoreflect.FieldD
 	switch descriptor.FullName() {
 	case "inference.inference.StoreListKeysRequest.run_id":
 		value := x.RunId
-		return protoreflect.ValueOfString(value)
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.StoreListKeysRequest"))
@@ -7908,7 +7796,7 @@ func (x *fastReflection_StoreListKeysRequest) Get(descriptor protoreflect.FieldD
 func (x *fastReflection_StoreListKeysRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	case "inference.inference.StoreListKeysRequest.run_id":
-		x.RunId = value.Interface().(string)
+		x.RunId = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.StoreListKeysRequest"))
@@ -7945,7 +7833,7 @@ func (x *fastReflection_StoreListKeysRequest) Mutable(fd protoreflect.FieldDescr
 func (x *fastReflection_StoreListKeysRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	case "inference.inference.StoreListKeysRequest.run_id":
-		return protoreflect.ValueOfString("")
+		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.StoreListKeysRequest"))
@@ -8015,9 +7903,8 @@ func (x *fastReflection_StoreListKeysRequest) ProtoMethods() *protoiface.Methods
 		var n int
 		var l int
 		_ = l
-		l = len(x.RunId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
+		if x.RunId != 0 {
+			n += 1 + runtime.Sov(uint64(x.RunId))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -8048,12 +7935,10 @@ func (x *fastReflection_StoreListKeysRequest) ProtoMethods() *protoiface.Methods
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.RunId) > 0 {
-			i -= len(x.RunId)
-			copy(dAtA[i:], x.RunId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RunId)))
+		if x.RunId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RunId))
 			i--
-			dAtA[i] = 0xa
+			dAtA[i] = 0x8
 		}
 		if input.Buf != nil {
 			input.Buf = append(input.Buf, dAtA...)
@@ -8105,10 +7990,10 @@ func (x *fastReflection_StoreListKeysRequest) ProtoMethods() *protoiface.Methods
 			}
 			switch fieldNum {
 			case 1:
-				if wireType != 2 {
+				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RunId", wireType)
 				}
-				var stringLen uint64
+				x.RunId = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -8118,24 +8003,11 @@ func (x *fastReflection_StoreListKeysRequest) ProtoMethods() *protoiface.Methods
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					x.RunId |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RunId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -8854,15 +8726,13 @@ func (StoreRecordStatusEnum) EnumDescriptor() ([]byte, []int) {
 	return file_inference_inference_network_node_proto_rawDescGZIP(), []int{3}
 }
 
-// FIXME: IS run_id the same as task_id? Is it the same for all nodes in a run?
-// FIXME: change type to uint64 for run_id
 type JoinTrainingRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
 	NodeId string `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	RunId  string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId  uint64 `protobuf:"varint,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Epoch  int32  `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
 }
 
@@ -8893,11 +8763,11 @@ func (x *JoinTrainingRequest) GetNodeId() string {
 	return ""
 }
 
-func (x *JoinTrainingRequest) GetRunId() string {
+func (x *JoinTrainingRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *JoinTrainingRequest) GetEpoch() int32 {
@@ -8980,7 +8850,7 @@ type HeartbeatRequest struct {
 	unknownFields protoimpl.UnknownFields
 
 	NodeId      string  `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	RunId       string  `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId       uint64  `protobuf:"varint,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	LocalRank   int32   `protobuf:"varint,3,opt,name=local_rank,json=localRank,proto3" json:"local_rank,omitempty"`
 	Timestamp   float64 `protobuf:"fixed64,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Step        int32   `protobuf:"varint,5,opt,name=step,proto3" json:"step,omitempty"`
@@ -9014,11 +8884,11 @@ func (x *HeartbeatRequest) GetNodeId() string {
 	return ""
 }
 
-func (x *HeartbeatRequest) GetRunId() string {
+func (x *HeartbeatRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *HeartbeatRequest) GetLocalRank() int32 {
@@ -9089,7 +8959,7 @@ type GetAliveNodesRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId uint64 `protobuf:"varint,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Epoch int32  `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
 }
 
@@ -9113,11 +8983,11 @@ func (*GetAliveNodesRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_network_node_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *GetAliveNodesRequest) GetRunId() string {
+func (x *GetAliveNodesRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *GetAliveNodesRequest) GetEpoch() int32 {
@@ -9169,7 +9039,7 @@ type SetBarrierRequest struct {
 
 	BarrierId string `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
 	NodeId    string `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	RunId     string `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId     uint64 `protobuf:"varint,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Epoch     int32  `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
 }
 
@@ -9207,11 +9077,11 @@ func (x *SetBarrierRequest) GetNodeId() string {
 	return ""
 }
 
-func (x *SetBarrierRequest) GetRunId() string {
+func (x *SetBarrierRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *SetBarrierRequest) GetEpoch() int32 {
@@ -9262,7 +9132,7 @@ type GetBarrierStatusRequest struct {
 	unknownFields protoimpl.UnknownFields
 
 	BarrierId string `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
-	RunId     string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId     uint64 `protobuf:"varint,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Epoch     int32  `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
 }
 
@@ -9293,11 +9163,11 @@ func (x *GetBarrierStatusRequest) GetBarrierId() string {
 	return ""
 }
 
-func (x *GetBarrierStatusRequest) GetRunId() string {
+func (x *GetBarrierStatusRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *GetBarrierStatusRequest) GetEpoch() int32 {
@@ -9363,7 +9233,7 @@ type SetStoreRecordRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RunId  string  `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId  uint64  `protobuf:"varint,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Record *Record `protobuf:"bytes,2,opt,name=record,proto3" json:"record,omitempty"`
 }
 
@@ -9387,11 +9257,11 @@ func (*SetStoreRecordRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_network_node_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *SetStoreRecordRequest) GetRunId() string {
+func (x *SetStoreRecordRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *SetStoreRecordRequest) GetRecord() *Record {
@@ -9484,7 +9354,7 @@ type GetStoreRecordRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId uint64 `protobuf:"varint,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Key   string `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
 }
 
@@ -9508,11 +9378,11 @@ func (*GetStoreRecordRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_network_node_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *GetStoreRecordRequest) GetRunId() string {
+func (x *GetStoreRecordRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 func (x *GetStoreRecordRequest) GetKey() string {
@@ -9562,7 +9432,7 @@ type StoreListKeysRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId uint64 `protobuf:"varint,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 }
 
 func (x *StoreListKeysRequest) Reset() {
@@ -9585,11 +9455,11 @@ func (*StoreListKeysRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_network_node_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *StoreListKeysRequest) GetRunId() string {
+func (x *StoreListKeysRequest) GetRunId() uint64 {
 	if x != nil {
 		return x.RunId
 	}
-	return ""
+	return 0
 }
 
 type StoreListKeysResponse struct {
@@ -9637,7 +9507,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x13, 0x4a, 0x6f, 0x69, 0x6e, 0x54, 0x72, 0x61, 0x69, 0x6e, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71,
 	0x75, 0x65, 0x73, 0x74, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x15, 0x0a,
-	0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x72,
+	0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x72,
 	0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x03, 0x20,
 	0x01, 0x28, 0x05, 0x52, 0x05, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x22, 0xbd, 0x01, 0x0a, 0x11, 0x4d,
 	0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x54, 0x72, 0x61, 0x69, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
@@ -9655,7 +9525,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x65, 0x61, 0x72, 0x74, 0x62, 0x65, 0x61, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
 	0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
 	0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f,
-	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12,
 	0x1d, 0x0a, 0x0a, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x5f, 0x72, 0x61, 0x6e, 0x6b, 0x18, 0x03, 0x20,
 	0x01, 0x28, 0x05, 0x52, 0x09, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x52, 0x61, 0x6e, 0x6b, 0x12, 0x1c,
 	0x0a, 0x09, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x04, 0x20, 0x01, 0x28,
@@ -9671,7 +9541,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x75, 0x6d, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x22, 0x43, 0x0a, 0x14, 0x47, 0x65,
 	0x74, 0x41, 0x6c, 0x69, 0x76, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65,
 	0x73, 0x74, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65, 0x70, 0x6f,
+	0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65, 0x70, 0x6f,
 	0x63, 0x68, 0x18, 0x02, 0x20, 0x01, 0x28, 0x05, 0x52, 0x05, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x22,
 	0x38, 0x0a, 0x15, 0x47, 0x65, 0x74, 0x41, 0x6c, 0x69, 0x76, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73,
 	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x61, 0x6c, 0x69, 0x76,
@@ -9682,7 +9552,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x28, 0x09, 0x52, 0x09, 0x62, 0x61, 0x72, 0x72, 0x69, 0x65, 0x72, 0x49, 0x64, 0x12, 0x17, 0x0a,
 	0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06,
 	0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64,
-	0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a,
 	0x05, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x05, 0x52, 0x05, 0x65, 0x70,
 	0x6f, 0x63, 0x68, 0x22, 0x54, 0x0a, 0x12, 0x53, 0x65, 0x74, 0x42, 0x61, 0x72, 0x72, 0x69, 0x65,
 	0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x3e, 0x0a, 0x06, 0x73, 0x74, 0x61,
@@ -9694,7 +9564,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x62, 0x61, 0x72, 0x72, 0x69, 0x65, 0x72, 0x5f,
 	0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x62, 0x61, 0x72, 0x72, 0x69, 0x65,
 	0x72, 0x49, 0x64, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65, 0x70,
+	0x01, 0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65, 0x70,
 	0x6f, 0x63, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x05, 0x65, 0x70, 0x6f, 0x63, 0x68,
 	0x22, 0x75, 0x0a, 0x18, 0x47, 0x65, 0x74, 0x42, 0x61, 0x72, 0x72, 0x69, 0x65, 0x72, 0x53, 0x74,
 	0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1b, 0x0a, 0x09,
@@ -9705,7 +9575,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x6e, 0x6f, 0x64, 0x65, 0x73, 0x18, 0x03, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0a, 0x61, 0x6c, 0x69,
 	0x76, 0x65, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x22, 0x63, 0x0a, 0x15, 0x53, 0x65, 0x74, 0x53, 0x74,
 	0x6f, 0x72, 0x65, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04,
 	0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x33, 0x0a, 0x06, 0x72, 0x65, 0x63, 0x6f, 0x72,
 	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x52, 0x65,
@@ -9721,7 +9591,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x45, 0x6e, 0x75, 0x6d, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x22, 0x40, 0x0a, 0x15,
 	0x47, 0x65, 0x74, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x10, 0x0a, 0x03,
+	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x12, 0x10, 0x0a, 0x03,
 	0x6b, 0x65, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x6b, 0x65, 0x79, 0x22, 0x4d,
 	0x0a, 0x16, 0x47, 0x65, 0x74, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64,
 	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x33, 0x0a, 0x06, 0x72, 0x65, 0x63, 0x6f,
@@ -9730,7 +9600,7 @@ var file_inference_inference_network_node_proto_rawDesc = []byte{
 	0x65, 0x63, 0x6f, 0x72, 0x64, 0x52, 0x06, 0x72, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x22, 0x2d, 0x0a,
 	0x14, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x4b, 0x65, 0x79, 0x73, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x15, 0x0a, 0x06, 0x72, 0x75, 0x6e, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x22, 0x2b, 0x0a, 0x15,
+	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05, 0x72, 0x75, 0x6e, 0x49, 0x64, 0x22, 0x2b, 0x0a, 0x15,
 	0x53, 0x74, 0x6f, 0x72, 0x65, 0x4c, 0x69, 0x73, 0x74, 0x4b, 0x65, 0x79, 0x73, 0x52, 0x65, 0x73,
 	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x6b, 0x65, 0x79, 0x73, 0x18, 0x01, 0x20,
 	0x03, 0x28, 0x09, 0x52, 0x04, 0x6b, 0x65, 0x79, 0x73, 0x2a, 0x46, 0x0a, 0x15, 0x4d, 0x4c, 0x4e,
