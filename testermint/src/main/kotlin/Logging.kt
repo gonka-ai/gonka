@@ -95,21 +95,33 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
                 }
             }
         }
-        val warn = "WRN\u001B"
-        if (logEntry.contains("INFO+")) {
-            Logger.info(logEntry)
-        } else if (logEntry.contains("INF ") || logEntry.contains(" INFO ")) {
-            // We map this to debug as there is a LOT of info level logs
-            Logger.debug(logEntry)
-        } else if (logEntry.contains("ERR") || logEntry.contains(" ERROR ")) {
-            Logger.error(logEntry)
-        } else if (logEntry.contains("DBG ") || logEntry.contains(" DEBUG ")) {
-            Logger.debug(logEntry)
-        } else if (logEntry.contains(warn) || logEntry.contains(" WARN ")) {
-            Logger.warn(logEntry)
+
+        val (level, message) = parseEntry(logEntry)
+        if (level.startsWith("INF")) {
+            Logger.info(message)
+        } else if (level.startsWith("ERR")) {
+            Logger.error(message)
+        } else if (level.startsWith("D")) {
+            Logger.debug(message)
+        } else if (level.startsWith("W")) {
+            Logger.warn(message)
         } else {
-            Logger.trace(logEntry)
+            Logger.trace(message)
         }
+    }
+
+    private fun parseEntry(logEntry: String): Pair<String, String> {
+        val cosmosLogRegex = "(?:\\x1B\\[[0-9;]*m)*([A-Z]{3,4})(?:\\x1B\\[[0-9;]*m)*\\s+(.*)".toRegex()
+        val match = cosmosLogRegex.find(logEntry)
+        if (match != null) {
+            return match.groupValues[1] to match.groupValues[2]
+        }
+        val apiLogRegex = "^\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2} ([A-Z]+) (.+)\$".toRegex()
+        val apiMatch = apiLogRegex.find(logEntry)
+        if (apiMatch != null) {
+            return apiMatch.groupValues[1] to apiMatch.groupValues[2]
+        }
+        return Pair("", logEntry)
     }
 }
 

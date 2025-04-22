@@ -21,6 +21,8 @@ open class TestermintTest {
     fun beforeEach(testInfo: TestInfo) {
         val displayName = testInfo.testClass.get().simpleName + "-" + testInfo.displayName.trimEnd('(', ')')
         ThreadContext.put("test", displayName)
+        ThreadContext.put("pair", "none")
+        ThreadContext.put("operation", "init")
         TestFilesWriter.currentTest = displayName
         Logger.warn("Starting test:{}", displayName)
     }

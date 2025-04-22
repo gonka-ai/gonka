@@ -37,6 +37,9 @@ jobs:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
         run: sudo make build-docker
 
+      - name: Start test chain
+        run: sudo make launch-test-chain
+
       - name: Run Tests
         run: sudo make run-tests
 
