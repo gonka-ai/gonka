@@ -375,24 +375,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a create_partial_upgrade tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
 				},
-				{
-					RpcMethod:      "SubmitTrainingKvRecord",
-					Use:            "submit-training-kv-record [task-id] [participant] [key] [value]",
-					Short:          "Send a submit-training-kv-record tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}, {ProtoField: "key"}, {ProtoField: "value"}},
-				},
-				{
-					RpcMethod:      "JoinTraining",
-					Use:            "join-training",
-					Short:          "Send a join-training tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
-				{
-					RpcMethod:      "TrainingHeartbeat",
-					Use:            "training-heartbeat",
-					Short:          "Send a training-heartbeat tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
-				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},
