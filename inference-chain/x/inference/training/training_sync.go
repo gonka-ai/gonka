@@ -135,14 +135,14 @@ func (rm *RunManager) Join(ctx context.Context, nodeId string, epoch int32, bloc
 	return rm.FinishIfNeeded(ctx)
 }
 
-func (rm *RunManager) Heartbeat(ctx context.Context, nodeID string, epoch int32) error {
+func (rm *RunManager) Heartbeat(ctx context.Context, nodeId string, epoch int32) error {
 	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return err
 	}
-	rec, ok := es.Records[nodeID]
+	rec, ok := es.Records[nodeId]
 	if !ok {
-		return fmt.Errorf("node %s not joined in epoch %d", nodeID, epoch)
+		return fmt.Errorf("node %s not joined in epoch %d", nodeId, epoch)
 	}
 	rec.LastHeartbeat = time.Now()
 	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es); err != nil {
