@@ -19,6 +19,11 @@ type Server struct {
 /*
 	grpcurl -plaintext \
 	  -protoset network_node.pb \
+	  localhost:9003 \
+	  list
+
+	grpcurl -plaintext \
+	  -protoset network_node.pb \
 	  -d '{"run_id": "1", "record":{"key":"foo","value":"bar"}}' \
 	  localhost:9003 \
 	  network_node.v1.NetworkNodeService/SetStoreRecord
