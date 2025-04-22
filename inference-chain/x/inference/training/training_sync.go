@@ -127,11 +127,27 @@ type BlockInfo struct {
 	timestamp time.Time
 }
 
+// NewBlockInfoFromValues creates a BlockInfo for testing purposes.
+func NewBlockInfoFromValues(height int64, timestamp time.Time) BlockInfo {
+	return BlockInfo{
+		height:    height,
+		timestamp: timestamp,
+	}
+}
+
 func NewBlockInfo(ctx sdk.Context) BlockInfo {
 	return BlockInfo{
 		height:    ctx.BlockHeight(),
 		timestamp: ctx.BlockTime(),
 	}
+}
+
+func (bi BlockInfo) Height() int64 {
+	return bi.height
+}
+
+func (bi BlockInfo) Timestamp() time.Time {
+	return bi.timestamp
 }
 
 // Helper function to sort NodeId slices deterministically
