@@ -21,7 +21,6 @@ require (
 	github.com/knadh/koanf/providers/structs v0.1.0
 	github.com/knadh/koanf/v2 v2.1.1
 	github.com/labstack/echo/v4 v4.10.0
-	github.com/product-science/chain-protos v0.3.0
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.32.0
