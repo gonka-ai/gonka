@@ -52,19 +52,23 @@ type RunManager struct {
 	heartbeatTimeout time.Duration
 }
 
+const (
+	defaultJoinTimeout      = 5 * time.Minute
+	defaultHeartbeatTimeout = 5 * time.Minute
+)
+
 func NewRunManager(
 	runId string,
 	store RunStore,
 	minNodes, maxNodes int,
-	joinTimeout, heartbeatTimeout time.Duration,
 ) *RunManager {
 	return &RunManager{
 		runId:            runId,
 		store:            store,
 		minNodes:         minNodes,
 		maxNodes:         maxNodes,
-		joinTimeout:      joinTimeout,
-		heartbeatTimeout: heartbeatTimeout,
+		joinTimeout:      defaultJoinTimeout,
+		heartbeatTimeout: defaultHeartbeatTimeout,
 	}
 }
 
