@@ -10,18 +10,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-type MembershipRecord struct {
-	LastHeartbeat time.Time
-	Rank          int
-}
-
-// TODO: delet this
-type RunState struct {
-	LastEpoch          int
-	LastEpochTimestamp time.Time
-	FinishedEpochs     map[int]bool
-}
-
 // EpochState holds per‑epoch membership info.
 type EpochState struct {
 	Epoch    int32
@@ -75,6 +63,8 @@ type RunStore interface {
 
 	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error)
 	SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity)
+
+	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier)
 }
 
 // RunMembershipService is the public API.
@@ -85,6 +75,7 @@ type RunMembershipService interface {
 	AssignRank(ctx context.Context, block BlockInfo) error
 	FinishIfNeeded(ctx context.Context, block BlockInfo) error
 	RerankIfSomeNodesLeft(ctx context.Context, epoch int32, block BlockInfo) error
+	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier, block BlockInfo) error
 }
 
 type NodeId struct {
@@ -103,6 +94,8 @@ type RunManager struct {
 
 // FIXME: should we use blocks or time?
 const (
+	defaultMinNodes         = 3
+	defaultMaxNodes         = 3
 	defaultJoinTimeout      = 30 // 30 blocks
 	defaultHeartbeatTimeout = 30 // 30 blocks
 )
@@ -316,6 +309,10 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error
 	}
 	// reuse AssignRank (which also marks FinishedEpochs)
 	return rm.AssignRank(ctx, block)
+}
+
+func (rm *RunManager) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
+	rm.store.SetBarrier(ctx, barrier)
 }
 
 /*

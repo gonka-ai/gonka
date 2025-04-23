@@ -51,3 +51,7 @@ func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uin
 func (k *TrainingRunStore) SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) {
 	k.keeper.SetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), activity)
 }
+
+func (k *TrainingRunStore) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
+	k.keeper.SetTrainingBarrier(sdk.UnwrapSDKContext(ctx), barrier)
+}
