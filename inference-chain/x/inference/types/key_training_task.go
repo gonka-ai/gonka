@@ -56,3 +56,15 @@ func TrainingTaskNodeEpochActivityKey(taskId uint64, epoch int32, participant st
 func TrainingTaskNodeEpochActivityEpochPrefix(taskId uint64, epoch int32) []byte {
 	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d", taskId, epoch))
 }
+
+type TrainingTaskBarrierKey struct {
+	BarrierId   string
+	TaskId      uint64
+	Participant string
+	NodeId      string
+	Epoch       int32
+}
+
+func (b TrainingTaskBarrierKey) ToByteKey() []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d/%s/%s", b.TaskId, b.BarrierId, b.Epoch, b.Participant, b.NodeId))
+}

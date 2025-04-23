@@ -1332,6 +1332,746 @@ func (x *fastReflection_TrainingTaskNodeEpochActivity) ProtoMethods() *protoifac
 	}
 }
 
+var (
+	md_TrainingTaskBarrier              protoreflect.MessageDescriptor
+	fd_TrainingTaskBarrier_barrier_id   protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_task_id      protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_participant  protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_node_id      protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_epoch        protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_block_height protoreflect.FieldDescriptor
+	fd_TrainingTaskBarrier_block_time   protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_training_task_sync_proto_init()
+	md_TrainingTaskBarrier = File_inference_inference_training_task_sync_proto.Messages().ByName("TrainingTaskBarrier")
+	fd_TrainingTaskBarrier_barrier_id = md_TrainingTaskBarrier.Fields().ByName("barrier_id")
+	fd_TrainingTaskBarrier_task_id = md_TrainingTaskBarrier.Fields().ByName("task_id")
+	fd_TrainingTaskBarrier_participant = md_TrainingTaskBarrier.Fields().ByName("participant")
+	fd_TrainingTaskBarrier_node_id = md_TrainingTaskBarrier.Fields().ByName("node_id")
+	fd_TrainingTaskBarrier_epoch = md_TrainingTaskBarrier.Fields().ByName("epoch")
+	fd_TrainingTaskBarrier_block_height = md_TrainingTaskBarrier.Fields().ByName("block_height")
+	fd_TrainingTaskBarrier_block_time = md_TrainingTaskBarrier.Fields().ByName("block_time")
+}
+
+var _ protoreflect.Message = (*fastReflection_TrainingTaskBarrier)(nil)
+
+type fastReflection_TrainingTaskBarrier TrainingTaskBarrier
+
+func (x *TrainingTaskBarrier) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_TrainingTaskBarrier)(x)
+}
+
+func (x *TrainingTaskBarrier) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_training_task_sync_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_TrainingTaskBarrier_messageType fastReflection_TrainingTaskBarrier_messageType
+var _ protoreflect.MessageType = fastReflection_TrainingTaskBarrier_messageType{}
+
+type fastReflection_TrainingTaskBarrier_messageType struct{}
+
+func (x fastReflection_TrainingTaskBarrier_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_TrainingTaskBarrier)(nil)
+}
+func (x fastReflection_TrainingTaskBarrier_messageType) New() protoreflect.Message {
+	return new(fastReflection_TrainingTaskBarrier)
+}
+func (x fastReflection_TrainingTaskBarrier_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_TrainingTaskBarrier
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_TrainingTaskBarrier) Descriptor() protoreflect.MessageDescriptor {
+	return md_TrainingTaskBarrier
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_TrainingTaskBarrier) Type() protoreflect.MessageType {
+	return _fastReflection_TrainingTaskBarrier_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_TrainingTaskBarrier) New() protoreflect.Message {
+	return new(fastReflection_TrainingTaskBarrier)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_TrainingTaskBarrier) Interface() protoreflect.ProtoMessage {
+	return (*TrainingTaskBarrier)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_TrainingTaskBarrier) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.BarrierId != "" {
+		value := protoreflect.ValueOfString(x.BarrierId)
+		if !f(fd_TrainingTaskBarrier_barrier_id, value) {
+			return
+		}
+	}
+	if x.TaskId != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.TaskId)
+		if !f(fd_TrainingTaskBarrier_task_id, value) {
+			return
+		}
+	}
+	if x.Participant != "" {
+		value := protoreflect.ValueOfString(x.Participant)
+		if !f(fd_TrainingTaskBarrier_participant, value) {
+			return
+		}
+	}
+	if x.NodeId != "" {
+		value := protoreflect.ValueOfString(x.NodeId)
+		if !f(fd_TrainingTaskBarrier_node_id, value) {
+			return
+		}
+	}
+	if x.Epoch != int32(0) {
+		value := protoreflect.ValueOfInt32(x.Epoch)
+		if !f(fd_TrainingTaskBarrier_epoch, value) {
+			return
+		}
+	}
+	if x.BlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.BlockHeight)
+		if !f(fd_TrainingTaskBarrier_block_height, value) {
+			return
+		}
+	}
+	if x.BlockTime != int64(0) {
+		value := protoreflect.ValueOfInt64(x.BlockTime)
+		if !f(fd_TrainingTaskBarrier_block_time, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_TrainingTaskBarrier) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		return x.BarrierId != ""
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		return x.TaskId != uint64(0)
+	case "inference.inference.TrainingTaskBarrier.participant":
+		return x.Participant != ""
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		return x.NodeId != ""
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		return x.Epoch != int32(0)
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		return x.BlockHeight != int64(0)
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		return x.BlockTime != int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_TrainingTaskBarrier) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		x.BarrierId = ""
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		x.TaskId = uint64(0)
+	case "inference.inference.TrainingTaskBarrier.participant":
+		x.Participant = ""
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		x.NodeId = ""
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		x.Epoch = int32(0)
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		x.BlockHeight = int64(0)
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		x.BlockTime = int64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_TrainingTaskBarrier) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		value := x.BarrierId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		value := x.TaskId
+		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.TrainingTaskBarrier.participant":
+		value := x.Participant
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		value := x.NodeId
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		value := x.Epoch
+		return protoreflect.ValueOfInt32(value)
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		value := x.BlockHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		value := x.BlockTime
+		return protoreflect.ValueOfInt64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_TrainingTaskBarrier) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		x.BarrierId = value.Interface().(string)
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		x.TaskId = value.Uint()
+	case "inference.inference.TrainingTaskBarrier.participant":
+		x.Participant = value.Interface().(string)
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		x.NodeId = value.Interface().(string)
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		x.Epoch = int32(value.Int())
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		x.BlockHeight = value.Int()
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		x.BlockTime = value.Int()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_TrainingTaskBarrier) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		panic(fmt.Errorf("field barrier_id of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		panic(fmt.Errorf("field task_id of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.participant":
+		panic(fmt.Errorf("field participant of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		panic(fmt.Errorf("field node_id of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		panic(fmt.Errorf("field epoch of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		panic(fmt.Errorf("field block_height of message inference.inference.TrainingTaskBarrier is not mutable"))
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		panic(fmt.Errorf("field block_time of message inference.inference.TrainingTaskBarrier is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_TrainingTaskBarrier) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.TrainingTaskBarrier.barrier_id":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.TrainingTaskBarrier.task_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.TrainingTaskBarrier.participant":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.TrainingTaskBarrier.node_id":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.TrainingTaskBarrier.epoch":
+		return protoreflect.ValueOfInt32(int32(0))
+	case "inference.inference.TrainingTaskBarrier.block_height":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.TrainingTaskBarrier.block_time":
+		return protoreflect.ValueOfInt64(int64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.TrainingTaskBarrier"))
+		}
+		panic(fmt.Errorf("message inference.inference.TrainingTaskBarrier does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_TrainingTaskBarrier) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.TrainingTaskBarrier", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_TrainingTaskBarrier) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_TrainingTaskBarrier) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_TrainingTaskBarrier) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_TrainingTaskBarrier) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*TrainingTaskBarrier)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.BarrierId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.TaskId != 0 {
+			n += 1 + runtime.Sov(uint64(x.TaskId))
+		}
+		l = len(x.Participant)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.NodeId)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.Epoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.Epoch))
+		}
+		if x.BlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.BlockHeight))
+		}
+		if x.BlockTime != 0 {
+			n += 1 + runtime.Sov(uint64(x.BlockTime))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*TrainingTaskBarrier)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.BlockTime != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockTime))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.BlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.BlockHeight))
+			i--
+			dAtA[i] = 0x30
+		}
+		if x.Epoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Epoch))
+			i--
+			dAtA[i] = 0x28
+		}
+		if len(x.NodeId) > 0 {
+			i -= len(x.NodeId)
+			copy(dAtA[i:], x.NodeId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.NodeId)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if len(x.Participant) > 0 {
+			i -= len(x.Participant)
+			copy(dAtA[i:], x.Participant)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Participant)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if x.TaskId != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TaskId))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.BarrierId) > 0 {
+			i -= len(x.BarrierId)
+			copy(dAtA[i:], x.BarrierId)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.BarrierId)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*TrainingTaskBarrier)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: TrainingTaskBarrier: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: TrainingTaskBarrier: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BarrierId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.BarrierId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TaskId", wireType)
+				}
+				x.TaskId = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TaskId |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Participant = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field NodeId", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.NodeId = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
+				}
+				x.Epoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Epoch |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 6:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockHeight", wireType)
+				}
+				x.BlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.BlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BlockTime", wireType)
+				}
+				x.BlockTime = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.BlockTime |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 // Code generated by protoc-gen-go. DO NOT EDIT.
 // versions:
 // 	protoc-gen-go v1.27.0
@@ -1487,6 +2227,89 @@ func (x *TrainingTaskNodeEpochActivity) GetRank() int32 {
 	return 0
 }
 
+type TrainingTaskBarrier struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	BarrierId   string `protobuf:"bytes,1,opt,name=barrier_id,json=barrierId,proto3" json:"barrier_id,omitempty"`
+	TaskId      uint64 `protobuf:"varint,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Participant string `protobuf:"bytes,3,opt,name=participant,proto3" json:"participant,omitempty"`
+	NodeId      string `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Epoch       int32  `protobuf:"varint,5,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	BlockHeight int64  `protobuf:"varint,6,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
+	BlockTime   int64  `protobuf:"varint,7,opt,name=block_time,json=blockTime,proto3" json:"block_time,omitempty"`
+}
+
+func (x *TrainingTaskBarrier) Reset() {
+	*x = TrainingTaskBarrier{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_training_task_sync_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *TrainingTaskBarrier) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrainingTaskBarrier) ProtoMessage() {}
+
+// Deprecated: Use TrainingTaskBarrier.ProtoReflect.Descriptor instead.
+func (*TrainingTaskBarrier) Descriptor() ([]byte, []int) {
+	return file_inference_inference_training_task_sync_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TrainingTaskBarrier) GetBarrierId() string {
+	if x != nil {
+		return x.BarrierId
+	}
+	return ""
+}
+
+func (x *TrainingTaskBarrier) GetTaskId() uint64 {
+	if x != nil {
+		return x.TaskId
+	}
+	return 0
+}
+
+func (x *TrainingTaskBarrier) GetParticipant() string {
+	if x != nil {
+		return x.Participant
+	}
+	return ""
+}
+
+func (x *TrainingTaskBarrier) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *TrainingTaskBarrier) GetEpoch() int32 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *TrainingTaskBarrier) GetBlockHeight() int64 {
+	if x != nil {
+		return x.BlockHeight
+	}
+	return 0
+}
+
+func (x *TrainingTaskBarrier) GetBlockTime() int64 {
+	if x != nil {
+		return x.BlockTime
+	}
+	return 0
+}
+
 var File_inference_inference_training_task_sync_proto protoreflect.FileDescriptor
 
 var file_inference_inference_training_task_sync_proto_rawDesc = []byte{
@@ -1516,19 +2339,34 @@ var file_inference_inference_training_task_sync_proto_rawDesc = []byte{
 	0x0a, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28,
 	0x03, 0x52, 0x09, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x54, 0x69, 0x6d, 0x65, 0x12, 0x12, 0x0a, 0x04,
 	0x72, 0x61, 0x6e, 0x6b, 0x18, 0x07, 0x20, 0x01, 0x28, 0x05, 0x52, 0x04, 0x72, 0x61, 0x6e, 0x6b,
-	0x42, 0xc3, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x15, 0x54, 0x72,
-	0x61, 0x69, 0x6e, 0x69, 0x6e, 0x67, 0x54, 0x61, 0x73, 0x6b, 0x53, 0x79, 0x6e, 0x63, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x22, 0xe0, 0x01, 0x0a, 0x13, 0x54, 0x72, 0x61, 0x69, 0x6e, 0x69, 0x6e, 0x67, 0x54, 0x61, 0x73,
+	0x6b, 0x42, 0x61, 0x72, 0x72, 0x69, 0x65, 0x72, 0x12, 0x1d, 0x0a, 0x0a, 0x62, 0x61, 0x72, 0x72,
+	0x69, 0x65, 0x72, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x62, 0x61,
+	0x72, 0x72, 0x69, 0x65, 0x72, 0x49, 0x64, 0x12, 0x17, 0x0a, 0x07, 0x74, 0x61, 0x73, 0x6b, 0x5f,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x06, 0x74, 0x61, 0x73, 0x6b, 0x49, 0x64,
+	0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61,
+	0x6e, 0x74, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x65,
+	0x70, 0x6f, 0x63, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x05, 0x52, 0x05, 0x65, 0x70, 0x6f, 0x63,
+	0x68, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65,
+	0x69, 0x67, 0x68, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x74, 0x69,
+	0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x09, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x54,
+	0x69, 0x6d, 0x65, 0x42, 0xc3, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
+	0x15, 0x54, 0x72, 0x61, 0x69, 0x6e, 0x69, 0x6e, 0x67, 0x54, 0x61, 0x73, 0x6b, 0x53, 0x79, 0x6e,
+	0x63, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73,
+	0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02,
+	0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
+	0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x33,
 }
 
 var (
@@ -1543,10 +2381,11 @@ func file_inference_inference_training_task_sync_proto_rawDescGZIP() []byte {
 	return file_inference_inference_training_task_sync_proto_rawDescData
 }
 
-var file_inference_inference_training_task_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_inference_inference_training_task_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_inference_inference_training_task_sync_proto_goTypes = []interface{}{
 	(*TrainingTaskKVRecord)(nil),          // 0: inference.inference.TrainingTaskKVRecord
 	(*TrainingTaskNodeEpochActivity)(nil), // 1: inference.inference.TrainingTaskNodeEpochActivity
+	(*TrainingTaskBarrier)(nil),           // 2: inference.inference.TrainingTaskBarrier
 }
 var file_inference_inference_training_task_sync_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -1586,6 +2425,18 @@ func file_inference_inference_training_task_sync_proto_init() {
 				return nil
 			}
 		}
+		file_inference_inference_training_task_sync_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*TrainingTaskBarrier); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1593,7 +2444,7 @@ func file_inference_inference_training_task_sync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_training_task_sync_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

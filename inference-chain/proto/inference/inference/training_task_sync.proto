@@ -19,3 +19,13 @@ message TrainingTaskNodeEpochActivity {
   int64 block_time = 6;
   int32 rank = 7;
 }
+
+message TrainingTaskBarrier {
+  string barrier_id = 1;
+  uint64 task_id = 2;
+  string participant = 3;
+  string node_id = 4;
+  int32 epoch = 5;
+  int64 block_height = 6;
+  int64 block_time = 7;
+}
