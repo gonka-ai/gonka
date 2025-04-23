@@ -31,6 +31,25 @@
       "test_section": {
         "pattern": "(TestSection:.+)",
         "color": "yellow"
+      },
+      "subsystem": {
+        "pattern": "subsystem=\\w+",
+        "color" : "cyan"
+      },
+      "dapi": {
+        "pattern": "(dapi):pair=",
+        "color": "black",
+        "background-color": "ivory"
+      },
+      "node": {
+        "pattern": "(node):pair=",
+        "background-color": "gray"
+      },
+      "test": {
+        "pattern": "(test):pair="
+      },
+      "waiting": {
+        "pattern": "(Waiting for state: .+)operation="
       }
     },
     "value": {
