@@ -111,6 +111,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgTrainingHeartbeat int = 100
 
+	opWeightMsgSetBarrier = "op_weight_msg_set_barrier"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSetBarrier int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -365,6 +369,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgSetBarrier int
+	simState.AppParams.GetOrGenerate(opWeightMsgSetBarrier, &weightMsgSetBarrier, nil,
+		func(_ *rand.Rand) {
+			weightMsgSetBarrier = defaultWeightMsgSetBarrier
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgSetBarrier,
+		inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -538,6 +553,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgTrainingHeartbeat,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgSetBarrier,
+			defaultWeightMsgSetBarrier,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

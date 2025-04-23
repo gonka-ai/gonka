@@ -375,6 +375,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Send a create_partial_upgrade tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
 				},
+				{
+					RpcMethod:      "SetBarrier",
+					Use:            "set-barrier",
+					Short:          "Send a set-barrier tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

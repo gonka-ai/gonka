@@ -161,8 +161,21 @@ func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequ
 func (s *Server) GetAliveNodes(context.Context, *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
 }
-func (s *Server) SetBarrier(context.Context, *inference.SetBarrierRequest) (*inference.SetBarrierResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
+func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierRequest) (*inference.SetBarrierResponse, error) {
+	logging.Info("SetBarrier called", types.Training)
+
+	msg := inference.MsgSetBarrier{
+		Creator: s.cosmosClient.GetAddress(),
+		Req:     req,
+	}
+	resp := inference.MsgSetBarrierResponse{}
+	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Training, "error", err)
+		return nil, err
+	}
+
+	return resp.Resp, nil
 }
 func (s *Server) GetBarrierStatus(context.Context, *inference.GetBarrierStatusRequest) (*inference.GetBarrierStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBarrierStatus not implemented")

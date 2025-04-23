@@ -42,6 +42,7 @@ service Msg {
   rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
   rpc JoinTraining                     (MsgJoinTraining                    ) returns (MsgJoinTrainingResponse                    );
   rpc TrainingHeartbeat                (MsgTrainingHeartbeat               ) returns (MsgTrainingHeartbeatResponse               );
+  rpc SetBarrier                       (MsgSetBarrier                      ) returns (MsgSetBarrierResponse                      );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -285,10 +286,21 @@ message MsgJoinTrainingResponse {
 
 message MsgTrainingHeartbeat {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  HeartbeatRequest req = 2;
+  string           creator = 1;
+  HeartbeatRequest req     = 2;
 }
 
 message MsgTrainingHeartbeatResponse {
   HeartbeatResponse resp = 1;
 }
+
+message MsgSetBarrier {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  SetBarrierRequest req = 2;
+}
+
+message MsgSetBarrierResponse {
+  SetBarrierResponse resp = 1;
+}
+
