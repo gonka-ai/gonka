@@ -180,5 +180,9 @@ func sortNodeActivity(activities []*types.TrainingTaskNodeEpochActivity) {
 	})
 }
 
+func (m *MockRunStore) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
+	panic("implement me")
+}
+
 // Ensure MockRunStore implements RunStore interface
 var _ RunStore = (*MockRunStore)(nil)
