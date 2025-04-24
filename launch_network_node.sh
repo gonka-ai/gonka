@@ -50,9 +50,6 @@ fi
 
 if [ "$mode" == "local" ]; then
   project_name="$KEY_NAME"
-
-  docker compose -p "$project_name" down -v
-  rm -r ./prod-local/"$project_name" || true
 else
   project_name="inferenced"
 fi

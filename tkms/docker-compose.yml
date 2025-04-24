@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  tmkms:
+    image: tmkms-softsign
+    container_name: tmkms
+    restart: unless-stopped
+    volumes:
+      - tmkms_data:/root/.tmkms
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    external: true
+
+volumes:
+  tmkms_data:

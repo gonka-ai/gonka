@@ -11,9 +11,12 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+      - TKMS_PORT=${TKMS_PORT}
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"
+    expose:
+      - "${TKMS_PORT}"
     networks:
       - chain-public
 
