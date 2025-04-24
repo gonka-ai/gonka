@@ -25,6 +25,7 @@ import "inference/inference/training_task.proto";
 import "inference/inference/training_task_sync.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
+import "inference/inference/network_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -254,6 +255,12 @@ service Query {
   // Queries a list of ListTrainingKvRecordKeys items.
   rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
     option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}/{participant}";
+  
+  }
+  
+  // Queries a list of TrainingBarrier items.
+  rpc TrainingBarrier (QueryTrainingBarrierRequest) returns (QueryTrainingBarrierResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_barrier";
   
   }
 }
@@ -608,5 +615,13 @@ message QueryListTrainingKvRecordKeysRequest {
 
 message QueryListTrainingKvRecordKeysResponse {
   repeated string keys = 1;
+}
+
+message QueryTrainingBarrierRequest {
+  GetBarrierStatusRequest req = 1;
+}
+
+message QueryTrainingBarrierResponse {
+  GetBarrierStatusResponse resp = 2;
 }
 

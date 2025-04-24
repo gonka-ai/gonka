@@ -60,6 +60,7 @@ const (
 	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
 	Query_TrainingKvRecord_FullMethodName                 = "/inference.inference.Query/TrainingKvRecord"
 	Query_ListTrainingKvRecordKeys_FullMethodName         = "/inference.inference.Query/ListTrainingKvRecordKeys"
+	Query_TrainingBarrier_FullMethodName                  = "/inference.inference.Query/TrainingBarrier"
 )
 
 // QueryClient is the client API for Query service.
@@ -138,6 +139,8 @@ type QueryClient interface {
 	TrainingKvRecord(ctx context.Context, in *QueryTrainingKvRecordRequest, opts ...grpc.CallOption) (*QueryTrainingKvRecordResponse, error)
 	// Queries a list of ListTrainingKvRecordKeys items.
 	ListTrainingKvRecordKeys(ctx context.Context, in *QueryListTrainingKvRecordKeysRequest, opts ...grpc.CallOption) (*QueryListTrainingKvRecordKeysResponse, error)
+	// Queries a list of TrainingBarrier items.
+	TrainingBarrier(ctx context.Context, in *QueryTrainingBarrierRequest, opts ...grpc.CallOption) (*QueryTrainingBarrierResponse, error)
 }
 
 type queryClient struct {
@@ -517,6 +520,15 @@ func (c *queryClient) ListTrainingKvRecordKeys(ctx context.Context, in *QueryLis
 	return out, nil
 }
 
+func (c *queryClient) TrainingBarrier(ctx context.Context, in *QueryTrainingBarrierRequest, opts ...grpc.CallOption) (*QueryTrainingBarrierResponse, error) {
+	out := new(QueryTrainingBarrierResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingBarrier_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -593,6 +605,8 @@ type QueryServer interface {
 	TrainingKvRecord(context.Context, *QueryTrainingKvRecordRequest) (*QueryTrainingKvRecordResponse, error)
 	// Queries a list of ListTrainingKvRecordKeys items.
 	ListTrainingKvRecordKeys(context.Context, *QueryListTrainingKvRecordKeysRequest) (*QueryListTrainingKvRecordKeysResponse, error)
+	// Queries a list of TrainingBarrier items.
+	TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -722,6 +736,9 @@ func (UnimplementedQueryServer) TrainingKvRecord(context.Context, *QueryTraining
 }
 func (UnimplementedQueryServer) ListTrainingKvRecordKeys(context.Context, *QueryListTrainingKvRecordKeysRequest) (*QueryListTrainingKvRecordKeysResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTrainingKvRecordKeys not implemented")
+}
+func (UnimplementedQueryServer) TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingBarrier not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1474,6 +1491,24 @@ func _Query_ListTrainingKvRecordKeys_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TrainingBarrier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingBarrierRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingBarrier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingBarrier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingBarrier(ctx, req.(*QueryTrainingBarrierRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1644,6 +1679,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTrainingKvRecordKeys",
 			Handler:    _Query_ListTrainingKvRecordKeys_Handler,
+		},
+		{
+			MethodName: "TrainingBarrier",
+			Handler:    _Query_TrainingBarrier_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
