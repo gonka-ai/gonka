@@ -61,7 +61,7 @@ type RunStore interface {
 	GetEpochState(ctx context.Context, runId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error)
 	SaveEpochState(ctx context.Context, runId uint64, epoch int32, state []*types.TrainingTaskNodeEpochActivity) error
 
-	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error)
+	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool)
 	SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity)
 
 	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier)
@@ -70,7 +70,7 @@ type RunStore interface {
 // RunMembershipService is the public API.
 type RunMembershipService interface {
 	Join(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) error
-	Heartbeat(ctx context.Context, nodeId string, epoch int32, block BlockInfo) error
+	Heartbeat(ctx context.Context, participant string, nodeId string, epoch int32, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]NodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
 	FinishIfNeeded(ctx context.Context, block BlockInfo) error
@@ -183,43 +183,37 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 		}
 	}
 
-	activity, err := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
-	if err != nil {
-		return err
-	}
-	// PRTODO: TODO: do some kind of merge function for existing activity + new activity
+	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
+	activity.BlockTime = block.timestamp.Unix()
+	activity.BlockHeight = block.height
+
+	rm.store.SaveParticipantActivity(ctx, &activity)
+
+	return rm.FinishIfNeeded(ctx, block)
+}
+
+func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, epoch int32) types.TrainingTaskNodeEpochActivity {
+	activity, _ := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
 	if activity == nil {
 		activity = &types.TrainingTaskNodeEpochActivity{
 			TaskId:      rm.runId,
 			Participant: participant,
 			NodeId:      nodeId,
 			Epoch:       epoch,
-			BlockHeight: block.height,
-			BlockTime:   block.timestamp.Unix(),
-			Rank:        -1, // FIXME: what's here???
+			BlockHeight: 0,
+			BlockTime:   0,
+			Rank:        -1, // TODO: are we sure -1?
 		}
-	} else {
-		activity.BlockTime = block.timestamp.Unix()
-		activity.BlockHeight = block.height
 	}
-
-	rm.store.SaveParticipantActivity(ctx, activity)
-
-	return rm.FinishIfNeeded(ctx, block)
+	return *activity
 }
 
-func (rm *RunManager) Heartbeat(ctx sdk.Context, nodeId string, epoch int32, block BlockInfo) error {
-	activity, err := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, "", nodeId)
-	if err != nil {
-		// PRTODO: find a way to log errors here
-		// So here it probably means not joined in epoch or smth
-		return err
-	}
+func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId string, epoch int32, block BlockInfo) error {
+	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
+	activity.BlockHeight = block.height
+	activity.BlockTime = block.timestamp.Unix()
 
-	activity.BlockTime = block.height
-	activity.BlockTime = block.timestamp.UnixMilli() // PRTODO: FIXME: think of a way for converting timestamps
-
-	rm.store.SaveParticipantActivity(ctx, activity)
+	rm.store.SaveParticipantActivity(ctx, &activity)
 
 	return rm.FinishIfNeeded(ctx, block)
 }

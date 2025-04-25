@@ -34,14 +34,27 @@ func (k *TrainingRunStore) GetEpochState(ctx context.Context, runId uint64, epoc
 	return activity, nil
 }
 
-func (k *TrainingRunStore) SaveEpochState(ctx context.Context, runId uint64, epoch int32, state []*types.TrainingTaskNodeEpochActivity) error {
-	//TODO implement me
-	panic("implement me")
+func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.TrainingTaskNodeEpochActivity) {
+	if len(state) == 0 {
+		return
+	}
+
+	epochId := state[0].Epoch
+	runId := state[0].TaskId
+
+	for _, activity := range state {
+		if activity.Epoch != epochId {
+			panic("Epoch ID mismatch")
+		}
+		if activity.TaskId != runId {
+			panic("Run ID mismatch")
+		}
+		k.keeper.SetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), activity)
+	}
 }
 
-func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error) {
-	activity, _ := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
-	return activity, nil
+func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool) {
+	return k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
 }
 
 func (k *TrainingRunStore) SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) {

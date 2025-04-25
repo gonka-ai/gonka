@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/training"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -34,7 +33,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	}
 	keeper.SetTrainingTask(keeperCtx, initialTask)
 
-	baseCtx := sdk.Context{}
+	baseCtx := keeperCtx
 	blockHeight := int64(10)
 	blockTime := time.Now()
 
@@ -55,8 +54,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 
 	// Check RunState using standard context for store access
 	storeCtx := context.Background()
-	runState1, err := store.GetRunState(storeCtx, runId)
-	require.NoError(t, err)
+	runState1, found := store.GetRunState(storeCtx, runId)
+	require.True(t, found)
 	require.NotNil(t, runState1)
 	require.Equal(t, startingEpoch, runState1.Epoch.LastEpoch)
 	require.False(t, runState1.Epoch.LastEpochIsFinished) // Not finished yet
@@ -82,8 +81,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check RunState (should still be epoch 0, not finished)
-	runState2, err := store.GetRunState(storeCtx, runId)
-	require.NoError(t, err)
+	runState2, found := store.GetRunState(storeCtx, runId)
+	require.True(t, found)
 	require.Equal(t, startingEpoch, runState2.Epoch.LastEpoch)
 	require.False(t, runState2.Epoch.LastEpochIsFinished)
 
@@ -108,8 +107,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	// 4. Check ranks got assigned because minNodes (3) was reached
 
 	// Check RunState (should now be finished)
-	runState3, err := store.GetRunState(storeCtx, runId)
-	require.NoError(t, err)
+	runState3, found := store.GetRunState(storeCtx, runId)
+	require.True(t, found)
 	require.Equal(t, startingEpoch, runState3.Epoch.LastEpoch)
 	require.True(t, runState3.Epoch.LastEpochIsFinished) // Should be finished now
 
