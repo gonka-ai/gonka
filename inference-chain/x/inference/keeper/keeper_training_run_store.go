@@ -16,12 +16,8 @@ func NewKeeperTrainingRunStore(keeper Keeper) *TrainingRunStore {
 	}
 }
 
-func (k *TrainingRunStore) GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, error) {
-	trainingTask, found := k.keeper.GetTrainingTask(sdk.UnwrapSDKContext(ctx), runId)
-	if !found {
-		return nil, nil
-	}
-	return trainingTask, nil
+func (k *TrainingRunStore) GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, bool) {
+	return k.keeper.GetTrainingTask(sdk.UnwrapSDKContext(ctx), runId)
 }
 
 func (k *TrainingRunStore) SaveRunState(ctx context.Context, state *types.TrainingTask) error {

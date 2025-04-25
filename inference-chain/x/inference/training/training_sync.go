@@ -55,7 +55,7 @@ func (es *EpochState) toActivityArray() []*types.TrainingTaskNodeEpochActivity {
 }
 
 type RunStore interface {
-	GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, error)
+	GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, bool)
 	SaveRunState(ctx context.Context, state *types.TrainingTask) error
 
 	GetEpochState(ctx context.Context, runId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error)
@@ -155,12 +155,9 @@ func sortNodeIds(nodeIds []NodeId) {
 }
 
 func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block BlockInfo, participant string) error {
-	rs, err := rm.store.GetRunState(ctx, rm.runId)
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return fmt.Errorf("run %d not found", rm.runId)
+	rs, found := rm.store.GetRunState(ctx, rm.runId)
+	if !found {
+		return fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 
 	lastEpoch := rs.Epoch.LastEpoch
@@ -249,9 +246,9 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, curr
 }
 
 func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
-	rs, err := rm.store.GetRunState(ctx, rm.runId)
-	if err != nil {
-		return err
+	rs, found := rm.store.GetRunState(ctx, rm.runId)
+	if !found {
+		return fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 	epoch := rs.Epoch.LastEpoch
 
@@ -291,9 +288,9 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 
 // FinishIfNeeded is the exported version of finishIfNeededNoLock.
 func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error {
-	rs, err := rm.store.GetRunState(ctx, rm.runId)
-	if err != nil {
-		return err
+	rs, found := rm.store.GetRunState(ctx, rm.runId)
+	if !found {
+		return fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 	epoch := rs.Epoch.LastEpoch
 

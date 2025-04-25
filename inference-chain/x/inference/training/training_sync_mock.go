@@ -58,16 +58,16 @@ func (m *MockRunStore) SetParticipantActivity(activity *types.TrainingTaskNodeEp
 
 // --- RunStore interface implementation ---
 
-func (m *MockRunStore) GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, error) {
+func (m *MockRunStore) GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	task, found := m.trainingTasks[runId]
 	if !found {
-		return nil, nil // Mimic keeper behavior: return nil if not found
+		return nil, false // Mimic keeper behavior: return nil if not found
 	}
 	// Return a copy to prevent modification of the stored object
 	taskCopy := *task
-	return &taskCopy, nil
+	return &taskCopy, true
 }
 
 func (m *MockRunStore) SaveRunState(ctx context.Context, state *types.TrainingTask) error {
