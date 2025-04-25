@@ -134,8 +134,19 @@ func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRe
 	return resp.Status, nil
 }
 
-func (s *Server) GetJoinTrainingStatus(context.Context, *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetJoinTrainingStatus not implemented")
+func (s *Server) GetJoinTrainingStatus(ctx context.Context, req *inference.JoinTrainingRequest) (*inference.MLNodeTrainStatus, error) {
+	msg := inference.MsgJoinTrainingStatus{
+		Creator: s.cosmosClient.GetAddress(),
+		Req:     req,
+	}
+	resp := inference.MsgJoinTrainingStatusResponse{}
+	err := cosmosclient.SendTransactionBlocking(ctx, s.cosmosClient, &msg, &resp)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Training, "error", err)
+		return nil, err
+	}
+
+	return resp.Status, nil
 }
 
 func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequest) (*inference.HeartbeatResponse, error) {
@@ -177,6 +188,28 @@ func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierReques
 
 	return resp.Resp, nil
 }
-func (s *Server) GetBarrierStatus(context.Context, *inference.GetBarrierStatusRequest) (*inference.GetBarrierStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetBarrierStatus not implemented")
+func (s *Server) GetBarrierStatus(ctx context.Context, req *inference.GetBarrierStatusRequest) (*inference.GetBarrierStatusResponse, error) {
+	logging.Info("GetBarrierStatus called", types.Training)
+
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
+	queryReq := &types.QueryTrainingBarrierRequest{
+		Req: &types.GetBarrierStatusRequest{
+			BarrierId: req.BarrierId,
+			RunId:     req.RunId,
+			Epoch:     req.Epoch,
+		},
+	}
+	resp, err := queryClient.TrainingBarrier(ctx, queryReq)
+	if err != nil {
+		logging.Error("Failed to get training barrier status", types.Training, "error", err)
+		return nil, err
+	}
+
+	logging.Info("GetBarrierStatus response", types.Training, "resp", resp)
+
+	return &inference.GetBarrierStatusResponse{
+		AllReady:   resp.Resp.AllReady,
+		NotReady:   resp.Resp.NotReady,
+		AliveNodes: resp.Resp.AliveNodes,
+	}, nil
 }
