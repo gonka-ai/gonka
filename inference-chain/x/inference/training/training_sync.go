@@ -92,8 +92,6 @@ func (n *NodeId) ToString() string {
 type RunManager struct {
 	runId            uint64
 	store            RunStore
-	minNodes         int
-	maxNodes         int
 	joinTimeout      int64
 	heartbeatTimeout int64
 }
@@ -249,9 +247,11 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 	if err != nil {
 		return err
 	}
-	if len(active) < rm.minNodes || len(active) > rm.maxNodes {
+	nodeNumParams := getNodeNumParams(rs)
+
+	if len(active) < nodeNumParams.minNodes || len(active) > nodeNumParams.maxNodes {
 		return fmt.Errorf("cannot assign rank: active=%d, want [%d,%d]",
-			len(active), rm.minNodes, rm.maxNodes)
+			len(active), nodeNumParams.minNodes, nodeNumParams.maxNodes)
 	}
 
 	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
@@ -292,14 +292,31 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error
 		return err
 	}
 	joined := len(active)
-	enough := joined == rm.maxNodes
-	enoughTimeout := joined >= rm.minNodes && block.height-rs.Epoch.LastEpochBlockHeight > rm.joinTimeout
+	nodeNumParams := getNodeNumParams(rs)
+	enough := joined == nodeNumParams.maxNodes
+	enoughTimeout := joined >= nodeNumParams.minNodes && block.height-rs.Epoch.LastEpochBlockHeight > rm.joinTimeout
 
 	if !(enough || enoughTimeout) {
 		return nil
 	}
 	// reuse AssignRank (which also marks FinishedEpochs)
 	return rm.AssignRank(ctx, block)
+}
+
+type minAndMaxNodesParams struct {
+	maxNodes int
+	minNodes int
+}
+
+func getNodeNumParams(task *types.TrainingTask) minAndMaxNodesParams {
+	maxNodes := 0
+	for _, a := range task.Assignees {
+		maxNodes = maxNodes + len(a.NodeIds)
+	}
+	return minAndMaxNodesParams{
+		maxNodes: maxNodes,
+		minNodes: max(maxNodes-1, 0),
+	}
 }
 
 func (rm *RunManager) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
