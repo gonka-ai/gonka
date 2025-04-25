@@ -100,7 +100,7 @@ type RunMembershipService interface {
 	Heartbeat(ctx context.Context, participant string, nodeId string, epoch int32, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]NodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
-	FinishIfNeeded(ctx context.Context, block BlockInfo) error
+	FinishIfNeeded(ctx context.Context, block BlockInfo) (bool, error)
 	RerankIfSomeNodesLeft(ctx context.Context, epoch int32, block BlockInfo) error
 	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier, block BlockInfo) error
 	GetBarrierStatus(ctx context.Context, req *types.GetBarrierStatusRequest) (*types.GetBarrierStatusResponse, error)
@@ -212,7 +212,8 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	activity.BlockHeight = block.height
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
-	return rm.FinishIfNeeded(ctx, block)
+	_, err := rm.FinishIfNeeded(ctx, block)
+	return err
 }
 
 func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, epoch int32) types.TrainingTaskNodeEpochActivity {
@@ -232,7 +233,63 @@ func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant 
 }
 
 func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error) {
-	panic("implement me")
+	rs := rm.store.GetRunState(ctx, rm.runId)
+	if rs == nil {
+		return &types.MLNodeTrainStatus{
+			Status:      types.MLNodeTrainStatusEnum_ERROR,
+			NodeId:      nodeId,
+			Epoch:       epoch,
+			ActiveNodes: make([]string, 0),
+			Rank:        -1,
+		}, nil
+	}
+
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+	if activity != nil {
+		activity.BlockHeight = block.height
+		activity.BlockTime = block.timestamp.Unix()
+	}
+	rm.store.SaveParticipantActivity(ctx, activity)
+
+	finished, err := rm.FinishIfNeeded(ctx, block)
+	if err != nil {
+		return nil, err
+	}
+
+	if finished {
+		err = rm.rerankIfSomeNodesLeft(ctx, epoch, block)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	aliveNodes, err := rm.GetEpochActiveNodes(ctx, epoch, block)
+	if err != nil {
+		return nil, err
+	}
+	aliveNodeIds := make([]string, len(aliveNodes))
+	for i, n := range aliveNodes {
+		aliveNodeIds[i] = n.ToString()
+	}
+
+	activity = rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+	if activity == nil || activity.Rank == -1 {
+		return &types.MLNodeTrainStatus{
+			Status:      types.MLNodeTrainStatusEnum_NOT_JOINED,
+			NodeId:      nodeId,
+			Epoch:       epoch,
+			ActiveNodes: aliveNodeIds,
+			Rank:        -1,
+		}, nil
+	} else {
+		return &types.MLNodeTrainStatus{
+			Status:      types.MLNodeTrainStatusEnum_OK,
+			NodeId:      nodeId,
+			Epoch:       epoch,
+			ActiveNodes: aliveNodeIds,
+			Rank:        activity.Rank,
+		}, nil
+	}
 }
 
 func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId string, epoch int32, block BlockInfo) error {
@@ -242,7 +299,8 @@ func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId stri
 
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
-	return rm.FinishIfNeeded(ctx, block)
+	_, err := rm.FinishIfNeeded(ctx, block)
+	return err
 }
 
 func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, currentBlock BlockInfo) ([]NodeId, error) {
@@ -300,16 +358,16 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 }
 
 // FinishIfNeeded is the exported version of finishIfNeededNoLock.
-func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error {
+func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) (bool, error) {
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
-		return fmt.Errorf("run not found. task_id = %d", rm.runId)
+		return false, fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 	epoch := rs.Epoch.LastEpoch
 
 	active, err := rm.GetEpochActiveNodes(ctx, epoch, block)
 	if err != nil {
-		return err
+		return false, err
 	}
 	joined := len(active)
 	nodeNumParams := getNodeNumParams(rs)
@@ -317,10 +375,15 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error
 	enoughTimeout := joined >= nodeNumParams.minNodes && block.height-rs.Epoch.LastEpochBlockHeight > rm.joinTimeout
 
 	if !(enough || enoughTimeout) {
-		return nil
+		return false, nil
 	}
 
-	return rm.AssignRank(ctx, block)
+	err = rm.AssignRank(ctx, block)
+	if err != nil {
+		return false, err
+	} else {
+		return true, nil
+	}
 }
 
 type minAndMaxNodesParams struct {
@@ -400,11 +463,10 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 	}, nil
 }
 
-/*
 func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, block BlockInfo) error {
-	rs, err := rm.store.GetRunState(ctx, rm.runId)
-	if err != nil {
-		return err
+	rs := rm.store.GetRunState(ctx, rm.runId)
+	if rs == nil {
+		return fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 
 	if epoch == rs.Epoch.LastEpoch && !rs.Epoch.LastEpochIsFinished {
@@ -415,47 +477,44 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 		// TODO: log epoch
 	}
 
-	es, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
+	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return err
 	}
-	// collect originally ranked nodes
+	es, err := NewEpochState(activity)
+	if err != nil {
+		return err
+	}
+
 	var original []NodeId
-	for id, rec := range es.Activity {
+	for nodeId, rec := range es.Activity {
 		if rec.Rank != -1 {
-			original = append(original, id)
+			original = append(original, nodeId)
 		}
 	}
 	sortNodeIds(original)
 
-	// collect still‑alive
-	aliveMap := map[string]bool{}
-	active, err := rm.GetEpochActiveNodes(ctx, epoch, block)
-	if err != nil {
-		return err
-	}
-	for _, id := range active {
-		aliveMap[id] = true
-	}
+	activeEs := es.filterActive(block, rm.heartbeatTimeout)
 
 	// if some dropped, reassign among survivors
-	var survivors []string
-	for _, id := range original {
-		if aliveMap[id] {
-			survivors = append(survivors, id)
+	var survivors []NodeId
+	for _, nodeId := range original {
+		if _, ok := activeEs.Activity[nodeId]; ok {
+			survivors = append(survivors, nodeId)
 		}
 	}
+
 	if len(survivors) < len(original) {
 		for rank, nodeID := range survivors {
-			es.Activity[nodeID].Rank = rank
+			es.Activity[nodeID].Rank = int32(rank)
 		}
 		for _, nodeID := range original {
-			if !aliveMap[nodeID] {
+			if _, ok := activeEs.Activity[nodeID]; !ok {
 				es.Activity[nodeID].Rank = -1
 			}
 		}
-		return rm.store.SaveEpochState(ctx, rm.runId, epoch, es)
+		return rm.store.SaveEpochState(ctx, activeEs.toActivityArray())
 	}
+
 	return nil
 }
-*/
