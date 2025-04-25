@@ -208,12 +208,16 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	}
 
 	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
-	activity.BlockTime = block.timestamp.Unix()
-	activity.BlockHeight = block.height
+	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
 	_, err := rm.FinishIfNeeded(ctx, block)
 	return err
+}
+
+func updateHeartbeat(a *types.TrainingTaskNodeEpochActivity, block BlockInfo) {
+	a.BlockHeight = block.height
+	a.BlockTime = block.timestamp.Unix()
 }
 
 func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, epoch int32) types.TrainingTaskNodeEpochActivity {
@@ -246,10 +250,9 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32
 
 	activity := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
 	if activity != nil {
-		activity.BlockHeight = block.height
-		activity.BlockTime = block.timestamp.Unix()
+		updateHeartbeat(activity, block)
+		rm.store.SaveParticipantActivity(ctx, activity)
 	}
-	rm.store.SaveParticipantActivity(ctx, activity)
 
 	finished, err := rm.FinishIfNeeded(ctx, block)
 	if err != nil {
@@ -294,9 +297,7 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32
 
 func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId string, epoch int32, block BlockInfo) error {
 	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
-	activity.BlockHeight = block.height
-	activity.BlockTime = block.timestamp.Unix()
-
+	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
 	_, err := rm.FinishIfNeeded(ctx, block)
