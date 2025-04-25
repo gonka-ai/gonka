@@ -2,9 +2,10 @@ package keeper
 
 import (
 	"context"
+	"github.com/productscience/inference/x/inference/training"
+	"github.com/productscience/inference/x/inference/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inf
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -16,8 +17,13 @@ func (k Keeper) TrainingAliveNodes(goCtx context.Context, req *types.QueryTraini
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: Process the query
-	_ = ctx
+	runStore := NewKeeperTrainingRunStore(k)
+	runManager := training.NewRunManager(
+		req.Req.RunId,
+		runStore,
+		10,
+		10,
+	)
 
 	return &types.QueryTrainingAliveNodesResponse{}, nil
 }

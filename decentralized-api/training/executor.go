@@ -106,6 +106,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	slog.Info(logTagExecutor+"Starting training", "taskId", taskId, "masterNode", masterNode.Host, "nodeRanks", nodeRanks, "worldSize", len(rankedNodes))
 	command := broker.NewStartTrainingCommand(
+		taskId,
 		masterNode.Host,
 		len(rankedNodes),
 		nodeRanks,

@@ -86,6 +86,7 @@ type Checkpoint struct {
 }
 
 type TrainEnv struct {
+	TaskId          uint64 `json:"TASK_ID"`
 	GlobalAddr      string `json:"GLOBAL_ADDR"`
 	GlobalPort      string `json:"GLOBAL_PORT"`
 	GlobalRank      string `json:"GLOBAL_RANK"`
@@ -132,13 +133,14 @@ const (
 	defaultTrainingBasePort   = "10001"
 )
 
-func (api *Client) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
+func (api *Client) StartTraining(taskId uint64, masterNodeAddr string, rank int, worldSize int) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
 
 	trainEnv := TrainEnv{
+		TaskId:          taskId,
 		GlobalAddr:      masterNodeAddr,
 		GlobalPort:      defaultGlobalTrainingPort,
 		GlobalRank:      strconv.Itoa(rank),

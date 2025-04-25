@@ -119,14 +119,16 @@ func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 }
 
 type StartTrainingCommand struct {
+	taskId            uint64
 	masterNodeAddress string
 	worldSize         int
 	nodeRanks         map[string]int
 	Response          chan bool
 }
 
-func NewStartTrainingCommand(masterNodeAddress string, worldSize int, nodeRanks map[string]int) StartTrainingCommand {
+func NewStartTrainingCommand(taskId uint64, masterNodeAddress string, worldSize int, nodeRanks map[string]int) StartTrainingCommand {
 	return StartTrainingCommand{
+		taskId:            taskId,
 		masterNodeAddress: masterNodeAddress,
 		worldSize:         worldSize,
 		nodeRanks:         nodeRanks,
