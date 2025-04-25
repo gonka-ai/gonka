@@ -42,6 +42,7 @@ const (
 	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
 	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
 	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
+	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
 )
 
 // MsgClient is the client API for Msg service.
@@ -73,6 +74,7 @@ type MsgClient interface {
 	JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error)
 	TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error)
 	SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error)
+	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
 }
 
 type msgClient struct {
@@ -290,6 +292,15 @@ func (c *msgClient) SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...g
 	return out, nil
 }
 
+func (c *msgClient) JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error) {
+	out := new(MsgJoinTrainingStatusResponse)
+	err := c.cc.Invoke(ctx, Msg_JoinTrainingStatus_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -319,6 +330,7 @@ type MsgServer interface {
 	JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error)
 	TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error)
 	SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error)
+	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -394,6 +406,9 @@ func (UnimplementedMsgServer) TrainingHeartbeat(context.Context, *MsgTrainingHea
 }
 func (UnimplementedMsgServer) SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
+}
+func (UnimplementedMsgServer) JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinTrainingStatus not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -822,6 +837,24 @@ func _Msg_SetBarrier_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_JoinTrainingStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgJoinTrainingStatus)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).JoinTrainingStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_JoinTrainingStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).JoinTrainingStatus(ctx, req.(*MsgJoinTrainingStatus))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -920,6 +953,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetBarrier",
 			Handler:    _Msg_SetBarrier_Handler,
+		},
+		{
+			MethodName: "JoinTrainingStatus",
+			Handler:    _Msg_JoinTrainingStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -115,6 +115,10 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgSetBarrier int = 100
 
+	opWeightMsgJoinTrainingStatus = "op_weight_msg_join_training_status"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgJoinTrainingStatus int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -380,6 +384,17 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgJoinTrainingStatus int
+	simState.AppParams.GetOrGenerate(opWeightMsgJoinTrainingStatus, &weightMsgJoinTrainingStatus, nil,
+		func(_ *rand.Rand) {
+			weightMsgJoinTrainingStatus = defaultWeightMsgJoinTrainingStatus
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgJoinTrainingStatus,
+		inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -561,6 +576,14 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgSetBarrier,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgJoinTrainingStatus,
+			defaultWeightMsgJoinTrainingStatus,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),
