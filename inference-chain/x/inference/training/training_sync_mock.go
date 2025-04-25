@@ -139,7 +139,7 @@ func (m *MockRunStore) SaveEpochState(ctx context.Context, runId uint64, epoch i
 	return nil
 }
 
-func (m *MockRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, error) {
+func (m *MockRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -149,14 +149,14 @@ func (m *MockRunStore) GetParticipantActivity(ctx context.Context, runId uint64,
 				if activity, found := nodeMap[nodeId]; found {
 					// Return a copy
 					activityCopy := *activity
-					return &activityCopy, nil
+					return &activityCopy, true
 				}
 			}
 		}
 	}
 
 	// Mimic keeper behavior: return error if not found
-	return nil, nil
+	return nil, false
 }
 
 func (m *MockRunStore) SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) {
