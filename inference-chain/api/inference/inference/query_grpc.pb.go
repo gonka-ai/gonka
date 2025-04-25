@@ -61,6 +61,7 @@ const (
 	Query_TrainingKvRecord_FullMethodName                 = "/inference.inference.Query/TrainingKvRecord"
 	Query_ListTrainingKvRecordKeys_FullMethodName         = "/inference.inference.Query/ListTrainingKvRecordKeys"
 	Query_TrainingBarrier_FullMethodName                  = "/inference.inference.Query/TrainingBarrier"
+	Query_TrainingAliveNodes_FullMethodName               = "/inference.inference.Query/TrainingAliveNodes"
 )
 
 // QueryClient is the client API for Query service.
@@ -141,6 +142,8 @@ type QueryClient interface {
 	ListTrainingKvRecordKeys(ctx context.Context, in *QueryListTrainingKvRecordKeysRequest, opts ...grpc.CallOption) (*QueryListTrainingKvRecordKeysResponse, error)
 	// Queries a list of TrainingBarrier items.
 	TrainingBarrier(ctx context.Context, in *QueryTrainingBarrierRequest, opts ...grpc.CallOption) (*QueryTrainingBarrierResponse, error)
+	// Queries a list of TrainingAliveNodes items.
+	TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error)
 }
 
 type queryClient struct {
@@ -529,6 +532,15 @@ func (c *queryClient) TrainingBarrier(ctx context.Context, in *QueryTrainingBarr
 	return out, nil
 }
 
+func (c *queryClient) TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error) {
+	out := new(QueryTrainingAliveNodesResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingAliveNodes_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -607,6 +619,8 @@ type QueryServer interface {
 	ListTrainingKvRecordKeys(context.Context, *QueryListTrainingKvRecordKeysRequest) (*QueryListTrainingKvRecordKeysResponse, error)
 	// Queries a list of TrainingBarrier items.
 	TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error)
+	// Queries a list of TrainingAliveNodes items.
+	TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -739,6 +753,9 @@ func (UnimplementedQueryServer) ListTrainingKvRecordKeys(context.Context, *Query
 }
 func (UnimplementedQueryServer) TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingBarrier not implemented")
+}
+func (UnimplementedQueryServer) TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingAliveNodes not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1509,6 +1526,24 @@ func _Query_TrainingBarrier_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TrainingAliveNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingAliveNodesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingAliveNodes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingAliveNodes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingAliveNodes(ctx, req.(*QueryTrainingAliveNodesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1683,6 +1718,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TrainingBarrier",
 			Handler:    _Query_TrainingBarrier_Handler,
+		},
+		{
+			MethodName: "TrainingAliveNodes",
+			Handler:    _Query_TrainingAliveNodes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

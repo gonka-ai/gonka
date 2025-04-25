@@ -263,6 +263,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/training_barrier";
   
   }
+  
+  // Queries a list of TrainingAliveNodes items.
+  rpc TrainingAliveNodes (QueryTrainingAliveNodesRequest) returns (QueryTrainingAliveNodesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
+  
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -625,3 +631,10 @@ message QueryTrainingBarrierResponse {
   GetBarrierStatusResponse resp = 2;
 }
 
+message QueryTrainingAliveNodesRequest {
+  GetAliveNodesRequest req = 1;
+}
+
+message QueryTrainingAliveNodesResponse {
+  GetAliveNodesResponse resp = 2;
+}
