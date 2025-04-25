@@ -12,19 +12,21 @@ func (k msgServer) TrainingHeartbeat(goCtx context.Context, msg *types.MsgTraini
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	store := NewKeeperTrainingRunStore(k.Keeper)
-	runManager := training.NewRunManager(
-		msg.Req.RunId,
-		store,
-		10,
-		20,
-	)
+	runManager := training.NewRunManager(msg.Req.RunId, store)
 
 	err := runManager.Heartbeat(ctx, msg.Creator, msg.Req.NodeId, msg.Req.GlobalEpoch, training.NewBlockInfo(ctx))
 	if err != nil {
 		k.LogError("Failed to send heartbeat", types.Training, "error", err)
-		return nil, err
+		return &types.MsgTrainingHeartbeatResponse{
+			Resp: &types.HeartbeatResponse{
+				Status: types.HeartbeatStatusEnum_HEARTBEAT_ERROR,
+			},
+		}, err // TODO: should we return both error resp and error body?
 	}
 
-	// PRTODO: add response!
-	return &types.MsgTrainingHeartbeatResponse{}, nil
+	return &types.MsgTrainingHeartbeatResponse{
+		Resp: &types.HeartbeatResponse{
+			Status: types.HeartbeatStatusEnum_HEARTBEAT_OK,
+		},
+	}, nil
 }
