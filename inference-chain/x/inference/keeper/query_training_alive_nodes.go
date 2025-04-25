@@ -16,14 +16,29 @@ func (k Keeper) TrainingAliveNodes(goCtx context.Context, req *types.QueryTraini
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	_ = ctx
 
 	runStore := NewKeeperTrainingRunStore(k)
 	runManager := training.NewRunManager(
 		req.Req.RunId,
 		runStore,
-		10,
-		10,
 	)
 
-	return &types.QueryTrainingAliveNodesResponse{}, nil
+	nodeIds, err := runManager.GetEpochActiveNodes(goCtx, req.Req.Epoch, training.NewBlockInfo(ctx))
+	if err != nil {
+		k.LogError("GetEpochActiveNodes failure", types.Training, "error", err)
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	nodeIdsString := make([]string, len(nodeIds))
+	for i, nodeId := range nodeIds {
+		nodeIdsString[i] = nodeId.ToString()
+	}
+	response := &types.QueryTrainingAliveNodesResponse{
+		Resp: &types.GetAliveNodesResponse{
+			AliveNodes: nodeIdsString,
+		},
+	}
+
+	return response, nil
 }

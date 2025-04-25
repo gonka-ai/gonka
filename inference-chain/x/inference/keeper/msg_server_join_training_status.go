@@ -11,7 +11,7 @@ import (
 func (k msgServer) JoinTrainingStatus(goCtx context.Context, msg *types.MsgJoinTrainingStatus) (*types.MsgJoinTrainingStatusResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	runManager := training.NewRunManager(msg.Req.RunId, NewKeeperTrainingRunStore(k.Keeper), 10, 10)
+	runManager := training.NewRunManager(msg.Req.RunId, NewKeeperTrainingRunStore(k.Keeper))
 	_ = runManager
 	_ = ctx
 

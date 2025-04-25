@@ -15,8 +15,6 @@ func (k msgServer) SetBarrier(goCtx context.Context, msg *types.MsgSetBarrier) (
 	runManager := training.NewRunManager(
 		msg.Req.RunId,
 		store,
-		10,
-		10,
 	)
 
 	barrier := &types.TrainingTaskBarrier{

@@ -85,6 +85,10 @@ type NodeId struct {
 	NodeId      string
 }
 
+func (n *NodeId) ToString() string {
+	return fmt.Sprintf("%s/%s", n.Participant, n.NodeId)
+}
+
 type RunManager struct {
 	runId            uint64
 	store            RunStore
@@ -96,8 +100,6 @@ type RunManager struct {
 
 // FIXME: should we use blocks or time?
 const (
-	defaultMinNodes         = 3
-	defaultMaxNodes         = 3
 	defaultJoinTimeout      = 30 // 30 blocks
 	defaultHeartbeatTimeout = 30 // 30 blocks
 )
@@ -105,13 +107,10 @@ const (
 func NewRunManager(
 	runId uint64,
 	store RunStore,
-	minNodes, maxNodes int,
 ) *RunManager {
 	return &RunManager{
 		runId:            runId,
 		store:            store,
-		minNodes:         minNodes,
-		maxNodes:         maxNodes,
 		joinTimeout:      defaultJoinTimeout,
 		heartbeatTimeout: defaultHeartbeatTimeout,
 	}
@@ -348,11 +347,11 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 
 	aliveIds := make([]string, 0)
 	notReady := make([]string, 0)
-	for _, node := range aliveNodes {
-		nodeIdString := fmt.Sprintf("%s/%s", node.Participant, node.NodeId)
+	for _, nodeId := range aliveNodes {
+		nodeIdString := nodeId.ToString()
 		aliveIds = append(aliveIds, nodeIdString)
 
-		if _, ok := barrierMap[node]; !ok {
+		if _, ok := barrierMap[nodeId]; !ok {
 			notReady = append(notReady, nodeIdString)
 		}
 	}

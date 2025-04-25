@@ -15,10 +15,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	keeper, keeperCtx := keepertest.InferenceKeeper(t)
 	store := keeper2.NewKeeperTrainingRunStore(keeper)
 	runId := uint64(1)
-	minNodes := 3
-	maxNodes := 3
 
-	rm := training.NewRunManager(runId, store, minNodes, maxNodes)
+	rm := training.NewRunManager(runId, store)
 
 	// 1. Populate with a dummy training task
 	initialTask := &types.TrainingTask{
@@ -28,6 +26,20 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 			LastEpochIsFinished:  false,
 			LastEpochBlockHeight: 0,
 			LastEpochTimestamp:   0,
+		},
+		Assignees: []*types.TrainingTaskAssignee{
+			{
+				Participant: "participantA",
+				NodeIds:     []string{"node1"},
+			},
+			{
+				Participant: "participantB",
+				NodeIds:     []string{"node2"},
+			},
+			{
+				Participant: "participantC",
+				NodeIds:     []string{"node3"},
+			},
 		},
 	}
 	keeper.SetTrainingTask(keeperCtx, initialTask)
@@ -128,7 +140,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 		participantsFound[activity.Participant][activity.NodeId] = true
 	}
 
-	require.Len(t, ranks, minNodes, "Should have assigned ranks 0 to minNodes-1")
+	require.Len(t, ranks, len(runState1.Assignees))
 	require.True(t, ranks[0])
 	require.True(t, ranks[1])
 	require.True(t, ranks[2])

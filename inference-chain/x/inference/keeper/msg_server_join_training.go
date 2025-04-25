@@ -14,8 +14,6 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 	runManager := training.NewRunManager(
 		msg.Req.RunId,
 		store,
-		10,
-		20,
 	)
 
 	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch, training.NewBlockInfo(ctx), msg.Creator)
