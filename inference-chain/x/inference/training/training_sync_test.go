@@ -2,6 +2,8 @@ package training_test
 
 import (
 	"context"
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	keeper2 "github.com/productscience/inference/x/inference/keeper"
 	"testing"
 	"time"
 
@@ -12,7 +14,8 @@ import (
 )
 
 func TestRunManager_Join_And_RankAssignment(t *testing.T) {
-	store := training.NewMockRunStore()
+	keeper, keeperCtx := keepertest.InferenceKeeper(t)
+	store := keeper2.NewKeeperTrainingRunStore(keeper)
 	runId := uint64(1)
 	minNodes := 3
 	maxNodes := 3
@@ -29,7 +32,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 			LastEpochTimestamp:   0,
 		},
 	}
-	store.SetTrainingTask(initialTask)
+	keeper.SetTrainingTask(keeperCtx, initialTask)
 
 	baseCtx := sdk.Context{}
 	blockHeight := int64(10)

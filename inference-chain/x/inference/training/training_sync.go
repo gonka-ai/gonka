@@ -76,6 +76,7 @@ type RunMembershipService interface {
 	FinishIfNeeded(ctx context.Context, block BlockInfo) error
 	RerankIfSomeNodesLeft(ctx context.Context, epoch int32, block BlockInfo) error
 	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier, block BlockInfo) error
+	GetBarrierStatus(ctx context.Context, req *types.GetBarrierStatusRequest) (*types.GetBarrierStatusResponse, error)
 }
 
 type NodeId struct {
@@ -313,6 +314,11 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error
 
 func (rm *RunManager) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
 	rm.store.SetBarrier(ctx, barrier)
+}
+
+func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrierStatusRequest) (*types.GetBarrierStatusResponse, error) {
+	// PRTODO: !!!
+	panic("implement me")
 }
 
 /*
