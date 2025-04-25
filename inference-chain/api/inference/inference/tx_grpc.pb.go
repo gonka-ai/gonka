@@ -43,6 +43,7 @@ const (
 	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
 	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
 	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
+	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 )
 
 // MsgClient is the client API for Msg service.
@@ -75,6 +76,7 @@ type MsgClient interface {
 	TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error)
 	SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error)
 	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
+	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 }
 
 type msgClient struct {
@@ -301,6 +303,15 @@ func (c *msgClient) JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingS
 	return out, nil
 }
 
+func (c *msgClient) CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error) {
+	out := new(MsgCreateDummyTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateDummyTrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -331,6 +342,7 @@ type MsgServer interface {
 	TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error)
 	SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error)
 	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
+	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -409,6 +421,9 @@ func (UnimplementedMsgServer) SetBarrier(context.Context, *MsgSetBarrier) (*MsgS
 }
 func (UnimplementedMsgServer) JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinTrainingStatus not implemented")
+}
+func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateDummyTrainingTask not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -855,6 +870,24 @@ func _Msg_JoinTrainingStatus_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreateDummyTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateDummyTrainingTask)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreateDummyTrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateDummyTrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateDummyTrainingTask(ctx, req.(*MsgCreateDummyTrainingTask))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -957,6 +990,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JoinTrainingStatus",
 			Handler:    _Msg_JoinTrainingStatus_Handler,
+		},
+		{
+			MethodName: "CreateDummyTrainingTask",
+			Handler:    _Msg_CreateDummyTrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
