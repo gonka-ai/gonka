@@ -40,6 +40,31 @@ func NewEpochState(activity []*types.TrainingTaskNodeEpochActivity) (*EpochState
 	}, nil
 }
 
+func (es *EpochState) filterActive(currentBlock BlockInfo, heartbeatTimeout int64) EpochState {
+	active := make(map[NodeId]*types.TrainingTaskNodeEpochActivity)
+
+	for nodeId, rec := range es.Activity {
+		blockDiff := currentBlock.height - rec.BlockHeight
+		if blockDiff <= heartbeatTimeout {
+			active[nodeId] = rec
+		}
+	}
+
+	return EpochState{
+		Epoch:    es.Epoch,
+		Activity: active,
+	}
+}
+
+func (es *EpochState) getSortedNodeIds() []NodeId {
+	nodeIds := make([]NodeId, 0, len(es.Activity))
+	for nodeId := range es.Activity {
+		nodeIds = append(nodeIds, nodeId)
+	}
+	sortNodeIds(nodeIds)
+	return nodeIds
+}
+
 func (es *EpochState) toActivityArray() []*types.TrainingTaskNodeEpochActivity {
 	activity := make([]*types.TrainingTaskNodeEpochActivity, 0, len(es.Activity))
 	for _, rec := range es.Activity {
@@ -216,6 +241,14 @@ func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId stri
 }
 
 func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, currentBlock BlockInfo) ([]NodeId, error) {
+	es, err := rm.getEpochStateActiveFiltered(ctx, epoch, currentBlock)
+	if err != nil {
+		return nil, err
+	}
+	return es.getSortedNodeIds(), nil
+}
+
+func (rm *RunManager) getEpochStateActiveFiltered(ctx context.Context, epoch int32, currentBlock BlockInfo) (*EpochState, error) {
 	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return nil, err
@@ -225,15 +258,8 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, curr
 		return nil, err
 	}
 
-	var active []NodeId
-	for nodeId, rec := range es.Activity {
-		blockDiff := currentBlock.height - rec.BlockHeight
-		if blockDiff <= rm.heartbeatTimeout {
-			active = append(active, nodeId)
-		}
-	}
-	sortNodeIds(active)
-	return active, nil
+	filteredEs := es.filterActive(currentBlock, rm.heartbeatTimeout)
+	return &filteredEs, nil
 }
 
 func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
@@ -243,10 +269,11 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 	}
 	epoch := rs.Epoch.LastEpoch
 
-	active, err := rm.GetEpochActiveNodes(ctx, epoch, block)
+	epochState, err := rm.getEpochStateActiveFiltered(ctx, epoch, block)
 	if err != nil {
 		return err
 	}
+	active := epochState.Activity
 	nodeNumParams := getNodeNumParams(rs)
 
 	if len(active) < nodeNumParams.minNodes || len(active) > nodeNumParams.maxNodes {
@@ -254,28 +281,16 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 			len(active), nodeNumParams.minNodes, nodeNumParams.maxNodes)
 	}
 
-	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
-	if err != nil {
-		return err
+	nodeIds := epochState.getSortedNodeIds()
+	for i, nodeId := range nodeIds {
+		epochState.Activity[nodeId].Rank = int32(i)
 	}
-	es, err := NewEpochState(activity)
-	if err != nil {
+
+	if err := rm.store.SaveEpochState(ctx, epochState.toActivityArray()); err != nil {
 		return err
 	}
 
-	// PRTODO: FIXME: insepct this, fix sorting
-	for i, nodeId := range active {
-		key := NodeId{
-			Participant: nodeId.Participant,
-			NodeId:      nodeId.NodeId,
-		}
-		es.Activity[key].Rank = int32(i)
-	}
 	rs.Epoch.LastEpochIsFinished = true
-
-	if err := rm.store.SaveEpochState(ctx, es.toActivityArray()); err != nil {
-		return err
-	}
 	return rm.store.SaveRunState(ctx, rs)
 }
 
@@ -299,7 +314,7 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) error
 	if !(enough || enoughTimeout) {
 		return nil
 	}
-	// reuse AssignRank (which also marks FinishedEpochs)
+
 	return rm.AssignRank(ctx, block)
 }
 
