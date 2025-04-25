@@ -96,6 +96,7 @@ type RunStore interface {
 // RunMembershipService is the public API.
 type RunMembershipService interface {
 	Join(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) error
+	JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error)
 	Heartbeat(ctx context.Context, participant string, nodeId string, epoch int32, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]NodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
@@ -228,6 +229,10 @@ func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant 
 		}
 	}
 	return *activity
+}
+
+func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error) {
+	panic("implement me")
 }
 
 func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId string, epoch int32, block BlockInfo) error {
