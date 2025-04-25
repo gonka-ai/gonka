@@ -16,7 +16,7 @@ func (k Keeper) SetTrainingKVRecord(ctx sdk.Context, record *types.TrainingTaskK
 
 func (k Keeper) ListTrainingKVRecords(ctx sdk.Context, taskId uint64, participant string) ([]*types.TrainingTaskKVRecord, error) {
 	keyPrefix := types.TrainingTaskKVParticipantRecordsKey(taskId, participant)
-	return GetAllValues(ctx, k, keyPrefix, func() *types.TrainingTaskKVRecord {
+	return GetAllValues(ctx, &k, keyPrefix, func() *types.TrainingTaskKVRecord {
 		return &types.TrainingTaskKVRecord{}
 	})
 }

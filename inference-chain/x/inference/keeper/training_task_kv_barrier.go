@@ -28,3 +28,9 @@ func (k Keeper) SetTrainingBarrier(ctx sdk.Context, barrier *types.TrainingTaskB
 	}
 	SetValue(k, ctx, barrier, []byte{}, key.ToByteKey())
 }
+
+func (k Keeper) GetTrainingBarrierForEpoch(ctx sdk.Context, key types.TrainingTaskBarrierEpochKey) ([]*types.TrainingTaskBarrier, error) {
+	return GetAllValues(ctx, &k, key.ToByteKey(), func() *types.TrainingTaskBarrier {
+		return &types.TrainingTaskBarrier{}
+	})
+}

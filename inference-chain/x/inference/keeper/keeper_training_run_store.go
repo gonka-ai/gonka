@@ -20,8 +20,17 @@ func NewKeeperTrainingRunStore(keeper Keeper) *TrainingRunStore {
 	}
 }
 
-func (k *TrainingRunStore) GetRunState(ctx context.Context, runId uint64) (*types.TrainingTask, bool) {
-	return k.keeper.GetTrainingTask(sdk.UnwrapSDKContext(ctx), runId)
+func (k *TrainingRunStore) GetRunState(ctx context.Context, runId uint64) *types.TrainingTask {
+	task, found := k.keeper.GetTrainingTask(sdk.UnwrapSDKContext(ctx), runId)
+	if !found {
+		return nil
+	} else {
+		if task == nil {
+			panic("keeper.GetTrainingTask: task = nil. found = true")
+		}
+
+		return task
+	}
 }
 
 func (k *TrainingRunStore) SaveRunState(ctx context.Context, state *types.TrainingTask) error {
@@ -77,4 +86,8 @@ func (k *TrainingRunStore) SaveParticipantActivity(ctx context.Context, activity
 
 func (k *TrainingRunStore) SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier) {
 	k.keeper.SetTrainingBarrier(sdk.UnwrapSDKContext(ctx), barrier)
+}
+
+func (k *TrainingRunStore) GetBarrierEpochStatus(ctx context.Context, key types.TrainingTaskBarrierEpochKey) ([]*types.TrainingTaskBarrier, error) {
+	return k.keeper.GetTrainingBarrierForEpoch(sdk.UnwrapSDKContext(ctx), key)
 }

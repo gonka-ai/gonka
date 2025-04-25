@@ -31,7 +31,7 @@ func (k Keeper) GetHardwareNodes(ctx sdk.Context, participantId string) (*types.
 }
 
 func (k Keeper) GetAllHardwareNodes(ctx sdk.Context) ([]*types.HardwareNodes, error) {
-	return GetAllValues(ctx, k, []byte(HardwareNodesKeysPrefix), func() *types.HardwareNodes {
+	return GetAllValues(ctx, &k, []byte(HardwareNodesKeysPrefix), func() *types.HardwareNodes {
 		return &types.HardwareNodes{}
 	})
 }

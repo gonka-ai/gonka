@@ -25,9 +25,12 @@ func (k Keeper) TrainingBarrier(goCtx context.Context, req *types.QueryTrainingB
 		10,
 	)
 
-	_ = runManager
-	_ = ctx
-	// PRTODO: query!!!
+	resp, err := runManager.GetBarrierStatus(ctx, req.Req)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
-	return &types.QueryTrainingBarrierResponse{}, nil
+	return &types.QueryTrainingBarrierResponse{
+		Resp: resp,
+	}, nil
 }

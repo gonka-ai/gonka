@@ -6,7 +6,7 @@ import (
 )
 
 func (k Keeper) GetTrainingTaskNodeActivityAtEpoch(ctx sdk.Context, taskId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error) {
-	return GetAllValues(ctx, k, types.TrainingTaskNodeEpochActivityEpochPrefix(taskId, epoch), func() *types.TrainingTaskNodeEpochActivity {
+	return GetAllValues(ctx, &k, types.TrainingTaskNodeEpochActivityEpochPrefix(taskId, epoch), func() *types.TrainingTaskNodeEpochActivity {
 		return &types.TrainingTaskNodeEpochActivity{}
 	})
 }

@@ -58,13 +58,23 @@ func TrainingTaskNodeEpochActivityEpochPrefix(taskId uint64, epoch int32) []byte
 }
 
 type TrainingTaskBarrierKey struct {
-	BarrierId   string
 	TaskId      uint64
+	BarrierId   string
+	Epoch       int32
 	Participant string
 	NodeId      string
-	Epoch       int32
 }
 
 func (b TrainingTaskBarrierKey) ToByteKey() []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d/%s/%s", b.TaskId, b.BarrierId, b.Epoch, b.Participant, b.NodeId))
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d/%s/%s/value", b.TaskId, b.BarrierId, b.Epoch, b.Participant, b.NodeId))
+}
+
+type TrainingTaskBarrierEpochKey struct {
+	TaskId    uint64
+	BarrierId string
+	Epoch     int32
+}
+
+func (b TrainingTaskBarrierEpochKey) ToByteKey() []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d", b.TaskId, b.BarrierId, b.Epoch))
 }
