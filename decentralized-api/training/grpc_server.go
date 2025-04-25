@@ -169,9 +169,30 @@ func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequ
 	return resp.Resp, nil
 }
 
-func (s *Server) GetAliveNodes(context.Context, *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
+func (s *Server) GetAliveNodes(ctx context.Context, req *inference.GetAliveNodesRequest) (*inference.GetAliveNodesResponse, error) {
+	logging.Info("GetAliveNodes called", types.Training)
+
+	queryClient := s.cosmosClient.NewInferenceQueryClient()
+	queryReq := &types.QueryTrainingAliveNodesRequest{
+		Req: &types.GetAliveNodesRequest{
+			RunId: req.RunId,
+			Epoch: req.Epoch,
+		},
+	}
+
+	resp, err := queryClient.TrainingAliveNodes(ctx, queryReq)
+	if err != nil {
+		logging.Error("Failed to get alive nodes", types.Training, "error", err)
+		return nil, err
+	}
+
+	logging.Info("GetAliveNodes response", types.Training, "resp", resp)
+
+	return &inference.GetAliveNodesResponse{
+		AliveNodes: resp.Resp.AliveNodes,
+	}, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
 }
+
 func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierRequest) (*inference.SetBarrierResponse, error) {
 	logging.Info("SetBarrier called", types.Training)
 
