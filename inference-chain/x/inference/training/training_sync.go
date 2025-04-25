@@ -346,18 +346,15 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 		barrierMap[nodeId] = true
 	}
 
+	aliveIds := make([]string, 0)
 	notReady := make([]string, 0)
 	for _, node := range aliveNodes {
-		if _, ok := barrierMap[node]; !ok {
-			notReady = append(notReady, fmt.Sprintf("%s/%s"), node.Participant, node.NodeId)
-		}
-	}
-	_ = barriers
-	_ = aliveNodes
+		nodeIdString := fmt.Sprintf("%s/%s", node.Participant, node.NodeId)
+		aliveIds = append(aliveIds, nodeIdString)
 
-	aliveIds := make([]string, 0)
-	for _, node := range aliveNodes {
-		aliveIds = append(aliveIds, fmt.Sprintf("%s/%s", node.Participant, node.NodeId))
+		if _, ok := barrierMap[node]; !ok {
+			notReady = append(notReady, nodeIdString)
+		}
 	}
 
 	return &types.GetBarrierStatusResponse{

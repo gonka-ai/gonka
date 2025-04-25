@@ -53,8 +53,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 
 	// Check RunState using standard context for store access
 	storeCtx := baseCtx
-	runState1, found := store.GetRunState(storeCtx, runId)
-	require.True(t, found)
+	runState1 := store.GetRunState(storeCtx, runId)
 	require.NotNil(t, runState1)
 	require.Equal(t, startingEpoch, runState1.Epoch.LastEpoch)
 	require.False(t, runState1.Epoch.LastEpochIsFinished) // Not finished yet
@@ -80,8 +79,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check RunState (should still be epoch 0, not finished)
-	runState2, found := store.GetRunState(storeCtx, runId)
-	require.True(t, found)
+	runState2 := store.GetRunState(storeCtx, runId)
+	require.NotNil(t, runState2)
 	require.Equal(t, startingEpoch, runState2.Epoch.LastEpoch)
 	require.False(t, runState2.Epoch.LastEpochIsFinished)
 
@@ -106,8 +105,8 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	// 4. Check ranks got assigned because minNodes (3) was reached
 
 	// Check RunState (should now be finished)
-	runState3, found := store.GetRunState(storeCtx, runId)
-	require.True(t, found)
+	runState3 := store.GetRunState(storeCtx, runId)
+	require.NotNil(t, runState3)
 	require.Equal(t, startingEpoch, runState3.Epoch.LastEpoch)
 	require.True(t, runState3.Epoch.LastEpochIsFinished) // Should be finished now
 
