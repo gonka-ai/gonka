@@ -2,13 +2,17 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/training"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 type TrainingRunStore struct {
 	keeper Keeper
 }
+
+var _ training.RunStore = (*TrainingRunStore)(nil)
 
 func NewKeeperTrainingRunStore(keeper Keeper) *TrainingRunStore {
 	return &TrainingRunStore{
@@ -34,9 +38,9 @@ func (k *TrainingRunStore) GetEpochState(ctx context.Context, runId uint64, epoc
 	return activity, nil
 }
 
-func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.TrainingTaskNodeEpochActivity) {
+func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.TrainingTaskNodeEpochActivity) error {
 	if len(state) == 0 {
-		return
+		return nil
 	}
 
 	epochId := state[0].Epoch
@@ -44,17 +48,27 @@ func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.Tr
 
 	for _, activity := range state {
 		if activity.Epoch != epochId {
-			panic("Epoch ID mismatch")
+			return fmt.Errorf("invalid epoch %d, expected %d", activity.Epoch, epochId)
 		}
 		if activity.TaskId != runId {
-			panic("Run ID mismatch")
+			return fmt.Errorf("invalid run id %d, expected %d", activity.TaskId, runId)
 		}
 		k.keeper.SetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), activity)
 	}
+	return nil
 }
 
-func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool) {
-	return k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
+func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) *types.TrainingTaskNodeEpochActivity {
+	activity, found := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
+	if !found {
+		return nil
+	} else {
+		if activity == nil {
+			panic("GetParticipantActivity: nil training task node epoch activity")
+		}
+
+		return activity
+	}
 }
 
 func (k *TrainingRunStore) SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity) {

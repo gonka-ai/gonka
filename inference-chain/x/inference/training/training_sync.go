@@ -59,9 +59,9 @@ type RunStore interface {
 	SaveRunState(ctx context.Context, state *types.TrainingTask) error
 
 	GetEpochState(ctx context.Context, runId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error)
-	SaveEpochState(ctx context.Context, runId uint64, epoch int32, state []*types.TrainingTaskNodeEpochActivity) error
+	SaveEpochState(ctx context.Context, state []*types.TrainingTaskNodeEpochActivity) error
 
-	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool)
+	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) *types.TrainingTaskNodeEpochActivity
 	SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity)
 
 	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier)
@@ -186,14 +186,13 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
 	activity.BlockTime = block.timestamp.Unix()
 	activity.BlockHeight = block.height
-
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
 	return rm.FinishIfNeeded(ctx, block)
 }
 
 func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, epoch int32) types.TrainingTaskNodeEpochActivity {
-	activity, _ := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
 	if activity == nil {
 		activity = &types.TrainingTaskNodeEpochActivity{
 			TaskId:      rm.runId,
@@ -265,16 +264,16 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 	}
 
 	// PRTODO: FIXME: insepct this, fix sorting
-	for i, nodeID := range active {
+	for i, nodeId := range active {
 		key := NodeId{
-			Participant: nodeID.Participant,
-			NodeId:      nodeID.NodeId,
+			Participant: nodeId.Participant,
+			NodeId:      nodeId.NodeId,
 		}
 		es.Activity[key].Rank = int32(i)
 	}
 	rs.Epoch.LastEpochIsFinished = true
 
-	if err := rm.store.SaveEpochState(ctx, rm.runId, epoch, es.toActivityArray()); err != nil {
+	if err := rm.store.SaveEpochState(ctx, es.toActivityArray()); err != nil {
 		return err
 	}
 	return rm.store.SaveRunState(ctx, rs)

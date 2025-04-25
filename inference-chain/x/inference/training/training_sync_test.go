@@ -1,7 +1,6 @@
 package training_test
 
 import (
-	"context"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	keeper2 "github.com/productscience/inference/x/inference/keeper"
 	"testing"
@@ -53,7 +52,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check RunState using standard context for store access
-	storeCtx := context.Background()
+	storeCtx := baseCtx
 	runState1, found := store.GetRunState(storeCtx, runId)
 	require.True(t, found)
 	require.NotNil(t, runState1)
