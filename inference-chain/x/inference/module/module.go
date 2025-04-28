@@ -176,7 +176,7 @@ func (am AppModule) handleExpiredInference(ctx context.Context, inference types.
 	am.LogInfo("Inference expired, not finished. Issuing refund", types.Inferences, "inferenceId", inference.InferenceId, "executor", inference.AssignedTo)
 	inference.Status = types.InferenceStatus_EXPIRED
 	inference.ActualCost = 0
-	err := am.keeper.IssueRefund(ctx, uint64(inference.EscrowAmount), inference.RequestedBy)
+	err := am.keeper.IssueRefund(ctx, uint64(inference.EscrowAmount), inference.RequestedBy, "expired_inference:"+inference.InferenceId)
 	if err != nil {
 		am.LogError("Error issuing refund", types.Inferences, "error", err)
 	}

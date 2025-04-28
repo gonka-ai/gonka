@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release check-docker build-testermint run-blockchain-tests test-blockchain
+.PHONY: release decentralized-api-release inference-chain-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -11,7 +11,7 @@ api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
 
 node-build-docker:
-	@make -C inference-chain build-docker SET_LATEST=1
+	@make -C inference-chain build-docker SET_LATEST=1 GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE)
 
 release: decentralized-api-release inference-chain-release
 	@git tag $(TAG_NAME)
@@ -39,4 +39,72 @@ check-docker:
 run-tests:
 	@cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
 
+run-sanity:
+	@cd testermint && ./gradlew test --tests "*" -DincludeTags=sanity
+
 test-blockchain: check-docker run-blockchain-tests
+
+# Local build targets
+api-local-build:
+	@echo "Building decentralized-api locally..."
+	@cd decentralized-api && go build -mod=mod -o ./build/dapi
+
+node-local-build:
+	@echo "Building inference-chain locally..."
+	@make -C inference-chain build
+
+api-test:
+	@echo "Running decentralized-api tests..."
+	@cd decentralized-api && go test ./... -v > ../api-test-output.log
+	@echo "----------------------------------------"
+	@echo "DECENTRALIZED-API TEST SUMMARY:"
+	@PASS_COUNT=$$(grep -c "PASS:" api-test-output.log); \
+	FAIL_COUNT=$$(grep -c "FAIL:" api-test-output.log); \
+	NO_TEST_COUNT=$$(grep -c "no test files" api-test-output.log); \
+	echo "Passed: $$PASS_COUNT tests"; \
+	echo "Failed: $$FAIL_COUNT tests"; \
+	echo "No test files: $$NO_TEST_COUNT packages";
+	@echo "----------------------------------------"
+	@if [ $$(grep -c "FAIL:" api-test-output.log) -gt 0 ]; then \
+		echo "Failed tests:"; \
+		grep -A 1 "FAIL:" api-test-output.log | grep -v "^\--"; \
+	fi
+	@if [ $$(grep -c "FAIL:" api-test-output.log) -gt 0 ]; then \
+		exit 1; \
+	fi
+
+node-test:
+	@echo "Running inference-chain tests..."
+	@cd inference-chain && go test ./... -v > ../node-test-output.log
+	@echo "----------------------------------------"
+	@echo "INFERENCE-CHAIN TEST SUMMARY:"
+	@PASS_COUNT=$$(grep -c "PASS:" node-test-output.log); \
+	FAIL_COUNT=$$(grep -c "FAIL:" node-test-output.log); \
+	NO_TEST_COUNT=$$(grep -c "no test files" node-test-output.log); \
+	echo "Passed: $$PASS_COUNT tests"; \
+	echo "Failed: $$FAIL_COUNT tests"; \
+	echo "No test files: $$NO_TEST_COUNT packages";
+	@echo "----------------------------------------"
+	@if [ $$(grep -c "FAIL:" node-test-output.log) -gt 0 ]; then \
+		echo "Failed tests:"; \
+		grep -A 1 "FAIL:" node-test-output.log | grep -v "^\--"; \
+	fi
+	@if [ $$(grep -c "FAIL:" node-test-output.log) -gt 0 ]; then \
+		exit 1; \
+	fi
+
+local-build: api-local-build node-local-build api-test node-test
+	@echo "=========================================="
+	@echo "LOCAL BUILD AND TEST SUMMARY:"
+	@API_PASS=$$(grep -c "PASS:" api-test-output.log); \
+	API_FAIL=$$(grep -c "FAIL:" api-test-output.log); \
+	NODE_PASS=$$(grep -c "PASS:" node-test-output.log); \
+	NODE_FAIL=$$(grep -c "FAIL:" node-test-output.log); \
+	TOTAL_PASS=$$((API_PASS + NODE_PASS)); \
+	TOTAL_FAIL=$$((API_FAIL + NODE_FAIL)); \
+	echo "API Tests - Passed: $$API_PASS, Failed: $$API_FAIL"; \
+	echo "Node Tests - Passed: $$NODE_PASS, Failed: $$NODE_FAIL"; \
+	echo "Total - Passed: $$TOTAL_PASS, Failed: $$TOTAL_FAIL";
+	@echo "=========================================="
+	@echo "Local build and tests completed successfully!"
+	@rm -f api-test-output.log node-test-output.log

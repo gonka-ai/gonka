@@ -45,12 +45,13 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.CoinBalance += existingInference.ActualCost
-	k.LogInfo("Executor CoinBalance credited for inference", types.Payments, "executor", executor.Address, "coin_balance", executor.CoinBalance, "actual_cost", existingInference.ActualCost)
+	k.LogBalance(executor.Address, existingInference.ActualCost, executor.CoinBalance, "inference_finished:"+existingInference.InferenceId)
+	k.LogInfo("Executor CoinBalance credited for inference", types.Balances, "executor", executor.Address, "coin_balance", executor.CoinBalance, "actual_cost", existingInference.ActualCost)
 	executor.CurrentEpochStats.InferenceCount++
 
 	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
 	if refundAmount > 0 {
-		err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address)
+		err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address, "inference_refund:"+existingInference.InferenceId)
 		if err != nil {
 			k.LogError("Unable to Issue Refund for finished inference", types.Payments, err)
 		}

@@ -1,7 +1,6 @@
 package com.productscience
 
 import org.tinylog.core.LogEntry
-import org.tinylog.core.LogEntryValue
 import org.tinylog.writers.AbstractFormatPatternWriter
 import org.tinylog.writers.FileWriter
 

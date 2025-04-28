@@ -10,8 +10,6 @@ import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
 import java.util.concurrent.TimeUnit
 
-val minDeposit = 10000000L
-
 class UpgradeTests : TestermintTest() {
     @Test
     @Tag("unstable")
@@ -38,20 +36,23 @@ class UpgradeTests : TestermintTest() {
             assert(false)
             return
         }
-        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
+        val govParams = genesis.node.getGovParams().params
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, govParams.minDeposit.first().amount)
         println("DEPOSIT:\n" + depositResponse)
         pairs.forEach {
             val response2 = it.voteOnProposal(proposalId, "yes")
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
-        genesis.node.waitForMinimumBlock(upgradeBlock)
+        genesis.node.waitForMinimumBlock(upgradeBlock, "upgradeBlock")
     }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.MINUTES)
     fun partialUpgrade() {
         val (cluster, genesis) = initCluster(reboot = true)
+        genesis.markNeedsReboot()
+        logSection("Verifying current inference hits right endpoint")
         val effectiveHeight = genesis.getCurrentBlockHeight() + 40
         val newResponse = "Only a short response"
         val newSegment = "/newVersion"
@@ -67,31 +68,18 @@ class UpgradeTests : TestermintTest() {
         }
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
-        val result: TxResponse = genesis.submitGovernanceProposal(
-            GovernanceProposal(
-                metadata = "https://www.yahoo.com",
-                deposit = "${minDeposit}${inferenceConfig.denom}",
-                title = "Test Proposal",
-                summary = "Test Proposal Summary",
-                expedited = false,
-                listOf(
-                    CreatePartialUpgrade(
-                        height = effectiveHeight.toString(),
-                        nodeVersion = newVersion,
-                        apiBinariesJson = ""
-                    )
-                )
+        val proposalId = genesis.runProposal(cluster,
+            CreatePartialUpgrade(
+                height = effectiveHeight.toString(),
+                nodeVersion = newVersion,
+                apiBinariesJson = ""
             )
         )
-        val proposalId = result.getProposalId()!!
-        val depositResponse = genesis.makeGovernanceDeposit(proposalId, minDeposit)
-        Logger.info("DEPOSIT:\n{}", depositResponse)
-        cluster.joinPairs.forEach {
-            val response2 = it.voteOnProposal(proposalId, "yes")
-            assertThat(response2).isNotNull()
-            println("VOTE:\n" + response2)
-        }
-        genesis.node.waitForMinimumBlock(effectiveHeight + 10)
+        logSection("Waiting for upgrade to be effective")
+        genesis.node.waitForMinimumBlock(effectiveHeight + 10, "partialUpgradeTime+10")
+        logSection("Verifying new inference hits right endpoint")
+        val proposals = genesis.node.getGovernanceProposals()
+        Logger.info("Proposals: $proposals", "")
         val newResult = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
