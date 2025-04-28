@@ -12,19 +12,26 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
 
-	// FIXME: Figure out something here:
-	//  1. Either get current validators by using staking keeper or smth
-	//  2. Or alter InitGenesis or set validator logic so there's always active participants
-	var currentActiveParticipants *types.ActiveParticipants = nil
+	var currentValidatorWeights map[string]int64 = nil
 	if upcomingGroupData.EpochGroupId > 1 {
-		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
-		currentActiveParticipants = &val
-		if !found {
-			am.LogError("ComputeNewWeights: No active participants found.", types.PoC)
+		previousEpochGroup, err := am.keeper.GetPreviousEpochGroup(ctx)
+		if err != nil {
+			am.LogError("ComputeNewWeights: Error getting previous epoch group", types.PoC, "error", err)
+			return nil
+		}
+
+		votingData, err := previousEpochGroup.GetValidationWeights()
+		if err != nil {
+			am.LogError("ComputeNewWeights: Error getting validation weights from previous epoch group", types.PoC, "error", err)
+			return nil
+		}
+
+		currentValidatorWeights = votingData.Members
+		if len(currentValidatorWeights) == 0 {
+			am.LogError("ComputeNewWeights: No validator weights found in previous epoch group.", types.PoC)
 			return nil
 		}
 	}
-	currentValidatorWeights := getActiveParticipantsWeights(currentActiveParticipants)
 	totalWeight := getTotalWeight(currentValidatorWeights)
 	requiredValidWeight := (totalWeight * 2) / 3
 
@@ -75,7 +82,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			continue
 		}
 
-		if currentActiveParticipants != nil {
+		if currentValidatorWeights != nil {
 			valOutcome := getValidationOutcome(currentValidatorWeights, vals)
 			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
 			if votedWeight < requiredValidWeight {
