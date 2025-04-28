@@ -187,6 +187,11 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 		return fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 
+	if rs.Epoch == nil {
+		rm.logger.LogError("RunManager.Join: rs.Epoch is unexpectedly nil, setting to empty epoch", types.Training, "runId", rm.runId)
+		rs.Epoch = NewEmptyEpochInfo()
+	}
+
 	lastEpoch := rs.Epoch.LastEpoch
 	if epoch < -1 {
 		return fmt.Errorf("bad request. invalid epoch %d", epoch)
