@@ -335,6 +335,7 @@ func (rm *RunManager) getEpochStateActiveFiltered(ctx context.Context, epoch int
 }
 
 func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
+	rm.logger.LogInfo("RunManager.AssignRank", types.Training, "runId", rm.runId, "blockHeight", block.height)
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
 		return fmt.Errorf("run not found. task_id = %d", rm.runId)
@@ -349,10 +350,12 @@ func (rm *RunManager) AssignRank(ctx context.Context, block BlockInfo) error {
 	nodeNumParams := getNodeNumParams(rs)
 
 	if len(active) < nodeNumParams.minNodes || len(active) > nodeNumParams.maxNodes {
+		rm.logger.LogInfo("RunManager.AssignRank. cannot assign ranks", types.Training, "runId", rm.runId, "len(active)", len(active), "minNodes", nodeNumParams.minNodes, "maxNodes", nodeNumParams.maxNodes)
 		return fmt.Errorf("cannot assign rank: active=%d, want [%d,%d]",
 			len(active), nodeNumParams.minNodes, nodeNumParams.maxNodes)
 	}
 
+	rm.logger.LogInfo("Proceeding to assign ranks and mark step as finished", types.Training, "runId", rm.runId, "step", rs.Epoch.LastEpoch)
 	nodeIds := epochState.getSortedNodeIds()
 	for i, nodeId := range nodeIds {
 		epochState.Activity[nodeId].Rank = int32(i)
@@ -383,6 +386,7 @@ func (rm *RunManager) FinishIfNeeded(ctx context.Context, block BlockInfo) (bool
 	enough := joined == nodeNumParams.maxNodes
 	enoughTimeout := joined >= nodeNumParams.minNodes && block.height-rs.Epoch.LastEpochBlockHeight > rm.joinTimeout
 
+	rm.logger.LogInfo("RunManager.FinishIfNeeded", types.Training, "enough", enough, "enoughTimeout", enoughTimeout)
 	if !(enough || enoughTimeout) {
 		return false, nil
 	}
@@ -514,6 +518,7 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 	}
 
 	if len(survivors) < len(original) {
+		rm.logger.LogInfo("RunManager.rerankIfSomeNodesLeft len(survivors) < len(original), reranking", types.Training, "runId", rm.runId, "epoch", epoch, "original", original, "survivors", survivors)
 		for rank, nodeID := range survivors {
 			es.Activity[nodeID].Rank = int32(rank)
 		}
