@@ -120,6 +120,7 @@ type RunManager struct {
 	store            RunStore
 	joinTimeout      int64
 	heartbeatTimeout int64
+	logger           types.InferenceLogger
 }
 
 // FIXME: should we use blocks or time?
@@ -131,12 +132,14 @@ const (
 func NewRunManager(
 	runId uint64,
 	store RunStore,
+	logger types.InferenceLogger,
 ) *RunManager {
 	return &RunManager{
 		runId:            runId,
 		store:            store,
 		joinTimeout:      defaultJoinTimeout,
 		heartbeatTimeout: defaultHeartbeatTimeout,
+		logger:           logger,
 	}
 }
 
@@ -518,4 +521,13 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 	}
 
 	return nil
+}
+
+func NewEmptyEpochInfo() *types.EpochInfo {
+	return &types.EpochInfo{
+		LastEpoch:            -1,
+		LastEpochIsFinished:  false,
+		LastEpochBlockHeight: 0,
+		LastEpochTimestamp:   0,
+	}
 }

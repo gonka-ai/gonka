@@ -18,7 +18,7 @@ func (k Keeper) TrainingBarrier(goCtx context.Context, req *types.QueryTrainingB
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	store := NewKeeperTrainingRunStore(k)
-	runManager := training.NewRunManager(req.Req.RunId, store)
+	runManager := training.NewRunManager(req.Req.RunId, store, k)
 
 	resp, err := runManager.GetBarrierStatus(ctx, req.Req)
 	if err != nil {

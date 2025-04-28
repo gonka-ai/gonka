@@ -12,7 +12,7 @@ func (k msgServer) TrainingHeartbeat(goCtx context.Context, msg *types.MsgTraini
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	store := NewKeeperTrainingRunStore(k.Keeper)
-	runManager := training.NewRunManager(msg.Req.RunId, store)
+	runManager := training.NewRunManager(msg.Req.RunId, store, k)
 
 	err := runManager.Heartbeat(ctx, msg.Creator, msg.Req.NodeId, msg.Req.GlobalEpoch, training.NewBlockInfo(ctx))
 	if err != nil {

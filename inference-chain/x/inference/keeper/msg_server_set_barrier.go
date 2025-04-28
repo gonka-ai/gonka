@@ -12,10 +12,7 @@ func (k msgServer) SetBarrier(goCtx context.Context, msg *types.MsgSetBarrier) (
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	store := NewKeeperTrainingRunStore(k.Keeper)
-	runManager := training.NewRunManager(
-		msg.Req.RunId,
-		store,
-	)
+	runManager := training.NewRunManager(msg.Req.RunId, store, k)
 
 	barrier := &types.TrainingTaskBarrier{
 		BarrierId:   msg.Req.BarrierId,

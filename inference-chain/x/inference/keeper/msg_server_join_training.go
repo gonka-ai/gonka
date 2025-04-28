@@ -11,10 +11,7 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	store := NewKeeperTrainingRunStore(k.Keeper)
-	runManager := training.NewRunManager(
-		msg.Req.RunId,
-		store,
-	)
+	runManager := training.NewRunManager(msg.Req.RunId, store, k)
 
 	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch, training.NewBlockInfo(ctx), msg.Creator)
 	if err != nil {

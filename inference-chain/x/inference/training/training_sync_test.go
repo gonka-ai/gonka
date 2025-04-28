@@ -16,17 +16,12 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	store := keeper2.NewKeeperTrainingRunStore(keeper)
 	runId := uint64(1)
 
-	rm := training.NewRunManager(runId, store)
+	rm := training.NewRunManager(runId, store, keeper)
 
 	// 1. Populate with a dummy training task
 	initialTask := &types.TrainingTask{
-		Id: runId,
-		Epoch: &types.EpochInfo{
-			LastEpoch:            -1, // Start before epoch 0
-			LastEpochIsFinished:  false,
-			LastEpochBlockHeight: 0,
-			LastEpochTimestamp:   0,
-		},
+		Id:    runId,
+		Epoch: training.NewEmptyEpochInfo(),
 		Assignees: []*types.TrainingTaskAssignee{
 			{
 				Participant: "participantA",

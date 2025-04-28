@@ -19,10 +19,7 @@ func (k Keeper) TrainingAliveNodes(goCtx context.Context, req *types.QueryTraini
 	_ = ctx
 
 	runStore := NewKeeperTrainingRunStore(k)
-	runManager := training.NewRunManager(
-		req.Req.RunId,
-		runStore,
-	)
+	runManager := training.NewRunManager(req.Req.RunId, runStore, k)
 
 	nodeIds, err := runManager.GetEpochActiveNodes(goCtx, req.Req.Epoch, training.NewBlockInfo(ctx))
 	if err != nil {
