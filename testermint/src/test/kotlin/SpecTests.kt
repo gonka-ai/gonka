@@ -1,6 +1,7 @@
 import com.productscience.data.TopMinersResponse
 import com.productscience.data.spec
 import com.productscience.cosmosJson
+import com.productscience.data.Coin
 import com.productscience.data.CreatePartialUpgrade
 import com.productscience.data.Decimal
 import com.productscience.data.camelToSnake
@@ -9,8 +10,8 @@ import com.productscience.inferenceConfig
 import com.productscience.openAiJson
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
-
 import org.junit.jupiter.api.Test
+import java.time.Duration
 
 @Tag("exclude")
 class DecimalTests {
@@ -48,6 +49,12 @@ class TxMessageSerializationTests {
     fun `simple message`() {
         val message = CreatePartialUpgrade("creator", "50", "v1", "")
         println(gsonCamelCase.toJson(message))
+    }
+
+    @Test
+    fun `duration`() {
+        val duration = Duration.parse("PT48h0m0s")
+        assertThat(duration.toDays()).isEqualTo(2)
     }
 }
 
@@ -142,11 +149,85 @@ class SpecTests {
         }
         assertThat(result.isFailure).isTrue()
     }
+
+    @Test
+    fun `test spec with list of coins`() {
+        val coins = listOf(
+            Coin("nicoin", 100),
+            Coin("bitcoin", 200)
+        )
+
+        val spec = spec<WithCoins> {
+            this[WithCoins::coins] = coins
+        }
+
+        val actual = WithCoins(coins)
+        assertThat(spec.matches(actual)).isTrue()
+
+        val differentCoins = listOf(
+            Coin("nicoin", 300),
+            Coin("bitcoin", 400)
+        )
+        val different = WithCoins(differentCoins)
+        assertThat(spec.matches(different)).isFalse()
+    }
+
+    @Test
+    fun `test spec with duration`() {
+        val duration = Duration.ofMinutes(30)
+
+        val spec = spec<WithDuration> {
+            this[WithDuration::duration] = duration
+        }
+
+        val actual = WithDuration(duration)
+        assertThat(spec.matches(actual)).isTrue()
+
+        val different = WithDuration(Duration.ofMinutes(45))
+        assertThat(spec.matches(different)).isFalse()
+    }
+
+    @Test
+    fun `output spec with list of coins to json`() {
+        val coins = listOf(
+            Coin("nicoin", 100),
+            Coin("bitcoin", 200)
+        )
+
+        val spec = spec<WithCoins> {
+            this[WithCoins::coins] = coins
+        }
+
+        val json = spec.toJson(cosmosJson)
+        println(json)
+        assertThat(json).contains("\"coins\":")
+        assertThat(json).contains("\"denom\":\"nicoin\"")
+        assertThat(json).contains("\"amount\":\"100\"")
+        assertThat(json).contains("\"denom\":\"bitcoin\"")
+        assertThat(json).contains("\"amount\":\"200\"")
+    }
+
+    @Test
+    fun `output spec with duration to json`() {
+        val duration = Duration.ofMinutes(30)
+
+        val spec = spec<WithDuration> {
+            this[WithDuration::duration] = duration
+        }
+
+        val json = spec.toJson(cosmosJson)
+        println(json)
+        assertThat(json).contains("\"duration\":\"30m\"")
+    }
 }
 
 data class Nested(val group:String, val person:Person)
 
 data class Person(val name: String, val age: Int, val gender: String, val camelCasedValue: String)
+
+data class WithCoins(val coins: List<Coin>)
+
+data class WithDuration(val duration: Duration)
 
 
 val topMinerJson = """

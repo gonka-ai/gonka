@@ -5,6 +5,7 @@ import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
 import com.productscience.inferenceRequest
 import com.productscience.initCluster
+import com.productscience.logSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -21,12 +22,11 @@ class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
         val (_, genesis) = initCluster()
-        genesis.waitForFirstValidators()
-
+        logSection("Making inference requests in parallel")
         val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
         Logger.info("Statuses: $statuses")
 
-        // Some will be validated, some will not.
+        logSection("Verifying inference statuses")
         assertThat(statuses.map { status ->
             InferenceStatus.entries.first { it.value == status }
         }).allMatch {
@@ -45,8 +45,10 @@ class ValidationTests : TestermintTest() {
         oddPair.mock?.setInferenceResponse(badResponse)
         var newState: InferencePayload
         do {
+            logSection("Trying to get invalid inference. Tries left: $tries")
             newState = getInferenceValidationState(genesis, oddPair)
         } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
+        logSection("Verifying invalidation")
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
     }
 
@@ -81,6 +83,7 @@ class ValidationTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
         oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
+        logSection("Getting many invalid inferences for ${oddPair.name}")
         val invalidResult =
             generateSequence { getInferenceResult(genesis) }
                 .filter {
@@ -91,11 +94,11 @@ class ValidationTests : TestermintTest() {
                 .toList()
         Logger.warn("Got invalid result, waiting for invalidation.")
 
+        genesis.markNeedsReboot()
+        logSection("Waiting for removal")
         genesis.node.waitForNextBlock(10)
         val participants = genesis.api.getParticipants()
-        participants.forEach { Logger.warn("Participant: ${it.id} ${it.balance}") }
-        // reset the chain, so this doesn';t cause other problems
-        initCluster(reboot = true)
+        participants.forEach { Logger.warn("Participant: $it") }
     }
 
     @Test
@@ -103,13 +106,16 @@ class ValidationTests : TestermintTest() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
         oddPair.mock?.setInferenceResponse(defaultInferenceResponseObject.withMissingLogit())
+        logSection("Getting invalid invalidation")
         val invalidResult =
             generateSequence { getInferenceResult(genesis) }
                 .first { it.executorBefore.id != oddPair.node.addresss }
         // The oddPair will mark it as invalid and force a vote, which should fail (valid)
 
         Logger.warn("Got invalid result, waiting for validation.")
+        logSection("Waiting for revalidation")
         genesis.node.waitForNextBlock(10)
+        logSection("Verifying revalidation")
         val newState = genesis.api.getInference(invalidResult.inference.inferenceId)
 
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.VALIDATED)

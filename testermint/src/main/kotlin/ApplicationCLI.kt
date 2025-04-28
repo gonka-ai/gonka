@@ -119,16 +119,17 @@ data class ApplicationCLI(
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long) {
+    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
         wrapLog("waitForMinimumBlock", false) {
-            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight }, "block height $minBlockHeight")
+            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight },
+                "$waitingFor:block height $minBlockHeight")
         }
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
         wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
-            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
+            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait, "$blocksToWait blocks")
         }
     }
 
@@ -185,6 +186,10 @@ data class ApplicationCLI(
 
     fun getBalance(address: String, denom: String): BalanceResponse = wrapLog("getBalance", false) {
         execAndParse(listOf("query", "bank", "balance", address, denom))
+    }
+
+    fun getGovParams(): GovState = wrapLog("getGovParams", false) {
+        execAndParse(listOf("query", "gov", "params"))
     }
 
     fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
@@ -287,7 +292,7 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
-    fun writeFileToContainer(content: String, fileName: String) {
+    fun writeFileToContainer(content: String, fileName: String) = wrapLog("writeFileToContainer", false) {
         try {
             // Write content using echo command
             val writeCommand = listOf(

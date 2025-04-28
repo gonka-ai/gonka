@@ -105,7 +105,9 @@ inline fun <reified T : Any> spec(block: MutableMap<KProperty1<T, *>, Any?>.() -
                 "Type mismatch for Spec property '${property.name}': expected ${property.returnType}, but got ${value::class}"
             }
         } else {
-            require(value == null || property.returnType.classifier!! == value::class) {
+            require(value == null || 
+                    property.returnType.classifier!! == value::class || 
+                    (property.returnType.toString().startsWith("kotlin.collections.") && value is Collection<*>)) {
                 "Type mismatch for property '${property.name}': expected ${property.returnType}, but got ${value!!::class}"
             }
         }
@@ -113,4 +115,3 @@ inline fun <reified T : Any> spec(block: MutableMap<KProperty1<T, *>, Any?>.() -
 
     return Spec(constraints, T::class)
 }
-
