@@ -48,4 +48,4 @@ fi
 echo "project_name=$project_name"
 
 export GENESIS_FILE="genesis.json"
-docker compose -p "$project_name" -f "$compose_file" -f docker-compose-cloud-restart.yml up -d
+docker compose -p "$project_name" -f "$compose_file" -f docker-compose-restart.yml up -d
