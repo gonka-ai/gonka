@@ -190,7 +190,7 @@ func (s *Server) GetAliveNodes(ctx context.Context, req *inference.GetAliveNodes
 
 	return &inference.GetAliveNodesResponse{
 		AliveNodes: resp.Resp.AliveNodes,
-	}, status.Errorf(codes.Unimplemented, "method GetAliveNodes not implemented")
+	}, nil
 }
 
 func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierRequest) (*inference.SetBarrierResponse, error) {
