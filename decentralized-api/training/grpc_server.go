@@ -6,7 +6,6 @@ import (
 	"decentralized-api/logging"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"google.golang.org/grpc/codes"
 )
 
 type Server struct {
