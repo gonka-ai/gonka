@@ -26,7 +26,7 @@ class InferenceMock(port: Int, val name: String) {
         this.setInferenceResponse(
             openAiJson.toJson(openAIResponse), delay, segment)
 
-    fun setPocResponse(weight: Long) {
+    fun setPocResponse(weight: Long, scenarioName: String = "ModelState") {
         val nonces = (1..weight).toList()
         val dist = nonces.map { it.toDouble() / weight }
         val body = """
@@ -40,6 +40,8 @@ class InferenceMock(port: Int, val name: String) {
         """.trimIndent()
         this.givenThat(
             post(urlEqualTo("/api/v1/pow/init/generate"))
+                .inScenario("ModelState")
+                .willSetStateTo("POW")
                 .willReturn(
                     aResponse()
                         .withStatus(200)

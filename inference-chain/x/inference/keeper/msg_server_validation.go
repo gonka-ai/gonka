@@ -78,7 +78,8 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 			if adjustment.ParticipantId == executor.Address {
 				executor.CoinBalance += adjustment.WorkAdjustment
 				k.LogInfo("Adjusting executor balance for validation", types.Validation, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment)
-				k.LogInfo("Adjusting executor CoinBalance for validation", types.Payments, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
+				k.LogInfo("Adjusting executor CoinBalance for validation", types.Balances, "executor", executor.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", executor.CoinBalance)
+				k.LogBalance(executor.Address, adjustment.WorkAdjustment, executor.CoinBalance, "share_validation_executor:"+inference.InferenceId)
 			} else {
 				worker, found := k.GetParticipant(ctx, adjustment.ParticipantId)
 				if !found {
@@ -87,7 +88,8 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 				}
 				worker.CoinBalance += adjustment.WorkAdjustment
 				k.LogInfo("Adjusting worker balance for validation", types.Validation, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment)
-				k.LogInfo("Adjusting worker CoinBalance for validation", types.Payments, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
+				k.LogInfo("Adjusting worker CoinBalance for validation", types.Balances, "worker", worker.Address, "adjustment", adjustment.WorkAdjustment, "coin_balance", worker.CoinBalance)
+				k.LogBalance(worker.Address, adjustment.WorkAdjustment, worker.CoinBalance, "share_validation_worker:"+inference.InferenceId)
 				k.SetParticipant(ctx, worker)
 			}
 		}

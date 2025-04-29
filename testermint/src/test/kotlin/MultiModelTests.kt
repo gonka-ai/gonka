@@ -1,8 +1,10 @@
 import com.productscience.*
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 class MultiModelTests : TestermintTest() {
     @Test
+    @Tag("unstable")
     fun test() {
         val pairs = getLocalInferencePairs(inferenceConfig)
 
@@ -15,6 +17,7 @@ class MultiModelTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun test2() {
         val pairs = getLocalInferencePairs(inferenceConfig)
         val instance = pairs[0]

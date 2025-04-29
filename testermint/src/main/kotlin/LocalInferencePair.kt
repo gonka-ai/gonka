@@ -1,19 +1,9 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
-import com.productscience.data.AppState
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.PubKey
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Instant
@@ -33,41 +23,46 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.wireMockImageName }
-    return nodes.mapNotNull {
-        val nameMatch = nameExtractor.find(it.names.first())
+    return nodes.mapNotNull { chainContainer ->
+        val nameMatch = nameExtractor.find(chainContainer.names.first())
         if (nameMatch == null) {
-            Logger.warn("Container does not match expected name format: ${it.names.first()}")
+            Logger.warn("Container does not match expected name format: ${chainContainer.names.first()}")
             return@mapNotNull null
         }
         val name = nameMatch.groupValues[1]
-        val matchingApi = apis.find { it.names.any { it == "$name-api" } }!!
-        val matchingMock: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
+        val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
+        val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
-        attachDockerLogs(dockerClient, name, "node", it.id)
-        attachDockerLogs(dockerClient, name, "api", matchingApi.id)
+        attachDockerLogs(dockerClient, name, "node", chainContainer.id)
+        attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
 
-        val portMap = matchingApi.ports.associateBy { it.privatePort }
-
+        val portMap = apiContainer.ports.associateBy { it.privatePort }
+        Logger.info("Container ports: $portMap")
         val apiUrls = mapOf(
-            SERVER_TYPE_PUBLIC to "http://${portMap[9000]?.ip}:${portMap[9000]?.publicPort}",
-            SERVER_TYPE_ML     to "http://${portMap[9100]?.ip}:${portMap[9100]?.publicPort}",
-            SERVER_TYPE_ADMIN  to "http://${portMap[9200]?.ip}:${portMap[9200]?.publicPort}"
+            SERVER_TYPE_PUBLIC to getUrlForPrivatePort(portMap, 9000),
+            SERVER_TYPE_ML to getUrlForPrivatePort(portMap, 9100),
+            SERVER_TYPE_ADMIN to getUrlForPrivatePort(portMap, 9200)
         )
 
         Logger.info("Creating local inference pair for $name")
-        Logger.info("API URLs for ${matchingApi.names.first()}:")
+        Logger.info("API URLs for ${apiContainer.names.first()}:")
         Logger.info("  $SERVER_TYPE_PUBLIC: ${apiUrls[SERVER_TYPE_PUBLIC]}")
         Logger.info("  $SERVER_TYPE_ML: ${apiUrls[SERVER_TYPE_ML]}")
         Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
 
         LocalInferencePair(
-            ApplicationCLI(it.id, configWithName),
-            ApplicationAPI(apiUrls, configWithName),
-            matchingMock?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
-            name,
-            config
+            node = ApplicationCLI(chainContainer.id, configWithName),
+            api = ApplicationAPI(apiUrls, configWithName),
+            mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
+            name = name,
+            config = configWithName
         )
     }
+}
+
+private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 
 private fun Container.getMappedPort(internalPort: Int) =
@@ -138,7 +133,7 @@ data class LocalInferencePair(
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null
-): HasConfig {
+) : HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
         val validatorInfo = status.validatorInfo
@@ -170,8 +165,18 @@ data class LocalInferencePair(
         return node.getStatus().syncInfo.latestBlockHeight
     }
 
-    fun waitForNextSettle() {
-        this.node.waitForMinimumBlock(getNextSettleBlock())
+    fun changePoc(newPoc: Long) {
+        this.mock?.setPocResponse(newPoc)
+        this.waitForStage(EpochStage.START_OF_POC)
+        // CometBFT validators have a 1 block delay
+        this.waitForStage(EpochStage.START_OF_POC, 2)
+    }
+
+    fun waitForStage(stage: EpochStage, offset: Int = 1) {
+        this.node.waitForMinimumBlock(
+            getNextStage(stage) + offset,
+            "stage $stage" + if (offset > 0) "+$offset)" else ""
+        )
     }
 
     fun waitForBlock(maxBlocks: Int, condition: (LocalInferencePair) -> Boolean) {
@@ -189,18 +194,17 @@ data class LocalInferencePair(
         error("Block $targetBlock reached without condition passing")
     }
 
-    fun getNextSettleBlock(): Long {
+    fun getNextStage(stage: EpochStage): Long {
         if (this.mostRecentParams == null) {
             this.getParams()
         }
         val epochParams = this.mostRecentParams?.epochParams!!
         val currentHeight = this.getCurrentBlockHeight()
         val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
-        val nextSettle = currentHeight + blocksTillEpoch + epochParams.getSetNewValidatorsStage() + 1
-        return if (nextSettle - epochParams.epochLength > currentHeight)
-            nextSettle - epochParams.epochLength
-        else
-            nextSettle
+        val nextStage = currentHeight + blocksTillEpoch + epochParams.getStage(stage) + 1
+        return if (nextStage - epochParams.epochLength > currentHeight)
+            nextStage - epochParams.epochLength
+        else nextStage
     }
 
     fun waitForFirstBlock() {
@@ -222,9 +226,9 @@ data class LocalInferencePair(
         if (epochParams.epochLength > 500) {
             error("Epoch length is too long for testing")
         }
-        val epochFinished = epochParams.epochLength + epochParams.getSetNewValidatorsStage() + 1
+        val epochFinished = epochParams.epochLength + epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) + 1
         Logger.info("First PoC should be finished at block height $epochFinished")
-        this.node.waitForMinimumBlock(epochFinished)
+        this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
@@ -305,6 +309,31 @@ data class LocalInferencePair(
         )
     }
 
+    fun runProposal(cluster: LocalCluster, proposal: GovernanceMessage, noVoters: List<String> = emptyList()): String =
+        wrapLog("runProposal", true) {
+            logSection("Submitting and funding proposal")
+            val govParams = this.node.getGovParams().params
+            val minDeposit = govParams.minDeposit.first().amount
+            val proposalId = this.submitGovernanceProposal(
+                GovernanceProposal(
+                    metadata = "http://www.yahoo.com",
+                    deposit = "${minDeposit}${inferenceConfig.denom}",
+                    title = "Extend the expiration blocks",
+                    summary = "some inferences are taking a very long time to respond to, we need a longer expiration",
+                    expedited = false,
+                    messages = listOf(
+                        proposal
+                    )
+                )
+            ).getProposalId()!!
+            this.makeGovernanceDeposit(proposalId, minDeposit)
+            logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
+            cluster.allPairs.forEach {
+                it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
+            }
+            proposalId
+        }
+
     fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
         val depositor = this.node.getKeys()[0].address
         this.submitTransaction(
@@ -354,7 +383,7 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName:String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

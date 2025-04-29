@@ -3,6 +3,7 @@ package com.productscience.data
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
+import com.google.gson.JsonPrimitive
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
 import java.lang.reflect.Type
@@ -26,13 +27,7 @@ class DurationDeserializer : JsonDeserializer<Duration> {
         val durationString = json.asString
         if (durationString.isBlank()) return Duration.ZERO
 
-        return when {
-            durationString.endsWith("s") -> Duration.ofSeconds(durationString.removeSuffix("s").toLong())
-            durationString.endsWith("m") -> Duration.ofMinutes(durationString.removeSuffix("m").toLong())
-            durationString.endsWith("h") -> Duration.ofHours(durationString.removeSuffix("h").toLong())
-            durationString.endsWith("d") -> Duration.ofDays(durationString.removeSuffix("d").toLong())
-            else -> throw IllegalArgumentException("Invalid duration format: $durationString")
-        }
+        return Duration.parse("PT${durationString}")
     }
 }
 
@@ -63,6 +58,28 @@ class FloatSerializer: JsonSerializer<java.lang.Float> {
         context: com.google.gson.JsonSerializationContext,
     ): JsonElement {
         return com.google.gson.JsonPrimitive( src?.toDouble()?.toBigDecimal()?.toPlainString())
+    }
+}
+
+class DurationSerializer : JsonSerializer<Duration> {
+    override fun serialize(
+        src: Duration?,
+        typeOfSrc: Type?,
+        context: JsonSerializationContext
+    ): JsonElement {
+        if (src == null) return JsonPrimitive("")
+
+        return when {
+            src.isZero -> JsonPrimitive("0s")
+            src.toDays() > 0 && src.toHours() % 24 == 0L && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L -> 
+                JsonPrimitive("${src.toDays()}d")
+            src.toHours() > 0 && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L -> 
+                JsonPrimitive("${src.toHours()}h")
+            src.toMinutes() > 0 && src.toSeconds() % 60 == 0L -> 
+                JsonPrimitive("${src.toMinutes()}m")
+            else -> 
+                JsonPrimitive("${src.toSeconds()}s")
+        }
     }
 }
 

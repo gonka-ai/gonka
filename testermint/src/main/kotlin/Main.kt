@@ -4,12 +4,16 @@ import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.AppState
+import com.productscience.data.Coin
 import com.productscience.data.Decimal
 import com.productscience.data.DoubleSerializer
 import com.productscience.data.DurationDeserializer
+import com.productscience.data.DurationSerializer
 import com.productscience.data.EpochParams
 import com.productscience.data.FloatSerializer
 import com.productscience.data.GenesisOnlyParams
+import com.productscience.data.GovParams
+import com.productscience.data.GovState
 import com.productscience.data.InferenceNode
 import com.productscience.data.ModelConfig
 import com.productscience.data.InferenceParams
@@ -157,22 +161,6 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     return highestFunded
 }
 
-private fun fundUnfunded(
-    unfunded: List<LocalInferencePair>,
-    highestFunded: LocalInferencePair,
-) {
-    for (pair in unfunded) {
-        highestFunded.transferMoneyTo(pair.node, defaultFunding).assertSuccess()
-        highestFunded.node.waitForNextBlock()
-    }
-    val fundingHeight = highestFunded.node.getStatus().syncInfo.latestBlockHeight
-
-    unfunded.forEach {
-        it.node.waitForMinimumBlock(fundingHeight + 1L)
-        it.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
-    }
-}
-
 private fun addUnfundedDirectly(
     unfunded: List<LocalInferencePair>,
     currentParticipants: List<Participant>,
@@ -209,6 +197,7 @@ val cosmosJson: Gson = GsonBuilder()
     .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .registerTypeAdapter(Instant::class.java, InstantDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+    .registerTypeAdapter(Duration::class.java, DurationSerializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
     .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
@@ -254,6 +243,12 @@ val inferenceConfig = ApplicationConfig(
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back
     genesisSpec = spec {
+        this[AppState::gov] = spec<GovState> {
+            this[GovState::params] = spec<GovParams> {
+                this[GovParams::votingPeriod] = Duration.ofSeconds(30)
+                this[GovParams::minDeposit] = listOf(Coin("nicoin", 1000))
+            }
+        }
         this[AppState::inference] = spec<InferenceState> {
             this[InferenceState::params] = spec<InferenceParams> {
                 this[InferenceParams::epochParams] = spec<EpochParams> {

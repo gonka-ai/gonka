@@ -15,9 +15,9 @@ export IS_GENESIS=true
 export WIREMOCK_PORT=8090
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
 mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
-cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
+cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
 if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
-  cp -r ./public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
+  cp -r ../public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
 fi
 
 echo "Starting genesis node"
@@ -43,7 +43,7 @@ export RPC_PORT=8101
 export P2P_PORT=8201
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh local
+./launch_network_node.sh
 
 # join node 'join2'
 export KEY_NAME=join2
@@ -57,4 +57,4 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh local
+./launch_network_node.sh
