@@ -222,7 +222,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		if el.isNodeSynced() {
-			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
+			poc.HandleNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
