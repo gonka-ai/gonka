@@ -18,7 +18,7 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 
 ![The Task flow](https://github.com/user-attachments/assets/1ba81a47-f4ef-4eb1-9fcd-b6d371a20f5f)
 
-*[Work in progress] Diagram 1. The Task flow [Source](docs/papers/InferenceFlow.png)**
+*[Work in progress] Diagram 1. [The Task flow](docs/papers/InferenceFlow.png)*
 
 For a deeper technical and conceptual explanation, check out [the White Paper](https://github.com/product-science/inference-ignite/blob/31856bb939657d1746c5a34eb211ade450d0cab8/docs/papers/Decentralized%20AI%20Whitepaper.pdf).
 ## Getting started
@@ -86,7 +86,7 @@ Our project is built as a modular, containerized infrastructure with multiple in
 
 ![network-architecture](https://github.com/user-attachments/assets/df7aaf8a-209b-477e-8aeb-cfa423d7b10d)
 
-*Diagram 2. The diagram outlines how components interact across the system. [Source](https://github.com/product-science/mlnode/blob/main/network-architecture.png)*
+*Diagram 2. [The diagram outlines how components interact across the system](https://github.com/product-science/mlnode/blob/main/network-architecture.png)*
 ## Repository Layout
 
 The repository is organized as follows:
