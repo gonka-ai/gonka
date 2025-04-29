@@ -1,3 +1,4 @@
+# Contributing guidelines
 This project is maintained by a distributed team of contributors, and contributions are more than welcome. This guide outlines everything you need to know to participate — from coding standards to PR approvals and architectural proposals.
 #### Pull request lifecycle
 
@@ -8,10 +9,10 @@ This project is maintained by a distributed team of contributors, and contributi
 	1. Push your changes and open a pull request against the main branch.
 	2. Link related issues (if any), and include a summary of changes.
 	3. Tag relevant reviewers using @username.
-3. [WIP] Review and voting process 
+3. [Work in progress] Review and voting process 
 	1. PRs (involving protocol logic or architecture) must go through a voting process (described below). Voting follows a simple majority unless otherwise stated.
 4. Merge. Once approved, a maintainer will merge the PR.
-#### (WIP) Governance
+#### [Work in progress] Governance
 
 Currently, GitHub will remain our primary development platform, however, governance will be handled on-chain, requiring approval by the majority for all code changes. Here’s how this hybrid approach works.
 
@@ -27,7 +28,7 @@ Currently, GitHub will remain our primary development platform, however, governa
 - Participant nodes monitor the repository for unauthorized changes in the main branch of the repo.
 - If an unapproved commit is detected, all network participants are notified immediately.
 
-##### Future plans
+#### Future plans
 
 To achieve complete decentralization, the network repository will migrate from GitHub to a customized fork of Gitopia, a decentralized Git hosting solution built on Cosmos SDK. This fork will be integrated directly into the blockchain and hosted across currently active Participant nodes. As a result, voting on repository changes will utilize the same voting weights assigned to each Participant during the Race.
   
@@ -67,10 +68,10 @@ make run-tests
 	- All unit test
 	- All integration tests, minus known issues listed in `testermint/KNOW_ISSUES.md`
 - To run tests with a real `ml` node (locally):
-	- (Work in progress)
+	- [Work in progress]
 #### Code standards
-- (Work in progress)
-#### [WIP] Proposing architectural changes
+- [Work in progress]
+#### [Work in progress] Proposing architectural changes
 
 Before starting significant architectural work:
 1. Open a GitHub issue, describing the proposed change.
