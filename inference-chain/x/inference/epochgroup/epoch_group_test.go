@@ -25,6 +25,9 @@ func createEpochGroupObject(t testing.TB, epochGroupData *types.EpochGroupData) 
 	ctrl := gomock.NewController(t)
 	groupMock := keeper.NewMockGroupMessageKeeper(ctrl)
 	logger := keeper.NewMockLogger()
+	modelKeeper := keeper.NewMockModelKeeper(ctrl)
+	// Set up expectations for GetAllModels to return an empty slice
+	modelKeeper.EXPECT().GetAllModels(gomock.Any()).Return([]*types.Model{}, nil).AnyTimes()
 	return &EpochGroupMock{
 		EpochGroup: &epochgroup.EpochGroup{
 			GroupKeeper:       groupMock,
@@ -32,6 +35,7 @@ func createEpochGroupObject(t testing.TB, epochGroupData *types.EpochGroupData) 
 			Authority:         authority,
 			Logger:            logger,
 			GroupDataKeeper:   keeper.NewInMemoryEpochGroupDataKeeper(),
+			ModelKeeper:       modelKeeper,
 			GroupData:         epochGroupData,
 		},
 		GroupMock: groupMock,
@@ -74,6 +78,16 @@ func TestAddMembers(t *testing.T) {
 	testEG := createTestEpochGroup(t)
 	testEG.GroupMock.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any()).Return(nil, nil)
 	testEG.GroupMock.EXPECT().UpdateGroupMetadata(gomock.Any(), gomock.Any()).Return(nil, nil)
-	testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature", 1)
 
+	participant := &types.ActiveParticipant{
+		Index:        "member1",
+		Weight:       12,
+		ValidatorKey: "pubkey1",
+		Models:       []string{}, // Empty models to avoid CreateModelEpochGroup call
+		Seed: &types.RandomSeed{
+			Signature: "seedsignature",
+		},
+	}
+
+	testEG.EpochGroup.AddMember(context.Background(), participant, 1)
 }

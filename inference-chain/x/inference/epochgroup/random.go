@@ -15,10 +15,30 @@ import (
 func (eg *EpochGroup) GetRandomMember(
 	goCtx context.Context,
 	filterFn func([]*group.GroupMember) []*group.GroupMember,
+	modelId string,
 ) (*types.Participant, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(eg.GroupData.EpochGroupId)})
+	// Use the model-specific EpochGroup if available
+	groupId := eg.GroupData.EpochGroupId
+	if modelId != "" {
+		// Find the ModelEpochGroup for this model
+		var modelEpochGroup *types.ModelEpochGroup
+		for _, meg := range eg.GroupData.ModelEpochGroups {
+			if meg.ModelId == modelId {
+				modelEpochGroup = meg
+				break
+			}
+		}
+
+		// If we found a ModelEpochGroup for this model, use its group ID
+		if modelEpochGroup != nil {
+			groupId = modelEpochGroup.EpochGroupId
+			eg.Logger.LogInfo("Using model-specific epoch group for random member selection", types.EpochGroup, "model", modelId, "groupId", groupId)
+		}
+	}
+
+	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(groupId)})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -42,7 +62,6 @@ func (eg *EpochGroup) GetRandomMember(
 		return nil, status.Error(codes.Internal, msg)
 	}
 	return &participant, nil
-
 }
 
 func selectRandomParticipant(participants []*group.GroupMember) string {

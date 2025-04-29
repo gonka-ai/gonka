@@ -175,3 +175,30 @@ func (l *MockLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...i
 func (l *MockLogger) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	l.logs = append(l.logs, Log{Msg: msg, Level: "debug", Keyvals: keyvals})
 }
+
+// InMemoryModelKeeper is an in-memory implementation of ModelKeeper.
+type InMemoryModelKeeper struct {
+	models []*types.Model
+	mu     sync.RWMutex
+}
+
+// NewInMemoryModelKeeper creates a new instance of InMemoryModelKeeper.
+func NewInMemoryModelKeeper() *InMemoryModelKeeper {
+	return &InMemoryModelKeeper{
+		models: make([]*types.Model, 0),
+	}
+}
+
+// GetAllModels retrieves all stored Models.
+func (keeper *InMemoryModelKeeper) GetAllModels(ctx context.Context) ([]*types.Model, error) {
+	keeper.mu.RLock()
+	defer keeper.mu.RUnlock()
+	return keeper.models, nil
+}
+
+// AddModel adds a model to the keeper.
+func (keeper *InMemoryModelKeeper) AddModel(model *types.Model) {
+	keeper.mu.Lock()
+	defer keeper.mu.Unlock()
+	keeper.models = append(keeper.models, model)
+}

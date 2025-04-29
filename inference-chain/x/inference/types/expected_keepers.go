@@ -93,3 +93,7 @@ type EpochGroupDataKeeper interface {
 	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64)
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
 }
+
+type ModelKeeper interface {
+	GetAllModels(ctx context.Context) ([]*Model, error)
+}

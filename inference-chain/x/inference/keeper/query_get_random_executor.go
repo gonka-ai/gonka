@@ -27,24 +27,25 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 	}
 	k.LogInfo("Participant set by model", types.Inferences, "participantSetByModel", participantSetByModel)
 
+	// Pass the model to GetRandomMember to use the model-specific EpochGroup
 	participant, err := epochGroup.GetRandomMember(goCtx, func(members []*group.GroupMember) []*group.GroupMember {
+		// If using model-specific EpochGroup, all members already support the model
 		if strings.TrimSpace(req.Model) == "" {
 			k.LogInfo("GetRandomExecutor: model is empty, returning all members", types.Inferences)
 			return members
 		} else {
-			k.LogInfo("GetRandomExecutor: filtering members by model", types.Inferences, "model", req.Model)
-		}
-
-		filteredMembers := make([]*group.GroupMember, 0)
-		for _, member := range members {
-			participantSet := participantSetByModel[req.Model]
-			if found, ok := participantSet[member.Member.Address]; ok && found {
-				filteredMembers = append(filteredMembers, member)
+			k.LogInfo("GetRandomExecutor: using model-specific epoch group", types.Inferences, "model", req.Model)
+			// For backward compatibility, still filter by participantSetByModel
+			filteredMembers := make([]*group.GroupMember, 0)
+			for _, member := range members {
+				participantSet := participantSetByModel[req.Model]
+				if found, ok := participantSet[member.Member.Address]; ok && found {
+					filteredMembers = append(filteredMembers, member)
+				}
 			}
+			return filteredMembers
 		}
-
-		return filteredMembers
-	})
+	}, req.Model)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

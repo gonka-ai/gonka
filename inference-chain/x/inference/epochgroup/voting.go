@@ -7,16 +7,36 @@ import (
 )
 
 func (eg *EpochGroup) StartValidationVote(ctx sdk.Context, inference *types.Inference, invalidator string) (*types.ProposalDetails, error) {
-	proposalDetails, err := eg.submitValidationProposals(ctx, inference.InferenceId, invalidator, inference.ExecutedBy)
+	// Use the model-specific EpochGroup if available
+	proposalDetails, err := eg.submitValidationProposals(ctx, inference.InferenceId, invalidator, inference.ExecutedBy, inference.Model)
 	if err != nil {
 		return nil, err
 	}
-	eg.Logger.LogInfo("Invalidation Proposals submitted.", types.Validation, "proposalDetails", proposalDetails, "inference", inference.InferenceId, "invalidator", invalidator)
+	eg.Logger.LogInfo("Invalidation Proposals submitted.", types.Validation, "proposalDetails", proposalDetails, "inference", inference.InferenceId, "invalidator", invalidator, "model", inference.Model)
 	return proposalDetails, nil
 }
 
-func (eg *EpochGroup) submitValidationProposals(ctx sdk.Context, inferenceId string, invalidator string, executor string) (*types.ProposalDetails, error) {
+func (eg *EpochGroup) submitValidationProposals(ctx sdk.Context, inferenceId string, invalidator string, executor string, modelId string) (*types.ProposalDetails, error) {
+	// Use the model-specific EpochGroup if available
 	policyAddress := eg.GroupData.EpochPolicy
+	var modelEpochGroup *types.ModelEpochGroup
+
+	// If a model ID is provided, try to find the corresponding ModelEpochGroup
+	if modelId != "" {
+		for _, meg := range eg.GroupData.ModelEpochGroups {
+			if meg.ModelId == modelId {
+				modelEpochGroup = meg
+				break
+			}
+		}
+
+		// If we found a ModelEpochGroup for this model, use its policy address
+		if modelEpochGroup != nil {
+			policyAddress = modelEpochGroup.EpochPolicy
+			eg.Logger.LogInfo("Using model-specific epoch group", types.Validation, "model", modelId, "policyAddress", policyAddress)
+		}
+	}
+
 	invalidateMessage := &types.MsgInvalidateInference{
 		InferenceId: inferenceId,
 		Creator:     policyAddress,
@@ -51,7 +71,7 @@ func (eg *EpochGroup) submitValidationProposals(ctx sdk.Context, inferenceId str
 	return &types.ProposalDetails{
 		InvalidatePolicyId: invalidateResponse.ProposalId,
 		ReValidatePolicyId: revalidateResponse.ProposalId,
-		PolicyAddress:      eg.GroupData.EpochPolicy,
+		PolicyAddress:      policyAddress,
 	}, nil
 }
 

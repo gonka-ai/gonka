@@ -19,6 +19,17 @@ message EpochGroupData {
   int64 previous_epoch_requests = 11;
   ValidationParams validation_params = 12;
   int64 total_weight = 13;
+  // Nested EpochGroups per model
+  repeated ModelEpochGroup model_epoch_groups = 14;
+}
+
+// ModelEpochGroup represents a nested EpochGroup for a specific model
+message ModelEpochGroup {
+  string model_id = 1;
+  uint64 epoch_group_id = 2;
+  string epoch_policy = 3;
+  repeated ValidationWeight validation_weights = 4;
+  int64 total_weight = 5;
 }
 
 message ValidationWeight {
@@ -31,4 +42,3 @@ message SeedSignature {
   string member_address = 1;
   string signature = 2;
 }
-

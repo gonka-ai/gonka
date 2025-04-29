@@ -882,3 +882,41 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) SetEpochGroupData(ctx, epochGrou
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).SetEpochGroupData), ctx, epochGroupData)
 }
+
+// MockModelKeeper is a mock of ModelKeeper interface.
+type MockModelKeeper struct {
+	ctrl     *gomock.Controller
+	recorder *MockModelKeeperMockRecorder
+}
+
+// MockModelKeeperMockRecorder is the mock recorder for MockModelKeeper.
+type MockModelKeeperMockRecorder struct {
+	mock *MockModelKeeper
+}
+
+// NewMockModelKeeper creates a new mock instance.
+func NewMockModelKeeper(ctrl *gomock.Controller) *MockModelKeeper {
+	mock := &MockModelKeeper{ctrl: ctrl}
+	mock.recorder = &MockModelKeeperMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockModelKeeper) EXPECT() *MockModelKeeperMockRecorder {
+	return m.recorder
+}
+
+// GetAllModels mocks base method.
+func (m *MockModelKeeper) GetAllModels(ctx context.Context) ([]*types2.Model, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllModels", ctx)
+	ret0, _ := ret[0].([]*types2.Model)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllModels indicates an expected call of GetAllModels.
+func (mr *MockModelKeeperMockRecorder) GetAllModels(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllModels", reflect.TypeOf((*MockModelKeeper)(nil).GetAllModels), ctx)
+}
