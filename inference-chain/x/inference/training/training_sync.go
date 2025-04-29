@@ -112,7 +112,8 @@ type NodeId struct {
 }
 
 func (n *NodeId) ToString() string {
-	return fmt.Sprintf("%s/%s", n.Participant, n.NodeId)
+	return n.NodeId
+	// return fmt.Sprintf("%s/%s", n.Participant, n.NodeId)
 }
 
 type RunManager struct {
