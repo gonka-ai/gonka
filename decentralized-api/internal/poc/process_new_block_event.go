@@ -11,7 +11,7 @@ import (
 	"strconv"
 )
 
-func HandleNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
+func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		msg := fmt.Sprintf("Expected 'tendermint/event/NewBlock' but got %s", event.Result.Data.Type)
 		panic(msg)
