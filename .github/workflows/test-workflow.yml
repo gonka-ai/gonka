@@ -1,0 +1,66 @@
+name: Reusable Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      test_name:
+        required: true
+        type: string
+        description: 'Name of the test suite (e.g., "Integration Tests" or "Sanity Tests")'
+      test_command:
+        required: true
+        type: string
+        description: 'Make command to run the tests (e.g., "run-tests" or "run-sanity")'
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+      - name: Make Docker Images
+        env:
+          GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
+        run: sudo make build-docker
+
+      - name: Start test chain
+        working-directory: local-test-net
+        run: sudo ./launch.sh
+
+      - name: Run Tests
+        run: sudo make ${{ inputs.test_command }}
+
+      - name: Archive Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: ./testermint/logs
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: ${{ inputs.test_name }}
+          path: ./testermint/build/test-results/**/*.xml
+          reporter: java-junit
