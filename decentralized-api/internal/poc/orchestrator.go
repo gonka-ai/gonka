@@ -5,159 +5,12 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"log"
 	"strconv"
-	"sync"
-	"sync/atomic"
 
-	"github.com/productscience/inference/x/inference/proofofcompute"
 	"github.com/productscience/inference/x/inference/types"
 )
-
-type PoCOrchestrator struct {
-	results       *ProofOfComputeResults
-	startChan     chan StartPoCEvent
-	stopChan      chan StopPoCEvent
-	mu            sync.Mutex
-	wg            sync.WaitGroup
-	pubKey        string
-	difficulty    int
-	runningAtomic atomic.Bool
-}
-
-type StartPoCEvent struct {
-	blockHeight int64
-	blockHash   string
-}
-
-type StopPoCEvent struct {
-	action func(results *ProofOfComputeResults)
-}
-
-type ProofOfComputeResults struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	Results     []*ProofOfCompute
-}
-
-func (r *ProofOfComputeResults) addResult(proof ProofOfCompute) {
-	r.Results = append(r.Results, &proof)
-}
-
-type ProofOfCompute struct {
-	Nonce     string
-	ProofHash string
-}
-
-func NewPoCOrchestrator(pubKey string, difficulty int) *PoCOrchestrator {
-	orchestrator := &PoCOrchestrator{
-		startChan:  make(chan StartPoCEvent),
-		stopChan:   make(chan StopPoCEvent),
-		pubKey:     pubKey,
-		difficulty: difficulty,
-	}
-	orchestrator.runningAtomic.Store(false)
-	return orchestrator
-}
-
-func (o *PoCOrchestrator) clearResults(blockHeight int64, blockHash string) {
-	o.results = &ProofOfComputeResults{
-		BlockHeight: blockHeight,
-		BlockHash:   blockHash,
-		PubKey:      o.pubKey,
-		Results:     []*ProofOfCompute{},
-	}
-}
-
-func (o *PoCOrchestrator) acceptHash(hash string) bool {
-	return proofofcompute.AcceptHash(hash, o.difficulty)
-}
-
-// startProcessing is the function that starts when a start event is triggered
-func (o *PoCOrchestrator) startProcessing(event StartPoCEvent) {
-	o.mu.Lock()
-	o.clearResults(event.blockHeight, event.blockHash)
-	o.mu.Unlock()
-
-	o.runningAtomic.Store(true)
-	go func() {
-		input := proofofcompute.GetInput(event.blockHash, o.pubKey)
-		nonce := make([]byte, len(input))
-		for {
-			if !o.isRunning() {
-				return
-			}
-
-			// Execute the function and store the result
-			hashAndNonce := proofofcompute.ProofOfCompute(input, nonce)
-
-			if o.acceptHash(hashAndNonce.Hash) {
-				// Make it trace level maybe or even lower?
-				// log.Printf("Hash accepted, adding. input = %s. nonce = %v. hash = %s", hex.EncodeToString(input), hex.EncodeToString(nonce), hashAndNonce.Hash)
-				proof := ProofOfCompute{
-					Nonce:     hex.EncodeToString(nonce),
-					ProofHash: hashAndNonce.Hash,
-				}
-
-				o.mu.Lock()
-				o.results.addResult(proof)
-				o.mu.Unlock()
-			}
-
-			incrementBytes(nonce)
-		}
-	}()
-}
-
-// StopProcessing stops the processing and returns the results immediately
-func (o *PoCOrchestrator) stopProcessing() *ProofOfComputeResults {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	results := o.results
-	o.runningAtomic.Store(false)
-
-	return results
-}
-
-// Run listens for start and stop events
-func (o *PoCOrchestrator) Run() {
-	for {
-		select {
-		case event := <-o.startChan:
-			if !o.isRunning() {
-				fmt.Println("Start event received, processing...")
-				o.startProcessing(event)
-			}
-		case event := <-o.stopChan:
-			if o.isRunning() {
-				fmt.Println("Stop event received, stopping...")
-				results := o.stopProcessing()
-				fmt.Println("Final PoC results size:", len(results.Results))
-				event.action(results)
-			}
-		}
-	}
-}
-
-// isRunning checks if the component is running
-func (o *PoCOrchestrator) isRunning() bool {
-	return o.runningAtomic.Load()
-}
-
-// StartProcessing triggers the start event
-func (o *PoCOrchestrator) StartProcessing(event StartPoCEvent) {
-	o.startChan <- event
-}
-
-// StopProcessing triggers the stop event
-func (o *PoCOrchestrator) StopProcessing(action func(*ProofOfComputeResults)) {
-	o.stopChan <- StopPoCEvent{action: action}
-}
 
 func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
@@ -199,8 +52,6 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
-		//pocEvent := StartPoCEvent{blockHash: blockHash, blockHeight: blockHeight}
-		//orchestrator.StartProcessing(pocEvent)
 
 		nodePoCOrchestrator.StartPoC(blockHeight, blockHash)
 		generateSeed(blockHeight, &transactionRecorder, configManager)
@@ -209,7 +60,6 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 
 	if epochParams.IsEndOfPoCStage(blockHeight) {
 		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages)
-		//orchestrator.StopProcessing(createSubmitPoCCallback(transactionRecorder))
 
 		nodePoCOrchestrator.MoveToValidationStage(blockHeight)
 	}
@@ -281,13 +131,4 @@ func getBlockHash(data map[string]interface{}) (string, error) {
 	}
 
 	return hash, nil
-}
-
-func incrementBytes(nonce []byte) {
-	for i := len(nonce) - 1; i >= 0; i-- {
-		nonce[i]++
-		if nonce[i] != 0 {
-			break // If no carry, we're done
-		}
-	}
 }
