@@ -10,9 +10,22 @@ on:
       - 'decentralized-api/**'
       - 'local-test-net/**'
       - 'testermint/**'
+  issue_comment:
+    types: [created]
 
 jobs:
+  check-comment:
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/run-integration')
+    steps:
+      - name: Check comment
+        run: echo "Comment contains /run-integration, triggering integration tests"
+    outputs:
+      should_run: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/run-integration') }}
+
   integration-tests:
+    needs: check-comment
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || needs.check-comment.outputs.should_run == 'true' }}
     uses: ./.github/workflows/test-workflow.yml
     with:
       test_name: "Integration Tests"
