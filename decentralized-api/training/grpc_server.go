@@ -7,7 +7,6 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type Server struct {
