@@ -28,7 +28,7 @@ import kotlin.test.assertNotNull
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
-    @Tag("health")
+    @Tag("sanity")
     fun `test immediate pre settle amounts`() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
@@ -73,7 +73,7 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
-    @Tag("health")
+    @Tag("sanity")
     fun `test post settle amounts`() {
         val (_, genesis) = initCluster()
         logSection("Clearing claims")
@@ -125,7 +125,6 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
-    @Tag("health")
     fun `test consumer only participant`() {
         val (cluster, genesis) = initCluster()
         logSection("Clearing claims")
@@ -184,7 +183,6 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     @Test
-    @Tag("health")
     fun payTopMiner() {
         val fastRewardSpec = spec {
             this[AppState::inference] = spec<InferenceState> {

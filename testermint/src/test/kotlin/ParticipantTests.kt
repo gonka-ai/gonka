@@ -74,7 +74,6 @@ class ParticipantTests : TestermintTest() {
     }
 
     @Test
-    @Tag("sanity")
     fun `stage tests`() {
         val (cluster, genesis) = initCluster()
         EpochStage.entries.forEach { stage ->

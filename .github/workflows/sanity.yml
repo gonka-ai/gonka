@@ -1,4 +1,4 @@
-name: Integration Tests
+name: Sanity Tests
 
 on:
   workflow_dispatch:
@@ -7,8 +7,8 @@ on:
       - main
 
 jobs:
-  integration-tests:
+  sanity-tests:
     uses: ./.github/workflows/test-workflow.yml
     with:
-      test_name: "Integration Tests"
-      test_command: "run-tests"
+      test_name: "Sanity Tests"
+      test_command: "run-sanity"
