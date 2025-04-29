@@ -38,7 +38,8 @@ jobs:
         run: sudo make build-docker
 
       - name: Start test chain
-        run: sudo make launch-test-chain
+        working-directory: local-test-net
+        run: sudo ./launch.sh
 
       - name: Run Tests
         run: sudo make run-tests

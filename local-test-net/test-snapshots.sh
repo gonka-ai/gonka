@@ -18,4 +18,4 @@ export RPC_PORT=8103
 export P2P_PORT=8203
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="$PUBLIC_URL"
-./launch_network_node.sh local
+./launch_network_node.sh
