@@ -2,7 +2,20 @@ name: Sanity Tests
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'inference-chain/**'
+      - 'decentralized-api/**'
+      - 'local-test-net/**'
+      - 'testermint/**'
   push:
+    paths:
+      - 'inference-chain/**'
+      - 'decentralized-api/**'
+      - 'local-test-net/**'
+      - 'testermint/**'
     branches:
       - main
 
