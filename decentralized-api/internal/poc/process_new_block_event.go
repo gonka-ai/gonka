@@ -113,7 +113,7 @@ func getBlockHeight(data map[string]interface{}) (int64, error) {
 
 	height, err := strconv.ParseInt(heightString, 10, 64)
 	if err != nil {
-		return 0, errors.New("Failed to convert retrieve height value to int64")
+		return 0, errors.New("Failed to convert retrieved height value to int64")
 	}
 
 	return height, nil
