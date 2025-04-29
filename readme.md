@@ -15,8 +15,10 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 3. **Validation during model training** follows a similar protocol as inference. Nodes are required to complete training workloads and are subject to majority-weighted peer verification. The system handles the non-deterministic nature of AI training by applying statistical validation, allowing for slight output variances while penalizing repeated or malicious inconsistencies. Rewards are withheld until a node’s training contributions are verified as honest and complete.
 4. The infrastructure leverages **DiLoCo**'s periodic synchronization approach to enable **Geo-Distributed Training** by efficiently distributing AI training tasks across a network of independent hardware providers, creating a **decentralized training environment** with minimal communication overhead. Nodes contribute compute power and receive tasks in proportion to their capabilities. Developers can initiate and fund training projects, and the system ensures workload distribution and result validation through its Proof of Work 2.0 protocol and validation layers. The platform is designed to maintain **fault tolerance and decentralized coordination**, enabling scalable training without centralized oversight.
 5. A reputation score is assigned to each node and increases with consistent, honest behavior. New nodes start with zero and are subject to more frequent checks. As reputation grows, verification frequency decreases, allowing for lower overhead and higher reward efficiency. Nodes caught submitting false results lose all earned rewards for that cycle and reset their reputation, entering a phase of strict scrutiny. This encourages long-term honesty and punishes strategic cheating.
-   ![[The Task flow.png]]
-   *[WIP] Diagram 1. The Task flow ([Source](https://github.com/product-science/inference-ignite/blob/31856bb939657d1746c5a34eb211ade450d0cab8/docs/papers/InferenceFlow.png))**
+
+![The Task flow](https://github.com/user-attachments/assets/1ba81a47-f4ef-4eb1-9fcd-b6d371a20f5f)
+
+*[Work in progress] Diagram 1. The Task flow [Source](docs/papers/InferenceFlow.png)**
 
 For a deeper technical and conceptual explanation, check out [the White Paper](https://github.com/product-science/inference-ignite/blob/31856bb939657d1746c5a34eb211ade450d0cab8/docs/papers/Decentralized%20AI%20Whitepaper.pdf).
 ## Getting started
@@ -82,7 +84,8 @@ Our project is built as a modular, containerized infrastructure with multiple in
     - Technologies: [Work in progress]
     - Location:  [Work in progress]
 
-![[network-architecture.png]]
+![network-architecture](https://github.com/user-attachments/assets/df7aaf8a-209b-477e-8aeb-cfa423d7b10d)
+
 *Diagram 2. The diagram outlines how components interact across the system. [Source](https://github.com/product-science/mlnode/blob/main/network-architecture.png)*
 ## Repository Layout
 

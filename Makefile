@@ -27,12 +27,6 @@ inference-chain-release:
 	@make -C inference-chain release
 	@make -C inference-chain docker-push
 
-launch-test-chain:
-	./launch-local-test-chain.sh
-
-stop-test-chain:
-	./stop-test-local-chain.sh
-
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
 
