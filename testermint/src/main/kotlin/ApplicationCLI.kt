@@ -255,7 +255,7 @@ data class ApplicationCLI(
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
         if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
-            val error = output.output.last().lines().last()
+            val error = output.output.last().lines().last { it.isNotBlank() }
             throw getExecException(error)
         }
         return output.output
