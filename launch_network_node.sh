@@ -8,6 +8,8 @@ fi
 
 if [ "$mode" == "local" ]; then
   compose_file="docker-compose-local.yml"
+elif [ "$mode" == "local-tkms" ]; then
+    compose_file="docker-compose-local-tkms.yml"
 elif [ "$mode" == "cloud" ]; then
     compose_file="docker-compose-cloud-join.yml"
 else
@@ -48,7 +50,7 @@ if [ -z "$WIREMOCK_PORT" ]; then
   echo "WIREMOCK_PORT is not set, using $WIREMOCK_PORT"
 fi
 
-if [ "$mode" == "local" ]; then
+if [ "$mode" = "local" ] || [ "$mode" = "local-tkms" ]; then
   project_name="$KEY_NAME"
 else
   project_name="inferenced"
@@ -57,7 +59,7 @@ fi
 echo "project_name=$project_name"
 
 # Set up wiremock
-if [ "$mode" == "local" ]; then
+if [ "$mode" = "local" ] || [ "$mode" = "local-tkms" ]; then
   mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
   mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
   cp ./testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"

@@ -14,12 +14,12 @@ WORKDIR /root
 
 RUN tmkms init .tmkms
 
-COPY tmkms.toml .
-COPY priv_validator_key.json .
-COPY priv_validator_state.json .
+ARG TMKMS_TOML=tmkms.toml
+COPY ${TMKMS_TOML} /root/.tmkms/tmkms.toml
+COPY docker/init.sh /root/init.sh
+RUN chmod +x /root/init.sh
 
-COPY scripts/init.sh /init.sh
-RUN chmod +x /init.sh
+ENV WITHKEYGEN=true
+ENTRYPOINT ["/root/init.sh"]
 
-ENTRYPOINT ["/init.sh"]
 

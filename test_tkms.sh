@@ -1,6 +1,6 @@
 set -e
 
-docker compose -p join1 down
+#docker compose -p join1 down
 
 export SEED_API_URL="http://genesis-api:9000"
 export SEED_NODE_RPC_URL="http://genesis-node:26657"
@@ -19,4 +19,4 @@ export P2P_PORT=8201
 export TKMS_PORT=26658
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh local
+./launch_network_node.sh local-tkms

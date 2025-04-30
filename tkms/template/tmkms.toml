@@ -21,7 +21,7 @@ chain_id = "prod-sim"
 # addr is the address that TMKMS should connect to in order to sign blocks.
 # The port must match the value of priv_validator_laddr specified in the validator’s config.toml
 # (inside the Docker container, if TMKMS and the validator are running in the same Docker network).
-addr = "tcp://join1-node:26658"
+addr = "tcp://<validator_addr:port>"
 # secret_key is the connection secret key (not the validator's private key!),
 # used by TMKMS to establish a secure connection with the validator node. DO NOT MODIFY.
 secret_key = "/root/.tmkms/secrets/kms-identity.key"
