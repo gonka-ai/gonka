@@ -1,6 +1,6 @@
 set -e
 
-#docker compose -p join1 down
+docker compose -p join1 down
 
 export SEED_API_URL="http://genesis-api:9000"
 export SEED_NODE_RPC_URL="http://genesis-node:26657"
