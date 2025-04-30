@@ -1,0 +1,11 @@
+{
+  "binaries": {
+    "linux/amd64": "https://github.com/product-science/race-releases/releases/download/release%2Fv0.0.2-alpha6/inferenced-amd64.zip?checksum=sha256:478720a83ef813aaa7a027465f0b8908338366b1e23cf568b08441aa9295e216",
+    "linux/arm64": "https://github.com/product-science/race-releases/releases/download/release%2Fv0.0.2-alpha6/inferenced-arm64.zip?checksum=sha256:f4e15802966cb7efcc9cab87b8c8b53200717034c2df6efc52a9f172136b067d"
+  },
+  "api_binaries": {
+    "linux/amd64": "https://github.com/product-science/race-releases/releases/download/release%2Fv0.0.2-alpha6/decentralized-api-amd64.zip?checksum=sha256:8c151bbcaa8d89a2799ce70625ef9cfe2b5c8f39e42bd65bcb0a40b442c3897a",
+    "linux/arm64": "https://github.com/product-science/race-releases/releases/download/release%2Fv0.0.2-alpha6/decentralized-api-arm64.zip?checksum=sha256:93de622dd5dd6052c2fff76d672a473d71cc1737aaab45f2d56347a1872a0f89"
+
+  }
+}

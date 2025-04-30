@@ -109,11 +109,30 @@ build-for-upgrade:
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced
+	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-amd64
 	@echo "--> zipping inferenced binary"
-	@zip -j ../public-html/v2/inferenced/inferenced.zip ../public-html/v2/inferenced/inferenced
+# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
+	@zip -X -j ../public-html/v2/inferenced/inferenced-amd64.zip ../public-html/v2/inferenced/inferenced-amd64
 	@echo "--> generating shasum for inferenced.zip"
-	@shasum -a 256 ../public-html/v2/inferenced/inferenced.zip
+	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
+
+build-for-upgrade-arm:
+	$(eval PLATFORM=linux/arm64)
+	$(eval GOOS=linux)
+	$(eval GOARCH=arm64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(DOCKER_BUILD_OUTPUT)
+	@mkdir -p ../public-html/v2/inferenced
+	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
+	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-arm64
+	@echo "--> zipping inferenced binary"
+# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64
+	@zip -X -j ../public-html/v2/inferenced/inferenced-arm64.zip ../public-html/v2/inferenced/inferenced-arm64
+	@echo "--> generating shasum for inferenced.zip"
+	@shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip
+
 
 #################################################
 # CROSS-COMPILATION SECTION
