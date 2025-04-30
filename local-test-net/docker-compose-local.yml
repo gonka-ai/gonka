@@ -54,4 +54,3 @@ services:
 networks:
   chain-public:
     name: chain-public
-
