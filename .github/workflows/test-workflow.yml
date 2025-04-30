@@ -11,6 +11,15 @@ on:
         required: true
         type: string
         description: 'Make command to run the tests (e.g., "run-tests" or "run-sanity")'
+      pr_number:
+        required: false
+        type: string
+        description: 'PR number when triggered by comment'
+      is_pr_comment:
+        required: false
+        type: boolean
+        default: false
+        description: 'Whether this workflow was triggered by a PR comment'
 
 jobs:
   run-tests:
@@ -19,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
 
       - name: Set up Docker (Latest Version)
         uses: docker/setup-docker-action@v4

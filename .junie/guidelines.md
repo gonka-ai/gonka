@@ -22,6 +22,7 @@ The system consists of three main components:
 /inference-chain    # Chain node
 /prepare-local      # Scripts and configs for running local chain
 /testermint         # Integration tests suite
+/local-test-net     # Scripts and other files for runnina a local test net with multiple nodes
 ```
 
 ## Guidelines for Generated Files
