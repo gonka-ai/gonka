@@ -14,11 +14,13 @@ import java.time.Duration
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.Path
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 
-const val GENESIS_COMPOSE_FILE = "docker-compose-local-genesis.yml"
-const val NODE_COMPOSE_FILE = "docker-compose-local.yml"
+const val LOCAL_TEST_NET_DIR = "local-test-net"
+const val GENESIS_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local-genesis.yml"
+const val NODE_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local.yml"
 
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
@@ -43,20 +45,18 @@ data class DockerGroup(
     val config: ApplicationConfig,
 ) {
     val composeFile = if (isGenesis) GENESIS_COMPOSE_FILE else NODE_COMPOSE_FILE
-    val repoRoot = getRepoRoot()
-    val composePath = Path.of(repoRoot, composeFile)
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
         val envMap = this.getCommonEnvMap()
         return ProcessBuilder("docker", *args)
-            .directory(composePath.parent.toFile())
+            .directory(File(workingDirectory))
             .also { it.environment().putAll(envMap) }
     }
 
     fun init() {
         tearDownExisting()
         setupFiles()
-        val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "up", "-d")
+        val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "--project-directory", workingDirectory, "up", "-d")
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
@@ -67,7 +67,7 @@ data class DockerGroup(
 
     fun tearDownExisting() {
         Logger.info("Tearing down existing docker group with keyName={}", keyName)
-        dockerProcess("compose", "-p", keyName, "down").start().waitFor()
+        dockerProcess("compose", "-p", keyName, "--project-directory", workingDirectory, "down").start().waitFor()
     }
 
     private fun getCommonEnvMap(): Map<String, String> {
@@ -153,7 +153,7 @@ data class DockerGroup(
 
 fun createDockerGroup(joinIter: Int, iteration: Int, genesisUrls: GenesisUrls?, config: ApplicationConfig): DockerGroup {
     val keyName = if (iteration == 0) "genesis" else "join$joinIter"
-    val nodeConfigFile = "node_payload_wiremock_$keyName.json"
+    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_wiremock_$keyName.json"
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
@@ -219,10 +219,12 @@ fun initCluster(
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
 ): Pair<LocalCluster, LocalInferencePair> {
+    logSection("Cluster Discovery")
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
     val cluster = setupLocalCluster(joinCount, config, reboot || rebootFlagOn)
     Thread.sleep(50000)
     try {
+        logSection("Found cluster, initializing")
         initialize(cluster.allPairs)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
@@ -231,8 +233,10 @@ fun initCluster(
             throw e
         }
         Logger.error(e, "Error initializing cluser, retrying")
+        logSection("Exception during cluster initialization, retrying")
         return initCluster(joinCount, config, reboot = true)
     }
+    logSection("Cluster Initialized")
     return cluster to cluster.genesis
 }
 
@@ -242,6 +246,7 @@ fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean
         return currentCluster
     } else {
         if (!reboot) {
+            logSection("Cluster does not match config, rebooting")
             Logger.info("Current cluster does not match config, rebooting", "")
         }
         initializeCluster(joinCount, config)

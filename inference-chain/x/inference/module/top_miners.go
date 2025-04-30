@@ -39,7 +39,7 @@ func (am AppModule) RegisterTopMiners(ctx context.Context, participants []*types
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
 		case keeper.UpdateAndPayMiner:
 			am.keeper.SetTopMiner(ctx, typedAction.Miner)
-			err := am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, uint64(typedAction.Payout), types.TopRewardPoolAccName)
+			err := am.keeper.PayParticipantFromModule(ctx, typedAction.Miner.Address, uint64(typedAction.Payout), types.TopRewardPoolAccName, "top_miner")
 			if err != nil {
 				return err
 			}

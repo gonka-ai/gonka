@@ -2,78 +2,28 @@ package com.productscience
 
 import com.productscience.data.EpochParams
 
+enum class EpochStage {
+    START_OF_POC,
+    END_OF_POC,
+    POC_EXCHANGE_DEADLINE,
+    START_OF_POC_VALIDATION,
+    END_OF_POC_VALIDATION,
+    SET_NEW_VALIDATORS,
+    CLAIM_REWARDS
+}
+
 fun EpochParams.shift(blockHeight: Long): Long = blockHeight + this.epochShift
 fun EpochParams.unshift(blockHeight: Long): Long = blockHeight - this.epochShift
 
-fun EpochParams.isStartOfPoCStage(blockHeight: Long): Boolean {
-    val shiftedBlockHeight = shift(blockHeight)
-    return this.isNotZeroEpoch(shiftedBlockHeight) &&
-            (shiftedBlockHeight % epochLength == this.getStartOfPoCStage())
+fun EpochParams.isStage(stage: EpochStage, blockHeight: Long): Boolean =
+    shift(blockHeight) % epochLength == getStage(stage)
+
+fun EpochParams.getStage(stage: EpochStage): Long = when (stage) {
+    EpochStage.START_OF_POC -> 0L
+    EpochStage.END_OF_POC -> getStage(EpochStage.START_OF_POC) + pocValidationDuration * epochMultiplier
+    EpochStage.POC_EXCHANGE_DEADLINE -> getStage(EpochStage.END_OF_POC) + pocExchangeDuration * epochMultiplier
+    EpochStage.START_OF_POC_VALIDATION -> getStage(EpochStage.END_OF_POC) + pocValidationDelay * epochMultiplier
+    EpochStage.END_OF_POC_VALIDATION -> getStage(EpochStage.START_OF_POC_VALIDATION) + pocValidationDuration * epochMultiplier
+    EpochStage.SET_NEW_VALIDATORS -> getStage(EpochStage.END_OF_POC_VALIDATION) + 1 * epochMultiplier
+    EpochStage.CLAIM_REWARDS -> getStage(EpochStage.SET_NEW_VALIDATORS) + 1 * epochMultiplier
 }
-
-fun EpochParams.isEndOfPoCStage(blockHeight: Long): Boolean {
-    val shiftedBlockHeight = shift(blockHeight)
-    return this.isNotZeroEpoch(shiftedBlockHeight) &&
-            (shiftedBlockHeight % epochLength == this.getEndOfPoCStage())
-}
-
-fun EpochParams.isPoCExchangeWindow(startBlockHeight: Long, currentBlockHeight: Long): Boolean {
-    val shiftedStart = shift(startBlockHeight)
-    val shiftedCurrent = shift(currentBlockHeight)
-    val elapsedEpochs = shiftedCurrent - shiftedStart
-    return this.isNotZeroEpoch(shiftedStart) &&
-            (elapsedEpochs > 0) &&
-            (elapsedEpochs <= this.getPoCExchangeDeadline())
-}
-
-fun EpochParams.isStartOfPoCValidationStage(blockHeight: Long): Boolean {
-    val shiftedBlockHeight = shift(blockHeight)
-    return this.isNotZeroEpoch(shiftedBlockHeight) &&
-            (shiftedBlockHeight % epochLength == this.getStartOfPoCValidationStage())
-}
-
-fun EpochParams.isValidationExchangeWindow(startBlockHeight: Long, currentBlockHeight: Long): Boolean {
-    val shiftedStart = shift(startBlockHeight)
-    val shiftedCurrent = shift(currentBlockHeight)
-    val elapsedEpochs = shiftedCurrent - shiftedStart
-    return this.isNotZeroEpoch(shiftedStart) &&
-            (elapsedEpochs > 0) &&
-            (elapsedEpochs <= this.getSetNewValidatorsStage())
-}
-
-fun EpochParams.isEndOfPoCValidationStage(blockHeight: Long): Boolean {
-    val shiftedBlockHeight = shift(blockHeight)
-    return this.isNotZeroEpoch(shiftedBlockHeight) &&
-            (shiftedBlockHeight % epochLength == this.getEndOfPoCValidationStage())
-}
-
-fun EpochParams.isSetNewValidatorsStage(blockHeight: Long): Boolean {
-    val shiftedBlockHeight = shift(blockHeight)
-    return this.isNotZeroEpoch(shiftedBlockHeight) &&
-            (shiftedBlockHeight % epochLength == this.getSetNewValidatorsStage())
-}
-
-fun EpochParams.getStartBlockHeightFromEndOfPocStage(blockHeight: Long): Long {
-    return unshift(shift(blockHeight) - this.getEndOfPoCStage())
-}
-
-fun EpochParams.getStartBlockHeightFromStartOfPocValidationStage(blockHeight: Long): Long {
-    return unshift(shift(blockHeight) - this.getStartOfPoCValidationStage())
-}
-
-fun EpochParams.getStartOfPoCStage(): Long = 0L
-
-fun EpochParams.getEndOfPoCStage(): Long = getStartOfPoCStage() + pocValidationDuration * epochMultiplier
-
-fun EpochParams.getPoCExchangeDeadline(): Long = this.getEndOfPoCStage() + pocExchangeDuration * epochMultiplier
-
-fun EpochParams.getStartOfPoCValidationStage(): Long = this.getEndOfPoCStage() + pocValidationDelay * epochMultiplier
-
-fun EpochParams.getEndOfPoCValidationStage(): Long =
-    this.getStartOfPoCValidationStage() + pocValidationDuration * epochMultiplier
-
-fun EpochParams.getSetNewValidatorsStage(): Long = this.getEndOfPoCValidationStage() + 1 * epochMultiplier
-
-fun EpochParams.isNotZeroEpoch(blockHeight: Long): Boolean = !this.isZeroEpoch(blockHeight)
-
-fun EpochParams.isZeroEpoch(blockHeight: Long): Boolean = blockHeight < epochLength
