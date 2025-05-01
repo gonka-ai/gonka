@@ -24,8 +24,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			return nil
 		}
 	}
-	currentValidatorWeights := getActiveParticipantsWeights(currentActiveParticipants)
-	totalWeight := getTotalWeight(currentValidatorWeights)
+	currentValidatorWeights := calculateEpochGroupWeights(currentActiveParticipants)
+	totalWeight := calculateTotalWeight(currentValidatorWeights)
 	requiredValidWeight := (totalWeight * 2) / 3
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
@@ -64,7 +64,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			continue
 		}
 
-		claimedWeight := getParticipantWeight(originalBatches[participantAddress])
+		claimedWeight := calculateParticipantWeight(originalBatches[participantAddress])
 		if claimedWeight < 1 {
 			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 			continue
@@ -76,7 +76,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		}
 
 		if currentActiveParticipants != nil {
-			valOutcome := getValidationOutcome(currentValidatorWeights, vals)
+			valOutcome := calculateValidationOutcome(currentValidatorWeights, vals)
 			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
 			if votedWeight < requiredValidWeight {
 				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
@@ -115,7 +115,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	return activeParticipants
 }
 
-func getParticipantWeight(batches []types.PoCBatch) int64 {
+func calculateParticipantWeight(batches []types.PoCBatch) int64 {
 	uniqueNonces := make(map[int64]struct{})
 
 	for _, b := range batches {
@@ -127,7 +127,7 @@ func getParticipantWeight(batches []types.PoCBatch) int64 {
 	return int64(len(uniqueNonces))
 }
 
-func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) map[string]int64 {
+func calculateEpochGroupWeights(activeParticipants *types.ActiveParticipants) map[string]int64 {
 	if activeParticipants == nil {
 		return nil
 	}
@@ -139,7 +139,7 @@ func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) 
 	return weights
 }
 
-func getTotalWeight(validatorWeights map[string]int64) uint64 {
+func calculateTotalWeight(validatorWeights map[string]int64) uint64 {
 	if validatorWeights == nil {
 		return 0
 	}
@@ -147,7 +147,7 @@ func getTotalWeight(validatorWeights map[string]int64) uint64 {
 	totalWeight := uint64(0)
 	for participant, weight := range validatorWeights {
 		if weight < 0 {
-			slog.Error("getTotalWeight: Negative weight found", "participant", participant, "weight", weight)
+			slog.Error("calculateTotalWeight: Negative weight found", "participant", participant, "weight", weight)
 			continue
 		}
 		totalWeight += uint64(weight)
@@ -161,7 +161,7 @@ type validationOutcome struct {
 	InvalidWeight int64
 }
 
-func getValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
+func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
 	validWeight := int64(0)
 	invalidWeight := int64(0)
 	for _, v := range validations {
