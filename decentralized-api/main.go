@@ -88,11 +88,6 @@ func main() {
 		"address", recorder.Address,
 		"pubkey", pubKeyString)
 
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
-
-	logging.Info("PoC orchestrator initialized", types.PoC, "pocOrchestrator", pocOrchestrator)
-	go pocOrchestrator.Run()
-
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,
 		nodeBroker,
