@@ -2,6 +2,23 @@
   "mappings": [
     {
       "scenarioName": "ModelState",
+      "requiredScenarioState": "Started",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/state"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "state": "STARTED"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
       "requiredScenarioState": "POW",
       "request": {
         "method": "GET",
