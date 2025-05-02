@@ -61,7 +61,7 @@ jobs:
 
       - name: Make Upgrade Build
         if: ${{ inputs.enable_upgrades }}
-        run: sudo make build-for-upgrade
+        run: sudo make build-for-upgrade-tests
 
       - name: Start test chain
         working-directory: local-test-net

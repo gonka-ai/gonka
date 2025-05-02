@@ -108,3 +108,7 @@ build-for-upgrade:
 	@make -C inference-chain build-for-upgrade-arm
 	@make -C decentralized-api build-for-upgrade
 	@make -C decentralized-api build-for-upgrade-arm
+
+build-for-upgrade-tests:
+	@make -C inference-chain build-for-upgrade
+	@make -C decentralized-api build-for-upgrade
