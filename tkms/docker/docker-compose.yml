@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  tmkms:
+    image: "" # use 'tmkms-softsign-with-import' or 'tmkms-softsign-with-keygen' here
+    container_name: tmkms
+    restart: unless-stopped
+    environment:
+      - VALIDATOR_LISTEN_ADDRESS=tcp://join1-node:26658
+    volumes:
+      - tmkms_data:/root/.tmkms
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    external: true
+
+volumes:
+  tmkms_data:
