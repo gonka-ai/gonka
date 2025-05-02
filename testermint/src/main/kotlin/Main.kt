@@ -28,6 +28,7 @@ import com.productscience.data.PubKey
 import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.GovernanceMessage
+import com.productscience.data.LongDeserializer
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.data.ValidationParams
@@ -199,7 +200,9 @@ val cosmosJson: Gson = GsonBuilder()
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationSerializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+    .registerTypeAdapter(Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
+    .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
     .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
     .create()
