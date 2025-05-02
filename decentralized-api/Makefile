@@ -30,7 +30,7 @@ define DOCKER_BUILD
 		-t $(DOCKER_TAG)
 endef
 
-define DOCKER_BUILD_OUTPUT
+define DOCKER_BUILD_UPGRADE
 	@echo "--> building decentralized-api docker image"
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
