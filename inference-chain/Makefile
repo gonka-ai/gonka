@@ -50,7 +50,7 @@ define DOCKER_BUILD
 		-t $(DOCKER_TAG)
 endef
 
-define DOCKER_BUILD_OUTPUT
+define DOCKER_BUILD_UPGRADE
 	@echo "--> building inferenced docker image"
 	@echo "platform:  $(PLATFORM)"
 	@echo "GOARCH:    $(GOARCH)"
@@ -63,6 +63,7 @@ define DOCKER_BUILD_OUTPUT
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--build-arg TAGS='upgraded' \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..
@@ -104,7 +105,7 @@ build-for-upgrade:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_OUTPUT)
+	$(DOCKER_BUILD_UPGRADE)
 	@echo "--> clearing out ../public-html/v2/inferenced"
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
@@ -122,7 +123,7 @@ build-for-upgrade-arm:
 	$(eval GOOS=linux)
 	$(eval GOARCH=arm64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_OUTPUT)
+	$(DOCKER_BUILD_UPGRADE)
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
 	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-arm64

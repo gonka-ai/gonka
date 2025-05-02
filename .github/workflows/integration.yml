@@ -22,3 +22,4 @@ jobs:
       test_command: "run-tests"
       is_pr_comment: ${{ github.event_name == 'issue_comment' }}
       pr_number: ${{ github.event.issue.number || '' }}
+      enable_upgrades: true

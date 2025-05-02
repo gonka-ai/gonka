@@ -97,7 +97,7 @@ build-for-upgrade:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_OUTPUT)
+	$(DOCKER_BUILD_UPGRADE)
 	@echo "--> clearing out ../public-html/v2/dapi"
 	@rm -rf ../public-html/v2/dapi/*
 	@mkdir -p ../public-html/v2/dapi
@@ -115,7 +115,7 @@ build-for-upgrade-arm:
 	$(eval GOOS=linux)
 	$(eval GOARCH=arm64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_OUTPUT)
+	$(DOCKER_BUILD_UPGRADE)
 	@mkdir -p ../public-html/v2/dapi
 	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
 	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api-arm64

@@ -1,30 +1,37 @@
 import com.productscience.*
 import com.productscience.data.CreatePartialUpgrade
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceNode
-import com.productscience.data.TxResponse
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.Logger
+import java.io.File
+import java.security.MessageDigest
+import java.time.Duration
 import java.util.concurrent.TimeUnit
 
 class UpgradeTests : TestermintTest() {
     @Test
-    @Tag("unstable")
     fun `submit upgrade`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val genesis = initialize(pairs)
+        val (cluster, genesis) = initCluster(
+            config = inferenceConfig.copy(
+                genesisSpec = createSpec(
+                    epochLength = 100,
+                    epochShift = 80
+                )
+            ),
+            reboot = true
+        )
+        genesis.markNeedsReboot()
+        val pairs = cluster.joinPairs
         val height = genesis.getCurrentBlockHeight()
-        val checksum = "29c7cc8e000413de302c828cc798405fa690bdaa48a2266f3d8b50a58fe62554"
-        val path = getBinaryPath("v2/inferenced/inferenced.zip", checksum)
-        val apiCheckshum = "18df80363d3959000e5268e56b995d5e167d2bcb4a828f0c7fb54f2a0d546e24"
-        val apiPath = getBinaryPath("v2/dapi/decentralized-api.zip", apiCheckshum)
-        val upgradeBlock = height + 15
+        val path = getBinaryPath("v2/inferenced/inferenced-amd64.zip")
+        val apiPath = getBinaryPath("v2/dapi/decentralized-api-amd64.zip")
+        val upgradeBlock = height + 30
         Logger.info("Upgrade block: $upgradeBlock", "")
+        logSection("Submitting upgrade proposal")
         val response = genesis.submitUpgradeProposal(
-            title = "v0.0.2",
+            title = "v0.0.1test",
             description = "For testing",
             binaryPath = path,
             apiBinaryPath = apiPath,
@@ -37,14 +44,21 @@ class UpgradeTests : TestermintTest() {
             return
         }
         val govParams = genesis.node.getGovParams().params
+        logSection("Making deposit")
         val depositResponse = genesis.makeGovernanceDeposit(proposalId, govParams.minDeposit.first().amount)
-        println("DEPOSIT:\n" + depositResponse)
+        logSection("Voting on proposal")
         pairs.forEach {
             val response2 = it.voteOnProposal(proposalId, "yes")
             assertThat(response2).isNotNull()
             println("VOTE:\n" + response2)
         }
-        genesis.node.waitForMinimumBlock(upgradeBlock, "upgradeBlock")
+        logSection("Waiting for upgrade to be effective at block $upgradeBlock")
+        genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
+        logSection("Waiting for upgrade to finish")
+        Thread.sleep(Duration.ofMinutes(5))
+        logSection("Verifying upgrade")
+        genesis.node.waitForNextBlock(1)
+        // Some other action?
     }
 
     @Test
@@ -62,13 +76,17 @@ class UpgradeTests : TestermintTest() {
                 defaultInferenceResponseObject.withResponse(newResponse),
                 segment = newSegment
             )
-            it.api.addNode(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
-                 inferenceSegment = newSegment, version = newVersion, id = "v1Node"
-            ))
+            it.api.addNode(
+                validNode.copy(
+                    host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
+                    inferenceSegment = newSegment, version = newVersion, id = "v1Node"
+                )
+            )
         }
         val inferenceResponse = genesis.makeInferenceRequest(inferenceRequest)
         assertThat(inferenceResponse.choices.first().message.content).isNotEqualTo(newResponse)
-        val proposalId = genesis.runProposal(cluster,
+        val proposalId = genesis.runProposal(
+            cluster,
             CreatePartialUpgrade(
                 height = effectiveHeight.toString(),
                 nodeVersion = newVersion,
@@ -84,7 +102,25 @@ class UpgradeTests : TestermintTest() {
         assertThat(newResult.choices.first().message.content).isEqualTo(newResponse)
     }
 
-    fun getBinaryPath(path: String, sha: String): String {
+    fun getBinaryPath(path: String): String {
+        val localPath = "../public-html/$path"
+        val sha = getSha256Checksum(localPath)
         return "http://genesis-wiremock:8080/$path?checksum=sha256:$sha"
     }
+
+    private fun getSha256Checksum(filePath: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val file = File(filePath)
+        file.inputStream().use { fis ->
+            val buffer = ByteArray(8192)
+            var bytesRead = fis.read(buffer)
+            while (bytesRead != -1) {
+                digest.update(buffer, 0, bytesRead)
+                bytesRead = fis.read(buffer)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 }
+
+
