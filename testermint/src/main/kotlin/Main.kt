@@ -28,6 +28,8 @@ import com.productscience.data.PubKey
 import com.productscience.data.Pubkey2
 import com.productscience.data.Pubkey2Deserializer
 import com.productscience.data.GovernanceMessage
+import com.productscience.data.LongDeserializer
+import com.productscience.data.Spec
 import com.productscience.data.TxResponse
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.data.ValidationParams
@@ -199,7 +201,9 @@ val cosmosJson: Gson = GsonBuilder()
     .registerTypeAdapter(Duration::class.java, DurationDeserializer())
     .registerTypeAdapter(Duration::class.java, DurationSerializer())
     .registerTypeAdapter(Pubkey2::class.java, Pubkey2Deserializer())
+    .registerTypeAdapter(Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Long::class.java, LongSerializer())
+    .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
     .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
     .create()
@@ -242,37 +246,40 @@ val inferenceConfig = ApplicationConfig(
     denom = "nicoin",
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back
-    genesisSpec = spec {
-        this[AppState::gov] = spec<GovState> {
-            this[GovState::params] = spec<GovParams> {
-                this[GovParams::votingPeriod] = Duration.ofSeconds(30)
-                this[GovParams::minDeposit] = listOf(Coin("nicoin", 1000))
-            }
-        }
-        this[AppState::inference] = spec<InferenceState> {
-            this[InferenceState::params] = spec<InferenceParams> {
-                this[InferenceParams::epochParams] = spec<EpochParams> {
-                    this[EpochParams::epochLength] = 10L
-                    this[EpochParams::pocStageDuration] = 2L
-                    this[EpochParams::pocExchangeDuration] = 1L
-                    this[EpochParams::pocValidationDelay] = 1L
-                    this[EpochParams::pocValidationDuration] = 2L
-                }
-                this[InferenceParams::validationParams] = spec<ValidationParams> {
-                    this[ValidationParams::minValidationAverage] = Decimal.fromDouble(0.01)
-                    this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(1.0)
-                    this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
-                    this[ValidationParams::fullValidationTrafficCutoff] = 100L
-                    this[ValidationParams::minValidationHalfway] = Decimal.fromDouble(0.05)
-                    this[ValidationParams::minValidationTrafficCutoff] = 10L
-                }
-            }
-            this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
-                this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
-            }
+    genesisSpec = createSpec()
+)
+
+fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = spec {
+    this[AppState::gov] = spec<GovState> {
+        this[GovState::params] = spec<GovParams> {
+            this[GovParams::votingPeriod] = Duration.ofSeconds(30)
+            this[GovParams::minDeposit] = listOf(Coin("nicoin", 1000))
         }
     }
-)
+    this[AppState::inference] = spec<InferenceState> {
+        this[InferenceState::params] = spec<InferenceParams> {
+            this[InferenceParams::epochParams] = spec<EpochParams> {
+                this[EpochParams::epochLength] = epochLength
+                this[EpochParams::pocStageDuration] = 2L
+                this[EpochParams::pocExchangeDuration] = 1L
+                this[EpochParams::pocValidationDelay] = 1L
+                this[EpochParams::pocValidationDuration] = 2L
+                this[EpochParams::epochShift] = epochShift
+            }
+            this[InferenceParams::validationParams] = spec<ValidationParams> {
+                this[ValidationParams::minValidationAverage] = Decimal.fromDouble(0.01)
+                this[ValidationParams::maxValidationAverage] = Decimal.fromDouble(1.0)
+                this[ValidationParams::epochsToMax] = 100L // Easy to calculate/check
+                this[ValidationParams::fullValidationTrafficCutoff] = 100L
+                this[ValidationParams::minValidationHalfway] = Decimal.fromDouble(0.05)
+                this[ValidationParams::minValidationTrafficCutoff] = 10L
+            }
+        }
+        this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
+            this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
+        }
+    }
+}
 
 val inferenceRequest = """
     {

@@ -31,7 +31,7 @@ class DurationDeserializer : JsonDeserializer<Duration> {
     }
 }
 
-class LongSerializer : JsonSerializer<java.lang.Long> {
+class LongSerializer: JsonSerializer<java.lang.Long> {
     override fun serialize(
         src: java.lang.Long?,
         typeOfSrc: Type?,
@@ -40,6 +40,18 @@ class LongSerializer : JsonSerializer<java.lang.Long> {
         return com.google.gson.JsonPrimitive(src?.toString())
     }
 }
+
+class LongDeserializer : JsonDeserializer<java.lang.Long> {
+    override fun deserialize(
+        json: JsonElement,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?,
+    ): java.lang.Long? {
+        if (json.asString == "") return null
+        return java.lang.Long.parseLong(json.asString.replace("_", "")) as java.lang.Long?
+    }
+}
+
 
 class DoubleSerializer: JsonSerializer<java.lang.Double> {
     override fun serialize(
@@ -71,13 +83,13 @@ class DurationSerializer : JsonSerializer<Duration> {
 
         return when {
             src.isZero -> JsonPrimitive("0s")
-            src.toDays() > 0 && src.toHours() % 24 == 0L && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L -> 
+            src.toDays() > 0 && src.toHours() % 24 == 0L && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L ->
                 JsonPrimitive("${src.toDays()}d")
-            src.toHours() > 0 && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L -> 
+            src.toHours() > 0 && src.toMinutes() % 60 == 0L && src.toSeconds() % 60 == 0L ->
                 JsonPrimitive("${src.toHours()}h")
-            src.toMinutes() > 0 && src.toSeconds() % 60 == 0L -> 
+            src.toMinutes() > 0 && src.toSeconds() % 60 == 0L ->
                 JsonPrimitive("${src.toMinutes()}m")
-            else -> 
+            else ->
                 JsonPrimitive("${src.toSeconds()}s")
         }
     }
