@@ -21,4 +21,4 @@ build-with-import:
 
 push-keygen-image: build-with-keygen
 	@docker push gcr.io/decentralized-ai/tmkms-softsign-with-keygen:$(DOCKER_TAG)
-
+	@docker push ghcr.io/product-science/tmkms-softsign-with-keygen:$(DOCKER_TAG)
