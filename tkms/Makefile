@@ -8,6 +8,7 @@ build-with-keygen:
 		-f ./docker/Dockerfile_keygen \
 		--build-arg TMKMS_TOML=./template/tmkms.toml \
 		-t gcr.io/decentralized-ai/tmkms-softsign-with-keygen:$(DOCKER_TAG) \
+		-t ghcr.io/product-science/tmkms-softsign-with-keygen:$(DOCKER_TAG) \
 		.
 
 build-with-import:
