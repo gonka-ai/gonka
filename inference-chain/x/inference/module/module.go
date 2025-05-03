@@ -226,6 +226,18 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
+
+		// Create nested EpochGroups for each model
+		models, err := am.keeper.GetAllModels(ctx)
+		if err != nil {
+			am.LogError("Unable to get all models", types.EpochGroup, "error", err.Error())
+		} else {
+			err = newGroup.CreateModelEpochGroups(ctx, models)
+			if err != nil {
+				am.LogError("Unable to create model epoch groups", types.EpochGroup, "error", err.Error())
+			}
+		}
+
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
 	}
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
@@ -300,6 +312,19 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue
+		}
+
+		// Get the participant's models
+		participant, found := am.keeper.GetParticipant(ctx, p.Index)
+		if !found {
+			am.LogError("onSetNewValidatorsStage: Unable to get participant", types.EpochGroup, "address", p.Index)
+			continue
+		}
+
+		// Add member to model-specific EpochGroups
+		err = upcomingEg.AddMemberToModelGroups(ctx, p.Index, p.Weight, p.ValidatorKey, participant.Models)
+		if err != nil {
+			am.LogError("onSetNewValidatorsStage: Unable to add member to model groups", types.EpochGroup, "error", err.Error())
 		}
 	}
 
