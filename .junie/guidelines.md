@@ -135,3 +135,9 @@ When working with this codebase, AI Agents should:
 8. **Add new files to Git** - Use `git add` on the CLI to add newly created files to Github.
 
 By following these guidelines, AI Agents can contribute effectively to the Inference-Ignite project while maintaining the integrity and stability of the system.
+
+## Running Unit Tests During Dev
+To run tests in the `inference-chain` project:
+1. change to the `inference-chain` directory
+2. To execute ALL tests: `go test ./...`
+3. To execute tests for a specific file `go test (relative path from inference-chain)`
