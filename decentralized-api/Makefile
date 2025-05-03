@@ -80,8 +80,10 @@ build-docker:
 
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
+	@echo "pushing to Google Cloud Artifact Registry"
 	@docker push gcr.io/decentralized-ai/api:$(VERSION)
 	@docker tag gcr.io/decentralized-ai/api:$(VERSION) ghcr.io/product-science/api:$(VERSION)
+	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/api:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
