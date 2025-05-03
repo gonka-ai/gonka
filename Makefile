@@ -102,3 +102,13 @@ local-build: api-local-build node-local-build api-test node-test
 	@echo "=========================================="
 	@echo "Local build and tests completed successfully!"
 	@rm -f api-test-output.log node-test-output.log
+
+build-for-upgrade:
+	@make -C inference-chain build-for-upgrade
+	@make -C inference-chain build-for-upgrade-arm
+	@make -C decentralized-api build-for-upgrade
+	@make -C decentralized-api build-for-upgrade-arm
+
+build-for-upgrade-tests:
+	@make -C inference-chain build-for-upgrade
+	@make -C decentralized-api build-for-upgrade

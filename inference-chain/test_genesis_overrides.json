@@ -5,7 +5,13 @@
         "min_deposit": [
           {
             "denom": "nicoin",
-            "amount": "1000"
+            "amount": "1_000"
+          }
+        ],
+        "expedited_min_deposit": [
+          {
+            "denom": "nicoin",
+            "amount": "2_000"
           }
         ],
         "voting_period": "30s"

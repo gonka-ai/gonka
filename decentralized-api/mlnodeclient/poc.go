@@ -8,8 +8,8 @@ import (
 const (
 	InitGeneratePath = "/api/v1/pow/init/generate"
 
-	DefaultRTarget        = 1.390051443
-	DefaultBatchSize      = 8000
+	DefaultRTarget        = 1.3971164020989417
+	DefaultBatchSize      = 100
 	DefaultFraudThreshold = 0.01
 )
 
@@ -84,17 +84,17 @@ var DevTestParams = Params{
 }
 
 var TestNetParams = Params{
-	Dim:              2048,
-	NLayers:          16,
-	NHeads:           16,
-	NKVHeads:         16,
-	VocabSize:        8192,
-	FFNDimMultiplier: 1.3,
-	MultipleOf:       1024,
+	Dim:              1024,
+	NLayers:          32,
+	NHeads:           32,
+	NKVHeads:         32,
+	VocabSize:        8196,
+	FFNDimMultiplier: 10.0,
+	MultipleOf:       2048, // 8*256
 	NormEps:          1e-5,
-	RopeTheta:        500000.0,
-	UseScaledRope:    true,
-	SeqLen:           16,
+	RopeTheta:        10000.0,
+	UseScaledRope:    false,
+	SeqLen:           128,
 }
 
 func (api *Client) InitGenerate(dto InitDto) error {

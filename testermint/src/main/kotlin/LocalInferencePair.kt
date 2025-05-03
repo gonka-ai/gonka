@@ -226,7 +226,10 @@ data class LocalInferencePair(
         if (epochParams.epochLength > 500) {
             error("Epoch length is too long for testing")
         }
-        val epochFinished = epochParams.epochLength + epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) + 1
+        val epochFinished = epochParams.epochLength +
+                epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) +
+                1 -
+                epochParams.epochShift
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
