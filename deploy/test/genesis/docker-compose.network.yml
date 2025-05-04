@@ -1,6 +1,6 @@
 services:
   tmkms:
-     image: gcr.io/decentralized-ai/tmkms-softsign-with-keygen:gonka-test-net-1-2
+     image: gcr.io/decentralized-ai/tmkms-softsign-with-keygen:0.1.0-alpha1
      container_name: tmkms
      restart: unless-stopped
      environment:
@@ -34,7 +34,7 @@ services:
       - tmkms
 
   api:
-    image: ghcr.io/product-science/api:gonka-test-net-1-1
+    image: ghcr.io/product-science/api:0.1.0-alpha1
     restart: always
     depends_on:
       - node
@@ -57,7 +57,7 @@ services:
       - "9200:9200"
 
   inference:
-    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+    image: ghcr.io/product-science/mlnode:0.1.0-alpha1
     restart: always
     command: >
       uvicorn api.app:app
@@ -76,5 +76,3 @@ services:
               count: all
               capabilities: [gpu]
 
-volumes:
-  tmkms_data:
