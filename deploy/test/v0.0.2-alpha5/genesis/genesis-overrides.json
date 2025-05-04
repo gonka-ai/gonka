@@ -1,0 +1,45 @@
+{
+    "app_state": {
+      "gov": {
+        "params": {
+          "voting_period": "24h0m0s",
+          "min_deposit": [
+            {
+              "denom": "nicoin",
+              "amount": "25_000_000"
+            }
+          ],
+          "expedited_voting_period": "12h0m0s",
+          "expedited_min_deposit": [
+            {
+              "denom": "nicoin",
+              "amount": "50_000_000"
+            }
+          ]
+        }
+      },
+      "inference": {
+        "params": {
+          "epochParams": {
+            "epoch_length": "1800",
+            "epoch_multiplier": "1",
+            "epoch_shift": "1700",
+            "poc_stage_duration": "60",
+            "poc_exchange_duration": "5",
+            "poc_validation_delay": "5",
+            "poc_validation_duration": "20",
+            "default_unit_of_compute_price": "100"
+          }
+        },
+        "genesis_only_params": {
+          "total_supply": "1000",
+          "originator_supply": "160",
+          "top_reward_amount": "120",
+          "standard_reward_amount": "600",
+          "pre_programmed_sale_amount": "120",
+          "top_rewards": 3,
+          "supply_denom": "mcicoin"
+        }
+      }
+    }
+  }

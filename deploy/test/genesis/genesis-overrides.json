@@ -1,0 +1,37 @@
+{
+  "app_state": {
+    "gov": {
+      "params": {
+        "min_deposit": [
+          {
+            "denom": "icoin",
+            "amount": "10"
+          }
+        ]
+      }
+    },
+    "inference": {
+      "params": {
+        "epochParams": {
+          "epoch_length": "250",
+          "epoch_multiplier": "1",
+          "epoch_shift": "200",
+          "poc_stage_duration": "60",
+          "poc_exchange_duration": "5",
+          "poc_validation_delay": "5",
+          "poc_validation_duration": "20",
+          "default_unit_of_compute_price": "100"
+        }
+      },
+      "genesis_only_params": {
+        "total_supply": "1000",
+        "originator_supply": "160",
+        "top_reward_amount": "120",
+        "standard_reward_amount": "600",
+        "pre_programmed_sale_amount": "120",
+        "top_rewards": 3,
+        "supply_denom": "mcicoin"
+      }
+    }
+  }
+}
