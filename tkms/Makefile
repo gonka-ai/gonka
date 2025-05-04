@@ -24,7 +24,7 @@ build-with-import:
 		-t gcr.io/decentralized-ai/tmkms-softsign-with-import:$(VERSION) \
 		.
 
-release: push-keygen-image
+release: build-with-keygen
 
 docker-push:
 	@echo "pushing to Google Cloud Artifact Registry"
