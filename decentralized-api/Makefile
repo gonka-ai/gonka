@@ -74,8 +74,8 @@ build-docker:
 	$(eval DOCKER_TAG=gcr.io/decentralized-ai/api:$(VERSION))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
-	echo "Setting latest tag..."; \
-	docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
+		echo "Setting latest tag..."; \
+		docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
 	fi
 
 docker-push:

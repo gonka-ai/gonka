@@ -79,8 +79,8 @@ build-docker:
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
-     echo "Setting latest tag..."; \
-	 docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+    	echo "Setting latest tag..."; \
+		docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
 	fi
 
 
