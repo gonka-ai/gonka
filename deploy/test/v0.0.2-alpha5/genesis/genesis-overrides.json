@@ -21,13 +21,13 @@
     "inference": {
       "params": {
         "epochParams": {
-          "epoch_length": "1800",
+          "epoch_length": "200",
           "epoch_multiplier": "1",
-          "epoch_shift": "1700",
-          "poc_stage_duration": "60",
+          "epoch_shift": "170",
+          "poc_stage_duration": "30",
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
-          "poc_validation_duration": "20",
+          "poc_validation_duration": "10",
           "default_unit_of_compute_price": "100"
         }
       },
