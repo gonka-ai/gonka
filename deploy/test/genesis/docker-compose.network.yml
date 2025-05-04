@@ -43,7 +43,7 @@ services:
       - "9200:9200"
 
   inference:
-    image: ghcr.io/product-science/mlnode:0.1.0-alpha1
+    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
     restart: always
     command: >
       uvicorn api.app:app
