@@ -5,6 +5,7 @@ import (
 	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/hex"
+
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -30,7 +31,7 @@ func PubKeyToAddress(pubKeyHex string) (string, error) {
 	ripemdHash := ripemdHasher.Sum(nil)
 
 	// Step 3: Bech32 encode
-	prefix := "cosmos"
+	prefix := "gonka"
 	fiveBitData, err := bech32.ConvertBits(ripemdHash, 8, 5, true)
 	if err != nil {
 		logging.Error("Failed to convert bits", types.Participants, "err", err)
