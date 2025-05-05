@@ -53,6 +53,7 @@ services:
       --port=8080
     environment:
       - HF_HOME=/root/.cache
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
     volumes:
       - /mnt/shared/:/root/.cache
     ipc: host

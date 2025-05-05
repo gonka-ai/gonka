@@ -1,12 +1,19 @@
 [
   {
     "id": "node1",
-    "host": "inference-node",
+    "host": "inference",
     "inference_port": 5000,
     "poc_port": 8080,
     "max_concurrent": 500,
-    "models": [
-      "Qwen/QwQ-32B"
-    ]
+    "models": {
+      "Qwen/QwQ-32B": {
+        "args": [
+          "--quantization",
+          "fp8",
+          "--kv-cache-dtype",
+          "fp8"
+        ]
+      }
+    }
   }
 ]

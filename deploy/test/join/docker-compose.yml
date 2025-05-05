@@ -37,7 +37,7 @@ services:
     image: ghcr.io/product-science/api:0.1.0-alpha2
     volumes:
       - .inference:/root/.inference
-      - ./node-config.json:/root/node_config.json
+      - ${NODE_CONFIG:-./node-config.json}:/root/node_config.json
     depends_on:
       - node
     environment:
