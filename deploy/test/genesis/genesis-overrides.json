@@ -15,7 +15,8 @@
             "denom": "nicoin",
             "amount": "50_000_000"
           }
-        ]
+        ],
+        "quorum": "0.01000000000000000"
       }
     },
     "inference": {
