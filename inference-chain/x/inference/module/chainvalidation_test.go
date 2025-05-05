@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -240,8 +242,31 @@ func TestComputeNewWeights(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup
-			k, ctx := keepertest.InferenceKeeper(t)
+			// Setup with mocks
+			k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+			// Set up mock for GroupMembers if needed
+			if tt.epochGroupId > 1 {
+				// Create a mock response for GroupMembers
+				members := []*group.GroupMember{
+					{
+						Member: &group.Member{
+							Address:  "validator1",
+							Weight:   "10",
+							Metadata: "metadata1",
+						},
+					},
+				}
+				response := &group.QueryGroupMembersResponse{
+					Members: members,
+				}
+
+				// Set up the mock expectation
+				mocks.GroupKeeper.EXPECT().
+					GroupMembers(gomock.Any(), gomock.Any()).
+					Return(response, nil).
+					AnyTimes()
+			}
 
 			// Create AppModule with the keeper
 			am := inference.NewAppModule(nil, k, nil, nil, nil)
