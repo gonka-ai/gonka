@@ -18,7 +18,7 @@ OLD="$1"; NEW="$2"
 [ -r "$NEW" ] || { echo "Cannot read $NEW" >&2; exit 2; }
 
 BACKUP="${NEW}.bak.$(date +%s)"; cp "$NEW" "$BACKUP"
-echo "[info] Backup of $NEW saved to $BACKUP" >&2
+printf '[info] Backup of %s saved to %s\n' "$NEW" "$BACKUP" >&2
 
 # ───── EDIT BELOW ────────────────────────────────────────────────────────────
 MIGRATE_ENVS="\
@@ -50,25 +50,20 @@ get_value() {
   grep -E "^(export[[:space:]]+)?$var=" "$file" | head -n1 | cut -d= -f2-
 }
 
-escape() { printf '%s' "$1" | sed 's/[\\/&]/\\&/g'; }
-
-# Replace first occurrence of a variable (with or without export) keeping file order
+# Replace first occurrence of OLD with NEW=VAL, preserving order
 replace_line() {
-  oldvar="$1"; newvar="$2"; value="$3"; file="$4"
-  tmp="$(mktemp)"
-  awk -v OLD="$oldvar" -v NEW="$newvar" -v VAL="$(escape "$value")" '
+  oldvar="$1"; newvar="$2"; value="$3"; file="$4"; tmp="$(mktemp)"
+  awk -v OLD="$oldvar" -v NEW="$newvar" -v VAL="$value" '
     BEGIN{done=0; regex="^(export[[:space:]]+)?"OLD"="}
-    $0 ~ regex && !done {
-      print "export "NEW"="VAL; done=1; next
-    }
+    $0 ~ regex && !done {print "export "NEW"="VAL; done=1; next}
     {print}
   ' "$file" > "$tmp" && mv "$tmp" "$file"
 }
 
-# Update the value of an existing variable (same name)
+# Update the value of VAR=... in place
 update_value() {
   var="$1"; val="$2"; file="$3"; tmp="$(mktemp)"
-  awk -v V="$var" -v VAL="$(escape "$val")" '
+  awk -v V="$var" -v VAL="$val" '
     BEGIN{done=0; regex="^(export[[:space:]]+)?"V"="}
     $0 ~ regex && !done {print "export "V"="VAL; done=1; next}
     {print}
@@ -83,25 +78,24 @@ for VAR in $MIGRATE_ENVS; do VAR="$(trim "$VAR")"; [ -n "$VAR" ] || continue
 
   if [ "$TARGET" != "$VAR" ]; then
     if exists_var "$VAR" "$NEW"; then
-      # Replace old var line with new var keeping position
       replace_line "$VAR" "$TARGET" "$VAL" "$NEW"
-      echo "[info] Renamed $VAR → $TARGET (kept order)" >&2
+      printf '[info] Renamed %s → %s (kept order)\n' "$VAR" "$TARGET" >&2
     elif exists_var "$TARGET" "$NEW"; then
       update_value "$TARGET" "$VAL" "$NEW"
-      echo "[info] Updated existing $TARGET" >&2
+      printf '[info] Updated existing %s\n' "$TARGET" >&2
     else
       append_var "$TARGET" "$VAL" "$NEW"
-      echo "[info] Added $TARGET at end" >&2
+      printf '[info] Added %s at end\n' "$TARGET" >&2
     fi
   else
     if exists_var "$TARGET" "$NEW"; then
       update_value "$TARGET" "$VAL" "$NEW"
-      echo "[info] Updated $TARGET" >&2
+      printf '[info] Updated %s\n' "$TARGET" >&2
     else
       append_var "$TARGET" "$VAL" "$NEW"
-      echo "[info] Added $TARGET at end" >&2
+      printf '[info] Added %s at end\n' "$TARGET" >&2
     fi
   fi
 done
 
-echo "[info] Migration complete." >&2
+printf '[info] Migration complete.\n' >&2
