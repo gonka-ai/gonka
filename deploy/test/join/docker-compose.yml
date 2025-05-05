@@ -52,7 +52,7 @@ services:
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
     ports:
-      - "${PORT}:9000"
+      - "${API_PORT}:9000"
       - "9100:9100"
       - "9200:9200"
     restart: always

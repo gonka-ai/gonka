@@ -22,6 +22,7 @@ printf '[info] Backup of %s saved to %s\n' "$NEW" "$BACKUP" >&2
 
 # ───── EDIT BELOW ────────────────────────────────────────────────────────────
 MIGRATE_ENVS="\
+PORT
 KEY_NAME
 PUBLIC_URL
 P2P_EXTERNAL_ADDRESS
@@ -32,6 +33,7 @@ SEED_NODE_P2P_URL
 "
 
 RENAMES="\
+PORT=API_PORT
 "
 # ─────────────────────────────────────────────────────────────────────────────
 
