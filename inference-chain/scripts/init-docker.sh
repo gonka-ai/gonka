@@ -28,7 +28,7 @@ echo "SEEDS: $SEEDS"
 echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 APP_NAME="inferenced"
-CHAIN_ID="prod-sim"
+CHAIN_ID="gonka-testnet-1"
 COIN_DENOM="icoin"
 STATE_DIR="/root/.inference"
 
