@@ -23,22 +23,15 @@ echo "[info] Backup of $NEW saved to $BACKUP" >&2
 # ───── EDIT BELOW ────────────────────────────────────────────────────────────
 MIGRATE_ENVS="\
 KEY_NAME
-PORT
 PUBLIC_URL
 P2P_EXTERNAL_ADDRESS
 HF_HOME
 SEED_API_URL
 SEED_NODE_RPC_URL
 SEED_NODE_P2P_URL
-DAPI_API__POC_CALLBACK_URL
-DAPI_CHAIN_NODE__URL
-DAPI_CHAIN_NODE__P2P_URL
-RPC_SERVER_URL_1
-RPC_SERVER_URL_2
 "
 
 RENAMES="\
-PORT=API_PORT
 "
 # ─────────────────────────────────────────────────────────────────────────────
 
