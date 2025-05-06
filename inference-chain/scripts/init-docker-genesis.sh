@@ -15,7 +15,6 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-1"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
-
 # Init the chain:
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination

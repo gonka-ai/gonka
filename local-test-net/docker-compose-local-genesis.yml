@@ -8,7 +8,7 @@ services:
     environment:
       - KEY_NAME=${KEY_NAME}
       - IS_GENESIS=true
-      - INIT_TGBOT=true
+      - INIT_TGBOT=false
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
     networks:
       - chain-public
