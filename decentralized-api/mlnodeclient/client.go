@@ -5,6 +5,7 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/training"
 	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
@@ -140,9 +141,13 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 		return err
 	}
 
+	globalNodeId := training.GlobalNodeId{
+		Participant: participant,
+		LocalNodeId: nodeId,
+	}
 	trainEnv := TrainEnv{
 		TaskId:          taskId,
-		NodeId:          participant + "/" + nodeId,
+		NodeId:          globalNodeId.ToString(),
 		GlobalAddr:      masterNodeAddr,
 		GlobalPort:      defaultGlobalTrainingPort,
 		GlobalRank:      strconv.Itoa(rank),
