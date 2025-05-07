@@ -11,23 +11,27 @@ func TestTrainNodeActivity(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	taskId := uint64(1)
-	epoch := int32(1)
+	outerStep := int32(1)
 	participant := "participant1"
 	nodeId := "node1"
 	keeper.SetTrainingTaskNodeEpochActivity(ctx, &types.TrainingTaskNodeEpochActivity{
 		TaskId:      taskId,
 		Participant: participant,
 		NodeId:      nodeId,
-		Epoch:       epoch,
-		BlockTime:   111,
-		BlockHeight: 20,
-		Rank:        10,
+		Heartbeat: &types.TrainingTaskHeartbeat{
+			InnerStep:   0,
+			OuterStep:   outerStep,
+			Epoch:       0,
+			BlockTime:   111,
+			BlockHeight: 20,
+		},
+		Rank: 10,
 	})
 
-	activity, err := keeper.GetTrainingTaskNodeActivityAtEpoch(ctx, taskId, epoch)
+	activity, err := keeper.GetTrainingTaskNodeActivityAtEpoch(ctx, taskId, outerStep)
 	require.NoError(t, err)
 	require.Len(t, activity, 1)
 
-	_, found := keeper.GetTrainingTaskNodeEpochActivity(ctx, taskId, epoch, participant, nodeId)
+	_, found := keeper.GetTrainingTaskNodeEpochActivity(ctx, taskId, outerStep, participant, nodeId)
 	require.True(t, found)
 }
