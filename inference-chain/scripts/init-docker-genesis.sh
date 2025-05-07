@@ -15,7 +15,6 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-1"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
-
 # Init the chain:
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination
@@ -94,9 +93,11 @@ $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
 $APP_NAME genesis collect-gentxs
 
 # tgbot
+TG_ACC=gonka1va4hlpg929n6hhg4wc8hl0g9yp4nheqxm6k9wr
+
 if [ "$INIT_TGBOT" = "true" ]; then
   echo "Adding the tgbot account"
-  $APP_NAME genesis add-genesis-account cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
+  $APP_NAME genesis add-genesis-account $TG_ACC "100$MILLION_NATIVE" --keyring-backend $KEYRING_BACKEND
 fi
 
 modify_genesis_file 'genesis_overrides.json'
@@ -149,9 +150,7 @@ if [ "$INIT_TGBOT" = "true" ]; then
 
     echo "$TGBOT_PRIVATE_KEY_PASS" | inferenced keys import tgbot tgbot_private_key.json
 
-    inferenced tx bank send cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk \
-        cosmos154369peen2t4ve5pzkxkw2lx0fwyk5qeq4zymk 100nicoin --from tgbot --yes
-
+    inferenced tx bank send $TG_ACC $TG_ACC 100nicoin --from tgbot --yes
     echo "✅ tgbot account successfully initialized!"
 else
     echo "INIT_TGBOT is not set to true. Skipping tgbot initialization."

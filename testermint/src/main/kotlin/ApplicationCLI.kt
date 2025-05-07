@@ -121,8 +121,10 @@ data class ApplicationCLI(
 
     fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
         wrapLog("waitForMinimumBlock", false) {
-            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight },
-                "$waitingFor:block height $minBlockHeight")
+            waitForState(
+                { it.syncInfo.latestBlockHeight >= minBlockHeight },
+                "$waitingFor:block height $minBlockHeight"
+            )
         }
     }
 
@@ -255,7 +257,7 @@ data class ApplicationCLI(
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
         if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
-            val error = output.output.last().lines().last { it.isNotBlank() }
+            val error = output.output.last { it.isNotEmpty() }.lines().last { it.isNotBlank() }
             throw getExecException(error)
         }
         return output.output
@@ -351,7 +353,7 @@ data class ApplicationCLI(
         error("Transaction not processed after $maxWait attempts")
     }
 
-    fun getValidatorAddress():String {
+    fun getValidatorAddress(): String {
         return exec(listOf(config.execName, "comet", "show-address"))[0]
     }
 

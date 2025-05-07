@@ -1,0 +1,17 @@
+[
+  {
+    "id": "mlnode",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    }
+  }
+]
