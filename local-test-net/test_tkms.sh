@@ -19,4 +19,4 @@ export P2P_PORT=8201
 export TKMS_PORT=26658
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh local-tkms
+./launch_network_node.sh local
