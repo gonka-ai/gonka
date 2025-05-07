@@ -23,7 +23,7 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 		Status: &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_OK,
 			NodeId:      msg.Req.NodeId,
-			Epoch:       msg.Req.Epoch,
+			OuterStep:   msg.Req.OuterStep,
 			ActiveNodes: nil,
 			Rank:        -1,
 		},

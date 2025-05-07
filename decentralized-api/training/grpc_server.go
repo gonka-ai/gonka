@@ -173,8 +173,8 @@ func (s *Server) GetAliveNodes(ctx context.Context, req *inference.GetAliveNodes
 	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	queryReq := &types.QueryTrainingAliveNodesRequest{
 		Req: &types.GetAliveNodesRequest{
-			RunId: req.RunId,
-			Epoch: req.Epoch,
+			RunId:     req.RunId,
+			OuterStep: req.OuterStep,
 		},
 	}
 
@@ -215,7 +215,7 @@ func (s *Server) GetBarrierStatus(ctx context.Context, req *inference.GetBarrier
 		Req: &types.GetBarrierStatusRequest{
 			BarrierId: req.BarrierId,
 			RunId:     req.RunId,
-			Epoch:     req.Epoch,
+			OuterStep: req.OuterStep,
 		},
 	}
 	resp, err := queryClient.TrainingBarrier(ctx, queryReq)

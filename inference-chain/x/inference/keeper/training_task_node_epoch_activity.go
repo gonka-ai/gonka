@@ -12,7 +12,7 @@ func (k Keeper) GetTrainingTaskNodeActivityAtEpoch(ctx sdk.Context, taskId uint6
 }
 
 func (k Keeper) SetTrainingTaskNodeEpochActivity(ctx sdk.Context, activity *types.TrainingTaskNodeEpochActivity) {
-	SetValue(k, ctx, activity, []byte{}, types.TrainingTaskNodeEpochActivityKey(activity.TaskId, activity.Epoch, activity.Participant, activity.NodeId))
+	SetValue(k, ctx, activity, []byte{}, types.TrainingTaskNodeEpochActivityKey(activity.TaskId, activity.Heartbeat.OuterStep, activity.Participant, activity.NodeId))
 }
 
 func (k Keeper) GetTrainingTaskNodeEpochActivity(ctx sdk.Context, taskId uint64, epoch int32, participant string, nodeId string) (*types.TrainingTaskNodeEpochActivity, bool) {

@@ -21,7 +21,7 @@ func (k Keeper) TrainingAliveNodes(goCtx context.Context, req *types.QueryTraini
 	runStore := NewKeeperTrainingRunStore(k)
 	runManager := training.NewRunManager(req.Req.RunId, runStore, k)
 
-	nodeIds, err := runManager.GetEpochActiveNodes(goCtx, req.Req.Epoch, training.NewBlockInfo(ctx))
+	nodeIds, err := runManager.GetEpochActiveNodes(goCtx, req.Req.OuterStep, training.NewBlockInfo(ctx))
 	if err != nil {
 		k.LogError("GetEpochActiveNodes failure", types.Training, "error", err)
 		return nil, status.Error(codes.Internal, err.Error())

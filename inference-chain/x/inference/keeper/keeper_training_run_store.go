@@ -52,12 +52,12 @@ func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.Tr
 		return nil
 	}
 
-	epochId := state[0].Epoch
+	outerStep := state[0].Heartbeat.OuterStep
 	runId := state[0].TaskId
 
 	for _, activity := range state {
-		if activity.Epoch != epochId {
-			return fmt.Errorf("invalid epoch %d, expected %d", activity.Epoch, epochId)
+		if activity.Heartbeat.OuterStep != outerStep {
+			return fmt.Errorf("invalid OuterStep %d, expected %d", activity.Heartbeat.OuterStep, outerStep)
 		}
 		if activity.TaskId != runId {
 			return fmt.Errorf("invalid run id %d, expected %d", activity.TaskId, runId)

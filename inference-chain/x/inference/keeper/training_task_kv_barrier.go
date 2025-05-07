@@ -24,7 +24,7 @@ func (k Keeper) SetTrainingBarrier(ctx sdk.Context, barrier *types.TrainingTaskB
 		TaskId:      barrier.TaskId,
 		Participant: barrier.Participant,
 		NodeId:      barrier.NodeId,
-		Epoch:       barrier.Epoch,
+		OuterStep:   barrier.OuterStep,
 	}
 	SetValue(k, ctx, barrier, []byte{}, key.ToByteKey())
 }

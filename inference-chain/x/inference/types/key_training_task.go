@@ -49,32 +49,32 @@ func TrainingTaskKVParticipantRecordsKey(taskId uint64, participant string) []by
 	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s", taskId, participant))
 }
 
-func TrainingTaskNodeEpochActivityKey(taskId uint64, epoch int32, participant string, nodeId string) []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d/%s/%s", taskId, epoch, participant, nodeId))
+func TrainingTaskNodeEpochActivityKey(taskId uint64, outerStep int32, participant string, nodeId string) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d/%s/%s", taskId, outerStep, participant, nodeId))
 }
 
-func TrainingTaskNodeEpochActivityEpochPrefix(taskId uint64, epoch int32) []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d", taskId, epoch))
+func TrainingTaskNodeEpochActivityEpochPrefix(taskId uint64, outerStep int32) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/heartbeat/%d", taskId, outerStep))
 }
 
 type TrainingTaskBarrierKey struct {
 	TaskId      uint64
 	BarrierId   string
-	Epoch       int32
+	OuterStep   int32
 	Participant string
 	NodeId      string
 }
 
 func (b TrainingTaskBarrierKey) ToByteKey() []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d/%s/%s/value", b.TaskId, b.BarrierId, b.Epoch, b.Participant, b.NodeId))
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d/%s/%s/value", b.TaskId, b.BarrierId, b.OuterStep, b.Participant, b.NodeId))
 }
 
 type TrainingTaskBarrierEpochKey struct {
 	TaskId    uint64
 	BarrierId string
-	Epoch     int32
+	OuterStep int32
 }
 
 func (b TrainingTaskBarrierEpochKey) ToByteKey() []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d", b.TaskId, b.BarrierId, b.Epoch))
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/barrier/%s/%d", b.TaskId, b.BarrierId, b.OuterStep))
 }

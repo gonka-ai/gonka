@@ -31,7 +31,7 @@ message TrainingTaskBarrier {
   uint64 task_id = 2;
   string participant = 3;
   string node_id = 4;
-  int32 epoch = 5;
+  int32 outer_step = 5;
   int64 block_height = 6;
   int64 block_time = 7;
 }

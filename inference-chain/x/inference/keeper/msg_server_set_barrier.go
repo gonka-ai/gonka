@@ -19,7 +19,7 @@ func (k msgServer) SetBarrier(goCtx context.Context, msg *types.MsgSetBarrier) (
 		TaskId:      msg.Req.RunId,
 		Participant: msg.Creator,
 		NodeId:      msg.Req.NodeId,
-		Epoch:       msg.Req.Epoch,
+		OuterStep:   msg.Req.OuterStep,
 		BlockHeight: ctx.BlockHeight(),
 		BlockTime:   ctx.BlockTime().UnixMilli(),
 	}

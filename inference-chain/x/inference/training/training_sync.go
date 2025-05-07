@@ -97,7 +97,7 @@ type RunStore interface {
 type RunMembershipService interface {
 	Join(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) error
 	JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error)
-	Heartbeat(ctx context.Context, participant string, nodeId string, epoch int32, block BlockInfo) error
+	Heartbeat(ctx context.Context, req *types.HeartbeatRequest, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]NodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
 	FinishIfNeeded(ctx context.Context, block BlockInfo) (bool, error)
@@ -216,7 +216,13 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, outerStep int32, bloc
 		}
 	}
 
-	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, outerStep)
+	progress := taskProgress{
+		InnerStep: 0,
+		OuterStep: outerStep,
+		Epoch:     0,
+	}
+
+	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, progress)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
@@ -229,17 +235,23 @@ func updateHeartbeat(a *types.TrainingTaskNodeEpochActivity, block BlockInfo) {
 	a.Heartbeat.BlockHeight = block.timestamp.Unix()
 }
 
-func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, outerStep int32) types.TrainingTaskNodeEpochActivity {
-	activity := rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
+type taskProgress struct {
+	InnerStep int32
+	OuterStep int32
+	Epoch     int32
+}
+
+func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, taskProgress taskProgress) types.TrainingTaskNodeEpochActivity {
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, taskProgress.OuterStep, participant, nodeId)
 	if activity == nil {
 		activity = &types.TrainingTaskNodeEpochActivity{
 			TaskId:      rm.runId,
 			Participant: participant,
 			NodeId:      nodeId,
 			Heartbeat: &types.TrainingTaskHeartbeat{
-				InnerStep:   0,
-				OuterStep:   outerStep,
-				Epoch:       0,
+				InnerStep:   taskProgress.InnerStep,
+				OuterStep:   taskProgress.OuterStep,
+				Epoch:       taskProgress.Epoch,
 				BlockHeight: 0,
 				BlockTime:   0,
 			},
@@ -308,8 +320,13 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, outerStep i
 	}
 }
 
-func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, nodeId string, epoch int32, block BlockInfo) error {
-	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
+func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, req *types.HeartbeatRequest, block BlockInfo) error {
+	progress := taskProgress{
+		InnerStep: req.InnerStep,
+		OuterStep: req.OuterStep,
+		Epoch:     req.Epoch,
+	}
+	activity := rm.getOrCreateActivityEntry(ctx, participant, req.NodeId, progress)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
@@ -446,14 +463,14 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 	key := types.TrainingTaskBarrierEpochKey{
 		BarrierId: req.BarrierId,
 		TaskId:    rm.runId,
-		Epoch:     req.OuterStep,
+		OuterStep: req.OuterStep,
 	}
 	barriers, err := rm.store.GetBarrierEpochStatus(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check which alive nodes have a barrier entry
+	// Check which live nodes have a barrier entry
 	barrierMap := make(map[NodeId]bool)
 	for _, barrier := range barriers {
 		nodeId := NodeId{
