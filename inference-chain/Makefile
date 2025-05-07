@@ -79,8 +79,8 @@ build-docker:
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
-     echo "Setting latest tag..."; \
-	 docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+    	echo "Setting latest tag..."; \
+		docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
 	fi
 
 
@@ -88,14 +88,18 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
+	@echo "pushing to Google Cloud Artifact Registry"
 	@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
 	@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) ghcr.io/product-science/inferenced:$(VERSION)
+	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/inferenced:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
 		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+		@echo "Pushing latest tag to Google Cloud Artifact Registry"; \
 		@docker push gcr.io/decentralized-ai/inferenced:latest; \
+		@echo "Pushing latest tag to GitHub Container Registry"; \
 		@docker tag ghcr.io/product-science/inferenced:$(VERSION) ghcr.io/product-science/inferenced:latest; \
 		@docker push ghcr.io/product-science/inferenced:latest; \
 	fi
