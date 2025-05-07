@@ -91,13 +91,11 @@ func (m *TrainingTaskKVRecord) GetValue() string {
 }
 
 type TrainingTaskNodeEpochActivity struct {
-	TaskId      uint64 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Participant string `protobuf:"bytes,2,opt,name=participant,proto3" json:"participant,omitempty"`
-	NodeId      string `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Epoch       int32  `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	BlockHeight int64  `protobuf:"varint,5,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
-	BlockTime   int64  `protobuf:"varint,6,opt,name=block_time,json=blockTime,proto3" json:"block_time,omitempty"`
-	Rank        int32  `protobuf:"varint,7,opt,name=rank,proto3" json:"rank,omitempty"`
+	TaskId      uint64                 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Participant string                 `protobuf:"bytes,2,opt,name=participant,proto3" json:"participant,omitempty"`
+	NodeId      string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Rank        int32                  `protobuf:"varint,4,opt,name=rank,proto3" json:"rank,omitempty"`
+	Heartbeat   *TrainingTaskHeartbeat `protobuf:"bytes,5,opt,name=heartbeat,proto3" json:"heartbeat,omitempty"`
 }
 
 func (m *TrainingTaskNodeEpochActivity) Reset()         { *m = TrainingTaskNodeEpochActivity{} }
@@ -154,30 +152,92 @@ func (m *TrainingTaskNodeEpochActivity) GetNodeId() string {
 	return ""
 }
 
-func (m *TrainingTaskNodeEpochActivity) GetEpoch() int32 {
+func (m *TrainingTaskNodeEpochActivity) GetRank() int32 {
+	if m != nil {
+		return m.Rank
+	}
+	return 0
+}
+
+func (m *TrainingTaskNodeEpochActivity) GetHeartbeat() *TrainingTaskHeartbeat {
+	if m != nil {
+		return m.Heartbeat
+	}
+	return nil
+}
+
+type TrainingTaskHeartbeat struct {
+	InnerStep   int32 `protobuf:"varint,1,opt,name=inner_step,json=innerStep,proto3" json:"inner_step,omitempty"`
+	OuterStep   int32 `protobuf:"varint,2,opt,name=outer_step,json=outerStep,proto3" json:"outer_step,omitempty"`
+	Epoch       int32 `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	BlockHeight int64 `protobuf:"varint,4,opt,name=block_height,json=blockHeight,proto3" json:"block_height,omitempty"`
+	BlockTime   int64 `protobuf:"varint,5,opt,name=block_time,json=blockTime,proto3" json:"block_time,omitempty"`
+}
+
+func (m *TrainingTaskHeartbeat) Reset()         { *m = TrainingTaskHeartbeat{} }
+func (m *TrainingTaskHeartbeat) String() string { return proto.CompactTextString(m) }
+func (*TrainingTaskHeartbeat) ProtoMessage()    {}
+func (*TrainingTaskHeartbeat) Descriptor() ([]byte, []int) {
+	return fileDescriptor_0f5f05a6f52459f1, []int{2}
+}
+func (m *TrainingTaskHeartbeat) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *TrainingTaskHeartbeat) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_TrainingTaskHeartbeat.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *TrainingTaskHeartbeat) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_TrainingTaskHeartbeat.Merge(m, src)
+}
+func (m *TrainingTaskHeartbeat) XXX_Size() int {
+	return m.Size()
+}
+func (m *TrainingTaskHeartbeat) XXX_DiscardUnknown() {
+	xxx_messageInfo_TrainingTaskHeartbeat.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_TrainingTaskHeartbeat proto.InternalMessageInfo
+
+func (m *TrainingTaskHeartbeat) GetInnerStep() int32 {
+	if m != nil {
+		return m.InnerStep
+	}
+	return 0
+}
+
+func (m *TrainingTaskHeartbeat) GetOuterStep() int32 {
+	if m != nil {
+		return m.OuterStep
+	}
+	return 0
+}
+
+func (m *TrainingTaskHeartbeat) GetEpoch() int32 {
 	if m != nil {
 		return m.Epoch
 	}
 	return 0
 }
 
-func (m *TrainingTaskNodeEpochActivity) GetBlockHeight() int64 {
+func (m *TrainingTaskHeartbeat) GetBlockHeight() int64 {
 	if m != nil {
 		return m.BlockHeight
 	}
 	return 0
 }
 
-func (m *TrainingTaskNodeEpochActivity) GetBlockTime() int64 {
+func (m *TrainingTaskHeartbeat) GetBlockTime() int64 {
 	if m != nil {
 		return m.BlockTime
-	}
-	return 0
-}
-
-func (m *TrainingTaskNodeEpochActivity) GetRank() int32 {
-	if m != nil {
-		return m.Rank
 	}
 	return 0
 }
@@ -196,7 +256,7 @@ func (m *TrainingTaskBarrier) Reset()         { *m = TrainingTaskBarrier{} }
 func (m *TrainingTaskBarrier) String() string { return proto.CompactTextString(m) }
 func (*TrainingTaskBarrier) ProtoMessage()    {}
 func (*TrainingTaskBarrier) Descriptor() ([]byte, []int) {
-	return fileDescriptor_0f5f05a6f52459f1, []int{2}
+	return fileDescriptor_0f5f05a6f52459f1, []int{3}
 }
 func (m *TrainingTaskBarrier) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -277,6 +337,7 @@ func (m *TrainingTaskBarrier) GetBlockTime() int64 {
 func init() {
 	proto.RegisterType((*TrainingTaskKVRecord)(nil), "inference.inference.TrainingTaskKVRecord")
 	proto.RegisterType((*TrainingTaskNodeEpochActivity)(nil), "inference.inference.TrainingTaskNodeEpochActivity")
+	proto.RegisterType((*TrainingTaskHeartbeat)(nil), "inference.inference.TrainingTaskHeartbeat")
 	proto.RegisterType((*TrainingTaskBarrier)(nil), "inference.inference.TrainingTaskBarrier")
 }
 
@@ -285,31 +346,35 @@ func init() {
 }
 
 var fileDescriptor_0f5f05a6f52459f1 = []byte{
-	// 377 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x92, 0xcf, 0x6a, 0xf2, 0x40,
-	0x14, 0xc5, 0x1d, 0xf3, 0x8f, 0x8c, 0xdf, 0xe2, 0x63, 0x14, 0xcc, 0xc6, 0x90, 0xba, 0x72, 0x51,
-	0x74, 0x51, 0xfa, 0x00, 0x15, 0x0a, 0x95, 0x42, 0x0b, 0x41, 0xba, 0xe8, 0x46, 0xc6, 0xc9, 0xd4,
-	0x0c, 0xd1, 0x99, 0x30, 0x19, 0xa5, 0x79, 0x8b, 0x3e, 0x56, 0x97, 0x2e, 0xbb, 0xab, 0xe8, 0x8b,
-	0x94, 0x4c, 0xac, 0x4d, 0xa5, 0xd8, 0x45, 0x77, 0xe7, 0x9e, 0xdc, 0x3b, 0xf7, 0xfc, 0xc2, 0x85,
-	0xe7, 0x8c, 0x3f, 0x51, 0x49, 0x39, 0xa1, 0x83, 0x2f, 0xa5, 0x24, 0x66, 0x9c, 0xf1, 0xd9, 0x44,
-	0xe1, 0x2c, 0x99, 0x64, 0x39, 0x27, 0xfd, 0x54, 0x0a, 0x25, 0x50, 0xf3, 0xd0, 0xd3, 0x3f, 0xa8,
-	0x6e, 0x0e, 0x5b, 0xe3, 0xfd, 0xc0, 0x18, 0x67, 0xc9, 0xed, 0x43, 0x48, 0x89, 0x90, 0x11, 0x6a,
-	0x43, 0x47, 0xcf, 0xb3, 0xc8, 0x03, 0x01, 0xe8, 0x99, 0xa1, 0x5d, 0x94, 0xa3, 0x08, 0x05, 0xb0,
-	0x91, 0x62, 0xa9, 0x18, 0x61, 0x29, 0xe6, 0xca, 0xab, 0x07, 0xa0, 0xe7, 0x86, 0x55, 0x0b, 0xfd,
-	0x87, 0x46, 0x42, 0x73, 0xcf, 0xd0, 0x5f, 0x0a, 0x89, 0x5a, 0xd0, 0x5a, 0xe1, 0xf9, 0x92, 0x7a,
-	0xa6, 0xf6, 0xca, 0xa2, 0xfb, 0x0e, 0x60, 0xa7, 0xba, 0xfb, 0x4e, 0x44, 0xf4, 0x3a, 0x15, 0x24,
-	0xbe, 0x22, 0x8a, 0xad, 0x98, 0xca, 0xff, 0x12, 0xa2, 0x0d, 0x1d, 0x2e, 0x22, 0x5a, 0x8c, 0x96,
-	0x41, 0xec, 0xa2, 0x1c, 0x45, 0x45, 0x16, 0x5a, 0x2c, 0xd1, 0x59, 0xac, 0xb0, 0x2c, 0xd0, 0x19,
-	0xfc, 0x37, 0x9d, 0x0b, 0x92, 0x4c, 0x62, 0xca, 0x66, 0xb1, 0xf2, 0xac, 0x00, 0xf4, 0x8c, 0xb0,
-	0xa1, 0xbd, 0x1b, 0x6d, 0xa1, 0x0e, 0x84, 0x65, 0x8b, 0x62, 0x0b, 0xea, 0xd9, 0xba, 0xc1, 0xd5,
-	0xce, 0x98, 0x2d, 0x28, 0x42, 0xd0, 0x94, 0x98, 0x27, 0x9e, 0xa3, 0x9f, 0xd5, 0xba, 0xbb, 0x01,
-	0xb0, 0x59, 0x25, 0x1c, 0x62, 0x29, 0x19, 0x95, 0xfa, 0xa9, 0x52, 0x7e, 0xa2, 0xb9, 0xa1, 0xbb,
-	0x77, 0x46, 0xdf, 0xfe, 0x7d, 0xfd, 0x14, 0xb6, 0x71, 0x12, 0xdb, 0xfc, 0x19, 0xdb, 0x3a, 0x85,
-	0x6d, 0xff, 0x86, 0xed, 0x1c, 0x61, 0x0f, 0xef, 0x5f, 0xb7, 0x3e, 0x58, 0x6f, 0x7d, 0xb0, 0xd9,
-	0xfa, 0xe0, 0x65, 0xe7, 0xd7, 0xd6, 0x3b, 0xbf, 0xf6, 0xb6, 0xf3, 0x6b, 0x8f, 0x97, 0x33, 0xa6,
-	0xe2, 0xe5, 0xb4, 0x4f, 0xc4, 0x62, 0x90, 0x4a, 0x11, 0x2d, 0x89, 0xca, 0x08, 0x3b, 0x3a, 0xd6,
-	0xe7, 0xea, 0xe1, 0xe6, 0x29, 0xcd, 0xa6, 0xb6, 0x3e, 0xd6, 0x8b, 0x8f, 0x00, 0x00, 0x00, 0xff,
-	0xff, 0x15, 0xf6, 0x07, 0x18, 0xdc, 0x02, 0x00, 0x00,
+	// 446 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x53, 0xc1, 0x6a, 0xdb, 0x40,
+	0x10, 0xf5, 0x5a, 0x96, 0x8d, 0xd6, 0x3d, 0x94, 0x8d, 0x4b, 0x74, 0x89, 0x70, 0x7d, 0x32, 0xa5,
+	0x28, 0xd0, 0xd2, 0x0f, 0x68, 0xa0, 0x60, 0x53, 0x68, 0x61, 0x6b, 0x7a, 0xe8, 0xc5, 0xac, 0x57,
+	0x53, 0x6b, 0x51, 0xbc, 0x2b, 0x56, 0xab, 0x50, 0xfd, 0x45, 0x7f, 0xa4, 0xff, 0xd1, 0x63, 0x7a,
+	0xeb, 0x31, 0xd8, 0x3f, 0x52, 0x34, 0x8a, 0x1d, 0x25, 0x04, 0xf7, 0x90, 0xdb, 0xcc, 0x9b, 0x79,
+	0xd2, 0x7b, 0x33, 0x3b, 0xf4, 0xb5, 0xd2, 0xdf, 0xc1, 0x82, 0x96, 0x70, 0x7e, 0x17, 0x39, 0x2b,
+	0x94, 0x56, 0x7a, 0xbd, 0x74, 0xa2, 0xc8, 0x96, 0x45, 0xa5, 0x65, 0x9c, 0x5b, 0xe3, 0x0c, 0x3b,
+	0x39, 0xf4, 0xc4, 0x87, 0x68, 0x52, 0xd1, 0xd1, 0xe2, 0x96, 0xb0, 0x10, 0x45, 0xf6, 0xf1, 0x2b,
+	0x07, 0x69, 0x6c, 0xc2, 0x4e, 0xe9, 0x00, 0xf9, 0x2a, 0x09, 0xc9, 0x98, 0x4c, 0x7b, 0xbc, 0x5f,
+	0xa7, 0xf3, 0x84, 0x8d, 0xe9, 0x30, 0x17, 0xd6, 0x29, 0xa9, 0x72, 0xa1, 0x5d, 0xd8, 0x1d, 0x93,
+	0x69, 0xc0, 0xdb, 0x10, 0x7b, 0x4e, 0xbd, 0x0c, 0xaa, 0xd0, 0xc3, 0x4a, 0x1d, 0xb2, 0x11, 0xf5,
+	0xaf, 0xc4, 0x65, 0x09, 0x61, 0x0f, 0xb1, 0x26, 0x99, 0xfc, 0x21, 0xf4, 0xac, 0xfd, 0xef, 0x4f,
+	0x26, 0x81, 0x0f, 0xb9, 0x91, 0xe9, 0x7b, 0xe9, 0xd4, 0x95, 0x72, 0xd5, 0x53, 0x44, 0x9c, 0xd2,
+	0x81, 0x36, 0x09, 0xd4, 0xd4, 0x46, 0x48, 0xbf, 0x4e, 0xe7, 0x09, 0x63, 0xb4, 0x67, 0x85, 0xce,
+	0x50, 0x8a, 0xcf, 0x31, 0x66, 0x33, 0x1a, 0xa4, 0x20, 0xac, 0x5b, 0x81, 0x70, 0xa1, 0x3f, 0x26,
+	0xd3, 0xe1, 0x9b, 0x57, 0xf1, 0x23, 0xd3, 0x8a, 0xdb, 0x72, 0x67, 0x7b, 0x06, 0xbf, 0x23, 0x4f,
+	0x7e, 0x11, 0xfa, 0xe2, 0xd1, 0x26, 0x76, 0x46, 0xa9, 0xd2, 0x1a, 0xec, 0xb2, 0x70, 0x90, 0xa3,
+	0x1d, 0x9f, 0x07, 0x88, 0x7c, 0x71, 0x90, 0xd7, 0x65, 0x53, 0xba, 0x7d, 0xb9, 0xdb, 0x94, 0x11,
+	0xc1, 0xf2, 0x88, 0xfa, 0x50, 0x8f, 0x06, 0xcd, 0xf8, 0xbc, 0x49, 0xd8, 0x4b, 0xfa, 0x6c, 0x75,
+	0x69, 0x64, 0xb6, 0x4c, 0x41, 0xad, 0x53, 0x87, 0x9e, 0x3c, 0x3e, 0x44, 0x6c, 0x86, 0x50, 0xfd,
+	0xdd, 0xa6, 0xc5, 0xa9, 0x0d, 0xa0, 0x37, 0x8f, 0x07, 0x88, 0x2c, 0xd4, 0x06, 0x26, 0x37, 0x84,
+	0x9e, 0xb4, 0xf5, 0x5e, 0x08, 0x6b, 0x15, 0x58, 0xa4, 0x35, 0xe1, 0x7e, 0xf8, 0x01, 0x0f, 0x6e,
+	0x91, 0xf9, 0xbd, 0xd7, 0xd1, 0x3d, 0xb6, 0x18, 0xef, 0xe8, 0x62, 0x7a, 0xf7, 0x16, 0x73, 0xb0,
+	0xe8, 0x1f, 0xb3, 0xd8, 0xff, 0x9f, 0xc5, 0xc1, 0x03, 0x8b, 0x17, 0x9f, 0x7f, 0x6f, 0x23, 0x72,
+	0xbd, 0x8d, 0xc8, 0xcd, 0x36, 0x22, 0x3f, 0x77, 0x51, 0xe7, 0x7a, 0x17, 0x75, 0xfe, 0xee, 0xa2,
+	0xce, 0xb7, 0x77, 0x6b, 0xe5, 0xd2, 0x72, 0x15, 0x4b, 0xb3, 0x39, 0xcf, 0xad, 0x49, 0x4a, 0xe9,
+	0x0a, 0xa9, 0x1e, 0x9c, 0xd3, 0x8f, 0xf6, 0x69, 0x55, 0x39, 0x14, 0xab, 0x3e, 0x9e, 0xd3, 0xdb,
+	0x7f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x08, 0xc9, 0x67, 0xe8, 0x7e, 0x03, 0x00, 0x00,
 }
 
 func (m *TrainingTaskKVRecord) Marshal() (dAtA []byte, err error) {
@@ -381,23 +446,20 @@ func (m *TrainingTaskNodeEpochActivity) MarshalToSizedBuffer(dAtA []byte) (int, 
 	_ = i
 	var l int
 	_ = l
+	if m.Heartbeat != nil {
+		{
+			size, err := m.Heartbeat.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintTrainingTaskSync(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x2a
+	}
 	if m.Rank != 0 {
 		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.Rank))
-		i--
-		dAtA[i] = 0x38
-	}
-	if m.BlockTime != 0 {
-		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.BlockTime))
-		i--
-		dAtA[i] = 0x30
-	}
-	if m.BlockHeight != 0 {
-		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.BlockHeight))
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.Epoch != 0 {
-		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.Epoch))
 		i--
 		dAtA[i] = 0x20
 	}
@@ -417,6 +479,54 @@ func (m *TrainingTaskNodeEpochActivity) MarshalToSizedBuffer(dAtA []byte) (int, 
 	}
 	if m.TaskId != 0 {
 		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.TaskId))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *TrainingTaskHeartbeat) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *TrainingTaskHeartbeat) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *TrainingTaskHeartbeat) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.BlockTime != 0 {
+		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.BlockTime))
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.BlockHeight != 0 {
+		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.BlockHeight))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.Epoch != 0 {
+		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.Epoch))
+		i--
+		dAtA[i] = 0x18
+	}
+	if m.OuterStep != 0 {
+		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.OuterStep))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.InnerStep != 0 {
+		i = encodeVarintTrainingTaskSync(dAtA, i, uint64(m.InnerStep))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -539,6 +649,28 @@ func (m *TrainingTaskNodeEpochActivity) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovTrainingTaskSync(uint64(l))
 	}
+	if m.Rank != 0 {
+		n += 1 + sovTrainingTaskSync(uint64(m.Rank))
+	}
+	if m.Heartbeat != nil {
+		l = m.Heartbeat.Size()
+		n += 1 + l + sovTrainingTaskSync(uint64(l))
+	}
+	return n
+}
+
+func (m *TrainingTaskHeartbeat) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.InnerStep != 0 {
+		n += 1 + sovTrainingTaskSync(uint64(m.InnerStep))
+	}
+	if m.OuterStep != 0 {
+		n += 1 + sovTrainingTaskSync(uint64(m.OuterStep))
+	}
 	if m.Epoch != 0 {
 		n += 1 + sovTrainingTaskSync(uint64(m.Epoch))
 	}
@@ -547,9 +679,6 @@ func (m *TrainingTaskNodeEpochActivity) Size() (n int) {
 	}
 	if m.BlockTime != 0 {
 		n += 1 + sovTrainingTaskSync(uint64(m.BlockTime))
-	}
-	if m.Rank != 0 {
-		n += 1 + sovTrainingTaskSync(uint64(m.Rank))
 	}
 	return n
 }
@@ -872,6 +1001,149 @@ func (m *TrainingTaskNodeEpochActivity) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Rank", wireType)
+			}
+			m.Rank = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTaskSync
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Rank |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Heartbeat", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTaskSync
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTrainingTaskSync
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTrainingTaskSync
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Heartbeat == nil {
+				m.Heartbeat = &TrainingTaskHeartbeat{}
+			}
+			if err := m.Heartbeat.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTrainingTaskSync(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTrainingTaskSync
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *TrainingTaskHeartbeat) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTrainingTaskSync
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: TrainingTaskHeartbeat: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: TrainingTaskHeartbeat: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field InnerStep", wireType)
+			}
+			m.InnerStep = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTaskSync
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.InnerStep |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OuterStep", wireType)
+			}
+			m.OuterStep = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTrainingTaskSync
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.OuterStep |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Epoch", wireType)
 			}
 			m.Epoch = 0
@@ -889,7 +1161,7 @@ func (m *TrainingTaskNodeEpochActivity) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 5:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field BlockHeight", wireType)
 			}
@@ -908,7 +1180,7 @@ func (m *TrainingTaskNodeEpochActivity) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 6:
+		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field BlockTime", wireType)
 			}
@@ -923,25 +1195,6 @@ func (m *TrainingTaskNodeEpochActivity) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.BlockTime |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Rank", wireType)
-			}
-			m.Rank = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowTrainingTaskSync
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Rank |= int32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
