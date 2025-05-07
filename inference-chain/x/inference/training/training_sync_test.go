@@ -72,7 +72,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.Equal(t, participant1, epochState1[0].Participant)
 	require.Equal(t, node1, epochState1[0].NodeId)
 	require.Equal(t, int32(-1), epochState1[0].Rank) // Rank not assigned yet
-	require.Equal(t, block1.Height(), epochState1[0].BlockHeight)
+	require.Equal(t, block1.Height(), epochState1[0].Heartbeat.BlockHeight)
 
 	// --- Participant 2 joins ---
 	blockHeight += 1

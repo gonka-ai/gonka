@@ -232,7 +232,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, outerStep int32, bloc
 
 func updateHeartbeat(a *types.TrainingTaskNodeEpochActivity, block BlockInfo) {
 	a.Heartbeat.BlockHeight = block.height
-	a.Heartbeat.BlockHeight = block.timestamp.Unix()
+	a.Heartbeat.BlockTime = block.timestamp.Unix()
 }
 
 type taskProgress struct {
