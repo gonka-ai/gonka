@@ -17,13 +17,14 @@ import (
 	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 func main() {

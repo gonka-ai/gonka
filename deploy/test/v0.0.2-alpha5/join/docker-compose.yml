@@ -1,0 +1,66 @@
+services:
+  node:
+    container_name: node
+    image: ghcr.io/product-science/inferenced:0.0.2-alpha5
+    restart: always
+    command: ["sh", "./init-docker.sh"]
+    volumes:
+      - .inference:/root/.inference
+    environment:
+      - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
+      - SEED_NODE_P2P_URL=${SEED_NODE_P2P_URL}
+      - TRUSTED_BLOCK_PERIOD=${TRUSTED_BLOCK_PERIOD:-2000}
+      - SNAPSHOT_INTERVAL=1000
+      - SNAPSHOT_KEEP_RECENT=5
+      - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
+      - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
+      - KEY_NAME=${KEY_NAME}
+      - P2P_EXTERNAL_ADDRESS=${P2P_EXTERNAL_ADDRESS}
+      - CONFIG_p2p__allow_duplicate_ip=true
+      - CONFIG_p2p__handshake_timeout=30s
+      - CONFIG_p2p__dial_timeout=30s
+    ports:
+      - "5000:26656" #p2p
+      - "26657:26657" #rpc
+  api:
+    container_name: api
+    image: ghcr.io/product-science/api:0.0.2-alpha5
+    restart: always
+    volumes:
+      - .inference:/root/.inference
+      - ./node-config.json:/root/node_config.json
+    depends_on:
+      - node
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - DAPI_API__POC_CALLBACK_URL=${DAPI_API__POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
+      - DAPI_CHAIN_NODE__URL=${DAPI_CHAIN_NODE__URL}
+      - DAPI_CHAIN_NODE__P2P_URL=${DAPI_CHAIN_NODE__P2P_URL}
+      - NODE_CONFIG_PATH=/root/node_config.json
+    ports:
+      - "${PORT:-8000}:8080"
+
+  inference:
+    image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+    restart: always
+    volumes:
+      - ${HF_HOME:-${HOME}/cache}:/root/.cache
+    environment:
+      - HF_HOME=/root/.cache
+      - HF_HUB_ENABLE_HF_TRANSFER=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ipc: host
+    command: >
+      uvicorn api.app:app
+      --host=0.0.0.0
+      --port=8080
+  
