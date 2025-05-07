@@ -5,6 +5,7 @@ import (
 	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/hex"
+
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/productscience/inference/x/inference/types"
