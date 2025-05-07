@@ -52,10 +52,10 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 
 	// --- Participant 1 joins ---
 	participant1 := "participantA"
-	node1 := "node1"
+	node1 := training.GlobalNodeId{Participant: participant1, LocalNodeId: "node1"}
 	startingEpoch := int32(-1)
 
-	err := rm.Join(baseCtx, training.GlobalNodeId{Participant: participant1, LocalNodeId: node1}, startingEpoch, block1)
+	err := rm.Join(baseCtx, node1, startingEpoch, block1)
 	require.NoError(t, err)
 
 	// Check RunState using standard context for store access
@@ -70,7 +70,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, epochState1, 1)
 	require.Equal(t, participant1, epochState1[0].Participant)
-	require.Equal(t, node1, epochState1[0].NodeId)
+	require.Equal(t, node1, training.GlobalNodeId{Participant: epochState1[0].Participant, LocalNodeId: epochState1[0].NodeId})
 	require.Equal(t, int32(-1), epochState1[0].Rank) // Rank not assigned yet
 	require.Equal(t, block1.Height(), epochState1[0].Heartbeat.BlockHeight)
 
@@ -79,10 +79,10 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	blockTime = blockTime.Add(5 * time.Second)
 	block2 := createBlockInfo(blockHeight, blockTime)
 	participant2 := "participantB"
-	node2 := "node2"
+	node2 := training.GlobalNodeId{participant2, "node2"}
 
 	// Pass sdk.Context
-	err = rm.Join(baseCtx, training.GlobalNodeId{participant2, node2}, startingEpoch, block2)
+	err = rm.Join(baseCtx, node2, startingEpoch, block2)
 	require.NoError(t, err)
 
 	// Check RunState (should still be epoch 0, not finished)
@@ -104,9 +104,9 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	blockTime = blockTime.Add(5 * time.Second)
 	block3 := createBlockInfo(blockHeight, blockTime)
 	participant3 := "participantA" // Same participant, different node
-	node3 := "node3"
+	node3 := training.GlobalNodeId{Participant: participant3, LocalNodeId: "node3"}
 
-	err = rm.Join(baseCtx, node3, startingEpoch, block3, participant3)
+	err = rm.Join(baseCtx, node3, startingEpoch, block3)
 	require.NoError(t, err)
 
 	// 4. Check ranks got assigned because minNodes (3) was reached
@@ -124,15 +124,16 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 
 	// Check ranks are assigned (0, 1, 2). The mock store sorts activity.
 	ranks := make(map[int32]bool)
-	participantsFound := make(map[string]map[string]bool)
+	participantsFound := make(map[string]map[training.GlobalNodeId]bool)
 	for _, activity := range epochState3 {
 		require.NotEqual(t, int32(-1), activity.Rank, "Rank should be assigned")
 		ranks[activity.Rank] = true
 
 		if _, ok := participantsFound[activity.Participant]; !ok {
-			participantsFound[activity.Participant] = make(map[string]bool)
+			participantsFound[activity.Participant] = make(map[training.GlobalNodeId]bool)
 		}
-		participantsFound[activity.Participant][activity.NodeId] = true
+		gid := training.GlobalNodeId{Participant: activity.Participant, LocalNodeId: activity.NodeId}
+		participantsFound[activity.Participant][gid] = true
 	}
 
 	require.Len(t, ranks, len(runState1.Assignees))
