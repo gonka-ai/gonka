@@ -98,7 +98,7 @@ type RunStore interface {
 type RunMembershipService interface {
 	Join(ctx context.Context, nodeId GlobalNodeId, epoch int32, block BlockInfo) error
 	JoinStatus(ctx context.Context, nodeId GlobalNodeId, epoch int32, block BlockInfo) (*types.MLNodeTrainStatus, error)
-	Heartbeat(ctx context.Context, req *types.HeartbeatRequest, block BlockInfo) error
+	Heartbeat(ctx context.Context, nodeId GlobalNodeId, req *types.HeartbeatRequest, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]GlobalNodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
 	FinishIfNeeded(ctx context.Context, block BlockInfo) (bool, error)
@@ -358,16 +358,13 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId GlobalNodeId, outer
 	}
 }
 
-func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, req *types.HeartbeatRequest, block BlockInfo) error {
+func (rm *RunManager) Heartbeat(ctx sdk.Context, nodeId GlobalNodeId, req *types.HeartbeatRequest, block BlockInfo) error {
 	progress := taskProgress{
 		InnerStep: req.InnerStep,
 		OuterStep: req.OuterStep,
 		Epoch:     req.Epoch,
 	}
-	nodeId := GlobalNodeId{
-		Participant: participant,
-		LocalNodeId: req.NodeId,
-	}
+
 	activity := rm.getOrCreateActivityEntry(ctx, nodeId, progress)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
