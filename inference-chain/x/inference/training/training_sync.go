@@ -87,7 +87,7 @@ type RunStore interface {
 	GetEpochState(ctx context.Context, runId uint64, epoch int32) ([]*types.TrainingTaskNodeEpochActivity, error)
 	SaveEpochState(ctx context.Context, state []*types.TrainingTaskNodeEpochActivity) error
 
-	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) *types.TrainingTaskNodeEpochActivity
+	GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, nodeId GlobalNodeId) *types.TrainingTaskNodeEpochActivity
 	SaveParticipantActivity(ctx context.Context, activity *types.TrainingTaskNodeEpochActivity)
 
 	SetBarrier(ctx context.Context, barrier *types.TrainingTaskBarrier)
@@ -96,8 +96,8 @@ type RunStore interface {
 
 // RunMembershipService is the public API.
 type RunMembershipService interface {
-	Join(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) error
-	JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error)
+	Join(ctx context.Context, nodeId GlobalNodeId, epoch int32, block BlockInfo) error
+	JoinStatus(ctx context.Context, nodeId GlobalNodeId, epoch int32, block BlockInfo) (*types.MLNodeTrainStatus, error)
 	Heartbeat(ctx context.Context, req *types.HeartbeatRequest, block BlockInfo) error
 	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]GlobalNodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
@@ -112,47 +112,46 @@ type GlobalNodeId struct {
 	LocalNodeId string
 }
 
-func NewGlobalNodeId(globalNodeId string) *GlobalNodeId {
+func NewGlobalNodeId(globalNodeId string) (*GlobalNodeId, error) {
 	// Check globalNodeId contains only one slash /
 	if len(globalNodeId) == 0 {
-		return nil
+		return nil, fmt.Errorf("empty globalNodeId")
 	}
 	if globalNodeId[0] == '/' {
-		return nil
+		return nil, fmt.Errorf("globalNodeId should not start with /")
 	}
 	if globalNodeId[len(globalNodeId)-1] == '/' {
-		return nil
+		return nil, fmt.Errorf("globalNodeId should not end with /")
 	}
 	if !strings.Contains(globalNodeId, "/") {
-		return nil
+		return nil, fmt.Errorf("globalNodeId should contain /")
 	}
 	splitRes := strings.Split(globalNodeId, "/")
 	if len(splitRes) != 2 {
-		return nil
+		return nil, fmt.Errorf("globalNodeId should contain only one /")
 	}
 	if len(splitRes[0]) == 0 || len(splitRes[1]) == 0 {
-		return nil
+		return nil, fmt.Errorf("globalNodeId should not contain empty strings")
 	}
 	address := splitRes[0]
 	localNodeId := splitRes[1]
-	return &GlobalNodeId{Participant: address, LocalNodeId: localNodeId}
+	return &GlobalNodeId{Participant: address, LocalNodeId: localNodeId}, nil
 }
 
 type LocalNodeId struct {
 	id string
 }
 
-func NewLocalNodeId(globalNodeId string) *LocalNodeId {
-	global := NewGlobalNodeId(strings.TrimSpace(globalNodeId))
-	if global == nil {
-		return nil
+func NewLocalNodeId(globalNodeId string) (*LocalNodeId, error) {
+	global, err := NewGlobalNodeId(strings.TrimSpace(globalNodeId))
+	if err != nil {
+		return nil, err
 	}
-	return &LocalNodeId{id: global.LocalNodeId}
+	return &LocalNodeId{id: global.LocalNodeId}, nil
 }
 
 func (n *GlobalNodeId) ToString() string {
-	return n.LocalNodeId
-	// return fmt.Sprintf("%s/%s", n.Participant, n.NodeId)
+	return fmt.Sprintf("%s/%s", n.Participant, n.LocalNodeId)
 }
 
 type RunManager struct {
@@ -221,7 +220,7 @@ func sortNodeIds(nodeIds []GlobalNodeId) {
 	})
 }
 
-func (rm *RunManager) Join(ctx sdk.Context, nodeId string, outerStep int32, block BlockInfo, participant string) error {
+func (rm *RunManager) Join(ctx sdk.Context, nodeId GlobalNodeId, outerStep int32, block BlockInfo) error {
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
 		return fmt.Errorf("run not found. task_id = %d", rm.runId)
@@ -261,7 +260,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, outerStep int32, bloc
 		Epoch:     0,
 	}
 
-	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, progress)
+	activity := rm.getOrCreateActivityEntry(ctx, nodeId, progress)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
@@ -280,13 +279,13 @@ type taskProgress struct {
 	Epoch     int32
 }
 
-func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, taskProgress taskProgress) types.TrainingTaskNodeEpochActivity {
-	activity := rm.store.GetParticipantActivity(ctx, rm.runId, taskProgress.OuterStep, participant, nodeId)
+func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, nodeId GlobalNodeId, taskProgress taskProgress) types.TrainingTaskNodeEpochActivity {
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, taskProgress.OuterStep, nodeId)
 	if activity == nil {
 		activity = &types.TrainingTaskNodeEpochActivity{
 			TaskId:      rm.runId,
-			Participant: participant,
-			NodeId:      nodeId,
+			Participant: nodeId.Participant,
+			NodeId:      nodeId.LocalNodeId,
 			Heartbeat: &types.TrainingTaskHeartbeat{
 				InnerStep:   taskProgress.InnerStep,
 				OuterStep:   taskProgress.OuterStep,
@@ -300,19 +299,19 @@ func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant 
 	return *activity
 }
 
-func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, outerStep int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error) {
+func (rm *RunManager) JoinStatus(ctx context.Context, nodeId GlobalNodeId, outerStep int32, block BlockInfo) (*types.MLNodeTrainStatus, error) {
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_ERROR,
-			NodeId:      nodeId,
+			NodeId:      nodeId.ToString(),
 			OuterStep:   outerStep,
 			ActiveNodes: make([]string, 0),
 			Rank:        -1,
 		}, nil
 	}
 
-	activity := rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, nodeId)
 	if activity != nil {
 		updateHeartbeat(activity, block)
 		rm.store.SaveParticipantActivity(ctx, activity)
@@ -339,11 +338,11 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, outerStep i
 		aliveNodeIds[i] = n.ToString()
 	}
 
-	activity = rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
+	activity = rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, nodeId)
 	if activity == nil || activity.Rank == -1 {
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_NOT_JOINED,
-			NodeId:      nodeId,
+			NodeId:      nodeId.ToString(),
 			OuterStep:   outerStep,
 			ActiveNodes: aliveNodeIds,
 			Rank:        -1,
@@ -351,7 +350,7 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, outerStep i
 	} else {
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_OK,
-			NodeId:      nodeId,
+			NodeId:      nodeId.ToString(),
 			OuterStep:   outerStep,
 			ActiveNodes: aliveNodeIds,
 			Rank:        activity.Rank,
@@ -365,7 +364,11 @@ func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, req *types.
 		OuterStep: req.OuterStep,
 		Epoch:     req.Epoch,
 	}
-	activity := rm.getOrCreateActivityEntry(ctx, participant, req.NodeId, progress)
+	nodeId := GlobalNodeId{
+		Participant: participant,
+		LocalNodeId: req.NodeId,
+	}
+	activity := rm.getOrCreateActivityEntry(ctx, nodeId, progress)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 

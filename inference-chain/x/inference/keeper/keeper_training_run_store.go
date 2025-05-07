@@ -67,8 +67,8 @@ func (k *TrainingRunStore) SaveEpochState(ctx context.Context, state []*types.Tr
 	return nil
 }
 
-func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, participant string, nodeId string) *types.TrainingTaskNodeEpochActivity {
-	activity, found := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, participant, nodeId)
+func (k *TrainingRunStore) GetParticipantActivity(ctx context.Context, runId uint64, epoch int32, nodeId training.GlobalNodeId) *types.TrainingTaskNodeEpochActivity {
+	activity, found := k.keeper.GetTrainingTaskNodeEpochActivity(sdk.UnwrapSDKContext(ctx), runId, epoch, nodeId.Participant, nodeId.LocalNodeId)
 	if !found {
 		return nil
 	} else {

@@ -55,7 +55,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	node1 := "node1"
 	startingEpoch := int32(-1)
 
-	err := rm.Join(baseCtx, node1, startingEpoch, block1, participant1)
+	err := rm.Join(baseCtx, training.GlobalNodeId{Participant: participant1, LocalNodeId: node1}, startingEpoch, block1)
 	require.NoError(t, err)
 
 	// Check RunState using standard context for store access
@@ -82,7 +82,7 @@ func TestRunManager_Join_And_RankAssignment(t *testing.T) {
 	node2 := "node2"
 
 	// Pass sdk.Context
-	err = rm.Join(baseCtx, node2, startingEpoch, block2, participant2)
+	err = rm.Join(baseCtx, training.GlobalNodeId{participant2, node2}, startingEpoch, block2)
 	require.NoError(t, err)
 
 	// Check RunState (should still be epoch 0, not finished)
