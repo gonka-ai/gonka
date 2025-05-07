@@ -276,15 +276,49 @@ type UnmarshalledResponse struct {
 
 func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
 	if r.JsonResponse != nil {
-		return r.JsonResponse.Choices[0].Message.Content, nil
+		if len(r.JsonResponse.Choices) == 0 {
+			return "", errors.New("JsonResponse has no choices")
+		}
+
+		if len(r.JsonResponse.Choices) > 1 {
+			// TODO: We should learn how to process/validate multiple options completions
+			logging.Warn("More than one choice in a non-steamed inference response, defaulting to first one", types.Validation, "choices", r.JsonResponse.Choices)
+		}
+
+		content := r.JsonResponse.Choices[0].Message.Content
+		if content == "" {
+			logging.Error("Model return empty response", types.Validation, "inference_id", r.JsonResponse.ID)
+			return "", errors.New("JsonResponse has no content")
+		}
+
+		return content, nil
 	} else if r.StreamedResponse != nil {
+		var id = ""
 		var stringBuilder strings.Builder
 		for _, event := range r.StreamedResponse.Data {
-			if event.Choices[0].Delta.Content != nil {
-				stringBuilder.WriteString(*event.Choices[0].Delta.Content)
+			id = event.ID
+			if len(event.Choices) == 0 {
+				continue
+			}
+
+			if len(event.Choices) > 1 {
+				// TODO: We should learn how to process/validate multiple options completions
+				logging.Warn("More than one choice in a streamed inference response, defaulting to first one", types.Validation, "inferenceId", event.ID, "choices", event.Choices)
+			}
+
+			content := event.Choices[0].Delta.Content
+			if content != nil {
+				stringBuilder.WriteString(*content)
 			}
 		}
-		return stringBuilder.String(), nil
+
+		responseString := stringBuilder.String()
+		if responseString == "" {
+			logging.Error("Model return empty response", types.Validation, "inference_id", id)
+			return "", errors.New("StreamedResponse has no content")
+		}
+
+		return responseString, nil
 	} else {
 		return "", errors.New("UnmarshalledResponse has invalid state, both responses are nil")
 	}
