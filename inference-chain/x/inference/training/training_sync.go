@@ -11,21 +11,21 @@ import (
 )
 
 // EpochState holds per‑epoch membership info.
-type EpochState struct {
-	Epoch    int32
-	Activity map[NodeId]*types.TrainingTaskNodeEpochActivity
+type OuterStepState struct {
+	OuterStep int32
+	Activity  map[NodeId]*types.TrainingTaskNodeEpochActivity
 }
 
-func NewEpochState(activity []*types.TrainingTaskNodeEpochActivity) (*EpochState, error) {
+func NewOuterStepState(activity []*types.TrainingTaskNodeEpochActivity) (*OuterStepState, error) {
 	if len(activity) == 0 {
 		return nil, fmt.Errorf("empty activity")
 	}
 
-	epoch := activity[0].Epoch
+	outerStep := activity[0].Heartbeat.OuterStep
 	activityMap := make(map[NodeId]*types.TrainingTaskNodeEpochActivity, len(activity))
 	for _, rec := range activity {
-		if epoch != rec.Epoch {
-			return nil, fmt.Errorf("epoch does not match epoch %d", epoch)
+		if outerStep != rec.Heartbeat.OuterStep {
+			return nil, fmt.Errorf("OuterStep doesn't matach. OuterStep = %d, rec.Hearbeat.OuterStep = %d. rec.NodeId = %s", outerStep, rec.Heartbeat.OuterStep, rec.NodeId)
 		}
 		key := NodeId{
 			Participant: rec.Participant,
@@ -34,40 +34,40 @@ func NewEpochState(activity []*types.TrainingTaskNodeEpochActivity) (*EpochState
 		activityMap[key] = rec
 	}
 
-	return &EpochState{
-		Epoch:    activity[0].Epoch,
-		Activity: activityMap,
+	return &OuterStepState{
+		OuterStep: activity[0].Heartbeat.OuterStep,
+		Activity:  activityMap,
 	}, nil
 }
 
-func (es *EpochState) filterActive(currentBlock BlockInfo, heartbeatTimeout int64) EpochState {
+func (os *OuterStepState) filterActive(currentBlock BlockInfo, heartbeatTimeout int64) OuterStepState {
 	active := make(map[NodeId]*types.TrainingTaskNodeEpochActivity)
 
-	for nodeId, rec := range es.Activity {
-		blockDiff := currentBlock.height - rec.BlockHeight
+	for nodeId, rec := range os.Activity {
+		blockDiff := currentBlock.height - rec.Heartbeat.BlockHeight
 		if blockDiff <= heartbeatTimeout {
 			active[nodeId] = rec
 		}
 	}
 
-	return EpochState{
-		Epoch:    es.Epoch,
-		Activity: active,
+	return OuterStepState{
+		OuterStep: os.OuterStep,
+		Activity:  active,
 	}
 }
 
-func (es *EpochState) getSortedNodeIds() []NodeId {
-	nodeIds := make([]NodeId, 0, len(es.Activity))
-	for nodeId := range es.Activity {
+func (os *OuterStepState) getSortedNodeIds() []NodeId {
+	nodeIds := make([]NodeId, 0, len(os.Activity))
+	for nodeId := range os.Activity {
 		nodeIds = append(nodeIds, nodeId)
 	}
 	sortNodeIds(nodeIds)
 	return nodeIds
 }
 
-func (es *EpochState) toActivityArray() []*types.TrainingTaskNodeEpochActivity {
-	activity := make([]*types.TrainingTaskNodeEpochActivity, 0, len(es.Activity))
-	for _, rec := range es.Activity {
+func (os *OuterStepState) toActivityArray() []*types.TrainingTaskNodeEpochActivity {
+	activity := make([]*types.TrainingTaskNodeEpochActivity, 0, len(os.Activity))
+	for _, rec := range os.Activity {
 		activity = append(activity, rec)
 	}
 	sort.Slice(activity, func(i, j int) bool {
@@ -182,7 +182,7 @@ func sortNodeIds(nodeIds []NodeId) {
 	})
 }
 
-func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block BlockInfo, participant string) error {
+func (rm *RunManager) Join(ctx sdk.Context, nodeId string, outerStep int32, block BlockInfo, participant string) error {
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
 		return fmt.Errorf("run not found. task_id = %d", rm.runId)
@@ -194,19 +194,19 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 	}
 
 	lastEpoch := rs.Epoch.LastEpoch
-	if epoch < -1 {
-		return fmt.Errorf("bad request. invalid epoch %d", epoch)
+	if outerStep < -1 {
+		return fmt.Errorf("bad request. invalid outer step %d", outerStep)
 	}
-	if epoch < lastEpoch {
-		return fmt.Errorf("joining outdated epoch %d, last is %d", epoch, lastEpoch)
+	if outerStep < lastEpoch {
+		return fmt.Errorf("joining outdated outer step %d, last is %d", outerStep, lastEpoch)
 	}
-	if epoch == lastEpoch && rs.Epoch.LastEpochIsFinished {
-		return fmt.Errorf("joining epoch %d after finish", epoch)
+	if outerStep == lastEpoch && rs.Epoch.LastEpochIsFinished {
+		return fmt.Errorf("joining outer step %d after finish", outerStep)
 	}
 
 	// new epoch
-	if epoch > lastEpoch {
-		rs.Epoch.LastEpoch = epoch
+	if outerStep > lastEpoch {
+		rs.Epoch.LastEpoch = outerStep
 		rs.Epoch.LastEpochIsFinished = false
 		rs.Epoch.LastEpochBlockHeight = block.height
 		rs.Epoch.LastEpochTimestamp = block.timestamp.Unix()
@@ -216,7 +216,7 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 		}
 	}
 
-	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, epoch)
+	activity := rm.getOrCreateActivityEntry(ctx, participant, nodeId, outerStep)
 	updateHeartbeat(&activity, block)
 	rm.store.SaveParticipantActivity(ctx, &activity)
 
@@ -225,39 +225,43 @@ func (rm *RunManager) Join(ctx sdk.Context, nodeId string, epoch int32, block Bl
 }
 
 func updateHeartbeat(a *types.TrainingTaskNodeEpochActivity, block BlockInfo) {
-	a.BlockHeight = block.height
-	a.BlockTime = block.timestamp.Unix()
+	a.Heartbeat.BlockHeight = block.height
+	a.Heartbeat.BlockHeight = block.timestamp.Unix()
 }
 
-func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, epoch int32) types.TrainingTaskNodeEpochActivity {
-	activity := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+func (rm *RunManager) getOrCreateActivityEntry(ctx context.Context, participant string, nodeId string, outerStep int32) types.TrainingTaskNodeEpochActivity {
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
 	if activity == nil {
 		activity = &types.TrainingTaskNodeEpochActivity{
 			TaskId:      rm.runId,
 			Participant: participant,
 			NodeId:      nodeId,
-			Epoch:       epoch,
-			BlockHeight: 0,
-			BlockTime:   0,
-			Rank:        -1, // TODO: are we sure -1?
+			Heartbeat: &types.TrainingTaskHeartbeat{
+				InnerStep:   0,
+				OuterStep:   outerStep,
+				Epoch:       0,
+				BlockHeight: 0,
+				BlockTime:   0,
+			},
+			Rank: -1, // TODO: are we sure -1?
 		}
 	}
 	return *activity
 }
 
-func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error) {
+func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, outerStep int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error) {
 	rs := rm.store.GetRunState(ctx, rm.runId)
 	if rs == nil {
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_ERROR,
 			NodeId:      nodeId,
-			Epoch:       epoch,
+			OuterStep:   outerStep,
 			ActiveNodes: make([]string, 0),
 			Rank:        -1,
 		}, nil
 	}
 
-	activity := rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+	activity := rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
 	if activity != nil {
 		updateHeartbeat(activity, block)
 		rm.store.SaveParticipantActivity(ctx, activity)
@@ -269,13 +273,13 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32
 	}
 
 	if finished {
-		err = rm.rerankIfSomeNodesLeft(ctx, epoch, block)
+		err = rm.rerankIfSomeNodesLeft(ctx, outerStep, block)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	aliveNodes, err := rm.GetEpochActiveNodes(ctx, epoch, block)
+	aliveNodes, err := rm.GetEpochActiveNodes(ctx, outerStep, block)
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +288,12 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32
 		aliveNodeIds[i] = n.ToString()
 	}
 
-	activity = rm.store.GetParticipantActivity(ctx, rm.runId, epoch, participant, nodeId)
+	activity = rm.store.GetParticipantActivity(ctx, rm.runId, outerStep, participant, nodeId)
 	if activity == nil || activity.Rank == -1 {
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_NOT_JOINED,
 			NodeId:      nodeId,
-			Epoch:       epoch,
+			OuterStep:   outerStep,
 			ActiveNodes: aliveNodeIds,
 			Rank:        -1,
 		}, nil
@@ -297,7 +301,7 @@ func (rm *RunManager) JoinStatus(ctx context.Context, nodeId string, epoch int32
 		return &types.MLNodeTrainStatus{
 			Status:      types.MLNodeTrainStatusEnum_OK,
 			NodeId:      nodeId,
-			Epoch:       epoch,
+			OuterStep:   outerStep,
 			ActiveNodes: aliveNodeIds,
 			Rank:        activity.Rank,
 		}, nil
@@ -321,12 +325,12 @@ func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, curr
 	return es.getSortedNodeIds(), nil
 }
 
-func (rm *RunManager) getEpochStateActiveFiltered(ctx context.Context, epoch int32, currentBlock BlockInfo) (*EpochState, error) {
+func (rm *RunManager) getEpochStateActiveFiltered(ctx context.Context, epoch int32, currentBlock BlockInfo) (*OuterStepState, error) {
 	activity, err := rm.store.GetEpochState(ctx, rm.runId, epoch)
 	if err != nil {
 		return nil, err
 	}
-	es, err := NewEpochState(activity)
+	es, err := NewOuterStepState(activity)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +430,7 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 		return nil, fmt.Errorf("run not found. task_id = %d", rm.runId)
 	}
 
-	if req.Epoch > task.Epoch.LastEpoch {
+	if req.OuterStep > task.Epoch.LastEpoch {
 		return &types.GetBarrierStatusResponse{
 			AllReady:   false,
 			NotReady:   nil,
@@ -434,7 +438,7 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 		}, nil
 	}
 
-	aliveNodes, err := rm.GetEpochActiveNodes(ctx, req.Epoch, NewBlockInfo(sdk.UnwrapSDKContext(ctx)))
+	aliveNodes, err := rm.GetEpochActiveNodes(ctx, req.OuterStep, NewBlockInfo(sdk.UnwrapSDKContext(ctx)))
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +446,7 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 	key := types.TrainingTaskBarrierEpochKey{
 		BarrierId: req.BarrierId,
 		TaskId:    rm.runId,
-		Epoch:     req.Epoch,
+		Epoch:     req.OuterStep,
 	}
 	barriers, err := rm.store.GetBarrierEpochStatus(ctx, key)
 	if err != nil {
@@ -495,7 +499,7 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 	if err != nil {
 		return err
 	}
-	es, err := NewEpochState(activity)
+	es, err := NewOuterStepState(activity)
 	if err != nil {
 		return err
 	}

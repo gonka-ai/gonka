@@ -13,7 +13,7 @@ func (k msgServer) JoinTraining(goCtx context.Context, msg *types.MsgJoinTrainin
 	store := NewKeeperTrainingRunStore(k.Keeper)
 	runManager := training.NewRunManager(msg.Req.RunId, store, k)
 
-	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.Epoch, training.NewBlockInfo(ctx), msg.Creator)
+	err := runManager.Join(ctx, msg.Req.NodeId, msg.Req.OuterStep, training.NewBlockInfo(ctx), msg.Creator)
 	if err != nil {
 		k.LogError("Failed to join training", types.Training, "error", err)
 		return nil, err
