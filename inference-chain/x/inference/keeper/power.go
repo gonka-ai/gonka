@@ -108,12 +108,12 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epoc
 		k.SetEpochGroupData(ctx, data)
 	}
 
-	return &epochgroup.EpochGroup{
-		GroupKeeper:       k.group,
-		ParticipantKeeper: k,
-		Authority:         k.GetAuthority(),
-		Logger:            k,
-		GroupDataKeeper:   k,
-		GroupData:         &data,
-	}, nil
+	return epochgroup.NewEpochGroup(
+		k.group,
+		k,
+		k.GetAuthority(),
+		k,
+		k,
+		&data,
+	), nil
 }

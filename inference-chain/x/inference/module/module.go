@@ -296,7 +296,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
 		}
-		err = upcomingEg.AddMember(ctx, p.Index, p.Weight, p.ValidatorKey, p.Seed.Signature, reputation)
+		err = upcomingEg.AddMember(ctx, p.Index, p.Weight, p.ValidatorKey, p.Seed.Signature, reputation, p.Models)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue

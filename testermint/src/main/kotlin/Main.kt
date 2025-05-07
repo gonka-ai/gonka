@@ -281,74 +281,35 @@ fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = s
     }
 }
 
-val inferenceRequest = """
-    {
-      "model" : "unsloth/llama-3-8b-Instruct",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
 
-val inferenceRequestModel2 = """
-    {
-      "model" : "my-secret-model",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
+data class ChatMessage(
+    val role: String,
+    val content: String,
+    val toolCalls: List<Any> = emptyList()
+)
 
-val inferenceRequestNoSuchModel = """
-    {
-      "model" : "theres-no-model",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
+data class InferenceRequestPayload(
+    val model: String,
+    val temperature: Double,
+    val messages: List<ChatMessage>,
+    val seed: Int,
+    val stream: Boolean = false
+)
 
-val inferenceRequestStream = """
-    {
-      "model" : "unsloth/llama-3-8b-Instruct",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25,
-      "stream" : true
-    }
-""".trimIndent()
+val inferenceRequestObject = InferenceRequestPayload(
+    model = "unsloth/llama-3-8b-Instruct",
+    temperature = 0.8,
+    messages = listOf(
+        ChatMessage("system", "Regardless of the language of the question, answer in english"),
+        ChatMessage("user", "When did Hawaii become a state")
+    ),
+    seed = -25
+)
+
+val inferenceRequest = cosmosJson.toJson(inferenceRequestObject)
+
+val inferenceRequestStreamObject = inferenceRequestObject.copy(stream = true)
+val inferenceRequestStream = cosmosJson.toJson(inferenceRequestStreamObject)
 
 const val defaultModel = "unsloth/llama-3-8b-Instruct"
 

@@ -1,27 +1,42 @@
-import com.productscience.*
-import org.junit.jupiter.api.Tag
+import com.productscience.data.ModelConfig
+import com.productscience.defaultInferenceResponseObject
+import com.productscience.defaultModel
+import com.productscience.initCluster
+import com.productscience.logSection
+import com.productscience.validNode
 import org.junit.jupiter.api.Test
+import org.tinylog.Logger
 
 class MultiModelTests : TestermintTest() {
     @Test
-    @Tag("unstable")
-    fun test() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
+    fun `simple multi model`() {
+        val (cluster, genesis) = initCluster(3)
+        val newModelName = "newModel-1"
+        val secondModelPairs = cluster.joinPairs.take(2) + genesis
 
-        val response = pairs[0].makeInferenceRequest(inferenceRequestModel2)
-        println("RESPONSE1 = $response")
-        val response2 = pairs[0].makeInferenceRequest(inferenceRequestNoSuchModel)
-        println("RESPONSE2 = $response2")
-        val response3 = pairs[0].makeInferenceRequest(inferenceRequest)
-        println("RESPONSE3 = $response3")
+        logSection("Setting nodes for new model")
+        cluster.allPairs.forEach { pair ->
+            pair.api.getNodes().forEach { node ->
+                Logger.info("Pair: ${pair.name} Node: ${node.node.id} Models: ${node.node.models}", "")
+            }
+        }
+
+        secondModelPairs.forEach {
+            val newNode = validNode.copy(
+                host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080, models = mapOf(
+                    newModelName to ModelConfig(
+                        args = emptyList()
+                    ), defaultModel to ModelConfig(args = emptyList())
+                )
+            )
+            it.api.setNodesTo(newNode)
+            it.mock?.setInferenceResponse(defaultInferenceResponseObject.withResponse("Hawaii doesn't exist."), model = newModelName)
+        }
+
+
+        genesis.makeInferenceRequest()
+
+
     }
 
-    @Test
-    @Tag("unstable")
-    fun test2() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
-        val result = instance.node.exec(listOf("inferenced", "query", "inference", "get-random-executor", "--model=unsloth/llama-3-8b-Instruct"))
-        println(result)
-    }
 }

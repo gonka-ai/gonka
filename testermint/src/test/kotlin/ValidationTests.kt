@@ -1,12 +1,7 @@
-import com.productscience.LocalInferencePair
+import com.productscience.*
 import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
-import com.productscience.defaultInferenceResponseObject
-import com.productscience.getInferenceResult
-import com.productscience.inferenceRequest
-import com.productscience.initCluster
-import com.productscience.logSection
-import kotlinx.coroutines.Dispatchers
+import com.productscience.data.ModelConfig
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -50,6 +45,24 @@ class ValidationTests : TestermintTest() {
         } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
         logSection("Verifying invalidation")
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
+    }
+
+    @Test
+    fun `test valid gets marked valid for second model`() {
+        val (cluster, genesis) = initCluster(joinCount = 3)
+        logSection("Setting up second model")
+        val pairsForNewModel = cluster.joinPairs.take(2) + genesis
+        val newModel = "model-2"
+        pairsForNewModel.forEach {
+            val newNode = validNode.copy(
+                host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080, models = mapOf(
+                    newModel to ModelConfig(
+                        args = emptyList()
+                    )
+                )
+            )
+//            it.api.addNode()
+        }
     }
 
     private fun getInferenceValidationState(
@@ -135,7 +148,7 @@ fun runParallelInferences(
     val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
     val requests = List(count) { i ->
         async(limitedDispatcher) {
-        Logger.warn("Starting request $i")
+            Logger.warn("Starting request $i")
             genesis.makeInferenceRequest(inferenceRequest)
         }
     }
