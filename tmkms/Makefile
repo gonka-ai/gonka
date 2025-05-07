@@ -16,7 +16,7 @@ build-with-import:
 		--build-arg TMKMS_TOML=./template/tmkms.toml \
 		--build-arg PRIV_VALIDATOR_KEY=priv_validator_key.json \
 		--build-arg PRIV_VALIDATOR_STATE=priv_validator_state.json \
-		-t tmkms-softsign-with-import:$(DOCKER_TAG) \
+		-t gcr.io/decentralized-ai/tmkms-softsign-with-import:$(DOCKER_TAG) \
 		.
 
 push-keygen-image: build-with-keygen
