@@ -1,5 +1,5 @@
 package v2
 
 const (
-	UpgradeName = "v0.1.1-alpha1"
+	UpgradeName = "v0.0.2"
 )
