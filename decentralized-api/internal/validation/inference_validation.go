@@ -280,6 +280,14 @@ func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
 	} else if r.StreamedResponse != nil {
 		var stringBuilder strings.Builder
 		for _, event := range r.StreamedResponse.Data {
+			if len(event.Choices) == 0 {
+				continue
+			}
+
+			//if len(event.Choices) > 1 {
+			//	logging.Warn("More than one choice in streamed response, defaulting to first one", types.Validation, "choices", event.Choices)
+			//}
+
 			if event.Choices[0].Delta.Content != nil {
 				stringBuilder.WriteString(*event.Choices[0].Delta.Content)
 			}
