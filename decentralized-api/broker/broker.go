@@ -452,7 +452,7 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 			return
 		}
 
-		err = client.StartTraining(command.taskId, command.masterNodeAddress, rank, command.worldSize)
+		err = client.StartTraining(command.taskId, b.client.GetAddress(), nodeId, command.masterNodeAddress, rank, command.worldSize)
 		if err != nil {
 			logging.Error("Error starting training", types.Nodes, "error", err)
 			command.Response <- false

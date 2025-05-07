@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -13,7 +14,7 @@ import (
 // EpochState holds per‑epoch membership info.
 type OuterStepState struct {
 	OuterStep int32
-	Activity  map[NodeId]*types.TrainingTaskNodeEpochActivity
+	Activity  map[GlobalNodeId]*types.TrainingTaskNodeEpochActivity
 }
 
 func NewOuterStepState(activity []*types.TrainingTaskNodeEpochActivity) (*OuterStepState, error) {
@@ -22,14 +23,14 @@ func NewOuterStepState(activity []*types.TrainingTaskNodeEpochActivity) (*OuterS
 	}
 
 	outerStep := activity[0].Heartbeat.OuterStep
-	activityMap := make(map[NodeId]*types.TrainingTaskNodeEpochActivity, len(activity))
+	activityMap := make(map[GlobalNodeId]*types.TrainingTaskNodeEpochActivity, len(activity))
 	for _, rec := range activity {
 		if outerStep != rec.Heartbeat.OuterStep {
 			return nil, fmt.Errorf("OuterStep doesn't matach. OuterStep = %d, rec.Hearbeat.OuterStep = %d. rec.NodeId = %s", outerStep, rec.Heartbeat.OuterStep, rec.NodeId)
 		}
-		key := NodeId{
+		key := GlobalNodeId{
 			Participant: rec.Participant,
-			NodeId:      rec.NodeId,
+			LocalNodeId: rec.NodeId,
 		}
 		activityMap[key] = rec
 	}
@@ -41,7 +42,7 @@ func NewOuterStepState(activity []*types.TrainingTaskNodeEpochActivity) (*OuterS
 }
 
 func (os *OuterStepState) filterActive(currentBlock BlockInfo, heartbeatTimeout int64) OuterStepState {
-	active := make(map[NodeId]*types.TrainingTaskNodeEpochActivity)
+	active := make(map[GlobalNodeId]*types.TrainingTaskNodeEpochActivity)
 
 	for nodeId, rec := range os.Activity {
 		blockDiff := currentBlock.height - rec.Heartbeat.BlockHeight
@@ -56,8 +57,8 @@ func (os *OuterStepState) filterActive(currentBlock BlockInfo, heartbeatTimeout 
 	}
 }
 
-func (os *OuterStepState) getSortedNodeIds() []NodeId {
-	nodeIds := make([]NodeId, 0, len(os.Activity))
+func (os *OuterStepState) getSortedNodeIds() []GlobalNodeId {
+	nodeIds := make([]GlobalNodeId, 0, len(os.Activity))
 	for nodeId := range os.Activity {
 		nodeIds = append(nodeIds, nodeId)
 	}
@@ -98,7 +99,7 @@ type RunMembershipService interface {
 	Join(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) error
 	JoinStatus(ctx context.Context, nodeId string, epoch int32, block BlockInfo, participant string) (*types.MLNodeTrainStatus, error)
 	Heartbeat(ctx context.Context, req *types.HeartbeatRequest, block BlockInfo) error
-	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]NodeId, error)
+	GetEpochActiveNodes(ctx context.Context, epoch int32, block BlockInfo) ([]GlobalNodeId, error)
 	AssignRank(ctx context.Context, block BlockInfo) error
 	FinishIfNeeded(ctx context.Context, block BlockInfo) (bool, error)
 	RerankIfSomeNodesLeft(ctx context.Context, epoch int32, block BlockInfo) error
@@ -106,13 +107,51 @@ type RunMembershipService interface {
 	GetBarrierStatus(ctx context.Context, req *types.GetBarrierStatusRequest) (*types.GetBarrierStatusResponse, error)
 }
 
-type NodeId struct {
+type GlobalNodeId struct {
 	Participant string
-	NodeId      string
+	LocalNodeId string
 }
 
-func (n *NodeId) ToString() string {
-	return n.NodeId
+func NewGlobalNodeId(globalNodeId string) *GlobalNodeId {
+	// Check globalNodeId contains only one slash /
+	if len(globalNodeId) == 0 {
+		return nil
+	}
+	if globalNodeId[0] == '/' {
+		return nil
+	}
+	if globalNodeId[len(globalNodeId)-1] == '/' {
+		return nil
+	}
+	if !strings.Contains(globalNodeId, "/") {
+		return nil
+	}
+	splitRes := strings.Split(globalNodeId, "/")
+	if len(splitRes) != 2 {
+		return nil
+	}
+	if len(splitRes[0]) == 0 || len(splitRes[1]) == 0 {
+		return nil
+	}
+	address := splitRes[0]
+	localNodeId := splitRes[1]
+	return &GlobalNodeId{Participant: address, LocalNodeId: localNodeId}
+}
+
+type LocalNodeId struct {
+	id string
+}
+
+func NewLocalNodeId(globalNodeId string) *LocalNodeId {
+	global := NewGlobalNodeId(strings.TrimSpace(globalNodeId))
+	if global == nil {
+		return nil
+	}
+	return &LocalNodeId{id: global.LocalNodeId}
+}
+
+func (n *GlobalNodeId) ToString() string {
+	return n.LocalNodeId
 	// return fmt.Sprintf("%s/%s", n.Participant, n.NodeId)
 }
 
@@ -173,12 +212,12 @@ func (bi BlockInfo) Timestamp() time.Time {
 }
 
 // Helper function to sort NodeId slices deterministically
-func sortNodeIds(nodeIds []NodeId) {
+func sortNodeIds(nodeIds []GlobalNodeId) {
 	sort.Slice(nodeIds, func(i, j int) bool {
 		if nodeIds[i].Participant != nodeIds[j].Participant {
 			return nodeIds[i].Participant < nodeIds[j].Participant
 		}
-		return nodeIds[i].NodeId < nodeIds[j].NodeId
+		return nodeIds[i].LocalNodeId < nodeIds[j].LocalNodeId
 	})
 }
 
@@ -334,7 +373,7 @@ func (rm *RunManager) Heartbeat(ctx sdk.Context, participant string, req *types.
 	return err
 }
 
-func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, currentBlock BlockInfo) ([]NodeId, error) {
+func (rm *RunManager) GetEpochActiveNodes(ctx context.Context, epoch int32, currentBlock BlockInfo) ([]GlobalNodeId, error) {
 	es, err := rm.getEpochStateActiveFiltered(ctx, epoch, currentBlock)
 	if err != nil {
 		return nil, err
@@ -471,11 +510,11 @@ func (rm *RunManager) GetBarrierStatus(ctx context.Context, req *types.GetBarrie
 	}
 
 	// Check which live nodes have a barrier entry
-	barrierMap := make(map[NodeId]bool)
+	barrierMap := make(map[GlobalNodeId]bool)
 	for _, barrier := range barriers {
-		nodeId := NodeId{
+		nodeId := GlobalNodeId{
 			Participant: barrier.Participant,
-			NodeId:      barrier.NodeId,
+			LocalNodeId: barrier.NodeId,
 		}
 		barrierMap[nodeId] = true
 	}
@@ -521,7 +560,7 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 		return err
 	}
 
-	var original []NodeId
+	var original []GlobalNodeId
 	for nodeId, rec := range es.Activity {
 		if rec.Rank != -1 {
 			original = append(original, nodeId)
@@ -532,7 +571,7 @@ func (rm *RunManager) rerankIfSomeNodesLeft(ctx context.Context, epoch int32, bl
 	activeEs := es.filterActive(block, rm.heartbeatTimeout)
 
 	// if some dropped, reassign among survivors
-	var survivors []NodeId
+	var survivors []GlobalNodeId
 	for _, nodeId := range original {
 		if _, ok := activeEs.Activity[nodeId]; ok {
 			survivors = append(survivors, nodeId)
