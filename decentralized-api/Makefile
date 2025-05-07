@@ -30,7 +30,7 @@ define DOCKER_BUILD
 		-t $(DOCKER_TAG)
 endef
 
-define DOCKER_BUILD_OUTPUT
+define DOCKER_BUILD_UPGRADE
 	@echo "--> building decentralized-api docker image"
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
@@ -97,16 +97,34 @@ build-for-upgrade:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_OUTPUT)
+	$(DOCKER_BUILD_UPGRADE)
 	@echo "--> clearing out ../public-html/v2/dapi"
 	@rm -rf ../public-html/v2/dapi/*
 	@mkdir -p ../public-html/v2/dapi
 	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
-	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api
+	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api-amd64
 	@echo "--> zipping decentralized-api binary"
-	@zip -j ../public-html/v2/dapi/decentralized-api.zip ../public-html/v2/dapi/decentralized-api
+	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-amd64
+	@zip -X -j ../public-html/v2/dapi/decentralized-api-amd64.zip ../public-html/v2/dapi/decentralized-api-amd64
 	@echo "--> generating shasum for decentralized-api.zip"
-	@shasum -a 256 ../public-html/v2/dapi/decentralized-api.zip
+	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip
+
+build-for-upgrade-arm:
+	$(eval PLATFORM=linux/arm64)
+	$(eval GOOS=linux)
+	$(eval GOARCH=arm64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(DOCKER_BUILD_UPGRADE)
+	@mkdir -p ../public-html/v2/dapi
+	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
+	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api-arm64
+	@echo "--> zipping decentralized-api binary"
+	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-arm64
+	@zip -X -j ../public-html/v2/dapi/decentralized-api-arm64.zip ../public-html/v2/dapi/decentralized-api-arm64
+	@echo "--> generating shasum for decentralized-api.zip"
+	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip
 
 #################################################
 # CROSS-COMPILATION SECTION

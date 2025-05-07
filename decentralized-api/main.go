@@ -54,7 +54,7 @@ func main() {
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
-		"cosmos",
+		"gonka",
 		10,
 		5*time.Second,
 		config,
@@ -91,11 +91,6 @@ func main() {
 		types.PoC, "name", recorder.Account.Name,
 		"address", recorder.Address,
 		"pubkey", pubKeyString)
-
-	pocOrchestrator := poc.NewPoCOrchestrator(pubKeyString, int(params.Params.PocParams.DefaultDifficulty))
-
-	logging.Info("PoC orchestrator initialized", types.PoC, "pocOrchestrator", pocOrchestrator)
-	go pocOrchestrator.Run()
 
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
 		pubKeyString,

@@ -30,7 +30,7 @@ func PubKeyToAddress(pubKeyHex string) (string, error) {
 	ripemdHash := ripemdHasher.Sum(nil)
 
 	// Step 3: Bech32 encode
-	prefix := "cosmos"
+	prefix := "gonka"
 	fiveBitData, err := bech32.ConvertBits(ripemdHash, 8, 5, true)
 	if err != nil {
 		logging.Error("Failed to convert bits", types.Participants, "err", err)

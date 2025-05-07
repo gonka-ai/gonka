@@ -5,10 +5,12 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 class NodeManagementTests : TestermintTest() {
     @Test
+    @Tag("sanity")
     fun `get nodes`() {
         val (_, genesis) = initCluster()
         val nodes = genesis.api.getNodes()
