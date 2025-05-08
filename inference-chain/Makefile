@@ -63,7 +63,6 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
-		--build-arg TAGS='upgraded' \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..

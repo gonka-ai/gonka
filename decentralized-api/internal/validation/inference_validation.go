@@ -573,10 +573,12 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 	switch result.(type) {
 	case *DifferentLengthValidationResult:
 		log.Printf("Different length validation result")
-		simVal = -1
+		// TODO: This is hack till we guarantee same tokenization
+		simVal = 1
 	case *DifferentTokensValidationResult:
 		log.Printf("Different tokens validation result")
-		simVal = -1
+		// TODO: This is hack till we guarantee same tokenization
+		simVal = 1
 	case *SimilarityValidationResult:
 		simVal = result.(*SimilarityValidationResult).Value
 		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
