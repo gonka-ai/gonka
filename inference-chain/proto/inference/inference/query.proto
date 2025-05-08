@@ -248,13 +248,13 @@ service Query {
   
   // Queries a list of TrainingKvRecord items.
   rpc TrainingKvRecord (QueryTrainingKvRecordRequest) returns (QueryTrainingKvRecordResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{participant}/{key}";
+    option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{key}";
   
   }
   
   // Queries a list of ListTrainingKvRecordKeys items.
   rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}/{participant}";
+    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}";
   
   }
   
@@ -606,8 +606,7 @@ message QueryAllPartialUpgradeResponse {
 
 message QueryTrainingKvRecordRequest {
   uint64 taskId      = 1;
-  string participant = 2;
-  string key         = 3;
+  string key         = 2;
 }
 
 message QueryTrainingKvRecordResponse {
@@ -616,7 +615,6 @@ message QueryTrainingKvRecordResponse {
 
 message QueryListTrainingKvRecordKeysRequest {
   uint64 taskId      = 1;
-  string participant = 2;
 }
 
 message QueryListTrainingKvRecordKeysResponse {

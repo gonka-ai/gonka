@@ -16,7 +16,7 @@ func (k Keeper) TrainingKvRecord(goCtx context.Context, req *types.QueryTraining
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	record, found := k.GetTrainingKVRecord(ctx, req.TaskId, req.Participant, req.Key)
+	record, found := k.GetTrainingKVRecord(ctx, req.TaskId, req.Key)
 	if !found {
 		return nil, status.Error(codes.NotFound, "record not found")
 	}

@@ -24,7 +24,7 @@ func TestTrainKVRecord(t *testing.T) {
 		Value:       "value2",
 	})
 
-	records, err := keeper.ListTrainingKVRecords(ctx, taskId, participant)
+	records, err := keeper.ListTrainingKVRecords(ctx, taskId)
 	if err != nil {
 		t.Fatalf("Error listing training KV records: %s", err)
 	}

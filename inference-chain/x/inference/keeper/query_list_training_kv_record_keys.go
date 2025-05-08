@@ -16,7 +16,7 @@ func (k Keeper) ListTrainingKvRecordKeys(goCtx context.Context, req *types.Query
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	response, err := k.ListTrainingKVRecords(ctx, req.TaskId, req.Participant)
+	response, err := k.ListTrainingKVRecords(ctx, req.TaskId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

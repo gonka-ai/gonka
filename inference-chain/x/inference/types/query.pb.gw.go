@@ -1641,17 +1641,6 @@ func request_Query_TrainingKvRecord_0(ctx context.Context, marshaler runtime.Mar
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "taskId", err)
 	}
 
-	val, ok = pathParams["participant"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant")
-	}
-
-	protoReq.Participant, err = runtime.String(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
-	}
-
 	val, ok = pathParams["key"]
 	if !ok {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "key")
@@ -1688,17 +1677,6 @@ func local_request_Query_TrainingKvRecord_0(ctx context.Context, marshaler runti
 
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "taskId", err)
-	}
-
-	val, ok = pathParams["participant"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant")
-	}
-
-	protoReq.Participant, err = runtime.String(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
 	val, ok = pathParams["key"]
@@ -1739,17 +1717,6 @@ func request_Query_ListTrainingKvRecordKeys_0(ctx context.Context, marshaler run
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "taskId", err)
 	}
 
-	val, ok = pathParams["participant"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant")
-	}
-
-	protoReq.Participant, err = runtime.String(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
-	}
-
 	msg, err := client.ListTrainingKvRecordKeys(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
@@ -1775,17 +1742,6 @@ func local_request_Query_ListTrainingKvRecordKeys_0(ctx context.Context, marshal
 
 	if err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "taskId", err)
-	}
-
-	val, ok = pathParams["participant"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant")
-	}
-
-	protoReq.Participant, err = runtime.String(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "participant", err)
 	}
 
 	msg, err := server.ListTrainingKvRecordKeys(ctx, &protoReq)
@@ -3843,9 +3799,9 @@ var (
 
 	pattern_Query_PartialUpgradeAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "partial_upgrade"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_TrainingKvRecord_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4, 1, 0, 4, 1, 5, 5}, []string{"productscience", "inference", "training_kv_record", "taskId", "participant", "key"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_TrainingKvRecord_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "training_kv_record", "taskId", "key"}, "", runtime.AssumeColonVerbOpt(false)))
 
-	pattern_Query_ListTrainingKvRecordKeys_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "list_training_kv_record_keys", "taskId", "participant"}, "", runtime.AssumeColonVerbOpt(false)))
+	pattern_Query_ListTrainingKvRecordKeys_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "list_training_kv_record_keys", "taskId"}, "", runtime.AssumeColonVerbOpt(false)))
 
 	pattern_Query_TrainingBarrier_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "training_barrier"}, "", runtime.AssumeColonVerbOpt(false)))
 

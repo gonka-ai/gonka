@@ -41,12 +41,12 @@ func InProgressTrainingTaskFullKey(taskId uint64) []byte {
 	return StringKey(key)
 }
 
-func TrainingTaskKVRecordKey(taskId uint64, participant string, key string) []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s/%s/value", taskId, participant, key))
+func TrainingTaskKVRecordKey(taskId uint64, key string) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s/value", taskId, key))
 }
 
-func TrainingTaskKVParticipantRecordsKey(taskId uint64, participant string) []byte {
-	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/%s", taskId, participant))
+func TrainingTaskAllKVRecordsKey(taskId uint64) []byte {
+	return StringKey(fmt.Sprintf("TrainingTask/sync/%d/store/", taskId))
 }
 
 func TrainingTaskNodeEpochActivityKey(taskId uint64, outerStep int32, participant string, nodeId string) []byte {
