@@ -28,3 +28,4 @@ prod-local/
 /public-html/
 /logdy
 /inference-chain/junit-report.xml
+/deploy/**/config.env
