@@ -250,16 +250,16 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "TrainingKvRecord",
-					Use:            "training-kv-record [task-id] [participant] [key]",
+					Use:            "training-kv-record [task-id] [key]",
 					Short:          "Query training-kv-record",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}, {ProtoField: "key"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "key"}},
 				},
 
 				{
 					RpcMethod:      "ListTrainingKvRecordKeys",
-					Use:            "list-training-kv-record-keys [task-id] [participant]",
+					Use:            "list-training-kv-record-keys [task-id]",
 					Short:          "Query list-training-kv-record-keys",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "participant"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}},
 				},
 
 				// this line is used by ignite scaffolding # autocli/query
