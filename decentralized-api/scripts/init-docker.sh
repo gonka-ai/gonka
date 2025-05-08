@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -e
 
 fail() {
   echo "$1" >&2

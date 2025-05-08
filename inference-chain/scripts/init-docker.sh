@@ -44,7 +44,7 @@ ACCOUNT_EXISTS=false
 echo "🔍 Checking if account $KEY_NAME exists in keyring ($KEYRING_BACKEND)..."
 ACCOUNT_CHECK=$($APP_NAME keys show "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR" 2>&1 || true)
 
-set -eu
+set -e
 
 echo "DEBUG LOG ACCOUNT_CHECK: $ACCOUNT_CHECK"
 
