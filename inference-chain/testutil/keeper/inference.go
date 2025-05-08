@@ -29,7 +29,8 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSetMock := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
-	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock)
+	stakingMock := NewMockStakingKeeper(ctrl)
+	mock, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock)
 	escrowKeeper.ExpectAny(context)
 	return mock, context
 }
@@ -38,6 +39,7 @@ type InferenceMocks struct {
 	BankKeeper    *MockBankEscrowKeeper
 	AccountKeeper *MockAccountKeeper
 	GroupKeeper   *MockGroupMessageKeeper
+	StakingKeeper *MockStakingKeeper
 }
 
 func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {
@@ -46,7 +48,8 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	accountKeeperMock := NewMockAccountKeeper(ctrl)
 	validatorSet := NewMockValidatorSet(ctrl)
 	groupMock := NewMockGroupMessageKeeper(ctrl)
-	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock)
+	stakingMock := NewMockStakingKeeper(ctrl)
+	keep, context := InferenceKeeperWithMock(t, escrowKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
 	keep.SetGenesisOnlyParams(context, &genesisParams)
@@ -54,6 +57,7 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 		BankKeeper:    escrowKeeper,
 		AccountKeeper: accountKeeperMock,
 		GroupKeeper:   groupMock,
+		StakingKeeper: stakingMock,
 	}
 	return keep, context, mocks
 }
@@ -64,6 +68,7 @@ func InferenceKeeperWithMock(
 	accountKeeper types.AccountKeeper,
 	validatorSet types.ValidatorSet,
 	groupMock types.GroupMessageKeeper,
+	stakingKeeper types.StakingKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -85,7 +90,7 @@ func InferenceKeeperWithMock(
 		nil,
 		groupMock,
 		validatorSet,
-		nil,
+		stakingKeeper,
 		accountKeeper,
 	)
 
