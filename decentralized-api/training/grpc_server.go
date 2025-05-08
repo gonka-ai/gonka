@@ -78,9 +78,8 @@ func (s *Server) GetStoreRecord(ctx context.Context, req *inference.GetStoreReco
 	logging.Info("GetStoreRecord called", types.Training, "key", req.Key)
 
 	request := &types.QueryTrainingKvRecordRequest{
-		TaskId:      req.RunId,
-		Participant: s.cosmosClient.GetAddress(),
-		Key:         req.Key,
+		TaskId: req.RunId,
+		Key:    req.Key,
 	}
 	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	resp, err := queryClient.TrainingKvRecord(ctx, request)
@@ -104,8 +103,7 @@ func (s *Server) ListStoreKeys(ctx context.Context, req *inference.StoreListKeys
 
 	queryClient := s.cosmosClient.NewInferenceQueryClient()
 	resp, err := queryClient.ListTrainingKvRecordKeys(ctx, &types.QueryListTrainingKvRecordKeysRequest{
-		TaskId:      req.RunId,
-		Participant: s.cosmosClient.GetAddress(),
+		TaskId: req.RunId,
 	})
 	if err != nil {
 		logging.Error("Failed to get training kv record keys", types.Training, "error", err)
