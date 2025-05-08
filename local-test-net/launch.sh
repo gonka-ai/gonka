@@ -45,6 +45,7 @@ export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 
 # join node 'join2'
 export KEY_NAME=join2
+export EXPLORER_PORT=26660
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021

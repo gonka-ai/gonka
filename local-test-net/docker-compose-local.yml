@@ -11,10 +11,11 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+      - EXPLORER_PORT=${EXPLORER_PORT}
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"
-      # - "26660:1317" # api
+      - "${EXPLORER_PORT}:1317" # api
     networks:
       - chain-public
 
