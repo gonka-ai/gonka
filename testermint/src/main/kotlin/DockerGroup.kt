@@ -282,11 +282,13 @@ data class LocalCluster(
 ) {
     val allPairs = listOf(genesis) + joinPairs
     fun withAdditionalJoin(joinCount: Int = 1): LocalCluster {
+        val currentMaxJoin = this.joinPairs.size + 1
+        val newMaxJoin = currentMaxJoin + joinCount
         val newJoinGroups =
-            (1..joinCount).map {
+            (currentMaxJoin..newMaxJoin).map {
                 createDockerGroup(
                     it,
-                    iteration = (it + this.joinPairs.size) * 10,
+                    iteration = it * 10,
                     genesisUrls = GenesisUrls(this.genesis.name.trimStart('/')),
                     config = this.genesis.config
                 )
