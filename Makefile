@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -13,7 +13,7 @@ api-build-docker:
 node-build-docker:
 	@make -C inference-chain build-docker SET_LATEST=1 GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE)
 
-release: decentralized-api-release inference-chain-release
+release: decentralized-api-release inference-chain-release tmkms-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -26,6 +26,11 @@ inference-chain-release:
 	@echo "Releasing inference-chain..."
 	@make -C inference-chain release
 	@make -C inference-chain docker-push
+
+tmkms-release:
+	@echo "Releasing tmkms..."
+	@make -C tkms release
+	@make -C tkms docker-push
 
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)

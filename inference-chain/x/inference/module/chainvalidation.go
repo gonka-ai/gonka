@@ -4,29 +4,93 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strconv"
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// WeightCalculator encapsulates all the data needed to calculate new weights for participants
+type WeightCalculator struct {
+	CurrentValidatorWeights map[string]int64
+	OriginalBatches         map[string][]types.PoCBatch
+	Validations             map[string][]types.PoCValidation
+	Participants            map[string]types.Participant
+	Seeds                   map[string]types.RandomSeed
+	EpochStartBlockHeight   int64
+	Logger                  types.InferenceLogger
+}
+
+// NewWeightCalculator creates a new WeightCalculator instance
+func NewWeightCalculator(
+	currentValidatorWeights map[string]int64,
+	originalBatches map[string][]types.PoCBatch,
+	validations map[string][]types.PoCValidation,
+	participants map[string]types.Participant,
+	seeds map[string]types.RandomSeed,
+	epochStartBlockHeight int64,
+	logger types.InferenceLogger,
+) *WeightCalculator {
+	return &WeightCalculator{
+		CurrentValidatorWeights: currentValidatorWeights,
+		OriginalBatches:         originalBatches,
+		Validations:             validations,
+		Participants:            participants,
+		Seeds:                   seeds,
+		EpochStartBlockHeight:   epochStartBlockHeight,
+		Logger:                  logger,
+	}
+}
+
+// getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
+func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochGroupId uint64) (map[string]int64, error) {
+	if epochGroupId <= 1 {
+		currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
+		if err != nil {
+			am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
+			return nil, err
+		}
+		weights := make(map[string]int64)
+		for _, validator := range currentValidators {
+			weights[validator.OperatorAddress] = validator.Tokens.Int64()
+		}
+		return weights, nil
+	}
+
+	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		am.LogError("getCurrentValidatorWeights: Error getting current epoch group", types.PoC, "error", err)
+		return nil, err
+	}
+	currentMembers, err := currentGroup.GetGroupMembers(ctx)
+	if err != nil {
+		am.LogError("getCurrentValidatorWeights: Error getting current group members", types.PoC, "error", err)
+		return nil, err
+	}
+
+	weights := make(map[string]int64)
+	for _, member := range currentMembers {
+		weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+		if err != nil {
+			am.LogError("getCurrentValidatorWeights: Error parsing weight", types.PoC, "address", member.Member.Address, "weight", member.Member.Weight, "error", err)
+			return nil, err
+		}
+		weights[member.Member.Address] = weight
+	}
+
+	return weights, nil
+}
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
 	epochStartBlockHeight := int64(upcomingGroupData.PocStartBlockHeight)
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
 
-	// FIXME: Figure out something here:
-	//  1. Either get current validators by using staking keeper or smth
-	//  2. Or alter InitGenesis or set validator logic so there's always active participants
-	var currentActiveParticipants *types.ActiveParticipants = nil
-	if upcomingGroupData.EpochGroupId > 1 {
-		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
-		currentActiveParticipants = &val
-		if !found {
-			am.LogError("ComputeNewWeights: No active participants found.", types.PoC)
-			return nil
-		}
+	// Get current active participants weights
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingGroupData.EpochGroupId)
+
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		return nil
 	}
-	currentValidatorWeights := getActiveParticipantsWeights(currentActiveParticipants)
-	totalWeight := getTotalWeight(currentValidatorWeights)
-	requiredValidWeight := (totalWeight * 2) / 3
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
@@ -43,7 +107,9 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
 
-	var activeParticipants []*types.ActiveParticipant
+	// Collect all participants and seeds
+	participants := make(map[string]types.Participant)
+	seeds := make(map[string]types.RandomSeed)
 
 	var sortedBatchKeys []string
 	for key := range originalBatches {
@@ -57,65 +123,128 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 			am.LogError("ComputeNewWeights: Error getting participant", types.PoC, "address", participantAddress)
 			continue
 		}
-
-		vals := validations[participantAddress]
-		if vals == nil || len(vals) == 0 {
-			am.LogError("ComputeNewWeights: No validations for participant found", types.PoC, "participant", participantAddress)
-			continue
-		}
-
-		claimedWeight := getParticipantWeight(originalBatches[participantAddress])
-		if claimedWeight < 1 {
-			am.LogWarn("ComputeNewWeights: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
-			continue
-		}
-
-		if participant.ValidatorKey == "" {
-			am.LogError("ComputeNewWeights: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
-			continue
-		}
-
-		if currentActiveParticipants != nil {
-			valOutcome := getValidationOutcome(currentValidatorWeights, vals)
-			votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
-			if votedWeight < requiredValidWeight {
-				am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations. Defaulting to accepting",
-					types.PoC, "participant", participantAddress,
-					"votedWeight", votedWeight,
-					"requiredValidWeight", requiredValidWeight)
-			} else {
-				if uint64(valOutcome.ValidWeight) < requiredValidWeight {
-					am.LogWarn("ComputeNewWeights: Participant didn't receive enough validations",
-						types.PoC, "participant", participantAddress,
-						"validWeight", valOutcome.ValidWeight,
-						"requiredValidWeight", requiredValidWeight)
-					continue
-				}
-			}
-		}
+		participants[participantAddress] = participant
 
 		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
 		if !found {
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC, "blockHeight", epochStartBlockHeight, "participant", participantAddress)
 			continue
 		}
+		seeds[participantAddress] = seed
+	}
 
-		activeParticipant := &types.ActiveParticipant{
-			Index:        participantAddress,
-			ValidatorKey: participant.ValidatorKey,
-			Weight:       claimedWeight,
-			InferenceUrl: participant.InferenceUrl,
-			Models:       participant.Models,
-			Seed:         &seed,
+	// Create a WeightCalculator and use it to calculate the new weights
+	calculator := NewWeightCalculator(
+		currentValidatorWeights,
+		originalBatches,
+		validations,
+		participants,
+		seeds,
+		epochStartBlockHeight,
+		am,
+	)
+	return calculator.Calculate()
+}
+
+// Calculate computes the new weights for active participants based on the data in the WeightCalculator
+func (wc *WeightCalculator) Calculate() []*types.ActiveParticipant {
+	sortedBatchKeys := wc.getSortedBatchKeys()
+
+	var activeParticipants []*types.ActiveParticipant
+	for _, participantAddress := range sortedBatchKeys {
+		activeParticipant := wc.validatedParticipant(participantAddress)
+		if activeParticipant != nil {
+			activeParticipants = append(activeParticipants, activeParticipant)
+			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
 		}
-		activeParticipants = append(activeParticipants, activeParticipant)
-		am.LogInfo("ComputeNewWeights: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant)
 	}
 
 	return activeParticipants
 }
 
-func getParticipantWeight(batches []types.PoCBatch) int64 {
+func (wc *WeightCalculator) getSortedBatchKeys() []string {
+	var sortedBatchKeys []string
+	for key := range wc.OriginalBatches {
+		sortedBatchKeys = append(sortedBatchKeys, key)
+	}
+	sort.Strings(sortedBatchKeys)
+	return sortedBatchKeys
+}
+
+func (wc *WeightCalculator) validatedParticipant(participantAddress string) *types.ActiveParticipant {
+	participant, ok := wc.Participants[participantAddress]
+	if !ok {
+		// This should not happen since we already checked when collecting participants
+		wc.Logger.LogError("Calculate: Participant not found", types.PoC, "address", participantAddress)
+		return nil
+	}
+
+	vals := wc.Validations[participantAddress]
+	if vals == nil || len(vals) == 0 {
+		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
+		return nil
+	}
+
+	claimedWeight := calculateParticipantWeight(wc.OriginalBatches[participantAddress])
+	if claimedWeight < 1 {
+		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
+		return nil
+	}
+
+	if participant.ValidatorKey == "" {
+		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
+		return nil
+	}
+
+	if !wc.pocValidated(vals, participantAddress) {
+		return nil
+	}
+
+	seed, found := wc.Seeds[participantAddress]
+	if !found {
+		// This should not happen since we already checked when collecting seeds
+		wc.Logger.LogError("Calculate: Seed not found", types.PoC, "blockHeight", wc.EpochStartBlockHeight, "participant", participantAddress)
+		return nil
+	}
+
+	activeParticipant := &types.ActiveParticipant{
+		Index:        participantAddress,
+		ValidatorKey: participant.ValidatorKey,
+		Weight:       claimedWeight,
+		InferenceUrl: participant.InferenceUrl,
+		Models:       participant.Models,
+		Seed:         &seed,
+	}
+	return activeParticipant
+}
+
+func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participantAddress string) bool {
+	totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
+	requiredValidWeight := (totalWeight * 2) / 3
+	shouldContinue := true
+
+	if wc.CurrentValidatorWeights != nil && len(wc.CurrentValidatorWeights) > 0 {
+		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
+		votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
+		if votedWeight < requiredValidWeight {
+			wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations. Defaulting to accepting",
+				types.PoC, "participant", participantAddress,
+				"votedWeight", votedWeight,
+				"requiredValidWeight", requiredValidWeight)
+		} else {
+			if uint64(valOutcome.ValidWeight) < requiredValidWeight {
+				wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations",
+					types.PoC, "participant", participantAddress,
+					"validWeight", valOutcome.ValidWeight,
+					"requiredValidWeight", requiredValidWeight)
+				shouldContinue = false
+			}
+		}
+	}
+	return shouldContinue
+}
+
+func calculateParticipantWeight(batches []types.PoCBatch) int64 {
 	uniqueNonces := make(map[int64]struct{})
 
 	for _, b := range batches {
@@ -127,19 +256,7 @@ func getParticipantWeight(batches []types.PoCBatch) int64 {
 	return int64(len(uniqueNonces))
 }
 
-func getActiveParticipantsWeights(activeParticipants *types.ActiveParticipants) map[string]int64 {
-	if activeParticipants == nil {
-		return nil
-	}
-
-	weights := make(map[string]int64)
-	for _, ap := range activeParticipants.Participants {
-		weights[ap.Index] = ap.Weight
-	}
-	return weights
-}
-
-func getTotalWeight(validatorWeights map[string]int64) uint64 {
+func calculateTotalWeight(validatorWeights map[string]int64) uint64 {
 	if validatorWeights == nil {
 		return 0
 	}
@@ -147,7 +264,7 @@ func getTotalWeight(validatorWeights map[string]int64) uint64 {
 	totalWeight := uint64(0)
 	for participant, weight := range validatorWeights {
 		if weight < 0 {
-			slog.Error("getTotalWeight: Negative weight found", "participant", participant, "weight", weight)
+			slog.Error("calculateTotalWeight: Negative weight found", "participant", participant, "weight", weight)
 			continue
 		}
 		totalWeight += uint64(weight)
@@ -161,7 +278,7 @@ type validationOutcome struct {
 	InvalidWeight int64
 }
 
-func getValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
+func calculateValidationOutcome(currentValidatorsSet map[string]int64, validations []types.PoCValidation) validationOutcome {
 	validWeight := int64(0)
 	invalidWeight := int64(0)
 	for _, v := range validations {

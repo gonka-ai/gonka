@@ -175,7 +175,7 @@ func (eg *EpochGroup) UpdateMember(ctx context.Context, previousVersion *types.P
 }
 
 func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeResult, error) {
-	members, err := eg.getGroupMembers(ctx)
+	members, err := eg.GetGroupMembers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 	return computeResults, nil
 }
 
-func (eg *EpochGroup) getGroupMembers(ctx context.Context) ([]*group.GroupMember, error) {
+func (eg *EpochGroup) GetGroupMembers(ctx context.Context) ([]*group.GroupMember, error) {
 	members, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{
 		GroupId: eg.GroupData.EpochGroupId,
 	})
