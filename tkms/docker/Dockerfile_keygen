@@ -1,0 +1,25 @@
+FROM rust:latest
+
+ENV RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"
+
+RUN apt-get update && apt-get install -y \
+  libusb-1.0-0-dev \
+  pkg-config \
+  --no-install-recommends && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN cargo install tmkms --features=softsign --version=0.12.0
+
+WORKDIR /root
+
+RUN tmkms init .tmkms
+
+ARG TMKMS_TOML=tmkms.toml
+COPY ${TMKMS_TOML} /root/.tmkms/tmkms.toml
+COPY docker/init.sh /root/init.sh
+RUN chmod +x /root/init.sh
+
+ENV WITHKEYGEN=true
+ENTRYPOINT ["/root/init.sh"]
+
+

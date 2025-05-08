@@ -176,16 +176,14 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	requestUrl, err := url.JoinPath(configManager.GetChainNodeConfig().SeedApiUrl, "/v1/participants")
 	if err != nil {
-		return fmt.Errorf("Failed to join URL path: %w", err)
+		return fmt.Errorf("failed to join URL path: %w", err)
 	}
 
-	// Serialize request body to JSON
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	// Create the POST request
 	req, err := http.NewRequest(http.MethodPost, requestUrl, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -194,7 +192,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	logging.Info("Sending request to seed node", types.Participants, "url", requestUrl)
 
-	// Send the request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -202,11 +199,9 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	}
 	defer resp.Body.Close()
 
-	// Handle the response
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("received non-OK response: %s", resp.Status)
 	}
-
 	return nil
 }
 
