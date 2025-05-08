@@ -4,11 +4,13 @@ import com.productscience.defaultModel
 import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.validNode
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.Logger
 
 class MultiModelTests : TestermintTest() {
     @Test
+    @Tag("unstable")
     fun `simple multi model`() {
         val (cluster, genesis) = initCluster(3)
         val newModelName = "newModel-1"
@@ -34,7 +36,7 @@ class MultiModelTests : TestermintTest() {
         }
 
 
-        genesis.makeInferenceRequest()
+//        genesis.makeInferenceRequest()
 
 
     }

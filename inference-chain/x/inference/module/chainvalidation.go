@@ -20,7 +20,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		val, found := am.keeper.GetActiveParticipants(ctx, upcomingGroupData.EpochGroupId-1)
 		currentActiveParticipants = &val
 		if !found {
-			am.LogError("ComputeNewWeights: No active participants found.", types.PoC)
+			am.LogError("ComputeNewWeights: No active participants found", types.PoC, "")
 			return nil
 		}
 	}

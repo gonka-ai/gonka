@@ -75,15 +75,27 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight int64, pubkey string, seedSignature string, reputation int64, models []string) error {
-	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature, "models", models)
 
 	// Check if this is a sub-group
 	if eg.GroupData.GetModelId() != "" {
 		// This is a sub-group, only add the member if the model matches
-		if len(models) == 0 || eg.GroupData.GetModelId() != models[0] {
+		if len(models) == 0 {
+			return nil
+		}
+		modelId := eg.GroupData.GetModelId()
+		found := false
+		for _, model := range models {
+			if modelId == model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			eg.Logger.LogInfo("Skipping member", types.EpochGroup, "address", address, "models", models, "groupModel", modelId)
 			return nil
 		}
 	}
+	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature, "models", models)
 
 	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
 	if !found {
@@ -260,6 +272,7 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 
 	// Check if we already have a sub-group for this model in memory
 	if subGroup, ok := eg.subGroups[modelId]; ok {
+		eg.Logger.LogInfo("Found existing sub-group in memory", types.EpochGroup, "modelId", modelId, "groupID", subGroup.GroupData.EpochGroupId, "height", subGroup.GroupData.PocStartBlockHeight)
 		return subGroup, nil
 	}
 
@@ -267,6 +280,7 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 	for _, height := range eg.GroupData.GetSubGroupHeights() {
 		subGroupData, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, height)
 		if found && subGroupData.GetModelId() == modelId {
+			eg.Logger.LogInfo("Found existing sub-group in state", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", height)
 			// Create an EpochGroup for the sub-group
 			subGroup := NewEpochGroup(
 				eg.GroupKeeper,
