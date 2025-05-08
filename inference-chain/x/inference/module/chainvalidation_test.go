@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/x/group"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -13,6 +15,78 @@ import (
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
+	// Setup with mocks
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Create validators to be returned by the staking keeper
+	validators := []stakingtypes.Validator{
+		{
+			OperatorAddress: "validator1",
+			Tokens:          math.NewInt(100),
+		},
+		{
+			OperatorAddress: "validator2",
+			Tokens:          math.NewInt(200),
+		},
+	}
+
+	// Set up the mock expectation for GetAllValidators
+	mocks.StakingKeeper.EXPECT().
+		GetAllValidators(gomock.Any()).
+		Return(validators, nil).
+		Times(1)
+
+	// Create AppModule with the keeper
+	am := inference.NewAppModule(nil, k, nil, nil, nil)
+
+	// Set up batches
+	batch := types.PoCBatch{
+		ParticipantAddress:       "participant1",
+		PocStageStartBlockHeight: 100,
+		Nonces:                   []int64{1, 2, 3},
+	}
+	k.SetPocBatch(ctx, batch)
+
+	// Set up validations
+	validation := types.PoCValidation{
+		ParticipantAddress:          "participant1",
+		ValidatorParticipantAddress: "validator1",
+		PocStageStartBlockHeight:    100,
+		FraudDetected:               false,
+	}
+	k.SetPoCValidation(ctx, validation)
+
+	// Set up participant
+	participant := types.Participant{
+		Index:        "participant1",
+		ValidatorKey: "validatorKey1",
+		InferenceUrl: "inferenceUrl1",
+		Models:       []string{"model1"},
+	}
+	k.SetParticipant(ctx, participant)
+
+	// Set up random seed
+	seed := types.RandomSeed{
+		Participant: "participant1",
+		BlockHeight: 100,
+		Signature:   "signature1",
+	}
+	k.SetRandomSeed(ctx, seed)
+
+	// Create EpochGroupData with epochGroupId <= 1
+	upcomingGroupData := &types.EpochGroupData{
+		EpochGroupId:        1,
+		PocStartBlockHeight: 100,
+	}
+
+	// Call the function
+	result := am.ComputeNewWeights(ctx, upcomingGroupData)
+
+	// Verify the result
+	require.Equal(t, 1, len(result))
+}
 
 func TestComputeNewWeights(t *testing.T) {
 	// Test cases
@@ -265,6 +339,20 @@ func TestComputeNewWeights(t *testing.T) {
 				mocks.GroupKeeper.EXPECT().
 					GroupMembers(gomock.Any(), gomock.Any()).
 					Return(response, nil).
+					AnyTimes()
+			} else {
+				// For epochGroupId <= 1, set up mock for GetAllValidators
+				validators := []stakingtypes.Validator{
+					{
+						OperatorAddress: "validator1",
+						Tokens:          math.NewInt(100),
+					},
+				}
+
+				// Set up the mock expectation for GetAllValidators
+				mocks.StakingKeeper.EXPECT().
+					GetAllValidators(gomock.Any()).
+					Return(validators, nil).
 					AnyTimes()
 			}
 

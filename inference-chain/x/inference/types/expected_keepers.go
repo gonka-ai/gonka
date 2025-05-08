@@ -76,6 +76,7 @@ type ValidatorSet interface {
 
 type StakingKeeper interface {
 	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types.Validator, error)
+	GetAllValidators(ctx context.Context) (validators []types.Validator, err error)
 }
 
 type ParticipantKeeper interface {

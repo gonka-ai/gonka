@@ -42,32 +42,42 @@ func NewWeightCalculator(
 }
 
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
-func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochGroupId uint64) map[string]int64 {
+func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochGroupId uint64) (map[string]int64, error) {
 	if epochGroupId <= 1 {
-		return nil
+		currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
+		if err != nil {
+			am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
+			return nil, err
+		}
+		weights := make(map[string]int64)
+		for _, validator := range currentValidators {
+			weights[validator.OperatorAddress] = validator.Tokens.Int64()
+		}
+		return weights, nil
 	}
 
 	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		am.LogError("getCurrentValidatorWeights: Error getting current epoch group", types.PoC, "error", err)
-		return nil
+		return nil, err
 	}
 	currentMembers, err := currentGroup.GetGroupMembers(ctx)
 	if err != nil {
 		am.LogError("getCurrentValidatorWeights: Error getting current group members", types.PoC, "error", err)
-		return nil
+		return nil, err
 	}
 
 	weights := make(map[string]int64)
 	for _, member := range currentMembers {
 		weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
 		if err != nil {
-			weight = 0
+			am.LogError("getCurrentValidatorWeights: Error parsing weight", types.PoC, "address", member.Member.Address, "weight", member.Member.Weight, "error", err)
+			return nil, err
 		}
 		weights[member.Member.Address] = weight
 	}
 
-	return weights
+	return weights, nil
 }
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *types.EpochGroupData) []*types.ActiveParticipant {
@@ -75,7 +85,12 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
 
 	// Get current active participants weights
-	currentValidatorWeights := am.getCurrentValidatorWeights(ctx, upcomingGroupData.EpochGroupId)
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingGroupData.EpochGroupId)
+
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		return nil
+	}
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
