@@ -8,15 +8,15 @@ sudo reboot
 nvidia-smi
 
 # Second part, install container toolkit
+# From official website: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
 # Add NVIDIA package repositories
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
-   && curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-   && curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-sudo apt update
-sudo apt install -y nvidia-container-toolkit
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
 
 # Configure containerd (which k3s uses) to use NVIDIA runtime
 # K3s ships its own containerd config. We need to be careful.
