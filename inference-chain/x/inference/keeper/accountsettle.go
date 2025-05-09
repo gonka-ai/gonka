@@ -2,10 +2,11 @@ package keeper
 
 import (
 	"context"
+	"math"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
-	"math"
 )
 
 type SettleParameters struct {
@@ -168,6 +169,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		previousSettle, found := k.GetSettleAmount(ctx, amount.Settle.Participant)
 		if found {
 			// No claim, burn it!
+			k.LogInfo("Burning coins", types.Settle, "address", amount.Settle.Participant, "amount", int64(previousSettle.GetTotalCoins()))
 			err = k.BurnCoins(ctx, int64(previousSettle.GetTotalCoins()), "no_claim:"+amount.Settle.Participant)
 			if err != nil {
 				k.LogError("Error burning coins", types.Settle, "error", err)
