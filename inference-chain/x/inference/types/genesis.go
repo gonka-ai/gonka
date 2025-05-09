@@ -43,7 +43,7 @@ func MockedGenesis() *GenesisState {
 }
 
 func DefaultGenesis() *GenesisState {
-	return GenerateGenesis(true)
+	return GenerateGenesis(false)
 }
 
 // Validate performs basic genesis state validation returning an error upon any

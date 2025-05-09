@@ -1,422 +1,276 @@
 package public
 
 import (
-	"fmt"
+	"decentralized-api/cosmosclient"
 	"log/slog"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
 )
 
-// NewBridgeTransactionQueue creates a new queue for bridge transactions
-func NewBridgeTransactionQueue() *BridgeTransactionQueue {
-	queue := &BridgeTransactionQueue{
-		pendingTransactions: make(map[string]*PendingBridgeTransaction),
-		finalizationCh:      make(chan BlockFinalizationData, 100),
+// NewBlockQueue creates a new queue for blocks with receipts
+func NewBlockQueue(recorder cosmosclient.CosmosMessageClient) *BridgeQueue {
+	queue := &BridgeQueue{
+		pendingBlocks:             make(map[string]*BridgeBlock),
+		minBlocksBeforeProcessing: 6,
+		recorder:                  recorder,
 	}
 
 	// Start the queue processor
-	go queue.processQueue()
+	go queue.init()
 
 	return queue
 }
 
-// Add adds a transaction to the pending queue
-func (q *BridgeTransactionQueue) Add(tx BridgeTransaction) string {
-	txIndex := fmt.Sprintf("%s-%s", tx.BlockNumber, tx.ReceiptIndex)
-
+// AddBlock adds a block to the queue
+func (q *BridgeQueue) AddBlock(block BridgeBlock) string {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	// Check if already exists
-	if _, exists := q.pendingTransactions[txIndex]; exists {
-		slog.Info("Transaction already in queue", "txIndex", txIndex)
-		return txIndex
+	// Check if block already exists
+	if _, exists := q.pendingBlocks[block.BlockNumber]; exists {
+		slog.Info("Block already in queue", "blockNumber", block.BlockNumber)
+		return block.BlockNumber
 	}
 
-	q.pendingTransactions[txIndex] = &PendingBridgeTransaction{
-		Transaction:    tx,
-		SubmittedAt:    time.Now(),
-		BlockFinalized: false,
+	q.pendingBlocks[block.BlockNumber] = &block
+
+	slog.Info("Added block to pending queue",
+		"blockNumber", block.BlockNumber,
+		"originChain", block.OriginChain,
+		"receiptsCount", len(block.Receipts),
+		"queueLength", len(q.pendingBlocks))
+
+	// Trigger processing if we have enough blocks
+	if len(q.pendingBlocks) >= q.minBlocksBeforeProcessing {
+		go q.processBlocks()
 	}
 
-	slog.Info("Added transaction to pending queue", "txIndex", txIndex)
-	return txIndex
+	return block.BlockNumber
 }
 
-// MarkAsFinalized marks transactions from a specific block as finalized if receipts root matches
-func (q *BridgeTransactionQueue) MarkAsFinalized(blockNumber string, receiptsRoot string) int {
-	q.finalizationCh <- BlockFinalizationData{
-		BlockNumber:  blockNumber,
-		ReceiptsRoot: receiptsRoot,
-	}
-	return 0 // Async operation, actual count will be logged in processQueue
-}
-
-// GetPendingTransactions returns all pending transactions
-func (q *BridgeTransactionQueue) GetPendingTransactions() []PendingBridgeTransaction {
+// GetPendingBlocks returns all pending blocks
+func (q *BridgeQueue) GetPendingBlocks() []BridgeBlock {
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 
-	result := make([]PendingBridgeTransaction, 0, len(q.pendingTransactions))
-	for _, tx := range q.pendingTransactions {
-		result = append(result, *tx)
+	result := make([]BridgeBlock, 0, len(q.pendingBlocks))
+	for _, block := range q.pendingBlocks {
+		result = append(result, *block)
 	}
 
 	return result
 }
 
-// ProcessQueue continuously processes the queue and handles finalization data
-func (q *BridgeTransactionQueue) processQueue() {
-	ticker := time.NewTicker(5 * time.Minute)
+// Init sets up the queue processing
+func (q *BridgeQueue) init() {
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case finData := <-q.finalizationCh:
-			count := q.handleFinalizationData(finData)
-			slog.Info("Processed block finalization",
-				"blockNumber", finData.BlockNumber,
-				"transactionsFinalized", count)
-
-			// After processing finalization data, try to process any finalized transactions
-			q.processFinalizedTransactions()
-
 		case <-ticker.C:
-			// Clean up old transactions
-			q.cleanupOldTransactions()
+			// Process blocks if we have enough
+			if len(q.pendingBlocks) >= q.minBlocksBeforeProcessing {
+				q.processBlocks()
+			}
 		}
 	}
 }
 
-// handleFinalizationData processes block finalization data and returns count of affected transactions
-func (q *BridgeTransactionQueue) handleFinalizationData(data BlockFinalizationData) int {
-	q.lock.Lock()
-	defer q.lock.Unlock()
+// processBlocks processes queued blocks in order starting from the earliest
+func (q *BridgeQueue) processBlocks() {
+	slog.Info("Starting to process blocks", "queueLength", len(q.pendingBlocks))
 
-	count := 0
-	invalidCount := 0
-
-	// First identify all transactions in this block
-	blockTxs := make(map[string]*PendingBridgeTransaction)
-	for txIndex, pendingTx := range q.pendingTransactions {
-		if pendingTx.Transaction.BlockNumber == data.BlockNumber {
-			blockTxs[txIndex] = pendingTx
-		}
-	}
-
-	slog.Info("Processing finalization for block",
-		"blockNumber", data.BlockNumber,
-		"receiptsRoot", data.ReceiptsRoot,
-		"transactionsInBlock", len(blockTxs))
-
-	if len(blockTxs) == 0 {
-		slog.Info("No transactions found for block",
-			"blockNumber", data.BlockNumber)
-		return 0
-	}
-
-	// Process transactions in this block
-	for txIndex, pendingTx := range blockTxs {
-		// If receipts root matches, mark as finalized
-		if pendingTx.Transaction.ReceiptsRoot == data.ReceiptsRoot {
-			pendingTx.BlockFinalized = true
-			count++
-			slog.Info("Marked transaction as finalized",
-				"txIndex", txIndex,
-				"blockNumber", data.BlockNumber)
-		} else {
-			// Receipts root doesn't match, this is an invalid receipt
-			slog.Warn("Removing invalid transaction with receipts root mismatch",
-				"txIndex", txIndex,
-				"txReceiptsRoot", pendingTx.Transaction.ReceiptsRoot,
-				"finalizedReceiptsRoot", data.ReceiptsRoot)
-
-			// Remove it directly
-			delete(q.pendingTransactions, txIndex)
-			invalidCount++
-		}
-	}
-
-	slog.Info("Finalization complete",
-		"blockNumber", data.BlockNumber,
-		"receiptsRoot", data.ReceiptsRoot,
-		"validTransactions", count,
-		"invalidTransactionsRemoved", invalidCount)
-
-	return count
-}
-
-// processFinalizedTransactions processes any transactions that have been marked as finalized
-func (q *BridgeTransactionQueue) processFinalizedTransactions() {
 	for {
-		tx, exists := q.GetNextFinalizedTransaction()
+		block, exists := q.getNextBlock()
 		if !exists {
 			break
 		}
 
-		// Process the transaction (e.g., create Cosmos transaction)
-		slog.Info("Processing finalized transaction",
-			"chain", tx.OriginChain,
-			"contract", tx.ContractAddress,
-			"owner", tx.OwnerAddress,
-			"amount", tx.Amount,
-			"blockNumber", tx.BlockNumber,
-			"receiptIndex", tx.ReceiptIndex)
+		// Process the block and its receipts
+		slog.Info("Processing block",
+			"blockNumber", block.BlockNumber,
+			"originChain", block.OriginChain,
+			"receiptsRoot", block.ReceiptsRoot,
+			"receiptsCount", len(block.Receipts))
 
-		// TODO: Implement actual transaction processing logic here
-		// This could involve creating and sending a Cosmos transaction
+		// Process each receipt in the block
+		for _, receipt := range block.Receipts {
+			// Process the receipt with block information
+			q.processReceipt(receipt, block)
+		}
 	}
 }
 
-// GetNextFinalizedTransaction gets the next finalized transaction ready for processing
-func (q *BridgeTransactionQueue) GetNextFinalizedTransaction() (BridgeTransaction, bool) {
+// getNextBlock retrieves and removes the earliest block from the queue
+func (q *BridgeQueue) getNextBlock() (BridgeBlock, bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	// Create a slice to hold all finalized transactions
-	var finalizedTxs []struct {
-		txIndex string
-		tx      BridgeTransaction
+	if len(q.pendingBlocks) == 0 {
+		return BridgeBlock{}, false
 	}
 
-	// Collect all finalized transactions
-	for txIndex, pendingTx := range q.pendingTransactions {
-		if pendingTx.BlockFinalized {
-			finalizedTxs = append(finalizedTxs, struct {
-				txIndex string
-				tx      BridgeTransaction
-			}{
-				txIndex: txIndex,
-				tx:      pendingTx.Transaction,
-			})
-		}
+	// Create a slice of all blocks
+	var blocks []struct {
+		blockNumber string
+		block       BridgeBlock
 	}
 
-	if len(finalizedTxs) == 0 {
-		return BridgeTransaction{}, false
+	for blockNum, pendingBlock := range q.pendingBlocks {
+		blocks = append(blocks, struct {
+			blockNumber string
+			block       BridgeBlock
+		}{
+			blockNumber: blockNum,
+			block:       *pendingBlock,
+		})
 	}
 
-	// Sort transactions by block number and receipt index
-	sort.Slice(finalizedTxs, func(i, j int) bool {
-		// First compare block numbers
-		blockNumI, errI := strconv.ParseUint(finalizedTxs[i].tx.BlockNumber, 10, 64)
-		blockNumJ, errJ := strconv.ParseUint(finalizedTxs[j].tx.BlockNumber, 10, 64)
-
-		// If block numbers are different, sort by block number
-		if errI == nil && errJ == nil && blockNumI != blockNumJ {
-			return blockNumI < blockNumJ
-		}
-
-		// If block numbers are the same, sort by receipt index
-		indexI, errI := strconv.ParseUint(finalizedTxs[i].tx.ReceiptIndex, 10, 64)
-		indexJ, errJ := strconv.ParseUint(finalizedTxs[j].tx.ReceiptIndex, 10, 64)
-
-		if errI == nil && errJ == nil {
-			return indexI < indexJ
-		}
+	// Sort blocks by block number (ascending)
+	sort.Slice(blocks, func(i, j int) bool {
+		blockNumI, errI := strconv.ParseUint(blocks[i].blockNumber, 10, 64)
+		blockNumJ, errJ := strconv.ParseUint(blocks[j].blockNumber, 10, 64)
 
 		// If parsing fails, fall back to string comparison
-		return finalizedTxs[i].tx.ReceiptIndex < finalizedTxs[j].tx.ReceiptIndex
+		if errI != nil || errJ != nil {
+			return blocks[i].blockNumber < blocks[j].blockNumber
+		}
+
+		return blockNumI < blockNumJ
 	})
 
-	// Get the first transaction after sorting
-	firstTx := finalizedTxs[0]
+	// Get the earliest block
+	earliestBlock := blocks[0]
 
 	// Remove it from the queue
-	delete(q.pendingTransactions, firstTx.txIndex)
+	delete(q.pendingBlocks, earliestBlock.blockNumber)
 
-	slog.Info("Processing finalized transaction in order",
-		"txIndex", firstTx.txIndex,
-		"blockNumber", firstTx.tx.BlockNumber,
-		"receiptIndex", firstTx.tx.ReceiptIndex)
+	slog.Info("Retrieved next block for processing",
+		"blockNumber", earliestBlock.blockNumber,
+		"remainingBlocks", len(q.pendingBlocks))
 
-	return firstTx.tx, true
+	return earliestBlock.block, true
 }
 
-// cleanupOldTransactions removes transactions that are too old or have too many failed verifications
-func (q *BridgeTransactionQueue) cleanupOldTransactions() {
-	q.lock.Lock()
-	defer q.lock.Unlock()
+// processReceipt handles an individual receipt (similar to previous cosmos processing)
+func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) {
+	// Process the transaction (e.g., create Cosmos transaction)
+	slog.Info("Processing receipt",
+		"chain", block.OriginChain,
+		"contract", receipt.ContractAddress,
+		"owner", receipt.OwnerAddress,
+		"amount", receipt.Amount,
+		"blockNumber", block.BlockNumber,
+		"receiptIndex", receipt.ReceiptIndex)
 
-	now := time.Now()
-	maxAge := 24 * time.Hour // Max age is 24 hours
+	msg := &types.MsgBridgeExchange{
+		Validator:       q.recorder.GetAddress(),
+		OriginChain:     block.OriginChain,
+		ContractAddress: receipt.ContractAddress,
+		OwnerAddress:    receipt.OwnerAddress,
+		Amount:          receipt.Amount,
+		BlockNumber:     block.BlockNumber,
+		ReceiptIndex:    receipt.ReceiptIndex,
+		ReceiptsRoot:    block.ReceiptsRoot,
+	}
 
-	for txIndex, pendingTx := range q.pendingTransactions {
-		age := now.Sub(pendingTx.SubmittedAt)
-
-		if age > maxAge {
-			slog.Warn("Removing old transaction from queue",
-				"txIndex", txIndex,
-				"age", age.String())
-			delete(q.pendingTransactions, txIndex)
-		}
+	err := q.recorder.BridgeExchange(msg)
+	if err != nil {
+		slog.Error("Error processing bridge exchange",
+			"error", err,
+			"blockNumber", block.BlockNumber,
+			"receiptIndex", receipt.ReceiptIndex)
 	}
 }
 
 // Create a global instance of the queue
-var transactionQueue *BridgeTransactionQueue
+var blockQueue *BridgeQueue
 
-// postBridge handles POST requests to submit new bridge transactions
-func (s *Server) postBridge(c echo.Context) error {
-	var bridgeTx BridgeTransaction
-	if err := c.Bind(&bridgeTx); err != nil {
-		slog.Error("Failed to decode bridge transaction", "error", err)
+// postBlock handles POST requests to submit finalized blocks with optional receipts
+func (s *Server) postBlock(c echo.Context) error {
+	var blockData BridgeBlock
+	if err := c.Bind(&blockData); err != nil {
+		slog.Error("Failed to decode block data", "error", err)
 		return c.JSON(400, map[string]string{"error": "Invalid request body: " + err.Error()})
 	}
 
 	// Validate required fields
-	if bridgeTx.OriginChain == "" || bridgeTx.ContractAddress == "" ||
-		bridgeTx.OwnerAddress == "" || bridgeTx.Amount == "" || bridgeTx.BlockNumber == "" ||
-		bridgeTx.ReceiptIndex == "" || bridgeTx.ReceiptsRoot == "" {
-		return c.JSON(400, map[string]string{"error": "All fields are required: chain, contract, owner, amount, blockNumber, receiptIndex, receiptsRoot"})
+	if blockData.BlockNumber == "" || blockData.ReceiptsRoot == "" || blockData.OriginChain == "" {
+		return c.JSON(400, map[string]string{"error": "Required fields missing: blockNumber, receiptsRoot, originChain"})
 	}
 
-	slog.Info("Received bridge transaction",
-		"chain", bridgeTx.OriginChain,
-		"contract", bridgeTx.ContractAddress,
-		"owner", bridgeTx.OwnerAddress,
-		"amount", bridgeTx.Amount,
-		"blockNumber", bridgeTx.BlockNumber,
-		"receiptIndex", bridgeTx.ReceiptIndex,
-		"receiptsRoot", bridgeTx.ReceiptsRoot)
+	slog.Info("Received finalized block",
+		"blockNumber", blockData.BlockNumber,
+		"originChain", blockData.OriginChain,
+		"receiptsRoot", blockData.ReceiptsRoot,
+		"receiptsCount", len(blockData.Receipts))
 
-	// Add to the queue
-	txIndex := transactionQueue.Add(bridgeTx)
+	// Add the block to the queue
+	blockNumber := blockQueue.AddBlock(blockData)
 
 	// Return success response
-	return c.JSON(200, map[string]string{
-		"status":  "pending",
-		"message": "Bridge transaction queued for processing",
-		"txIndex": txIndex,
-	})
-}
-
-// patchBridge handles PATCH requests to submit block finalization data
-func (s *Server) patchBridge(c echo.Context) error {
-	var finData BlockFinalizationData
-	if err := c.Bind(&finData); err != nil {
-		slog.Error("Failed to decode finalization data", "error", err)
-		return c.JSON(400, map[string]string{"error": "Invalid request body: " + err.Error()})
-	}
-
-	// Validate required fields
-	if finData.BlockNumber == "" || finData.ReceiptsRoot == "" {
-		return c.JSON(400, map[string]string{"error": "All fields are required: blockNumber, receiptsRoot"})
-	}
-
-	slog.Info("Received block finalization data",
-		"blockNumber", finData.BlockNumber,
-		"receiptsRoot", finData.ReceiptsRoot)
-
-	// Count transactions in the specified block before processing
-	pendingTx := transactionQueue.GetPendingTransactions()
-	blockTxCount := 0
-	finalizedCount := 0
-	for _, tx := range pendingTx {
-		if tx.Transaction.BlockNumber == finData.BlockNumber {
-			blockTxCount++
-			if tx.BlockFinalized {
-				finalizedCount++
-			}
-		}
-	}
-
-	// Mark matching transactions as finalized and remove invalid ones
-	transactionQueue.MarkAsFinalized(finData.BlockNumber, finData.ReceiptsRoot)
-
-	// Log information about the background processing
-	slog.Info("Block finalization scheduled. Cosmos transactions will be processed in background.",
-		"blockNumber", finData.BlockNumber,
-		"transactionsInBlock", blockTxCount,
-		"alreadyFinalized", finalizedCount,
-		"backgroundProcessDelay", "30 seconds maximum")
-
-	// Return success response with more details
 	return c.JSON(200, map[string]interface{}{
-		"status":            "success",
-		"message":           "Block finalization data processed",
-		"blockNumber":       finData.BlockNumber,
-		"receiptRoot":       finData.ReceiptsRoot,
-		"receiptsInBlock":   blockTxCount,
-		"totalPendingCount": len(pendingTx),
+		"status":        "success",
+		"message":       "Block queued for processing",
+		"blockNumber":   blockNumber,
+		"receiptsCount": len(blockData.Receipts),
+		"queueSize":     len(blockQueue.pendingBlocks),
 	})
 }
 
-// getBridgeStatus returns information about the pending transactions queue
+// getBridgeStatus returns information about the queue status
 func (s *Server) getBridgeStatus(c echo.Context) error {
-	pendingTx := transactionQueue.GetPendingTransactions()
+	pendingBlocks := blockQueue.GetPendingBlocks()
 
-	// Group transactions by block number and receipts root
-	blockGroups := make(map[string]int)
-	rootGroups := make(map[string]int)
+	// Group blocks by number
+	blockCountByNumber := make(map[string]int)
 
-	// For each block number, track unique receipts roots to identify potential conflicts
-	blockRoots := make(map[string]map[string]int)
+	// Track earliest and latest block numbers
+	var blockNumbers []uint64
 
-	for _, tx := range pendingTx {
-		blockNum := tx.Transaction.BlockNumber
-		receiptsRoot := tx.Transaction.ReceiptsRoot
+	for _, block := range pendingBlocks {
+		blockNum := block.BlockNumber
+		blockCountByNumber[blockNum]++
 
-		// Count by block number
-		blockGroups[blockNum]++
-
-		// Count by receipts root
-		rootGroups[receiptsRoot]++
-
-		// Track roots per block
-		if _, exists := blockRoots[blockNum]; !exists {
-			blockRoots[blockNum] = make(map[string]int)
-		}
-		blockRoots[blockNum][receiptsRoot]++
-	}
-
-	// Identify blocks with conflicting receipts
-	conflictBlocks := make([]map[string]interface{}, 0)
-	for blockNum, roots := range blockRoots {
-		if len(roots) > 1 {
-			// This block has multiple different receipts roots - potential conflict
-			rootCounts := make(map[string]int)
-			for root, count := range roots {
-				rootCounts[root] = count
-			}
-
-			conflictBlocks = append(conflictBlocks, map[string]interface{}{
-				"blockNumber": blockNum,
-				"rootCounts":  rootCounts,
-			})
+		// Parse block number for sorting
+		if blockNum, err := strconv.ParseUint(block.BlockNumber, 10, 64); err == nil {
+			blockNumbers = append(blockNumbers, blockNum)
 		}
 	}
 
-	// Count finalized vs non-finalized transactions
-	finalizedCount := 0
-	for _, tx := range pendingTx {
-		if tx.BlockFinalized {
-			finalizedCount++
-		}
+	var earliestBlock, latestBlock uint64
+	var readyToProcess bool
+
+	if len(blockNumbers) > 0 {
+		// Sort the block numbers
+		sort.Slice(blockNumbers, func(i, j int) bool {
+			return blockNumbers[i] < blockNumbers[j]
+		})
+
+		earliestBlock = blockNumbers[0]
+		latestBlock = blockNumbers[len(blockNumbers)-1]
+		readyToProcess = len(blockNumbers) >= blockQueue.minBlocksBeforeProcessing
+	}
+
+	// Count total receipts in all blocks
+	totalReceipts := 0
+	for _, block := range pendingBlocks {
+		totalReceipts += len(block.Receipts)
 	}
 
 	response := map[string]interface{}{
-		"total":             len(pendingTx),
-		"finalized":         finalizedCount,
-		"pending":           len(pendingTx) - finalizedCount,
-		"blockGroups":       blockGroups,
-		"receiptRootGroups": rootGroups,
-		"conflictingBlocks": conflictBlocks,
-		"oldestTransaction": time.Time{},
-	}
-
-	// Find oldest transaction
-	if len(pendingTx) > 0 {
-		oldest := pendingTx[0].SubmittedAt
-		for _, tx := range pendingTx {
-			if tx.SubmittedAt.Before(oldest) {
-				oldest = tx.SubmittedAt
-			}
-		}
-		response["oldestTransaction"] = oldest
+		"pendingBlocksCount":        len(pendingBlocks),
+		"pendingReceiptsCount":      totalReceipts,
+		"blockCountByNumber":        blockCountByNumber,
+		"earliestBlockNumber":       earliestBlock,
+		"latestBlockNumber":         latestBlock,
+		"readyToProcess":            readyToProcess,
+		"minBlocksBeforeProcessing": blockQueue.minBlocksBeforeProcessing,
 	}
 
 	return c.JSON(200, response)

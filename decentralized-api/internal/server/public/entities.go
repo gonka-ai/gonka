@@ -1,9 +1,9 @@
 package public
 
 import (
+	"decentralized-api/cosmosclient"
 	"net/http"
 	"sync"
-	"time"
 
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	comettypes "github.com/cometbft/cometbft/types"
@@ -145,33 +145,24 @@ type ModelPriceDto struct {
 	PricePerToken          uint64 `json:"price_per_token"`
 }
 
-type BridgeTransaction struct {
-	OriginChain     string `json:"chain"`        // Name of the origin chain (e.g., "ethereum")
+// FinalizedBlock represents a finalized block with optional receipts
+type BridgeBlock struct {
+	BlockNumber  string          `json:"blockNumber"`
+	OriginChain  string          `json:"originChain"`        // Name of the origin chain (e.g., "ethereum")
+	ReceiptsRoot string          `json:"receiptsRoot"`       // Merkle root of receipts trie for transaction verification
+	Receipts     []BridgeReceipt `json:"receipts,omitempty"` // Optional list of receipts
+}
+type BridgeReceipt struct {
 	ContractAddress string `json:"contract"`     // Address of the smart contract on the origin chain
 	OwnerAddress    string `json:"owner"`        // Address of the token owner on the origin chain
 	Amount          string `json:"amount"`       // Amount of tokens to be bridged
-	BlockNumber     string `json:"blockNumber"`  // Block number where the transaction occurred
 	ReceiptIndex    string `json:"receiptIndex"` // Index of the transaction receipt in the block
-	ReceiptsRoot    string `json:"receiptsRoot"` // Merkle root of receipts trie for transaction verification
 }
 
-// PendingBridgeTransaction represents a bridge transaction waiting for block finalization
-type PendingBridgeTransaction struct {
-	Transaction    BridgeTransaction `json:"transaction"`
-	SubmittedAt    time.Time         `json:"submittedAt"`
-	BlockFinalized bool              `json:"blockFinalized"`
-}
-
-// BlockFinalizationData represents data received to confirm that a block has been finalized
-type BlockFinalizationData struct {
-	BlockNumber  string `json:"blockNumber"`
-	ReceiptsRoot string `json:"receiptsRoot"`
-}
-
-// BridgeTransactionQueue manages pending bridge transactions
-type BridgeTransactionQueue struct {
-	pendingTransactions map[string]*PendingBridgeTransaction // Key is blockNumber-receiptIndex
-	lock                sync.RWMutex
-	// Channel to notify about new finalization data
-	finalizationCh chan BlockFinalizationData
+// BlockQueue manages a queue of blocks to be processed
+type BridgeQueue struct {
+	pendingBlocks             map[string]*BridgeBlock // Key is blockNumber
+	lock                      sync.RWMutex
+	minBlocksBeforeProcessing int // Minimum number of blocks needed before starting processing
+	recorder                  cosmosclient.CosmosMessageClient
 }
