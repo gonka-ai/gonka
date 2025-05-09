@@ -12,7 +12,7 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 KEY_NAME="genesis"
 APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-1"
+CHAIN_ID="gonka-testnet-2"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 # Init the chain:
