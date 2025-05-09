@@ -309,6 +309,7 @@ message QueryGetRandomExecutorResponse {
 
 message QueryGetEpochGroupDataRequest {
   uint64 poc_start_block_height = 1;
+  string model_id = 2;
 }
 
 message QueryGetEpochGroupDataResponse {
@@ -578,4 +579,3 @@ message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
 }
-

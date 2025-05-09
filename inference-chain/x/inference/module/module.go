@@ -216,7 +216,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
-		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight))
+		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight), "")
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
@@ -372,12 +372,12 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 	am.keeper.SetEffectiveEpochGroupId(ctx, newGroupId)
 	am.keeper.SetPreviousEpochGroupId(ctx, previousGroupId)
 	am.keeper.SetUpcomingEpochGroupId(ctx, 0)
-	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId)
+	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId, "")
 	if !found {
 		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
 		return
 	}
-	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousGroupId)
+	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousGroupId, "")
 	if !found {
 		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousGroupId", previousGroupId)
 		return

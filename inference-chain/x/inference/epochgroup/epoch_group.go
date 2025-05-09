@@ -97,9 +97,9 @@ func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight int6
 	}
 	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature, "models", models)
 
-	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight)
+	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight, eg.GroupData.ModelId)
 	if !found {
-		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight)
+		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight, "modelId", eg.GroupData.ModelId)
 		return types.ErrCurrentEpochGroupNotFound
 	}
 	eg.GroupData = &val
@@ -278,8 +278,8 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 
 	// Check if we already have a sub-group for this model in the chain state
 	for _, height := range eg.GroupData.GetSubGroupHeights() {
-		subGroupData, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, height)
-		if found && subGroupData.GetModelId() == modelId {
+		subGroupData, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, height, modelId)
+		if found {
 			eg.Logger.LogInfo("Found existing sub-group in state", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", height)
 			// Create an EpochGroup for the sub-group
 			subGroup := NewEpochGroup(

@@ -55,7 +55,8 @@ func TestCreateEpochGroup(t *testing.T) {
 	epochGroup.GroupMock.EXPECT().CreateGroupWithPolicy(gomock.Any(), gomock.Any()).Return(response, nil)
 	err := epochGroup.EpochGroup.CreateGroup(context.Background())
 	require.NoError(t, err)
-	data, found := epochGroup.EpochGroup.GroupDataKeeper.GetEpochGroupData(context.Background(), epochGroupData.PocStartBlockHeight)
+	data, found := epochGroup.EpochGroup.GroupDataKeeper.GetEpochGroupData(context.Background(), epochGroupData.PocStartBlockHeight,
+		epochGroupData.ModelId)
 	require.True(t, found)
 	require.Equal(t, uint64(8), data.EpochGroupId)
 	require.Equal(t, "groupPolicyAddress", data.EpochPolicy)
