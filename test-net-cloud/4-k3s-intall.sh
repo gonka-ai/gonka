@@ -1,4 +1,6 @@
 # should be run on k8s-control-plane machine
+# We use dev user:
+# gcloud compute ssh dev@k8s-control-plane
 
 # The --flannel-iface should match your primary internal network interface (usually eth0 on GCP),
 #    to check use: ip -4 addr show
@@ -26,7 +28,8 @@ export KUBECONFIG=$HOME/.kube/config
 #   # Verify installation
 #   kubectl version --client
 # 1. Copy the content of /etc/rancher/k3s/k3s.yaml from the control plane.
-#    scp user@YOUR_CONTROL_PLANE_EXTERNAL_IP:/etc/rancher/k3s/k3s.yaml ~/.kube/k3s-config
-# 2. Edit the copied file on your local machine:
-#    Change server: https://127.0.0.1:6443 to server: https://YOUR_CONTROL_PLANE_EXTERNAL_IP:6443
-# 3. Then use it: export KUBECONFIG=~/.kube/k3s-config ; kubectl get nodes
+#    if not exist: mkdir -p ~/.kube
+#    gcloud compute scp dev@k8s-control-plane:/etc/rancher/k3s/k3s.yaml ~/.kube/k3s-config
+# 2. Tunnel to the machine:
+#    gcloud compute ssh dev@k8s-control-plane -- -L 6443:localhost:6443
+# 3. Then use on you local machine: export KUBECONFIG=~/.kube/k3s-config ; kubectl get nodes
