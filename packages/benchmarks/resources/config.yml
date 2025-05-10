@@ -1,0 +1,13 @@
+- model_name: Qwen/Qwen2.5-7B-Instruct
+  experiment_name: "Full"
+  description: ""
+  prompts_file: prompts.csv
+  generate_prompts: true
+  num_prompts: 10
+  prompt_length: 20000
+  num_tasks: 5
+  num_runners: 1
+  max_tokens: 300
+  seed: 1
+  node_url: "http://36.189.234.237:19252"
+  account_address: "gonka"

@@ -1,0 +1,98 @@
+name: Performance Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      private_key_hex:
+        description: 'Private key in hex format'
+        required: true
+      model_name:
+        description: 'Model name to use for benchmarking'
+        required: false
+      account_address:
+        description: 'Account address'
+        required: false
+      node_url:
+        description: 'Node URL'
+        required: false
+
+jobs:
+  run-benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pip install --upgrade poetry
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            /home/runner/.cache/pypoetry
+            /home/runner/.cache/pip
+            packages/benchmarks/.venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('packages/benchmarks/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+
+      - name: Prepare .env
+        run: |
+          make setup-envs
+          sed -i 's#CACHE_DIR=<CACHE_DIR>#CACHE_DIR=/tmp/cache_dir#g' .env
+
+      - name: Install dependencies
+        run: |
+          make setup-dev-env
+
+      - name: Run measure-from-yaml
+        working-directory: packages/benchmarks
+        shell: bash
+        run: |
+          source ../.venv/bin/activate
+
+          COMMAND="compressa-perf measure-from-yaml --private_key_hex ${{ github.event.inputs.private_key_hex }}"
+
+          if [ ! -z "${{ github.event.inputs.model_name }}" ]; then
+            COMMAND="$COMMAND --model_name ${{ github.event.inputs.model_name }}"
+          fi
+
+          if [ ! -z "${{ github.event.inputs.account_address }}" ]; then
+            COMMAND="$COMMAND --account_address ${{ github.event.inputs.account_address }}"
+          fi
+
+          if [ ! -z "${{ github.event.inputs.node_url }}" ]; then
+            COMMAND="$COMMAND --node_url ${{ github.event.inputs.node_url }}"
+          fi
+
+          COMMAND="$COMMAND resources/config.yml"
+
+          echo "Running: $COMMAND"
+          eval $COMMAND | tee stdout.log
+
+      - name: Run compressa-perf list
+        working-directory: packages/benchmarks
+        shell: bash
+        run: |
+          source ../.venv/bin/activate
+          compressa-perf list --show-metrics --show-parameters > results.txt
+
+      - name: Upload stdout log
+        uses: actions/upload-artifact@v3
+        with:
+          name: stdout-log
+          path: packages/benchmarks/stdout.log
+
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: packages/benchmarks/results.txt

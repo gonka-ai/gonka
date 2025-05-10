@@ -52,6 +52,8 @@ locks:
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	cd packages/api \
 		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
+	cd packages/benchmarks \
+		&& rm -rf poetry.lock && POETRY_VIRTUALENVS_CREATE=false poetry lock
 	rm -rf poetry.lock && \
 		POETRY_VIRTUALENVS_IN_PROJECT=true \
 		POETRY_VIRTUALENVS_CREATE=true \

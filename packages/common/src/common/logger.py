@@ -8,7 +8,7 @@ def create_logger(name):
 
 def setup_logger(
     logger: logging.Logger,
-    log_level: int = logging.DEBUG
+    log_level: int = logging.INFO
 ) -> logging.Logger:
     logger.setLevel(log_level)
     handler = logging.StreamHandler()  # Outputs to console
