@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+// EpochMember contains all the parameters related to a member in an epoch group
+type EpochMember struct {
+	Address       string
+	Weight        int64
+	Pubkey        string
+	SeedSignature string
+	Reputation    int64
+	Models        []string
+}
+
 type EpochGroup struct {
 	GroupKeeper       types.GroupMessageKeeper
 	ParticipantKeeper types.ParticipantKeeper
@@ -75,76 +85,80 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	return nil
 }
 
-func (eg *EpochGroup) AddMember(ctx context.Context, address string, weight int64, pubkey string, seedSignature string, reputation int64, models []string) error {
-
-	// Check if this is a sub-group
-	if eg.GroupData.GetModelId() != "" {
-		// This is a sub-group, only add the member if the model matches
-		if len(models) == 0 {
-			return nil
-		}
-		modelId := eg.GroupData.GetModelId()
-		found := false
-		for _, model := range models {
-			if modelId == model {
-				found = true
-				break
-			}
-		}
-		if !found {
-			eg.Logger.LogInfo("Skipping member", types.EpochGroup, "address", address, "models", models, "groupModel", modelId)
+func (eg *EpochGroup) AddMember(ctx context.Context, member EpochMember) error {
+	if eg.GroupData.IsModelGroup() {
+		if !eg.memberSupportsModel(member.Models) {
+			eg.Logger.LogInfo("Skipping member", types.EpochGroup, "address", member.Address, "models", member.Models, "groupModel", eg.GroupData.ModelId)
 			return nil
 		}
 	}
-	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", address, "weight", weight, "pubkey", pubkey, "seedSignature", seedSignature, "models", models)
 
+	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", member.Address, "weight", member.Weight, "pubkey", member.Pubkey, "seedSignature", member.SeedSignature, "models", member.Models)
 	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight, eg.GroupData.ModelId)
 	if !found {
 		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight, "modelId", eg.GroupData.ModelId)
 		return types.ErrCurrentEpochGroupNotFound
 	}
+
+	eg.updateEpochGroupWithNewMember(ctx, member, val)
+	err := eg.updateMember(ctx, member.Address, member.Weight, member.Pubkey)
+	if err != nil {
+		return err
+	}
+
+	if !eg.GroupData.IsModelGroup() && len(member.Models) > 0 {
+		eg.addToModelGroups(ctx, member)
+	}
+
+	return nil
+}
+
+func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member EpochMember, val types.EpochGroupData) {
 	eg.GroupData = &val
 	if eg.GroupData.MemberSeedSignatures == nil {
 		eg.GroupData.MemberSeedSignatures = []*types.SeedSignature{}
 	}
 	eg.GroupData.MemberSeedSignatures = append(eg.GroupData.MemberSeedSignatures, &types.SeedSignature{
-		MemberAddress: address,
-		Signature:     seedSignature,
+		MemberAddress: member.Address,
+		Signature:     member.SeedSignature,
 	})
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
-		MemberAddress: address,
-		Weight:        int64(weight),
-		Reputation:    int32(reputation),
+		MemberAddress: member.Address,
+		Weight:        int64(member.Weight),
+		Reputation:    int32(member.Reputation),
 	})
-	eg.GroupData.TotalWeight += weight
+	eg.GroupData.TotalWeight += member.Weight
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
-	err := eg.updateMember(ctx, address, weight, pubkey)
-	if err != nil {
-		return err
-	}
+}
 
-	// If this is the parent group, add the member to sub-groups for each model
-	// Only do this if we're not already processing a sub-group (to prevent recursion)
-	if eg.GroupData.GetModelId() == "" && len(models) > 0 {
-		for _, model := range models {
-			eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", model, "address", address)
-			subGroup, err := eg.GetSubGroup(ctx, model)
-			if err != nil {
-				eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", model)
-				continue
-			}
+func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
+	for _, model := range member.Models {
+		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", model, "address", member.Address)
+		subGroup, err := eg.GetSubGroup(ctx, model)
+		if err != nil {
+			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", model)
+			continue
+		}
 
-			// Add the member to the sub-group with the same weight, pubkey, etc.
-			// We're explicitly passing only this model to prevent further recursion
-			modelArray := []string{model}
-			err = subGroup.AddMember(ctx, address, weight, pubkey, seedSignature, reputation, modelArray)
-			if err != nil {
-				eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", model)
-			}
+		// Add the member to the sub-group with the same weight, pubkey, etc.
+		// We're explicitly passing only this model to prevent further recursion
+		subMember := member
+		subMember.Models = []string{model}
+		err = subGroup.AddMember(ctx, subMember)
+		if err != nil {
+			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", model)
 		}
 	}
+}
 
-	return nil
+func (eg *EpochGroup) memberSupportsModel(models []string) bool {
+	modelId := eg.GroupData.GetModelId()
+	for _, model := range models {
+		if modelId == model {
+			return true
+		}
+	}
+	return false
 }
 
 type VotingData struct {

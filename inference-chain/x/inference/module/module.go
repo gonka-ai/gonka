@@ -18,6 +18,7 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
 	"sort"
 
@@ -299,7 +300,15 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
 		}
-		err = upcomingEg.AddMember(ctx, p.Index, p.Weight, p.ValidatorKey, p.Seed.Signature, reputation, p.Models)
+		member := epochgroup.EpochMember{
+			Address:       p.Index,
+			Weight:        p.Weight,
+			Pubkey:        p.ValidatorKey,
+			SeedSignature: p.Seed.Signature,
+			Reputation:    reputation,
+			Models:        p.Models,
+		}
+		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue

@@ -78,7 +78,15 @@ func TestAddMembers(t *testing.T) {
 	testEG := createTestEpochGroup(t)
 	testEG.GroupMock.EXPECT().UpdateGroupMembers(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	testEG.GroupMock.EXPECT().UpdateGroupMetadata(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature", 1, []string{})
+	member := epochgroup.EpochMember{
+		Address:       "member1",
+		Weight:        12,
+		Pubkey:        "pubkey1",
+		SeedSignature: "seedsignature",
+		Reputation:    1,
+		Models:        []string{},
+	}
+	testEG.EpochGroup.AddMember(context.Background(), member)
 }
 
 func TestAddMembersWithModels(t *testing.T) {
@@ -101,7 +109,15 @@ func TestAddMembersWithModels(t *testing.T) {
 	testEG.GroupMock.EXPECT().UpdateGroupMetadata(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	// Add member with model
-	err := testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature", 1, []string{"model1"})
+	member := epochgroup.EpochMember{
+		Address:       "member1",
+		Weight:        12,
+		Pubkey:        "pubkey1",
+		SeedSignature: "seedsignature",
+		Reputation:    1,
+		Models:        []string{"model1"},
+	}
+	err := testEG.EpochGroup.AddMember(context.Background(), member)
 	require.NoError(t, err)
 
 	// Verify sub-group was created
@@ -135,7 +151,15 @@ func TestGetRandomMemberForModel(t *testing.T) {
 	testEG.GroupMock.EXPECT().UpdateGroupMetadata(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	// Add member with model
-	err := testEG.EpochGroup.AddMember(context.Background(), "member1", 12, "pubkey1", "seedsignature", 1, []string{"model1"})
+	epochMember := epochgroup.EpochMember{
+		Address:       "member1",
+		Weight:        12,
+		Pubkey:        "pubkey1",
+		SeedSignature: "seedsignature",
+		Reputation:    1,
+		Models:        []string{"model1"},
+	}
+	err := testEG.EpochGroup.AddMember(context.Background(), epochMember)
 	require.NoError(t, err)
 
 	// Mock for getting group members
