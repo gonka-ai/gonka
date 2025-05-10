@@ -286,43 +286,26 @@ func (eg *EpochGroup) GetGroupMembers(ctx context.Context) ([]*group.GroupMember
 // CreateSubGroup creates a new sub-group for a specific model
 func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	// Check if this is already a sub-group
-	if eg.GroupData.GetModelId() != "" {
+	if eg.GroupData.IsModelGroup() {
 		return nil, types.ErrCannotCreateSubGroupFromSubGroup
 	}
 
-	// Check if we already have a sub-group for this model in memory
-	if subGroup, ok := eg.subGroups[modelId]; ok {
-		eg.Logger.LogInfo("Found existing sub-group in memory", types.EpochGroup, "modelId", modelId, "groupID", subGroup.GroupData.EpochGroupId, "height", subGroup.GroupData.PocStartBlockHeight)
-		return subGroup, nil
+	epochGroup := eg.getGroupFromMemory(modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
 	}
 
-	// Check if we already have a sub-group for this model in the chain state
-	for _, height := range eg.GroupData.GetSubGroupHeights() {
-		subGroupData, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, height, modelId)
-		if found {
-			eg.Logger.LogInfo("Found existing sub-group in state", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", height)
-			// Create an EpochGroup for the sub-group
-			subGroup := NewEpochGroup(
-				eg.GroupKeeper,
-				eg.ParticipantKeeper,
-				eg.Authority,
-				eg.Logger,
-				eg.GroupDataKeeper,
-				&subGroupData,
-			)
-			// Add it to the in-memory map
-			eg.subGroups[modelId] = subGroup
-			return subGroup, nil
-		}
+	epochGroup = eg.getGroupFromState(ctx, modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
 	}
 
-	// Create a new EpochGroupData for the sub-group
-	// Use a different PocStartBlockHeight to avoid conflicts
-	// We'll use the parent's PocStartBlockHeight + the length of the sub-group heights + 1
-	// This ensures a unique height for each sub-group
-	subGroupHeight := eg.GroupData.PocStartBlockHeight + uint64(len(eg.GroupData.SubGroupHeights)) + 1
+	return eg.createNewEpochSubGroup(ctx, modelId)
+}
+
+func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	subGroupData := &types.EpochGroupData{
-		PocStartBlockHeight: subGroupHeight,
+		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
 		ModelId:             modelId,
 	}
 
@@ -336,21 +319,52 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 		subGroupData,
 	)
 
-	// Create the group in t1he chain
+	// Create the group in the chain
 	err := subGroup.CreateGroup(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	// Add the sub-group to the parent's list of sub-groups
-	eg.GroupData.SubGroupHeights = append(eg.GroupData.SubGroupHeights, subGroupData.PocStartBlockHeight)
+	eg.GroupData.SubGroupModels = append(eg.GroupData.SubGroupModels, modelId)
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 
 	// Add the sub-group to the in-memory map
 	eg.subGroups[modelId] = subGroup
 
-	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", subGroupHeight)
+	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
 	return subGroup, nil
+}
+
+func (eg *EpochGroup) getGroupFromMemory(modelId string) *EpochGroup {
+	if subGroup, ok := eg.subGroups[modelId]; ok {
+		eg.Logger.LogInfo("Found existing sub-group in memory", types.EpochGroup, "modelId", modelId, "groupID", subGroup.GroupData.EpochGroupId, "height", subGroup.GroupData.PocStartBlockHeight)
+		return subGroup
+	}
+	return nil
+}
+
+func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *EpochGroup {
+	for _, model := range eg.GroupData.GetSubGroupModels() {
+		if model == modelId {
+			subGroupData, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.PocStartBlockHeight, modelId)
+			if found {
+				eg.Logger.LogInfo("Found existing sub-group in state", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
+				subGroup := NewEpochGroup(
+					eg.GroupKeeper,
+					eg.ParticipantKeeper,
+					eg.Authority,
+					eg.Logger,
+					eg.GroupDataKeeper,
+					&subGroupData,
+				)
+				// Add it to the in-memory map
+				eg.subGroups[modelId] = subGroup
+				return subGroup
+			}
+		}
+	}
+	return nil
 }
 
 // GetSubGroup gets a sub-group for a specific model, creating it if it doesn't exist

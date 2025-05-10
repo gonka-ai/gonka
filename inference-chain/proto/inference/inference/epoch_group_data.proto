@@ -22,8 +22,8 @@ message EpochGroupData {
   // If model_id is empty, this is the parent EpochGroup
   // If model_id is set, this is a sub EpochGroup for that specific model
   string model_id = 14;
-  // List of sub EpochGroups, only used in parent EpochGroup
-  repeated uint64 sub_group_heights = 15;
+  // List of model IDs for sub EpochGroups, only used in parent EpochGroup
+  repeated string sub_group_models = 15;
 }
 
 message ValidationWeight {

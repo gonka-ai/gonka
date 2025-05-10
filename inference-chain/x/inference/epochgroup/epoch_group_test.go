@@ -121,7 +121,7 @@ func TestAddMembersWithModels(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify sub-group was created
-	require.Equal(t, 1, len(testEG.EpochGroup.GroupData.SubGroupHeights))
+	require.Equal(t, 1, len(testEG.EpochGroup.GroupData.SubGroupModels))
 
 	// Get the sub-group
 	subGroup, err := testEG.EpochGroup.GetSubGroup(context.Background(), "model1")
