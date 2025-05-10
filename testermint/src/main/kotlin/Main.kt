@@ -54,9 +54,10 @@ fun main() {
     println("RBC:" + inference.requesterBalanceChange)
 }
 
-fun getInferenceResult(highestFunded: LocalInferencePair): InferenceResult {
+fun getInferenceResult(highestFunded: LocalInferencePair, modelName: String? = null): InferenceResult {
     val beforeInferenceParticipants = highestFunded.api.getParticipants()
-    val inference = makeInferenceRequest(highestFunded, inferenceRequest)
+    val payload = modelName?.let { inferenceRequestObject.copy(model = it).toJson()} ?: inferenceRequest
+    val inference = makeInferenceRequest(highestFunded, payload)
     val afterInference = highestFunded.api.getParticipants()
     return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
 }
@@ -294,7 +295,9 @@ data class InferenceRequestPayload(
     val messages: List<ChatMessage>,
     val seed: Int,
     val stream: Boolean = false
-)
+) {
+    fun toJson() = cosmosJson.toJson(this)
+}
 
 val inferenceRequestObject = InferenceRequestPayload(
     model = "unsloth/llama-3-8b-Instruct",

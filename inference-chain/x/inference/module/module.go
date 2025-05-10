@@ -19,6 +19,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/shopspring/decimal"
+	"sort"
 
 	// this line is used by starport scaffolding # 1
 
@@ -272,6 +273,8 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
+	am.setModelsForParticipants(ctx, activeParticipants)
+
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
@@ -486,4 +489,31 @@ func (am AppModule) LogWarn(msg string, subSystem types.SubSystem, keyvals ...in
 func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
 	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
+}
+
+func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant) {
+	for _, p := range participants {
+		hardwareNodes, found := am.keeper.GetHardwareNodes(ctx, p.Index)
+		if !found {
+			p.Models = make([]string, 0)
+			continue
+		}
+		p.Models = getAllModels(hardwareNodes)
+	}
+}
+
+func getAllModels(nodes *types.HardwareNodes) []string {
+	modelMap := make(map[string]struct{})
+	for _, node := range nodes.HardwareNodes {
+		for _, model := range node.Models {
+			modelMap[model] = struct{}{}
+		}
+	}
+
+	models := make([]string, 0, len(modelMap))
+	for model := range modelMap {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models
 }

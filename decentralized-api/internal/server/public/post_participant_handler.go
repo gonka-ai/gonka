@@ -26,7 +26,6 @@ func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
 
 	msg := &inference.MsgSubmitNewParticipant{
 		Url:          body.Url,
-		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
 		WorkerKey:    body.WorkerKey,
 	}
@@ -38,9 +37,8 @@ func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, &ParticipantDto{
-		Id:     msg.Creator,
-		Url:    msg.Url,
-		Models: msg.Models,
+		Id:  msg.Creator,
+		Url: msg.Url,
 	})
 }
 
@@ -48,7 +46,6 @@ func (s *Server) submitNewUnfundedParticipant(body SubmitUnfundedNewParticipantD
 	msg := &inference.MsgSubmitNewUnfundedParticipant{
 		Address:      body.Address,
 		Url:          body.Url,
-		Models:       body.Models,
 		ValidatorKey: body.ValidatorKey,
 		PubKey:       body.PubKey,
 		WorkerKey:    body.WorkerKey,

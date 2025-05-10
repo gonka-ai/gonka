@@ -8,7 +8,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"strings"
 )
 
 func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRandomExecutorRequest) (*types.QueryGetRandomExecutorResponse, error) {
@@ -20,32 +19,8 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-
-	// If a model is specified, use the GetRandomMemberForModel method
-	if strings.TrimSpace(req.Model) != "" {
-		k.LogInfo("GetRandomExecutor: using model-specific group", types.Inferences, "model", req.Model)
-		participant, err := epochGroup.GetRandomMemberForModel(goCtx, req.Model, func(members []*group.GroupMember) []*group.GroupMember {
-			return members // No additional filtering needed, as we're already using the model-specific group
-		})
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		return &types.QueryGetRandomExecutorResponse{
-			Executor: *participant,
-		}, nil
-	}
-
-	// If no model is specified, use the original implementation
-	participantSetByModel, err := k.getParticipantSetByModel(goCtx, epochGroup)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	k.LogInfo("Participant set by model", types.Inferences, "participantSetByModel", participantSetByModel)
-
-	participant, err := epochGroup.GetRandomMember(goCtx, func(members []*group.GroupMember) []*group.GroupMember {
-		k.LogInfo("GetRandomExecutor: model is empty, returning all members", types.Inferences)
-		return members
+	participant, err := epochGroup.GetRandomMemberForModel(goCtx, req.Model, func(members []*group.GroupMember) []*group.GroupMember {
+		return members // No additional filtering needed, as we're already using the model-specific group
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

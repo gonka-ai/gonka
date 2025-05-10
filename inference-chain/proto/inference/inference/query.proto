@@ -467,11 +467,10 @@ message QueryGetInferenceValidationParametersRequest {
 }
 
 message QueryGetInferenceValidationParametersResponse {
-           uint64                     total_power     = 1;
-           uint64                     validator_power = 2;
-           uint64                     current_height  = 3;
-  repeated InferenceValidationDetails details         = 4;
-           ValidationParams           parameters      = 5;
+           uint64                     validator_power = 1;
+           uint64                     current_height  = 2;
+  repeated InferenceValidationDetails details         = 3;
+           ValidationParams           parameters      = 4;
 }
 
 message QueryGetEpochPerformanceSummaryRequest {

@@ -47,8 +47,9 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 	minExecutionPeriod := 0 * time.Minute
 
 	groupMsg := &group.MsgCreateGroupWithPolicy{
-		Admin:   eg.Authority,
-		Members: []group.MemberRequest{},
+		Admin:         eg.Authority,
+		Members:       []group.MemberRequest{},
+		GroupMetadata: eg.GroupData.ModelId,
 	}
 	policy := group.NewPercentageDecisionPolicy(
 		"0.50",
@@ -167,7 +168,12 @@ func (eg *EpochGroup) GetValidationWeights() (VotingData, error) {
 }
 
 func (eg *EpochGroup) MarkChanged(ctx context.Context) error {
-	return eg.updateMetadata(ctx, "changed")
+	if eg.GroupData.ModelId != "" {
+		// only applies to the parent group
+		return nil
+	}
+	err := eg.updateMetadata(ctx, "changed")
+	return err
 }
 
 func (eg *EpochGroup) MarkUnchanged(ctx context.Context) error {
@@ -316,7 +322,7 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 		subGroupData,
 	)
 
-	// Create the group in the chain
+	// Create the group in t1he chain
 	err := subGroup.CreateGroup(ctx)
 	if err != nil {
 		return nil, err

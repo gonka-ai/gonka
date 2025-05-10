@@ -19,14 +19,13 @@ message Participant {
   int64 join_height = 5;
   int64 last_inference_time = 6;
   string inference_url = 7;
-  repeated string models = 8;
-  ParticipantStatus status = 9;
-  int64 coin_balance = 10;
-  string validator_key = 11;
-  int64 consecutive_invalid_inferences = 12;
-  string worker_public_key = 13;
-  uint32 epochs_completed = 14;
-  CurrentEpochStats current_epoch_stats = 15;
+  ParticipantStatus status = 8;
+  int64 coin_balance = 9;
+  string validator_key = 10;
+  int64 consecutive_invalid_inferences = 11;
+  string worker_public_key = 12;
+  uint32 epochs_completed = 13;
+  CurrentEpochStats current_epoch_stats = 14;
 }
 
 message CurrentEpochStats {

@@ -48,49 +48,6 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
-    fun `test valid gets marked valid for second model`() {
-        val (cluster, genesis) = initCluster(joinCount = 3)
-        logSection("Setting up second model")
-        val pairsForNewModel = cluster.joinPairs.take(2) + genesis
-        val newModel = "model-2"
-        pairsForNewModel.forEach {
-            val newNode = validNode.copy(
-                host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080, models = mapOf(
-                    newModel to ModelConfig(
-                        args = emptyList()
-                    )
-                )
-            )
-//            it.api.addNode()
-        }
-    }
-
-    private fun getInferenceValidationState(
-        highestFunded: LocalInferencePair,
-        oddPair: LocalInferencePair,
-    ): InferencePayload {
-        val invalidResult =
-            generateSequence { getInferenceResult(highestFunded) }
-                .take(10)
-                .firstOrNull {
-                    Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                    it.executorBefore.id == oddPair.node.addresss
-                }
-        if (invalidResult == null) {
-            error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
-        }
-
-        Logger.warn(
-            "Got invalid result, waiting for invalidation. " +
-                    "Output was:${invalidResult.inference.responsePayload}"
-        )
-
-        highestFunded.node.waitForNextBlock(2)
-        val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
-        return newState
-    }
-
-    @Test
     @Timeout(15, unit = TimeUnit.MINUTES)
     fun `test invalid gets removed`() {
         val (cluster, genesis) = initCluster()
@@ -142,6 +99,7 @@ fun runParallelInferences(
     count: Int,
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
+    models: List<String> = listOf(defaultModel)
 ): List<Int> = runBlocking {
     // Launch coroutines with async and collect the deferred results
 
@@ -149,7 +107,7 @@ fun runParallelInferences(
     val requests = List(count) { i ->
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
-            genesis.makeInferenceRequest(inferenceRequest)
+            genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
         }
     }
 
@@ -167,3 +125,29 @@ fun runParallelInferences(
 
 val InferencePayload.statusEnum: InferenceStatus
     get() = InferenceStatus.entries.first { it.value == status }
+
+fun getInferenceValidationState(
+    highestFunded: LocalInferencePair,
+    oddPair: LocalInferencePair,
+    modelName: String? = null
+): InferencePayload {
+    val invalidResult =
+        generateSequence { getInferenceResult(highestFunded, modelName) }
+            .take(10)
+            .firstOrNull {
+                Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
+                it.executorBefore.id == oddPair.node.addresss
+            }
+    if (invalidResult == null) {
+        error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
+    }
+
+    Logger.warn(
+        "Got invalid result, waiting for invalidation. " +
+                "Output was:${invalidResult.inference.responsePayload}"
+    )
+
+    highestFunded.node.waitForNextBlock(3)
+    val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
+    return newState
+}

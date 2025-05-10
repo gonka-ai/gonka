@@ -3354,57 +3354,10 @@ func (x *fastReflection_MsgFinishInferenceResponse) ProtoMethods() *protoiface.M
 	}
 }
 
-var _ protoreflect.List = (*_MsgSubmitNewParticipant_3_list)(nil)
-
-type _MsgSubmitNewParticipant_3_list struct {
-	list *[]string
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfString((*x.list)[i])
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.String()
-	concreteValue := valueUnwrapped
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.String()
-	concreteValue := valueUnwrapped
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) AppendMutable() protoreflect.Value {
-	panic(fmt.Errorf("AppendMutable can not be called on message MsgSubmitNewParticipant at list field Models as it is not of Message kind"))
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) Truncate(n int) {
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) NewElement() protoreflect.Value {
-	v := ""
-	return protoreflect.ValueOfString(v)
-}
-
-func (x *_MsgSubmitNewParticipant_3_list) IsValid() bool {
-	return x.list != nil
-}
-
 var (
 	md_MsgSubmitNewParticipant               protoreflect.MessageDescriptor
 	fd_MsgSubmitNewParticipant_creator       protoreflect.FieldDescriptor
 	fd_MsgSubmitNewParticipant_url           protoreflect.FieldDescriptor
-	fd_MsgSubmitNewParticipant_models        protoreflect.FieldDescriptor
 	fd_MsgSubmitNewParticipant_validator_key protoreflect.FieldDescriptor
 	fd_MsgSubmitNewParticipant_worker_key    protoreflect.FieldDescriptor
 )
@@ -3414,7 +3367,6 @@ func init() {
 	md_MsgSubmitNewParticipant = File_inference_inference_tx_proto.Messages().ByName("MsgSubmitNewParticipant")
 	fd_MsgSubmitNewParticipant_creator = md_MsgSubmitNewParticipant.Fields().ByName("creator")
 	fd_MsgSubmitNewParticipant_url = md_MsgSubmitNewParticipant.Fields().ByName("url")
-	fd_MsgSubmitNewParticipant_models = md_MsgSubmitNewParticipant.Fields().ByName("models")
 	fd_MsgSubmitNewParticipant_validator_key = md_MsgSubmitNewParticipant.Fields().ByName("validator_key")
 	fd_MsgSubmitNewParticipant_worker_key = md_MsgSubmitNewParticipant.Fields().ByName("worker_key")
 }
@@ -3496,12 +3448,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Range(f func(protoreflect.Field
 			return
 		}
 	}
-	if len(x.Models) != 0 {
-		value := protoreflect.ValueOfList(&_MsgSubmitNewParticipant_3_list{list: &x.Models})
-		if !f(fd_MsgSubmitNewParticipant_models, value) {
-			return
-		}
-	}
 	if x.ValidatorKey != "" {
 		value := protoreflect.ValueOfString(x.ValidatorKey)
 		if !f(fd_MsgSubmitNewParticipant_validator_key, value) {
@@ -3533,8 +3479,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Has(fd protoreflect.FieldDescri
 		return x.Creator != ""
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		return x.Url != ""
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		return len(x.Models) != 0
 	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		return x.ValidatorKey != ""
 	case "inference.inference.MsgSubmitNewParticipant.worker_key":
@@ -3559,8 +3503,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Clear(fd protoreflect.FieldDesc
 		x.Creator = ""
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		x.Url = ""
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		x.Models = nil
 	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		x.ValidatorKey = ""
 	case "inference.inference.MsgSubmitNewParticipant.worker_key":
@@ -3587,12 +3529,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Get(descriptor protoreflect.Fie
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		value := x.Url
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		if len(x.Models) == 0 {
-			return protoreflect.ValueOfList(&_MsgSubmitNewParticipant_3_list{})
-		}
-		listValue := &_MsgSubmitNewParticipant_3_list{list: &x.Models}
-		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		value := x.ValidatorKey
 		return protoreflect.ValueOfString(value)
@@ -3623,10 +3559,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Set(fd protoreflect.FieldDescri
 		x.Creator = value.Interface().(string)
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		x.Url = value.Interface().(string)
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		lv := value.List()
-		clv := lv.(*_MsgSubmitNewParticipant_3_list)
-		x.Models = *clv.list
 	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		x.ValidatorKey = value.Interface().(string)
 	case "inference.inference.MsgSubmitNewParticipant.worker_key":
@@ -3651,12 +3583,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) Set(fd protoreflect.FieldDescri
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgSubmitNewParticipant) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		if x.Models == nil {
-			x.Models = []string{}
-		}
-		value := &_MsgSubmitNewParticipant_3_list{list: &x.Models}
-		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitNewParticipant.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitNewParticipant is not mutable"))
 	case "inference.inference.MsgSubmitNewParticipant.url":
@@ -3682,9 +3608,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) NewField(fd protoreflect.FieldD
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitNewParticipant.url":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitNewParticipant.models":
-		list := []string{}
-		return protoreflect.ValueOfList(&_MsgSubmitNewParticipant_3_list{list: &list})
 	case "inference.inference.MsgSubmitNewParticipant.validator_key":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitNewParticipant.worker_key":
@@ -3766,12 +3689,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.Models) > 0 {
-			for _, s := range x.Models {
-				l = len(s)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
 		l = len(x.ValidatorKey)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
@@ -3814,23 +3731,14 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 			copy(dAtA[i:], x.WorkerKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.WorkerKey)))
 			i--
-			dAtA[i] = 0x2a
+			dAtA[i] = 0x22
 		}
 		if len(x.ValidatorKey) > 0 {
 			i -= len(x.ValidatorKey)
 			copy(dAtA[i:], x.ValidatorKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ValidatorKey)))
 			i--
-			dAtA[i] = 0x22
-		}
-		if len(x.Models) > 0 {
-			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
-				i -= len(x.Models[iNdEx])
-				copy(dAtA[i:], x.Models[iNdEx])
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Models[iNdEx])))
-				i--
-				dAtA[i] = 0x1a
-			}
+			dAtA[i] = 0x1a
 		}
 		if len(x.Url) > 0 {
 			i -= len(x.Url)
@@ -3961,38 +3869,6 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 				iNdEx = postIndex
 			case 3:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Models = append(x.Models, string(dAtA[iNdEx:postIndex]))
-				iNdEx = postIndex
-			case 4:
-				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatorKey", wireType)
 				}
 				var stringLen uint64
@@ -4023,7 +3899,7 @@ func (x *fastReflection_MsgSubmitNewParticipant) ProtoMethods() *protoiface.Meth
 				}
 				x.ValidatorKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 5:
+			case 4:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
 				}
@@ -5701,58 +5577,11 @@ func (x *fastReflection_MsgValidationResponse) ProtoMethods() *protoiface.Method
 	}
 }
 
-var _ protoreflect.List = (*_MsgSubmitNewUnfundedParticipant_4_list)(nil)
-
-type _MsgSubmitNewUnfundedParticipant_4_list struct {
-	list *[]string
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfString((*x.list)[i])
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.String()
-	concreteValue := valueUnwrapped
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.String()
-	concreteValue := valueUnwrapped
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) AppendMutable() protoreflect.Value {
-	panic(fmt.Errorf("AppendMutable can not be called on message MsgSubmitNewUnfundedParticipant at list field Models as it is not of Message kind"))
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) Truncate(n int) {
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) NewElement() protoreflect.Value {
-	v := ""
-	return protoreflect.ValueOfString(v)
-}
-
-func (x *_MsgSubmitNewUnfundedParticipant_4_list) IsValid() bool {
-	return x.list != nil
-}
-
 var (
 	md_MsgSubmitNewUnfundedParticipant               protoreflect.MessageDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_creator       protoreflect.FieldDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_address       protoreflect.FieldDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_url           protoreflect.FieldDescriptor
-	fd_MsgSubmitNewUnfundedParticipant_models        protoreflect.FieldDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_pub_key       protoreflect.FieldDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_validator_key protoreflect.FieldDescriptor
 	fd_MsgSubmitNewUnfundedParticipant_worker_key    protoreflect.FieldDescriptor
@@ -5764,7 +5593,6 @@ func init() {
 	fd_MsgSubmitNewUnfundedParticipant_creator = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("creator")
 	fd_MsgSubmitNewUnfundedParticipant_address = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("address")
 	fd_MsgSubmitNewUnfundedParticipant_url = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("url")
-	fd_MsgSubmitNewUnfundedParticipant_models = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("models")
 	fd_MsgSubmitNewUnfundedParticipant_pub_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("pub_key")
 	fd_MsgSubmitNewUnfundedParticipant_validator_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("validator_key")
 	fd_MsgSubmitNewUnfundedParticipant_worker_key = md_MsgSubmitNewUnfundedParticipant.Fields().ByName("worker_key")
@@ -5853,12 +5681,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Range(f func(protorefle
 			return
 		}
 	}
-	if len(x.Models) != 0 {
-		value := protoreflect.ValueOfList(&_MsgSubmitNewUnfundedParticipant_4_list{list: &x.Models})
-		if !f(fd_MsgSubmitNewUnfundedParticipant_models, value) {
-			return
-		}
-	}
 	if x.PubKey != "" {
 		value := protoreflect.ValueOfString(x.PubKey)
 		if !f(fd_MsgSubmitNewUnfundedParticipant_pub_key, value) {
@@ -5898,8 +5720,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Has(fd protoreflect.Fie
 		return x.Address != ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		return x.Url != ""
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		return len(x.Models) != 0
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		return x.PubKey != ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
@@ -5928,8 +5748,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Clear(fd protoreflect.F
 		x.Address = ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		x.Url = ""
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		x.Models = nil
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		x.PubKey = ""
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
@@ -5961,12 +5779,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Get(descriptor protoref
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		value := x.Url
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		if len(x.Models) == 0 {
-			return protoreflect.ValueOfList(&_MsgSubmitNewUnfundedParticipant_4_list{})
-		}
-		listValue := &_MsgSubmitNewUnfundedParticipant_4_list{list: &x.Models}
-		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		value := x.PubKey
 		return protoreflect.ValueOfString(value)
@@ -6002,10 +5814,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Set(fd protoreflect.Fie
 		x.Address = value.Interface().(string)
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		x.Url = value.Interface().(string)
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		lv := value.List()
-		clv := lv.(*_MsgSubmitNewUnfundedParticipant_4_list)
-		x.Models = *clv.list
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		x.PubKey = value.Interface().(string)
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
@@ -6032,12 +5840,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Set(fd protoreflect.Fie
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MsgSubmitNewUnfundedParticipant) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		if x.Models == nil {
-			x.Models = []string{}
-		}
-		value := &_MsgSubmitNewUnfundedParticipant_4_list{list: &x.Models}
-		return protoreflect.ValueOfList(value)
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.creator":
 		panic(fmt.Errorf("field creator of message inference.inference.MsgSubmitNewUnfundedParticipant is not mutable"))
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.address":
@@ -6069,9 +5871,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) NewField(fd protoreflec
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.url":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.MsgSubmitNewUnfundedParticipant.models":
-		list := []string{}
-		return protoreflect.ValueOfList(&_MsgSubmitNewUnfundedParticipant_4_list{list: &list})
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.pub_key":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.MsgSubmitNewUnfundedParticipant.validator_key":
@@ -6159,12 +5958,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.Models) > 0 {
-			for _, s := range x.Models {
-				l = len(s)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
 		l = len(x.PubKey)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
@@ -6211,30 +6004,21 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 			copy(dAtA[i:], x.WorkerKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.WorkerKey)))
 			i--
-			dAtA[i] = 0x3a
+			dAtA[i] = 0x32
 		}
 		if len(x.ValidatorKey) > 0 {
 			i -= len(x.ValidatorKey)
 			copy(dAtA[i:], x.ValidatorKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ValidatorKey)))
 			i--
-			dAtA[i] = 0x32
+			dAtA[i] = 0x2a
 		}
 		if len(x.PubKey) > 0 {
 			i -= len(x.PubKey)
 			copy(dAtA[i:], x.PubKey)
 			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.PubKey)))
 			i--
-			dAtA[i] = 0x2a
-		}
-		if len(x.Models) > 0 {
-			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
-				i -= len(x.Models[iNdEx])
-				copy(dAtA[i:], x.Models[iNdEx])
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Models[iNdEx])))
-				i--
-				dAtA[i] = 0x22
-			}
+			dAtA[i] = 0x22
 		}
 		if len(x.Url) > 0 {
 			i -= len(x.Url)
@@ -6404,38 +6188,6 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 				iNdEx = postIndex
 			case 4:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Models = append(x.Models, string(dAtA[iNdEx:postIndex]))
-				iNdEx = postIndex
-			case 5:
-				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PubKey", wireType)
 				}
 				var stringLen uint64
@@ -6466,7 +6218,7 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 				}
 				x.PubKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 6:
+			case 5:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatorKey", wireType)
 				}
@@ -6498,7 +6250,7 @@ func (x *fastReflection_MsgSubmitNewUnfundedParticipant) ProtoMethods() *protoif
 				}
 				x.ValidatorKey = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 7:
+			case 6:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorkerKey", wireType)
 				}
@@ -20242,11 +19994,10 @@ type MsgSubmitNewParticipant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Creator      string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	Url          string   `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
-	Models       []string `protobuf:"bytes,3,rep,name=models,proto3" json:"models,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,4,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
-	WorkerKey    string   `protobuf:"bytes,5,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
+	Creator      string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Url          string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	ValidatorKey string `protobuf:"bytes,3,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string `protobuf:"bytes,4,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (x *MsgSubmitNewParticipant) Reset() {
@@ -20281,13 +20032,6 @@ func (x *MsgSubmitNewParticipant) GetUrl() string {
 		return x.Url
 	}
 	return ""
-}
-
-func (x *MsgSubmitNewParticipant) GetModels() []string {
-	if x != nil {
-		return x.Models
-	}
-	return nil
 }
 
 func (x *MsgSubmitNewParticipant) GetValidatorKey() string {
@@ -20461,13 +20205,12 @@ type MsgSubmitNewUnfundedParticipant struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Creator      string   `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
-	Address      string   `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	Url          string   `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
-	Models       []string `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	PubKey       string   `protobuf:"bytes,5,opt,name=pub_key,json=pubKey,proto3" json:"pub_key,omitempty"`
-	ValidatorKey string   `protobuf:"bytes,6,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
-	WorkerKey    string   `protobuf:"bytes,7,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
+	Creator      string `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+	Address      string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Url          string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	PubKey       string `protobuf:"bytes,4,opt,name=pub_key,json=pubKey,proto3" json:"pub_key,omitempty"`
+	ValidatorKey string `protobuf:"bytes,5,opt,name=validator_key,json=validatorKey,proto3" json:"validator_key,omitempty"`
+	WorkerKey    string `protobuf:"bytes,6,opt,name=worker_key,json=workerKey,proto3" json:"worker_key,omitempty"`
 }
 
 func (x *MsgSubmitNewUnfundedParticipant) Reset() {
@@ -20509,13 +20252,6 @@ func (x *MsgSubmitNewUnfundedParticipant) GetUrl() string {
 		return x.Url
 	}
 	return ""
-}
-
-func (x *MsgSubmitNewUnfundedParticipant) GetModels() []string {
-	if x != nil {
-		return x.Models
-	}
-	return nil
 }
 
 func (x *MsgSubmitNewUnfundedParticipant) GetPubKey() string {
@@ -21737,55 +21473,52 @@ var file_inference_inference_tx_proto_rawDesc = []byte{
 	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
 	0x65, 0x12, 0x27, 0x0a, 0x0f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69,
 	0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x22, 0xaf, 0x01, 0x0a, 0x17, 0x4d,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x22, 0x97, 0x01, 0x0a, 0x17, 0x4d,
 	0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69,
 	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
 	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
 	0x12, 0x10, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75,
-	0x72, 0x6c, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x03, 0x20, 0x03,
-	0x28, 0x09, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61,
-	0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x04, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12,
-	0x1d, 0x0a, 0x0a, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x05, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x09, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c,
-	0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x66, 0x0a, 0x1f,
-	0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
-	0x2b, 0x0a, 0x11, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x69,
-	0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x10, 0x70, 0x61, 0x72, 0x74,
-	0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06,
-	0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74,
-	0x61, 0x74, 0x75, 0x73, 0x22, 0xf4, 0x01, 0x0a, 0x0d, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69,
-	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
-	0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72,
-	0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x64,
-	0x12, 0x21, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64,
-	0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x49, 0x64, 0x12, 0x29, 0x0a, 0x10, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f,
-	0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72,
-	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x50, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x23,
-	0x0a, 0x0d, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18,
-	0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48,
-	0x61, 0x73, 0x68, 0x12, 0x14, 0x0a, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x18, 0x06, 0x20, 0x01,
-	0x28, 0x01, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x08, 0x52,
-	0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x0c, 0x82,
-	0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d,
-	0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x22, 0xea, 0x01, 0x0a, 0x1f, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d,
-	0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72,
-	0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74,
-	0x6f, 0x72, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x10, 0x0a, 0x03,
-	0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x16,
-	0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x09, 0x52, 0x06,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x73, 0x12, 0x17, 0x0a, 0x07, 0x70, 0x75, 0x62, 0x5f, 0x6b, 0x65,
-	0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x12,
+	0x72, 0x6c, 0x12, 0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f,
+	0x6b, 0x65, 0x79, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x6f, 0x72, 0x4b, 0x65, 0x79, 0x12, 0x1d, 0x0a, 0x0a, 0x77, 0x6f, 0x72, 0x6b, 0x65,
+	0x72, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x77, 0x6f, 0x72,
+	0x6b, 0x65, 0x72, 0x4b, 0x65, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65,
+	0x61, 0x74, 0x6f, 0x72, 0x22, 0x66, 0x0a, 0x1f, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69,
+	0x74, 0x4e, 0x65, 0x77, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2b, 0x0a, 0x11, 0x70, 0x61, 0x72, 0x74, 0x69,
+	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x10, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x49,
+	0x6e, 0x64, 0x65, 0x78, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73, 0x22, 0xf4, 0x01, 0x0a,
+	0x0d, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x18,
+	0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x02,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x49, 0x64, 0x12, 0x29, 0x0a, 0x10, 0x72,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x5f, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0f, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x50,
+	0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x14, 0x0a, 0x05, 0x76,
+	0x61, 0x6c, 0x75, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x01, 0x52, 0x05, 0x76, 0x61, 0x6c, 0x75,
+	0x65, 0x12, 0x22, 0x0a, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0c, 0x72, 0x65, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61,
+	0x74, 0x6f, 0x72, 0x22, 0x17, 0x0a, 0x15, 0x4d, 0x73, 0x67, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xd2, 0x01, 0x0a,
+	0x1f, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65, 0x77, 0x55, 0x6e, 0x66,
+	0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
+	0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x18, 0x0a, 0x07, 0x61, 0x64,
+	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x61, 0x64, 0x64,
+	0x72, 0x65, 0x73, 0x73, 0x12, 0x10, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x12, 0x17, 0x0a, 0x07, 0x70, 0x75, 0x62, 0x5f, 0x6b, 0x65,
+	0x79, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x70, 0x75, 0x62, 0x4b, 0x65, 0x79, 0x12,
 	0x23, 0x0a, 0x0d, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x6b, 0x65, 0x79,
-	0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f,
+	0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f,
 	0x72, 0x4b, 0x65, 0x79, 0x12, 0x1d, 0x0a, 0x0a, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x5f, 0x6b,
-	0x65, 0x79, 0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72,
+	0x65, 0x79, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x77, 0x6f, 0x72, 0x6b, 0x65, 0x72,
 	0x4b, 0x65, 0x79, 0x3a, 0x0c, 0x82, 0xe7, 0xb0, 0x2a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f,
 	0x72, 0x22, 0x29, 0x0a, 0x27, 0x4d, 0x73, 0x67, 0x53, 0x75, 0x62, 0x6d, 0x69, 0x74, 0x4e, 0x65,
 	0x77, 0x55, 0x6e, 0x66, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x50, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,

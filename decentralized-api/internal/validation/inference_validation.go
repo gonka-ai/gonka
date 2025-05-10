@@ -107,7 +107,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 		shouldValidate, message := calculations.ShouldValidate(
 			currentSeed,
 			inferenceWithExecutor,
-			uint32(r.TotalPower),
+			uint32(inferenceWithExecutor.TotalPower),
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)

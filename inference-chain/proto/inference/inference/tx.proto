@@ -92,9 +92,8 @@ message MsgSubmitNewParticipant {
   option (cosmos.msg.v1.signer) = "creator";
            string creator       = 1;
            string url           = 2;
-  repeated string models        = 3;
-           string validator_key = 4;
-           string worker_key    = 5;
+           string validator_key = 3;
+           string worker_key    = 4;
 }
 
 message MsgSubmitNewParticipantResponse {
@@ -120,10 +119,9 @@ message MsgSubmitNewUnfundedParticipant {
            string creator       = 1;
            string address       = 2;
            string url           = 3;
-  repeated string models        = 4;
-           string pub_key       = 5;
-           string validator_key = 6;
-           string worker_key    = 7;
+           string pub_key       = 4;
+           string validator_key = 5;
+           string worker_key    = 6;
 }
 
 message MsgSubmitNewUnfundedParticipantResponse {}
