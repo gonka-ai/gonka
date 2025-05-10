@@ -226,6 +226,7 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	requestMap["enforced_str"] = enforcedStr
 	// A hack to simplify processing the response:
 	requestMap["stream"] = false
+	delete(requestMap, "stream_options")
 
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
