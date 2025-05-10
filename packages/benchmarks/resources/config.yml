@@ -12,7 +12,7 @@
   node_url: "http://36.189.234.237:19252"
   account_address: "gonka"
 
-- model_name: Qwen/QwQ-32B
+- model_name: Qwen/Qwen2.5-7B-Instruct
   experiment_name: ""
   description: ""
   prompts_file: prompts.csv
