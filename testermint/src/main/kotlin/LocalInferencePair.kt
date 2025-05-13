@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 val nameExtractor = "(.+)-node".toRegex()
 
-fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
+fun getLocalInferencePairs(config: ApplicationConfig, expectedPairCount: Int): List<LocalInferencePair> {
     Logger.info("Getting local inference pairs")
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
@@ -23,7 +23,9 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
     val mocks = containers.filter { it.image == config.wireMockImageName }
+    var foundPairs = 0
     return nodes.mapNotNull { chainContainer ->
+        foundPairs++
         val nameMatch = nameExtractor.find(chainContainer.names.first())
         if (nameMatch == null) {
             Logger.warn("Container does not match expected name format: ${chainContainer.names.first()}")
@@ -33,6 +35,11 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
+        if (foundPairs > expectedPairCount) {
+            dockerClient.stopContainerCmd(chainContainer.id).exec()
+            dockerClient.stopContainerCmd(apiContainer.id).exec()
+            return@mapNotNull null
+        }
         attachDockerLogs(dockerClient, name, "node", chainContainer.id)
         attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
 
