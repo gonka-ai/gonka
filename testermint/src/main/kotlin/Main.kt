@@ -40,7 +40,7 @@ import java.time.Duration
 import java.time.Instant
 
 fun main() {
-    val pairs = getLocalInferencePairs(inferenceConfig)
+    val pairs = getLocalInferencePairs(inferenceConfig, 3)
     val highestFunded = initialize(pairs)
     val inference = generateSequence {
         getInferenceResult(highestFunded)

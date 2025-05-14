@@ -92,4 +92,6 @@ class MultiModelTests : TestermintTest() {
         val inferences = generateSequence { getInferenceResult(genesis, models.random()) }.take(5)
         verifySettledInferences(genesis, inferences, participants)
     }
+
+
 }
