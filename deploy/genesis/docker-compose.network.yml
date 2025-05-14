@@ -1,6 +1,6 @@
 services:
   node:
-    image: ghcr.io/product-science/inferenced:0.1.3-alpha1
+    image: ghcr.io/product-science/inferenced:0.1.3
     restart: always
     command: ["sh", "./init-docker-genesis.sh"]
     environment:
@@ -22,7 +22,7 @@ services:
       - "26657:26657"
 
   api:
-    image: ghcr.io/product-science/api:0.1.3-alpha1
+    image: ghcr.io/product-science/api:0.1.3
     restart: always
     depends_on:
       - node
