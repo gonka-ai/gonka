@@ -53,3 +53,19 @@ gcloud compute firewall-rules create k8s-flannel-vxlan-internode \
 #     --source-ranges=YOUR_LOCAL_MACHINE_IP/32 \
 #     --target-tags=k8s-control-plane,k8s-worker \
 #     --description="Allow SSH access to K8s nodes from my local system"
+
+# Expose NodePort 30000-30004 on every VM tagged “k8s-worker”
+gcloud compute firewall-rules create k8s-nodeport-ingress \
+    --project=decentralized-ai \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:30000-30002 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=k8s-worker \
+    --description="Expose Kubernetes NodePort range 30000-30004 on worker nodes"
+
+# If you want to tweak this rule later
+# gcloud compute firewall-rules update k8s-nodeport-ingress \
+#    --rules=tcp:30000-30004
