@@ -34,7 +34,20 @@ sudo systemctl restart k3s-agent
 # Check for the latest stable version from: https://github.com/NVIDIA/k8s-device-plugin
 kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
 
-sudo k3s kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
-
 # Run a gpu pod to test:
 # https://github.com/NVIDIA/k8s-device-plugin?tab=readme-ov-file#running-gpu-jobs
+
+# TROUBLESHOOTING:
+
+# 1. Configs should be the same on all worker nodes:
+#   sudo cat /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+# 2. Strangely even after providing the right config and restarting the agent the nvidia plugin still couldn't see the device
+#   What helped:
+#   a. On control plane:
+#      kubectl delete -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+#   b. On every worker:
+#      sudo systemctl restart k3s-agent
+#   c. On control plane:
+#      kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+#
+#   Maybe next time if there's an issue like that we should just delete individual plugin pods instead of deleting the whole plugin
