@@ -1,3 +1,5 @@
+# Re-run this script when creating a new worker!
+
 # Run on the worker
 # We need to set nvidia runtime as the default runtime for containerd.
 sudo tee /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl >/dev/null <<'EOF'
