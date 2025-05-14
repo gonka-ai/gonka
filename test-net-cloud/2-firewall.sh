@@ -1,3 +1,5 @@
+# No need to run this script when creating a new worker!
+
 # Ensure your VMs have these tags in GCP:
 # k8s-control-plane VM: network tag `k8s-control-plane`
 # k8s-worker-1 VM: network tag `k8s-worker`

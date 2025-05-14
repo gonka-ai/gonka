@@ -1,3 +1,5 @@
+# No need to run this script when creating a new worker
+
 # should be run on k8s-control-plane machine
 # We use dev user:
 # gcloud compute ssh dev@k8s-control-plane
