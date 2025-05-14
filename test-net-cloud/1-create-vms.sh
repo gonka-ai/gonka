@@ -32,9 +32,14 @@ gcloud compute instances add-access-config k8s-control-plane \
 # Now IP is 34.132.221.241
 
 # Create a simple VM for a worker node
-gcloud compute instances create k8s-worker-1 \
-    --project=decentralized-ai \
-    --zone=us-central1-a \
+WORKER_INSTANCE_NAME="k8s-worker-1"
+GCP_PROJECT="decentralized-ai"
+GCP_REGION="us-central1"
+GCP_ZONE="us-central1-a"
+
+gcloud compute instances create "$WORKER_INSTANCE_NAME" \
+    --project="$GCP_PROJECT" \
+    --zone="$GCP_ZONE" \
     --machine-type=g2-standard-4 \
     --accelerator=type=nvidia-l4,count=1 \
     --image-family=ubuntu-2204-lts \
@@ -46,15 +51,11 @@ gcloud compute instances create k8s-worker-1 \
     --tags=k8s-worker,gpu-node,ssh-access \
     --scopes=https://www.googleapis.com/auth/cloud-platform
 
-gcloud compute addresses create k8s-worker-1-static-ip \
-    --project=decentralized-ai \
-    --region=us-central1
+WORKER_STATIC_IP_NAME="$WORKER_INSTANCE_NAME-static-ip"
 
-WORKER_INSTANCE_NAME="k8s-worker-1"
-WORKER_STATIC_IP_NAME="k8s-worker-1-static-ip"
-GCP_PROJECT="decentralized-ai"
-GCP_REGION="us-central1"
-GCP_ZONE="us-central1-a" # Make sure this is the zone where k8s-worker-1 exists
+gcloud compute addresses create "$WORKER_STATIC_IP_NAME" \
+    --project="$GCP_PROJECT" \
+    --region="$GCP_REGION"
 
 RESERVED_WORKER_IP=$(gcloud compute addresses describe "${WORKER_STATIC_IP_NAME}" \
     --project="${GCP_PROJECT}" \
