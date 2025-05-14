@@ -16,6 +16,7 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 	b := k.cdc.MustMarshal(&epochGroupData)
 	store.Set(types.EpochGroupDataKey(
 		epochGroupData.PocStartBlockHeight,
+		epochGroupData.ModelId,
 	), b)
 }
 
@@ -23,13 +24,14 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 func (k Keeper) GetEpochGroupData(
 	ctx context.Context,
 	pocStartBlockHeight uint64,
-
+	modelId string,
 ) (val types.EpochGroupData, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupDataKeyPrefix))
 
 	b := store.Get(types.EpochGroupDataKey(
 		pocStartBlockHeight,
+		modelId,
 	))
 	if b == nil {
 		return val, false
@@ -43,12 +45,13 @@ func (k Keeper) GetEpochGroupData(
 func (k Keeper) RemoveEpochGroupData(
 	ctx context.Context,
 	pocStartBlockHeight uint64,
-
+	modelId string,
 ) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupDataKeyPrefix))
 	store.Delete(types.EpochGroupDataKey(
 		pocStartBlockHeight,
+		modelId,
 	))
 }
 

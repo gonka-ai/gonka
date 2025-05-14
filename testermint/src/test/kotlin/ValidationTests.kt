@@ -1,12 +1,7 @@
-import com.productscience.LocalInferencePair
+import com.productscience.*
 import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
-import com.productscience.defaultInferenceResponseObject
-import com.productscience.getInferenceResult
-import com.productscience.inferenceRequest
-import com.productscience.initCluster
-import com.productscience.logSection
-import kotlinx.coroutines.Dispatchers
+import com.productscience.data.ModelConfig
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -50,31 +45,6 @@ class ValidationTests : TestermintTest() {
         } while (newState.statusEnum != InferenceStatus.INVALIDATED && tries-- > 0)
         logSection("Verifying invalidation")
         assertThat(newState.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
-    }
-
-    private fun getInferenceValidationState(
-        highestFunded: LocalInferencePair,
-        oddPair: LocalInferencePair,
-    ): InferencePayload {
-        val invalidResult =
-            generateSequence { getInferenceResult(highestFunded) }
-                .take(10)
-                .firstOrNull {
-                    Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                    it.executorBefore.id == oddPair.node.addresss
-                }
-        if (invalidResult == null) {
-            error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
-        }
-
-        Logger.warn(
-            "Got invalid result, waiting for invalidation. " +
-                    "Output was:${invalidResult.inference.responsePayload}"
-        )
-
-        highestFunded.node.waitForNextBlock(2)
-        val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
-        return newState
     }
 
     @Test
@@ -129,14 +99,15 @@ fun runParallelInferences(
     count: Int,
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
+    models: List<String> = listOf(defaultModel)
 ): List<Int> = runBlocking {
     // Launch coroutines with async and collect the deferred results
 
     val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
     val requests = List(count) { i ->
         async(limitedDispatcher) {
-        Logger.warn("Starting request $i")
-            genesis.makeInferenceRequest(inferenceRequest)
+            Logger.warn("Starting request $i")
+            genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
         }
     }
 
@@ -154,3 +125,29 @@ fun runParallelInferences(
 
 val InferencePayload.statusEnum: InferenceStatus
     get() = InferenceStatus.entries.first { it.value == status }
+
+fun getInferenceValidationState(
+    highestFunded: LocalInferencePair,
+    oddPair: LocalInferencePair,
+    modelName: String? = null
+): InferencePayload {
+    val invalidResult =
+        generateSequence { getInferenceResult(highestFunded, modelName) }
+            .take(10)
+            .firstOrNull {
+                Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
+                it.executorBefore.id == oddPair.node.addresss
+            }
+    if (invalidResult == null) {
+        error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
+    }
+
+    Logger.warn(
+        "Got invalid result, waiting for invalidation. " +
+                "Output was:${invalidResult.inference.responsePayload}"
+    )
+
+    highestFunded.node.waitForNextBlock(3)
+    val newState = highestFunded.api.getInference(invalidResult.inference.inferenceId)
+    return newState
+}

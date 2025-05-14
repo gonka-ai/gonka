@@ -99,7 +99,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got participants", types.Settle, "participants", len(participants.Participant))
 
-	data, found := k.GetEpochGroupData(ctx, pocBlockHeight)
+	data, found := k.GetEpochGroupData(ctx, pocBlockHeight, "")
 	k.LogInfo("Settling for block", types.Settle, "height", pocBlockHeight)
 	if !found {
 		k.LogError("Epoch group data not found", types.Settle, "height", pocBlockHeight)

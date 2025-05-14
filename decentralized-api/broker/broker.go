@@ -33,16 +33,16 @@ type Broker struct {
 }
 
 type ModelArgs struct {
-	Args []string
+	Args []string `json:"args"`
 }
 
 type Node struct {
-	Host             string `json:"host"`
-	InferenceSegment string `json:"inference_segment"`
-	InferencePort    int    `json:"inference_port"`
-	PoCSegment       string `json:"poc_segment"`
-	PoCPort          int    `json:"poc_port"`
-	Models           map[string]ModelArgs
+	Host             string               `json:"host"`
+	InferenceSegment string               `json:"inference_segment"`
+	InferencePort    int                  `json:"inference_port"`
+	PoCSegment       string               `json:"poc_segment"`
+	PoCPort          int                  `json:"poc_port"`
+	Models           map[string]ModelArgs `json:"models"`
 	Id               string               `json:"id"`
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
@@ -513,6 +513,23 @@ func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
 }
 
 func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
+	if len(a.Models) != len(b.Models) {
+		return false
+	}
+
+	aModels := make([]string, len(a.Models))
+	bModels := make([]string, len(b.Models))
+	copy(aModels, a.Models)
+	copy(bModels, b.Models)
+	sort.Strings(aModels)
+	sort.Strings(bModels)
+
+	for i := range aModels {
+		if aModels[i] != bModels[i] {
+			return false
+		}
+	}
+
 	aHardware := make([]*types.Hardware, len(a.Hardware))
 	bHardware := make([]*types.Hardware, len(b.Hardware))
 	copy(aHardware, a.Hardware)

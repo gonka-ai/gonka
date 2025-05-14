@@ -12,6 +12,7 @@ const (
 // EpochGroupDataKey returns the store key to retrieve a EpochGroupData from the index fields
 func EpochGroupDataKey(
 	pocStartBlockHeight uint64,
+	modelID string,
 ) []byte {
 	var key []byte
 
@@ -19,6 +20,7 @@ func EpochGroupDataKey(
 	binary.BigEndian.PutUint64(pocStartBlockHeightBytes, pocStartBlockHeight)
 	key = append(key, pocStartBlockHeightBytes...)
 	key = append(key, []byte("/")...)
+	key = append(key, []byte(modelID)...)
 
 	return key
 }

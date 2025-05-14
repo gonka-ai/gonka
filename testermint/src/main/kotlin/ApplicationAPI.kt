@@ -98,7 +98,6 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
 
     fun setNodesTo(node: InferenceNode) {
         val nodes = getNodes()
-        if (nodes.all { it.node.id == node.id }) return
         nodes.forEach { removeNode(it.node.id) }
         addNode(node)
     }

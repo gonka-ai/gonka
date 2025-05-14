@@ -54,7 +54,7 @@ func (gs GenesisState) Validate() error {
 	epochGroupDataIndexMap := make(map[string]struct{})
 
 	for _, elem := range gs.EpochGroupDataList {
-		index := string(EpochGroupDataKey(elem.PocStartBlockHeight))
+		index := string(EpochGroupDataKey(elem.PocStartBlockHeight, elem.ModelId))
 		if _, ok := epochGroupDataIndexMap[index]; ok {
 			return fmt.Errorf("duplicated index for epochGroupData")
 		}

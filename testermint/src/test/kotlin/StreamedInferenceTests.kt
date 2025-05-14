@@ -3,6 +3,7 @@ import com.github.kittinunf.fuel.core.extensions.jsonBody
 import com.productscience.getLocalInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequestStream
+import com.productscience.initCluster
 import com.productscience.stream
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
@@ -15,9 +16,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun test() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
-
+        val (_, instance) = initCluster()
         val signature = instance.node.signPayload(inferenceRequestStream)
         val address = instance.node.getAddress()
         println(signature)
@@ -28,8 +27,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun listInference() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
+        val (_, instance) = initCluster()
 
         val output = instance.node.exec(listOf("inferenced", "query", "inference", "list-inference"))
         println(output)
@@ -37,8 +35,7 @@ class StreamedInferenceTests : TestermintTest() {
 
     @Test
     fun getInference() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
+        val (_, instance) = initCluster()
 
         val inferenceId = "4cd1f41d-0afd-4186-8d4a-c78b50c302af"
         val output = instance.node.exec(listOf("inferenced", "query", "inference", "show-inference", inferenceId))

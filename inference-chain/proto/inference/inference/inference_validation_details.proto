@@ -11,5 +11,5 @@ message InferenceValidationDetails {
   uint64 traffic_basis = 5;
   uint64 executor_power = 6;
   string model = 7;
+  uint64 total_power = 8;
 }
-

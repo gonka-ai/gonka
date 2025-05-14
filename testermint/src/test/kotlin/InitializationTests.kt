@@ -40,7 +40,7 @@ class InitializationTests : TestermintTest() {
 
     @Test
     fun getGenesisState() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
+        val pairs = getLocalInferencePairs(inferenceConfig, 3)
         val highestFunded = initialize(pairs)
         val genesis = highestFunded.node.getGenesisState()
 

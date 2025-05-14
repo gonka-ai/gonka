@@ -62,7 +62,7 @@ data class DockerGroup(
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
         // Just register the log events
-        getLocalInferencePairs(config)
+        getLocalInferencePairs(config, 10000)
     }
 
     fun tearDownExisting() {
@@ -241,16 +241,16 @@ fun initCluster(
 }
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
-    val currentCluster = getLocalCluster(config)
+    val currentCluster = getLocalCluster(config, joinCount + 1)
+    val size = currentCluster?.joinPairs?.size
     if (!reboot && clusterMatchesConfig(currentCluster, joinCount, config)) {
         return currentCluster
     } else {
         if (!reboot) {
             logSection("Cluster does not match config, rebooting")
-            Logger.info("Current cluster does not match config, rebooting", "")
         }
         initializeCluster(joinCount, config)
-        return getLocalCluster(config) ?: error("Local cluster not initialized")
+        return getLocalCluster(config, joinCount + 1) ?: error("Local cluster not initialized")
     }
 }
 
@@ -265,8 +265,8 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
     return config.genesisSpec?.matches(genesisState.appState) != false
 }
 
-fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
-    val currentPairs = getLocalInferencePairs(config)
+fun getLocalCluster(config: ApplicationConfig, maxPairs: Int): LocalCluster? {
+    val currentPairs = getLocalInferencePairs(config, maxPairs)
     val (genesis, join) = currentPairs.partition { it.name == "/${config.genesisName}" }
     if (genesis.size != 1) {
         Logger.error("Expected exactly one genesis pair, found ${genesis.size}", "")
@@ -295,7 +295,7 @@ data class LocalCluster(
             }
         newJoinGroups.forEach { it.tearDownExisting() }
         newJoinGroups.forEach { it.init() }
-        return getLocalCluster(this.genesis.config)!!
+        return getLocalCluster(this.genesis.config, newMaxJoin + 1)!!
     }
 
     fun withConsumer(name: String, action: (Consumer) -> Unit) {

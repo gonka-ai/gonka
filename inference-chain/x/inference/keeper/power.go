@@ -86,34 +86,35 @@ func (k Keeper) GetPreviousEpochGroupId(ctx context.Context) (pocStartHeight uin
 
 func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
 	currentId := k.GetEffectiveEpochGroupId(ctx)
-	return k.GetEpochGroup(ctx, currentId)
+	return k.GetEpochGroup(ctx, currentId, "")
 }
 
 func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
 	currentId := k.GetUpcomingEpochGroupId(ctx)
-	return k.GetEpochGroup(ctx, currentId)
+	return k.GetEpochGroup(ctx, currentId, "")
 }
 
 func (k Keeper) GetPreviousEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
 	currentId := k.GetPreviousEpochGroupId(ctx)
-	return k.GetEpochGroup(ctx, currentId)
+	return k.GetEpochGroup(ctx, currentId, "")
 }
 
-func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64) (*epochgroup.EpochGroup, error) {
-	data, found := k.GetEpochGroupData(ctx, pocStartHeight)
+func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
+	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
 		data = types.EpochGroupData{
 			PocStartBlockHeight: pocStartHeight,
+			ModelId:             modelId,
 		}
 		k.SetEpochGroupData(ctx, data)
 	}
 
-	return &epochgroup.EpochGroup{
-		GroupKeeper:       k.group,
-		ParticipantKeeper: k,
-		Authority:         k.GetAuthority(),
-		Logger:            k,
-		GroupDataKeeper:   k,
-		GroupData:         &data,
-	}, nil
+	return epochgroup.NewEpochGroup(
+		k.group,
+		k,
+		k.GetAuthority(),
+		k,
+		k,
+		&data,
+	), nil
 }

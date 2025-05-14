@@ -42,7 +42,6 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 		Address: testAddress,
 		PubKey:  encodedPubKey,
 		Url:     "", // Consumer only
-		Models:  []string{},
 	})
 	require.NoError(t, err)
 
@@ -58,7 +57,6 @@ func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
 		InferenceUrl:      "",
-		Models:            nil, // The actual implementation returns nil for an empty slice
 		Status:            types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, savedParticipant)
@@ -88,7 +86,6 @@ func TestMsgServer_SubmitNewUnfundedParticipant_AccountAlreadyExists(t *testing.
 		Address: testAddress,
 		PubKey:  encodedPubKey,
 		Url:     "url",
-		Models:  []string{"model1", "model2"},
 	})
 
 	// Verify error is returned
@@ -123,7 +120,6 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 		Address: testAddress,
 		PubKey:  encodedPubKey,
 		Url:     "inference-url",
-		Models:  []string{"model1", "model2"},
 	})
 	require.NoError(t, err)
 
@@ -139,7 +135,6 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
 		InferenceUrl:      "inference-url",
-		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, savedParticipant)
