@@ -1,3 +1,7 @@
+# Re-run this script when creating a new worker!
+# Check driver version: nvidia-smi
+# Check container toolkit version:     nvidia-container-cli --version
+
 # First part, install NVIDIA drivers. only needs to be run on k8s-worker machines
 sudo add-apt-repository ppa:graphics-drivers
 sudo apt update
