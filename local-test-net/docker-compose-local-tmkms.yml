@@ -4,7 +4,7 @@ services:
     container_name: ${KEY_NAME}-tmkms
     restart: unless-stopped
     environment:
-      - VALIDATOR_LISTEN_ADDRESS=tcp://${KEY_NAME}-node:${TKMS_PORT:-26658}
+      - VALIDATOR_LISTEN_ADDRESS=tcp://${KEY_NAME}-node:${TMKMS_PORT:-26658}
     networks:
       - chain-public
 
@@ -20,12 +20,12 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
-      - TKMS_PORT=${TKMS_PORT:-26658}
+      - TMKMS_PORT=${TMKMS_PORT:-26658}
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"
     expose:
-      - "${TKMS_PORT:-26658}"
+      - "${TMKMS_PORT:-26658}"
     depends_on:
       - tmkms
     networks:
