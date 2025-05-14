@@ -19,6 +19,11 @@ message EpochGroupData {
   int64 previous_epoch_requests = 11;
   ValidationParams validation_params = 12;
   int64 total_weight = 13;
+  // If model_id is empty, this is the parent EpochGroup
+  // If model_id is set, this is a sub EpochGroup for that specific model
+  string model_id = 14;
+  // List of model IDs for sub EpochGroups, only used in parent EpochGroup
+  repeated string sub_group_models = 15;
 }
 
 message ValidationWeight {
@@ -31,4 +36,3 @@ message SeedSignature {
   string member_address = 1;
   string signature = 2;
 }
-

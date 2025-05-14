@@ -50,17 +50,17 @@ fi
 if [ "$ACCOUNT_EXISTS" = true ]; then
     echo "Node is already configured, skip configuration"
 
-    if [ -n "$TKMS_PORT" ]; then
-      echo "🔒 Using TMKMS: removing local consensus key and set up priv_validator_laddr to tcp://0.0.0.0:${TKMS_PORT}"
+    if [ -n "$TMKMS_PORT" ]; then
+      echo "🔒 Using TMKMS: removing local consensus key and set up priv_validator_laddr to tcp://0.0.0.0:${TMKMS_PORT}"
 
       rm -f $STATE_DIR/config/priv_validator_key.json
       rm -f $STATE_DIR/data/priv_validator_state.json
 
-      sed -i "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TKMS_PORT}\"|"   $STATE_DIR/config/config.toml
+      sed -i "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|"   $STATE_DIR/config/config.toml
       sed -i "s|^priv_validator_key_file *=|# priv_validator_key_file =|" "$STATE_DIR/config/config.toml"
       sed -i "s|^priv_validator_state_file *=|# priv_validator_state_file =|" "$STATE_DIR/config/config.toml"
     else
-      echo "TKMS_PORT is not set, skipping"
+      echo "TMKMS_PORT is not set, skipping"
     fi
 
     echo "Running node..."
@@ -149,17 +149,17 @@ cat $GENESIS_FILE
 echo "Using genesis file: $GENESIS_FILE"
 cp "$GENESIS_FILE" $STATE_DIR/config/genesis.json
 
-if [ -n "$TKMS_PORT" ]; then
-  echo "🔒 Using TMKMS: removing local consensus key and set up priv_validator_laddr to tcp://0.0.0.0:${TKMS_PORT}"
+if [ -n "$TMKMS_PORT" ]; then
+  echo "🔒 Using TMKMS: removing local consensus key and set up priv_validator_laddr to tcp://0.0.0.0:${TMKMS_PORT}"
 
   rm -f $STATE_DIR/config/priv_validator_key.json
   rm -f $STATE_DIR/data/priv_validator_state.json
 
-  sed -i "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TKMS_PORT}\"|"   $STATE_DIR/config/config.toml
+  sed -i "s|^priv_validator_laddr =.*|priv_validator_laddr = \"tcp://0.0.0.0:${TMKMS_PORT}\"|"   $STATE_DIR/config/config.toml
   sed -i "s|^priv_validator_key_file *=|# priv_validator_key_file =|" "$STATE_DIR/config/config.toml"
   sed -i "s|^priv_validator_state_file *=|# priv_validator_state_file =|" "$STATE_DIR/config/config.toml"
 else
-  echo "TKMS_PORT is not set, skipping"
+  echo "TMKMS_PORT is not set, skipping"
 fi
 
 echo "Running node..."

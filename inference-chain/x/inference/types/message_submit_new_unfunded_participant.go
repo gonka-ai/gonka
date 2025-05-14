@@ -13,7 +13,6 @@ func NewMsgSubmitNewUnfundedParticipant(creator string, address string, url stri
 		Creator:      creator,
 		Address:      address,
 		Url:          url,
-		Models:       models,
 		PubKey:       pubKey,
 		ValidatorKey: validatorKey,
 	}

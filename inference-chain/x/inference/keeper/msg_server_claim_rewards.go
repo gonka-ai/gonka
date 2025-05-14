@@ -156,7 +156,7 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 }
 
 func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) ([]string, error) {
-	epochData, found := k.GetEpochGroupData(ctx, msg.PocStartHeight)
+	epochData, found := k.GetEpochGroupData(ctx, msg.PocStartHeight, "")
 	if !found {
 		k.LogError("Epoch data not found", types.Claims, "height", msg.PocStartHeight)
 		return nil, types.ErrCurrentEpochGroupNotFound

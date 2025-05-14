@@ -27,6 +27,7 @@ dependencies {
 }
 
 tasks.test {
+    outputs.upToDateWhen { false }
     useJUnitPlatform {
         val includeTags = System.getProperty("includeTags")
         val excludeTags = System.getProperty("excludeTags")

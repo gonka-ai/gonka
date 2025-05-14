@@ -16,7 +16,7 @@ export ADMIN_SERVER_PORT=9012
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
-export TKMS_PORT=26658
+export TMKMS_PORT=26658
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 ./launch_network_node.sh local-tkms

@@ -35,8 +35,7 @@ class UnitOfComputeTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun `submit register model proposal`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[2]
+        val (_, instance) = initCluster()
 
         instance.api.registerModel(RegisterModelDto(id = "llama", unitsOfComputePerToken = 10.toULong()))
     }
@@ -44,7 +43,9 @@ class UnitOfComputeTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun `vote on model proposal`() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
+        val (cluster, instance) = initCluster()
+
+        val pairs = cluster.allPairs
 
         pairs.forEachIndexed { i, p ->
             p.voteOnProposal("1", "yes")
@@ -54,7 +55,8 @@ class UnitOfComputeTests : TestermintTest() {
     @Test
     @Tag("unstable")
     fun queries() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
+        val (cluster, _) = initCluster()
+        val pairs = cluster.allPairs
         pairs[2].node.exec(listOf("inferenced", "query", "gov", "deposits", "1"))
 
         pairs[2].node.exec(listOf("inferenced", "query", "gov", "params"))

@@ -63,7 +63,6 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		Index:        "participant1",
 		ValidatorKey: "validatorKey1",
 		InferenceUrl: "inferenceUrl1",
-		Models:       []string{"model1"},
 	}
 	k.SetParticipant(ctx, participant)
 
@@ -122,7 +121,6 @@ func TestComputeNewWeights(t *testing.T) {
 					Index:        "participant1",
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
-					Models:       []string{"model1"},
 				}
 				k.SetParticipant(ctx, participant)
 
@@ -178,7 +176,6 @@ func TestComputeNewWeights(t *testing.T) {
 					Index:        "participant1",
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
-					Models:       []string{"model1"},
 				}
 				k.SetParticipant(ctx, participant)
 
@@ -238,7 +235,6 @@ func TestComputeNewWeights(t *testing.T) {
 					Index:        "participant1",
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
-					Models:       []string{"model1"},
 				}
 				k.SetParticipant(ctx, participant)
 
@@ -306,7 +302,6 @@ func TestComputeNewWeights(t *testing.T) {
 					Index:        "participant1",
 					ValidatorKey: "validatorKey1",
 					InferenceUrl: "inferenceUrl1",
-					Models:       []string{"model1"},
 				}
 				k.SetParticipant(ctx, participant)
 			},

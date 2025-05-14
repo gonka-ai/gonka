@@ -3,7 +3,6 @@ package epochgroup
 import (
 	"context"
 	"fmt"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -12,11 +11,32 @@ import (
 	"strconv"
 )
 
+// GetRandomMemberForModel gets a random member for a specific model
+func (eg *EpochGroup) GetRandomMemberForModel(
+	goCtx context.Context,
+	modelId string,
+	filterFn func([]*group.GroupMember) []*group.GroupMember,
+) (*types.Participant, error) {
+	// If modelId is provided and this is the parent group, delegate to the sub-group
+	if modelId != "" && eg.GroupData.GetModelId() == "" {
+		subGroup, err := eg.GetSubGroup(goCtx, modelId)
+		if err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("Error getting sub-group for model %s: %v", modelId, err))
+		}
+		return subGroup.GetRandomMember(goCtx, filterFn)
+	}
+
+	// Otherwise, get a random member from this group
+	return eg.GetRandomMember(goCtx, filterFn)
+}
+
 func (eg *EpochGroup) GetRandomMember(
 	goCtx context.Context,
 	filterFn func([]*group.GroupMember) []*group.GroupMember,
 ) (*types.Participant, error) {
-	ctx := sdk.UnwrapSDKContext(goCtx)
+	// Use the context as is, don't try to unwrap it
+	// This allows the method to work with both SDK contexts and regular contexts
+	ctx := goCtx
 
 	groupMemberResponse, err := eg.GroupKeeper.GroupMembers(ctx, &group.QueryGroupMembersRequest{GroupId: uint64(eg.GroupData.EpochGroupId)})
 	if err != nil {
@@ -42,7 +62,6 @@ func (eg *EpochGroup) GetRandomMember(
 		return nil, status.Error(codes.Internal, msg)
 	}
 	return &participant, nil
-
 }
 
 func selectRandomParticipant(participants []*group.GroupMember) string {

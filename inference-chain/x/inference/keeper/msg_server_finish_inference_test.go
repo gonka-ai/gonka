@@ -84,7 +84,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
-		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
 		CoinBalance:       30 * keeper.PerTokenCost,
 		CurrentEpochStats: &types.CurrentEpochStats{
@@ -97,7 +96,6 @@ func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, a
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: address,
 		Url:     "url",
-		Models:  []string{"model1", "model2"},
 	})
 	require.NoError(t, err)
 }
