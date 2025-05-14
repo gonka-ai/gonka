@@ -4,7 +4,7 @@ services:
     container_name: tmkms
     restart: unless-stopped
     environment:
-      - VALIDATOR_LISTEN_ADDRESS=tcp://node:${TKMS_PORT:-26658}
+      - VALIDATOR_LISTEN_ADDRESS=tcp://node:${TMKMS_PORT:-26658}
     volumes:
       - tmkms_data:/root/.tmkms
 
@@ -23,12 +23,12 @@ services:
       - CONFIG_p2p__allow_duplicate_ip=true
       - CONFIG_p2p__handshake_timeout=30s
       - CONFIG_p2p__dial_timeout=30s
-      - TKMS_PORT=${TKMS_PORT:-26658}
+      - TMKMS_PORT=${TMKMS_PORT:-26658}
     ports:
       - "5000:26656" #p2p
       - "26657:26657" #rpc
     expose:
-      - "${TKMS_PORT:-26658}"
+      - "${TMKMS_PORT:-26658}"
     depends_on:
       - tmkms
 
