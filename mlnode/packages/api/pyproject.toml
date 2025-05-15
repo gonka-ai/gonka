@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "mlnode-api"
+version = "0.1.0"
+description = "MLNode API package"
+readme = "README.md"
+authors = [
+    "Gleb Morgachev <gleb.morgachev@productscience.ai>",
+    "Tamaz Gadaev <tamaz@productscience.ai>",
+    "Egor Shulgin <egor.shulgin@productscience.ai>"
+]
+packages = [{include = "api", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+mlnode-train = { path = "../train", develop = true }
+mlnode-pow = { path = "../pow", develop = true }
+mlnode-common = { path = "../common", develop = true }
+scipy = ">=1.15.1"
+fire = ">=0.7.0"
+toml = ">=0.10.2"
+fastapi = ">=0.115.8"
+uvicorn = ">=0.34.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2"
+pytest-asyncio = "^0.23.1"
+wait-for-it = "^2.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
