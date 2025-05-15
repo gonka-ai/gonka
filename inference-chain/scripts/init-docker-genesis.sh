@@ -15,6 +15,25 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-1"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
+
+update_configs_for_explorer() {
+  if [ -n "${EXPLORER_PORT}" ]; then
+    echo "EXPLORER_PORT is set to ${EXPLORER_PORT}, updating configs for enable explorer..."
+    sed -i 's/^enable *= *false/enable = true/' "$STATE_DIR/config/app.toml"
+
+    # enabled-unsafe-cors = true
+    sed -i 's/^enabled-unsafe-cors *= *false/enabled-unsafe-cors = true/' "$STATE_DIR/config/app.toml"
+
+    # cors_allowed_origins = ["*"]
+    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
+
+    # tcp://localhost:1317 → tcp://0.0.0.0:1317
+    sed -i 's|tcp://localhost:1317|tcp://0.0.0.0:1317|' "$STATE_DIR/config/app.toml"
+  else
+    echo "EXPLORER_PORT is not set. Skipping config changes for explorer"
+  fi
+}
+
 # Init the chain:
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination
@@ -122,6 +141,8 @@ if [ -f "config_override.toml" ]; then
     echo "Applying config overrides from config_override.toml"
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
+
+update_configs_for_explorer
 
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {

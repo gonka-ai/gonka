@@ -35,10 +35,10 @@ docker-push:
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+		@docker tag gcr.io/decentralized-ai/tmkms-softsign-with-keygen:$(VERSION) gcr.io/decentralized-ai/tmkms-softsign-with-keygen:latest; \
 		@echo "Pushing latest tag to Google Cloud Artifact Registry"; \
-		@docker push gcr.io/decentralized-ai/inferenced:latest; \
+		@docker push gcr.io/decentralized-ai/tmkms-softsign-with-keygen:latest; \
 		@echo "Pushing latest tag to GitHub Container Registry"; \
-		@docker tag ghcr.io/product-science/inferenced:$(VERSION) ghcr.io/product-science/inferenced:latest; \
-		@docker push ghcr.io/product-science/inferenced:latest; \
+		@docker tag ghcr.io/product-science/tmkms-softsign-with-keygen:$(VERSION) ghcr.io/product-science/tmkms-softsign-with-keygen:latest; \
+		@docker push ghcr.io/product-science/tmkms-softsign-with-keygen:latest; \
 	fi
