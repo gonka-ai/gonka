@@ -1,7 +1,16 @@
 #!/bin/sh
 set -e
-# Check if mandatory argument is provided
-if [ -z "$KEY_NAME" ]; then
+
+fail() {
+  echo "$1" >&2
+  if [ -n "${DEBUG-}" ]; then
+    tail -f /dev/null
+  else
+    exit 1
+  fi
+}
+
+if [ -z "${KEY_NAME-}" ]; then
   echo "Error: KEY_NAME is required."
   exit 1
 fi
@@ -33,14 +42,10 @@ echo "init for cosmovisor"
 mkdir -p /root/.dapi
 mkdir -p /root/.dapi/data
 
-cosmovisor init /usr/bin/decentralized-api || {
-  echo "Failed to initialize cosmovisor"
-  tail -f /dev/null
-}
+cosmovisor init /usr/bin/decentralized-api || fail "Failed to initialize cosmovisor"
 
-echo "starting cosmovisor over dapi"
-
-cosmovisor run || {
-  echo "Failed to start decentralized-api"
-  tail -f /dev/null
-}
+if [ -n "${DEBUG-}" ]; then
+  cosmovisor run || fail "Failed to start decentralized-api"
+else
+  exec cosmovisor run
+fi

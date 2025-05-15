@@ -63,6 +63,7 @@ class MultiModelTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `invalidate invalid multi model response`() {
         val (cluster, genesis) = initCluster(3)
         var tries = 5

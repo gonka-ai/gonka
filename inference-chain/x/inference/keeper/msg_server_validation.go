@@ -16,9 +16,9 @@ const (
 )
 
 var ModelToPassValue = map[string]float64{
-	"Qwen/Qwen2.5-7B-Instruct":    0.95,
-	"Qwen/QwQ-32B":                0.95,
-	"unsloth/llama-3-8b-Instruct": 0.95,
+	"Qwen/Qwen2.5-7B-Instruct":    0.85,
+	"Qwen/QwQ-32B":                0.85,
+	"unsloth/llama-3-8b-Instruct": 0.85,
 }
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
@@ -59,6 +59,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 
 	passed := msg.Value > passValue
+	k.LogInfo(
+		"Validation details", types.Validation,
+		"passValue", passValue,
+		"passed", passed,
+		"msgValue", msg.Value,
+		"model", inference.Model,
+	)
 	needsRevalidation := false
 
 	epochGroup, err := k.GetCurrentEpochGroup(ctx)

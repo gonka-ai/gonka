@@ -14,6 +14,8 @@ ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
 GENESIS_OVERRIDES_FILE ?= inference-chain/prod_genesis_overrides.json
+TESTS ?= 0
+TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
 
 install:
 	@echo "Installing locally with ldflags..."
@@ -56,6 +58,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "GOARCH:    $(GOARCH)"
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
+	@echo "TAGS:      $(if $(filter 1,$(TESTS)),upgraded,not set)"
 
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -63,7 +66,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
-		--build-arg TAGS='upgraded' \
+		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..

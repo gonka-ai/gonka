@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.1.0
+    image: ghcr.io/product-science/inferenced:0.1.3
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -34,7 +34,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.1.0
+    image: ghcr.io/product-science/api:0.1.3
     volumes:
       - .inference:/root/.inference
       - ${NODE_CONFIG:-./node-config.json}:/root/node_config.json
