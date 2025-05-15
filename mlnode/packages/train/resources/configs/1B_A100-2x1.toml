@@ -1,0 +1,31 @@
+name_model = "1B"
+project = "1B-ft-xlam"
+type_model = "llama2"
+
+name = "2x1 A100 DiloCo Separate Containers"
+description = ""
+group = "base"
+tags = ["2x1", "diloco"]
+
+[train]
+micro_bs = 8 # change this base on the gpu
+
+[optim]
+sched_type = "cosine"
+batch_size = 32
+warmup_steps = 50
+total_steps = 6_000
+
+adam_betas1 = 0.9
+adam_betas2 = 0.95
+weight_decay = 0.1
+
+lr = 5e-6
+
+[diloco]
+inner_steps = 100
+
+[ckpt]
+interval = 600
+topk = 6
+path = "outputs/1B_4x1-lr"

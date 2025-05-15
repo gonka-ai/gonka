@@ -1,0 +1,32 @@
+name_model = "1B"
+project = "1B-ft-xlam"
+type_model = "llama2"
+
+name = "Default"
+description = "default config"
+group = "base"
+
+[train]
+micro_bs = 8 
+torch_compile = false
+eval_interval = 192
+
+[optim]
+sched_type = "cosine"
+batch_size = 32
+warmup_steps = 50
+total_steps = 6_000 #one epoch is 1781 of bs 32
+
+adam_betas1 = 0.9
+adam_betas2 = 0.95
+weight_decay = 0.1
+
+lr = 5e-6
+
+[ckpt]
+interval = 600
+topk = 6
+path = "outputs/1B_default"
+
+[data]
+seed = 42

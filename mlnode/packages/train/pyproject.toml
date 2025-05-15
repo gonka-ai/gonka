@@ -1,0 +1,44 @@
+[tool.poetry]
+name = "mlnode-train"
+version = "0.1.0"
+description = "MLNode train package"
+readme = "README.md"
+authors = [
+    "Gleb Morgachev <gleb.morgachev@productscience.ai>",
+    "Tamaz Gadaev <tamaz@productscience.ai>",
+    "Egor Shulgin <egor.shulgin@productscience.ai>"
+]
+packages = [{include = "zeroband", from = "src"}]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+toml = ">=0.10.2"
+torch = ">=2.4.1"
+numpy = "*"
+setuptools = "*"
+transformers = ">=4.44.2"
+datasets = ">=3.0.0"
+pydantic_config = { git = "https://github.com/samsja/pydantic_config.git", rev = "e529c9c" }
+einops = "*"
+torchdata = ">=0.8.0"
+fsspec = { version = ">=2024.3.1", extras = ["gcs"] }
+ninja = "*"
+zstandard = "*"
+remote-pdb = "*"
+jupyter = "*"
+jupyterlab = "*"
+accelerate = ">=0.26.0"
+uvicorn = "^0.34.0"
+wandb = "^0.19.6"
+fastapi = "^0.115.8"
+bfcl = { path = "third_party/gorilla/berkeley-function-call-leaderboard", develop = false }
+mlnode-common = { path = "../common", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-timeout = "^2.3.1"
+ruff = "^0.6.9"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
