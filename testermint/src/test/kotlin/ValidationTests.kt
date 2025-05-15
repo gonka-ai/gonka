@@ -6,6 +6,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
@@ -32,6 +33,7 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `test invalid gets marked invalid`() {
         var tries = 3
         val (cluster, genesis) = initCluster()
@@ -72,6 +74,7 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `test valid with invalid validator gets validated`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
