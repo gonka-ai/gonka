@@ -37,6 +37,7 @@ class ParticipantTests : TestermintTest() {
         logSection("Verifying new node has joined for " + newPair!!.name)
         Thread.sleep(Duration.ofSeconds(30))
         newPair.node.waitForMinimumBlock(height + 20)
+        logSection("Verifying state was loaded from snapshot")
         val currentHeight = genesis.node.getStatus().syncInfo.latestBlockHeight
         assertThat(newPair.node.logOutput.minimumHeight).isGreaterThan(99)
         assertThat(newPair.node.logOutput.minimumHeight).isLessThan(currentHeight)
