@@ -69,5 +69,17 @@ gcloud compute firewall-rules create k8s-nodeport-ingress \
     --description="Expose Kubernetes NodePort range 30000-30004 on worker nodes"
 
 # If you want to tweak this rule later
-# gcloud compute firewall-rules update k8s-nodeport-ingress \
-#    --rules=tcp:30000-30004
+gcloud compute firewall-rules update k8s-nodeport-ingress \
+    --rules=tcp:30000-30029
+
+# The below rule is not really needed, since we are using NodePort for now
+gcloud compute firewall-rules create gonka-ingress \
+    --project=decentralized-ai \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:9000,tcp:26656,tcp:26657 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=k8s-worker \
+    --description="Expose ports necessary for the work of the gonka chain"
