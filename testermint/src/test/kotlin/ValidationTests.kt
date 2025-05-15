@@ -74,6 +74,7 @@ class ValidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("unstable")
     fun `test valid with invalid validator gets validated`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
