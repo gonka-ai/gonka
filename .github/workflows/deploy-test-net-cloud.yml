@@ -24,6 +24,7 @@ jobs:
           echo "GCE_PROJECT_ID=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
           echo "GCE_ZONE=us-central1-a" >> $GITHUB_OUTPUT
           echo "K8S_CONTROL_PLANE_NAME=k8s-control-plane" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_USER=dev" >> $GITHUB_OUTPUT
           echo "K8S_WORKER_1_NAME=k8s-worker-1" >> $GITHUB_OUTPUT
           echo "K8S_WORKER_2_NAME=k8s-worker-2" >> $GITHUB_OUTPUT
           echo "K8S_WORKER_3_NAME=k8s-worker-3" >> $GITHUB_OUTPUT
@@ -44,7 +45,7 @@ jobs:
         run: |
           echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
           mkdir -p $HOME/.kube
-          gcloud compute scp ${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
+          gcloud compute scp ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
           export KUBECONFIG=$HOME/.kube/config
           echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
 
@@ -54,10 +55,9 @@ jobs:
           # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
           #
           echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
-          gcloud compute ssh ${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
+          gcloud compute ssh ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
             --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
           sleep 5 # Give tunnel time to establish
-          sed -i 's|server: https://.*|server: https://127.0.0.1:6443|' $HOME/.kube/config
           echo "Kubeconfig modified to use tunnel."
           # ---- End SSH Tunnel Section ----
 
