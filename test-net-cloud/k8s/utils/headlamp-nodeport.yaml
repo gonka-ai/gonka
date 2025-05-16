@@ -1,0 +1,14 @@
+# headlamp-nodeport.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: kube-system
+spec:
+  type: NodePort
+  ports:
+    - port: 80          # inside the cluster
+      targetPort: 80    # container port
+      nodePort: 32080   # <-- choose any free port in 30000-32767
+  selector:
+    app.kubernetes.io/name: headlamp
