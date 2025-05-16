@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clear-worker-state-job
+  labels:
+    app: clear-worker-state
+spec:
+  parallelism: 3
+  completions: 3
+  backoffLimit: 2 # Number of retries before marking job as failed
+  template:
+    metadata:
+      labels:
+        app: clear-worker-state # For log selection
+    spec:
+      restartPolicy: Never # Or OnFailure
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - k8s-worker-1
+                - k8s-worker-2
+                - k8s-worker-3
+      containers:
+      - name: state-clearer
+        image: busybox
+        command:
+        - sh
+        - -c
+        - >
+          echo "Running state clearance on node: $(NODE_NAME)";
+          rm -rf /mnt_host/srv_dai_inference/* && \
+          rm -rf /mnt_host/srv_dai_inference/.* 2>/dev/null && \
+          rm -rf /mnt_host/srv_dai_tmkms_data/* && \
+          rm -rf /mnt_host/srv_dai_tmkms_data/.* 2>/dev/null && \
+          # Uncomment below to clear /mnt/shared as well
+          # rm -rf /mnt_host/mnt_shared/* && \
+          # rm -rf /mnt_host/mnt_shared/.* 2>/dev/null && \
+          echo "Successfully cleared state directories on $(NODE_NAME)";
+          sleep 5 # Keep pod alive for a few seconds for log visibility
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        securityContext:
+          runAsUser: 0 # Run as root to have permissions for rm -rf on host paths
+          # If runAsUser:0 is not sufficient, uncomment below (less secure):
+          # privileged: true
+        volumeMounts:
+        - name: host-srv-dai-inference
+          mountPath: /mnt_host/srv_dai_inference
+        - name: host-srv-dai-tmkms-data
+          mountPath: /mnt_host/srv_dai_tmkms_data
+        # Uncomment below if clearing /mnt/shared
+        # - name: host-mnt-shared
+        #   mountPath: /mnt_host/mnt_shared
+      volumes:
+      - name: host-srv-dai-inference
+        hostPath:
+          path: /srv/dai/inference
+          type: DirectoryOrCreate
+      - name: host-srv-dai-tmkms-data
+        hostPath:
+          path: /srv/dai/tmkms_data
+          type: DirectoryOrCreate
+      # Uncomment below if clearing /mnt/shared
+      # - name: host-mnt-shared
+      #   hostPath:
+      #     path: /mnt/shared
+      #     type: DirectoryOrCreate 

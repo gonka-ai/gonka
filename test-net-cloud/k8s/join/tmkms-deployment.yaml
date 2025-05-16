@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tmkms
+  labels:
+    app: tmkms
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tmkms
+  template:
+    metadata:
+      labels:
+        app: tmkms
+    spec:
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: ghcr-credentials
+      containers:
+      - name: tmkms
+        image: ghcr.io/product-science/tmkms-softsign-with-keygen:32165a2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: VALIDATOR_LISTEN_ADDRESS
+          value: "tcp://node:26658"
+        ports:
+        - containerPort: 26658 # Though tmkms connects out, its good practice to declare if it also listens on a port, even if not exposed via service
+                               # The docker-compose doesn't explicitly expose a port for tmkms itself.
+        volumeMounts:
+        - name: tmkms-data
+          mountPath: /root/.tmkms
+      volumes:
+      - name: tmkms-data
+        persistentVolumeClaim:
+          claimName: tmkms-data-pvc

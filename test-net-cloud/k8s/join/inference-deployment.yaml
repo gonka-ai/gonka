@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference
+  labels:
+    app: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference
+  template:
+    metadata:
+      labels:
+        app: inference
+    spec:
+      enableServiceLinks: false
+      hostIPC: true
+      imagePullSecrets:
+      - name: ghcr-credentials
+      containers:
+      - name: inference
+        image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+        imagePullPolicy: IfNotPresent
+        command:
+        - "/app/entrypoint.sh"
+        - "uvicorn"
+        - "api.app:app"
+        - "--host=0.0.0.0"
+        - "--port=8080"
+        ports:
+        - containerPort: 8080
+          name: poc-api
+        - containerPort: 5000
+          name: inference-api
+        env:
+        - name: HF_HOME
+          value: "/root/.cache"
+        - name: HF_HUB_ENABLE_HF_TRANSFER
+          value: "true"
+        - name: VLLM_ATTENTION_BACKEND
+          value: "FLASHINFER"
+        resources:
+          limits:
+            nvidia.com/gpu: "1" # Request 1 GPU
+        volumeMounts:
+        - name: cache
+          mountPath: /root/.cache # HF_HOME points to /mnt/shared, which is mounted here.
+      volumes:
+      - name: cache
+        hostPath:
+          path: /mnt/shared # Matches genesis; ensure this path exists on worker nodes
+          type: DirectoryOrCreate

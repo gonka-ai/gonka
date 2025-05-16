@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      enableServiceLinks: false # Prevent k8s from propagating vars like {SERVICE_NAME}_PORT inside the container
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-1
+      imagePullSecrets:
+      - name: ghcr-credentials
+      containers:
+      - name: api
+        image: ghcr.io/product-science/api:0.1.2
+        ports:
+        - containerPort: 9000
+          name: public
+        - containerPort: 9100
+          name: ml-server
+        - containerPort: 9200
+          name: admin 
+        env:
+        - name: KEY_NAME
+          value: "genesis"
+        - name: DAPI_API__POC_CALLBACK_URL
+          value: "http://api-private:9100"
+        - name: DAPI_API__PUBLIC_URL
+          valueFrom:
+            configMapKeyRef:
+              name: config
+              key: DAPI_API_PUBLIC_URL
+        - name: DAPI_CHAIN_NODE__IS_GENESIS
+          value: "true"
+        - name: DAPI_CHAIN_NODE__URL
+          value: "http://node:26657" # Assumes 'node' service DNS resolves
+        - name: NODE_CONFIG_PATH
+          value: "/root/node_config.json"
+        - name: DAPI_API__PUBLIC_SERVER_PORT
+          value: "9000"
+        - name: DAPI_API__ML_SERVER_PORT
+          value: "9100"
+        - name: DAPI_API__ADMIN_SERVER_PORT
+          value: "9200"
+        volumeMounts:
+        - name: data
+          mountPath: /root/.inference
+        - name: node-config
+          mountPath: /root/node_config.json
+          subPath: node_config.json
+      volumes:
+      - name: data
+        hostPath:
+          path: /srv/dai/inference
+          type: DirectoryOrCreate
+      - name: node-config
+        configMap:
+          name: node-config-cm 

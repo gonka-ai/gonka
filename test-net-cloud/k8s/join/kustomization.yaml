@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../common
+
+  - tmkms-pvc.yaml
+  - tmkms-deployment.yaml
+  - node-statefulset.yaml
+  - api-deployment.yaml
+  - inference-deployment.yaml
+  - config.yaml

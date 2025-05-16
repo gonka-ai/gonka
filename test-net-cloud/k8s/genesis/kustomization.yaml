@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Changed 'bases:' to 'resources:' to include the common kustomization
+resources:
+  - ../common # This now correctly lists the common kustomization under resources
+
+  - config.yaml
+  - genesis-overrides-configmap.yaml
+
+  # Workloads specific to Genesis
+  - node-statefulset.yaml
+  - api-deployment.yaml
+  - inference-deployment.yaml
+  - api-public-service.yaml
+  - node-service.yaml

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: node
+  labels:
+    app: node
+spec:
+  serviceName: "node"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node
+  template:
+    metadata:
+      labels:
+        app: node
+    spec:
+      enableServiceLinks: false # Prevent k8s from propagating vars like {SERVICE_NAME}_PORT inside the container
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-1
+      imagePullSecrets:
+      - name: ghcr-credentials
+      containers:
+      - name: node
+        image: ghcr.io/product-science/inferenced:0.1.2
+        command: ["sh", "./init-docker-genesis.sh"]
+        ports:
+        - containerPort: 26656
+          name: tendermint-p2p
+        - containerPort: 26657
+          name: tendermint-rpc
+        env:
+        - name: KEY_NAME
+          value: "genesis"
+        - name: SNAPSHOT_INTERVAL
+          value: "1000"
+        - name: SNAPSHOT_KEEP_RECENT
+          value: "5"
+        - name: NODE_CONFIG_PATH
+          value: "/root/node_config.json"
+        - name: P2P_EXTERNAL_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: config
+              key: P2P_EXTERNAL_ADDRESS
+        - name: CONFIG_p2p__allow_duplicate_ip
+          value: "true"
+        - name: CONFIG_p2p__handshake_timeout
+          value: "30s"
+        - name: CONFIG_p2p__dial_timeout
+          value: "30s"
+        - name: INIT_TGBOT
+          value: "true"
+        - name: TGBOT_PRIVATE_KEY_PASS
+          value: "defaultpassword"
+        volumeMounts:
+        - name: data
+          mountPath: /root/.inference
+        - name: genesis-overrides
+          mountPath: /root/genesis_overrides.json
+          subPath: genesis_overrides.json
+      volumes:
+      - name: data
+        hostPath:
+          path: /srv/dai/inference
+          type: DirectoryOrCreate
+      - name: genesis-overrides
+        configMap:
+          name: genesis-overrides-cm
