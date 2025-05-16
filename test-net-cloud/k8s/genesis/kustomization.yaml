@@ -3,7 +3,8 @@ kind: Kustomization
 
 # Changed 'bases:' to 'resources:' to include the common kustomization
 resources:
-  - ../common # This now correctly lists the common kustomization under resources
+  - ../common
+  - ../image-versions
 
   - config.yaml
   - genesis-overrides-configmap.yaml
@@ -14,11 +15,3 @@ resources:
   - inference-deployment.yaml
   - api-public-service.yaml
   - node-service.yaml
-
-images:
-  - name: ghcr.io/product-science/api
-    newTag: 0.1.2
-  - ghcr.io/product-science/inferenced
-    newTag: 0.1.2
-  - name: ghcr.io/product-science/mlnode
-    newTag: 3.0.4-alpha2

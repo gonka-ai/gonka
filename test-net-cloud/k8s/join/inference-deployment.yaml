@@ -20,7 +20,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: inference
-        image: ghcr.io/product-science/mlnode:3.0.4-alpha2
+        image: ghcr.io/product-science/mlnode
         imagePullPolicy: IfNotPresent
         command:
         - "/app/entrypoint.sh"

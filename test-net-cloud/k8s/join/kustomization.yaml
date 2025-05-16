@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../common
+  - ../image-versions
 
   - tmkms-pvc.yaml
   - tmkms-deployment.yaml
