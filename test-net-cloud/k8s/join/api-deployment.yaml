@@ -19,7 +19,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: api
-        image: ghcr.io/product-science/api
+        image: api
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 9000

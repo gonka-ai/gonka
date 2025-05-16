@@ -20,7 +20,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: node
-        image: ghcr.io/product-science/inferenced
+        image: node
         imagePullPolicy: IfNotPresent
         command:
         - "sh"

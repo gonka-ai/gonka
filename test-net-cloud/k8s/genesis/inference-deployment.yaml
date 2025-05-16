@@ -22,7 +22,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: inference
-        image: ghcr.io/product-science/mlnode
+        image: inference
         command:
         - /app/entrypoint.sh
         - uvicorn
