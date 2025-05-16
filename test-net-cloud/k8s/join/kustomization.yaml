@@ -3,7 +3,6 @@ kind: Kustomization
 
 resources:
 - ../common
-- ../image-versions
 
 - tmkms-pvc.yaml
 - tmkms-deployment.yaml
@@ -11,3 +10,6 @@ resources:
 - api-deployment.yaml
 - inference-deployment.yaml
 - config.yaml
+
+components:
+- ../image-versions

@@ -4,7 +4,6 @@ kind: Kustomization
 # Changed 'bases:' to 'resources:' to include the common kustomization
 resources:
 - ../common
-- ../image-versions
 
 - config.yaml
 - genesis-overrides-configmap.yaml
@@ -15,3 +14,6 @@ resources:
 - inference-deployment.yaml
 - api-public-service.yaml
 - node-service.yaml
+
+components:
+- ../image-versions
