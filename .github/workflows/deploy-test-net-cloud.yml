@@ -1,0 +1,117 @@
+name: Deploy Test Net Cloud
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-instance:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/gcp-auth-and-gcloud-setup
+
+      - name: Define GCE/K8s parameters
+        id: params
+        run: |
+          echo "GCE_PROJECT_ID=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
+          echo "GCE_ZONE=us-central1-a" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_NAME=k8s-control-plane" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_1_NAME=k8s-worker-1" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_2_NAME=k8s-worker-2" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_3_NAME=k8s-worker-3" >> $GITHUB_OUTPUT
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 1.33.0
+
+      - name: Configure kubectl
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
+        run: |
+          echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
+          mkdir -p $HOME/.kube
+          gcloud compute scp ${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
+          export KUBECONFIG=$HOME/.kube/config
+          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
+
+          # ---- IMPORTANT: SSH Tunnel (if K8s API server is not directly accessible) ----
+          # If your K8s API server isn't publicly accessible, you'll need an SSH tunnel.
+          # 1. Uncomment and adapt the following lines.
+          # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
+          #
+          echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
+          gcloud compute ssh ${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
+            --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
+          sleep 5 # Give tunnel time to establish
+          sed -i 's|server: https://.*|server: https://127.0.0.1:6443|' $HOME/.kube/config
+          echo "Kubeconfig modified to use tunnel."
+          # ---- End SSH Tunnel Section ----
+
+          echo "Verifying kubectl connection..."
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=30s
+
+      - name: Stop existing Kubernetes resources
+        run: |
+          echo "Deleting resources in genesis namespace..."
+          kubectl delete all --all -n genesis --ignore-not-found=true --request-timeout=2m
+          echo "Deleting resources in join-k8s-worker-2 namespace..."
+          kubectl delete all --all -n join-k8s-worker-2 --ignore-not-found=true --request-timeout=2m
+          kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-2 --ignore-not-found=true --request-timeout=1m
+          echo "Deleting resources in join-k8s-worker-3 namespace..."
+          kubectl delete all --all -n join-k8s-worker-3 --ignore-not-found=true --request-timeout=2m
+          kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-3 --ignore-not-found=true --request-timeout=1m
+        continue-on-error: true
+
+      - name: Clean data on GCE instances
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_WORKER_1_NAME: ${{ steps.params.outputs.K8S_WORKER_1_NAME }}
+          K8S_WORKER_2_NAME: ${{ steps.params.outputs.K8S_WORKER_2_NAME }}
+          K8S_WORKER_3_NAME: ${{ steps.params.outputs.K8S_WORKER_3_NAME }}
+        run: |
+          echo "Cleaning data on ${K8S_WORKER_1_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_1_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+          echo "Cleaning data on ${K8S_WORKER_2_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_2_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+          echo "Cleaning data on ${K8S_WORKER_3_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_3_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+
+      - name: Deploy Kubernetes resources
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
+        run: |
+          # Assuming k3s directory is at the root of the repo
+          echo "Applying genesis manifests..."
+          kubectl apply -k k3s/genesis -n genesis
+          echo "Waiting for 15 seconds for genesis node to initialize..."
+          sleep 15
+          echo "Applying join-k8s-worker-2 manifests..."
+          kubectl apply -k k3s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
+          echo "Applying join-k8s-worker-3 manifests..."
+          kubectl apply -k k3s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
+
+      - name: Verify deployments
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
+        run: |
+          echo "Waiting for 60 seconds for pods to stabilize..."
+          sleep 60
+          echo "Pods in genesis namespace:"
+          kubectl get pods -n genesis -o wide
+          echo "Pods in join-k8s-worker-2 namespace:"
+          kubectl get pods -n join-k8s-worker-2 -o wide
+          echo "Pods in join-k8s-worker-3 namespace:"
+          kubectl get pods -n join-k8s-worker-3 -o wide
+          echo "PersistentVolumeClaims in relevant namespaces:"
+          kubectl get pvc -n join-k8s-worker-2
+          kubectl get pvc -n join-k8s-worker-3
