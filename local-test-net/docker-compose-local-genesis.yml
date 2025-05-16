@@ -10,6 +10,8 @@ services:
       - IS_GENESIS=true
       - INIT_TGBOT=false
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
+      - SNAPSHOT_INTERVAL=100
+      - SNAPSHOT_KEEP_RECENT=5
       - DEBUG=true
     networks:
       - chain-public
