@@ -83,3 +83,14 @@ gcloud compute firewall-rules create gonka-ingress \
     --source-ranges=0.0.0.0/0 \
     --target-tags=k8s-worker \
     --description="Expose ports necessary for the work of the gonka chain"
+
+gcloud compute firewall-rules create headlamp-ingress \
+    --project=decentralized-ai \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:32080 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=k8s-worker \
+    --description="Expose port 32080 to serve headlamp"
