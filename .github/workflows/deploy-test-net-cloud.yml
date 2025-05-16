@@ -97,17 +97,18 @@ jobs:
         env:
           KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
         run: |
-          echo "Changing directory to inference-ignite/test-net-cloud..."
-          cd inference-ignite/test-net-cloud
-          # Assuming k8s directory is relative to the current directory (inference-ignite/test-net-cloud)
+          echo "About to deploy kubernetes resouces"
+          pwd
+          ls
+          # Applying kustomizations from the test-net-cloud/k8s directory (relative to repo root)
           echo "Applying genesis manifests..."
-          kubectl apply -k k8s/genesis -n genesis
+          kubectl apply -k test-net-cloud/k8s/genesis -n genesis
           echo "Waiting for 15 seconds for genesis node to initialize..."
           sleep 15
           echo "Applying join-k8s-worker-2 manifests..."
-          kubectl apply -k k8s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
+          kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
           echo "Applying join-k8s-worker-3 manifests..."
-          kubectl apply -k k8s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
+          kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
 
       - name: Verify deployments
         env:
