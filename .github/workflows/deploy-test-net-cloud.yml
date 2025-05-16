@@ -90,7 +90,9 @@ jobs:
         env:
           KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
         run: |
-          # Assuming k8s directory is at the root of the repo
+          echo "Changing directory to inference-ignite/test-net-cloud..."
+          cd inference-ignite/test-net-cloud
+          # Assuming k8s directory is relative to the current directory (inference-ignite/test-net-cloud)
           echo "Applying genesis manifests..."
           kubectl apply -k k8s/genesis -n genesis
           echo "Waiting for 15 seconds for genesis node to initialize..."
