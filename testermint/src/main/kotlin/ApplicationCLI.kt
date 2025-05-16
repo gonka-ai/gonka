@@ -13,6 +13,7 @@ import java.time.Instant
 data class ApplicationCLI(
     val containerId: String,
     override val config: ApplicationConfig,
+    val logOutput: LogOutput
 ) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
@@ -257,7 +258,7 @@ data class ApplicationCLI(
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
         if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
-            val error = output.output.last { it.isNotEmpty() }.lines().last { it.isNotBlank() }
+            val error = output.output.joinToString(separator = "").lines().last { it.isNotBlank() }
             throw getExecException(error)
         }
         return output.output

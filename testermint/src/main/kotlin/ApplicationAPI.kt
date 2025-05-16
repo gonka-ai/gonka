@@ -22,14 +22,18 @@ const val SERVER_TYPE_PUBLIC = "public"
 const val SERVER_TYPE_ML = "ml"
 const val SERVER_TYPE_ADMIN = "admin"
 
-data class ApplicationAPI(val urls: Map<String, String>, override val config: ApplicationConfig) : HasConfig {
+data class ApplicationAPI(
+    val urls: Map<String, String>,
+    override val config: ApplicationConfig,
+    val logOutput: LogOutput
+) : HasConfig {
     private fun urlFor(type: String): String =
         urls[type] ?: error("URL for type \"$type\" not found in ApplicationAPI")
 
     fun getParticipants(): List<Participant> = wrapLog("GetParticipants", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         val resp = Fuel.get("$url/v1/participants")
-            .timeoutRead(1000*60)
+            .timeoutRead(1000 * 60)
             .responseObject<ParticipantsResponse>(gsonDeserializer(cosmosJson))
         logResponse(resp)
         resp.third.get().participants
@@ -79,8 +83,8 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
                 .jsonBody(request)
                 .header("X-Requester-Address", address)
                 .header("Authorization", signature)
-                .timeout(1000*60)
-                .timeoutRead(1000*60)
+                .timeout(1000 * 60)
+                .timeoutRead(1000 * 60)
                 .responseObject<OpenAIResponse>(gsonDeserializer(cosmosJson))
             logResponse(response)
             response.third.get()
@@ -176,7 +180,7 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
         get(url, "v1/training/tasks/$taskId")
     }
 
-    inline fun <reified Out: Any> get(url: String, path: String): Out {
+    inline fun <reified Out : Any> get(url: String, path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))
         logResponse(response)
@@ -184,7 +188,7 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
         return response.third.get()
     }
 
-    inline fun <reified In: Any, reified Out: Any> post(url: String, path: String, body: In): Out {
+    inline fun <reified In : Any, reified Out : Any> post(url: String, path: String, body: In): Out {
         val response = Fuel.post("$url/$path")
             .jsonBody(body, cosmosJson)
             .responseObject<Out>()
@@ -202,7 +206,7 @@ data class ApplicationAPI(val urls: Map<String, String>, override val config: Ap
         return response.third.get()
     }
 
-    inline fun <reified In: Any> postWithStringResponse(url: String, path: String, body: In): String {
+    inline fun <reified In : Any> postWithStringResponse(url: String, path: String, body: In): String {
         val response = Fuel.post("$url/$path")
             .jsonBody(body, cosmosJson)
             .responseString()
