@@ -42,6 +42,7 @@ jobs:
           GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
           GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
           K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
+          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER }}
         run: |
           echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
           mkdir -p $HOME/.kube
