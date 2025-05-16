@@ -3,15 +3,15 @@ kind: Kustomization
 
 # Changed 'bases:' to 'resources:' to include the common kustomization
 resources:
-  - ../common
-  - ../image-versions
+- ../common
+- ../image-versions
 
-  - config.yaml
-  - genesis-overrides-configmap.yaml
+- config.yaml
+- genesis-overrides-configmap.yaml
 
-  # Workloads specific to Genesis
-  - node-statefulset.yaml
-  - api-deployment.yaml
-  - inference-deployment.yaml
-  - api-public-service.yaml
-  - node-service.yaml
+# Workloads specific to Genesis
+- node-statefulset.yaml
+- api-deployment.yaml
+- inference-deployment.yaml
+- api-public-service.yaml
+- node-service.yaml
