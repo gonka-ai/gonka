@@ -3,6 +3,7 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
 import com.productscience.data.ModelConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.Logger
 
