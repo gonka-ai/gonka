@@ -30,8 +30,13 @@ jobs:
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
-        with:
-          version: 1.33.0
+
+      - name: Print kubectl and kustomize versions
+        run: |
+          echo "kubectl client version:"
+          kubectl version --client -o yaml # -o yaml gives more structured output
+          echo "kubectl kustomize version:"
+          kubectl kustomize version
 
       - name: Configure kubectl
         env:
