@@ -2,7 +2,6 @@ name: Deploy Test Net Cloud
 
 on:
   workflow_dispatch:
-  pull_request:
 
 jobs:
   deploy-instance:
@@ -91,15 +90,15 @@ jobs:
         env:
           KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
         run: |
-          # Assuming k3s directory is at the root of the repo
+          # Assuming k8s directory is at the root of the repo
           echo "Applying genesis manifests..."
-          kubectl apply -k k3s/genesis -n genesis
+          kubectl apply -k k8s/genesis -n genesis
           echo "Waiting for 15 seconds for genesis node to initialize..."
           sleep 15
           echo "Applying join-k8s-worker-2 manifests..."
-          kubectl apply -k k3s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
+          kubectl apply -k k8s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
           echo "Applying join-k8s-worker-3 manifests..."
-          kubectl apply -k k3s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
+          kubectl apply -k k8s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
 
       - name: Verify deployments
         env:
