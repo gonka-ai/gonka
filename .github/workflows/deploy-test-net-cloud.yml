@@ -7,7 +7,7 @@ on:
     - '**'
 
 jobs:
-  deploy-instance:
+  deploy-test-net-cloud:
     runs-on: ubuntu-latest
 
     permissions:
