@@ -57,7 +57,7 @@ kubectl delete all --all -n join-k8s-worker-2
 kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-2
 kubectl delete all --all -n join-k8s-worker-3
 kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-3
-
+# Delete data
 gcloud compute ssh k8s-worker-1 --zone us-central1-a --command "sudo rm -rf /srv/dai"
 gcloud compute ssh k8s-worker-2 --zone us-central1-a --command "sudo rm -rf /srv/dai"
 gcloud compute ssh k8s-worker-3 --zone us-central1-a --command "sudo rm -rf /srv/dai"
