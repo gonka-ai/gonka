@@ -1,4 +1,3 @@
-# headlamp-nodeport.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -7,8 +6,8 @@ metadata:
 spec:
   type: NodePort
   ports:
-    - port: 80          # inside the cluster
-      targetPort: 80    # container port
-      nodePort: 32080   # <-- choose any free port in 30000-32767
+    - port: 80
+      targetPort: 80
+      nodePort: 32080
   selector:
     app.kubernetes.io/name: headlamp
