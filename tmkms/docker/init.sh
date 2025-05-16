@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 
-TEMPLATE_DIR="/app/tmkms_init_data" # Where we initialized in the Dockerfile
-TARGET_DIR="/root/.tmkms"         # Where the volume is mounted
+# Copy file from TEMPLATE_DIR (used at docker build stage for initializing tmkms)
+#   to TARGET_DIR (where we mount the volume)
+TEMPLATE_DIR="/app/tmkms_init_data"
+TARGET_DIR="/root/.tmkms"
 TOML_FILE="$TARGET_DIR/tmkms.toml"
 
 if [ ! -d "$TARGET_DIR/secrets" ]; then
@@ -14,7 +16,6 @@ fi
 
 if [ ! -f "$TOML_FILE" ]; then
   echo "Initializing $TARGET_DIR from template $TEMPLATE_DIR..."
-  # Copy all contents, including hidden files. The dot at the end of TEMPLATE_DIR/. is important.
   if [ -n "$(ls -A $TEMPLATE_DIR)" ]; then # Check if TEMPLATE_DIR is not empty
     cp -R "$TEMPLATE_DIR/." "$TARGET_DIR/"
     echo "Initialization complete."
