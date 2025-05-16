@@ -1,0 +1,103 @@
+name: Performance Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      private_key_hex:
+        description: "Private key in hex format"
+        required: true
+      model_name:
+        description: "Model name to use for benchmarking"
+        required: false
+      account_address:
+        description: "Account address"
+        required: false
+      node_url:
+        description: "Node URL"
+        required: false
+
+jobs:
+  run-benchmarks:
+    runs-on: ubuntu-latest
+
+    steps:
+    # --------------------------------------------------------------------
+    # 1. Source & toolchain
+    # --------------------------------------------------------------------
+    - name: Check out code
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+        cache: pip          # pip cache => fast installs
+
+    # --------------------------------------------------------------------
+    # 2. Poetry (lightweight – install every run, wheel cache makes it fast)
+    # --------------------------------------------------------------------
+    - name: Install Poetry
+      run: |
+        python -m pip install --upgrade poetry
+        echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"   # make poetry visible
+
+    # --------------------------------------------------------------------
+    # 3. Project dependencies (cache virtual-env by lockfile hash)
+    # --------------------------------------------------------------------
+    - name: Cache project venv
+      id: cache-poetry-deps
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/pypoetry
+          ~/.cache/pip
+          packages/benchmarks/.venv
+        key: ${{ runner.os }}-benchmarks-${{ hashFiles('packages/benchmarks/poetry.lock') }}
+
+    - name: Install project deps (cache miss only)
+      if: steps.cache-poetry-deps.outputs.cache-hit != 'true'
+      working-directory: packages/benchmarks
+      run: |
+        poetry config virtualenvs.in-project true
+        poetry install --no-interaction --no-root
+
+    # --------------------------------------------------------------------
+    # 4. Benchmark run
+    # --------------------------------------------------------------------
+    - name: Run measure-from-yaml
+      working-directory: packages/benchmarks
+      shell: bash
+      run: |
+        COMMAND="compressa-perf measure-from-yaml --private_key_hex ${{ github.event.inputs.private_key_hex }}"
+
+        [ -n "${{ github.event.inputs.model_name }}"     ] && COMMAND="$COMMAND --model_name ${{ github.event.inputs.model_name }}"
+        [ -n "${{ github.event.inputs.account_address }}" ] && COMMAND="$COMMAND --account_address ${{ github.event.inputs.account_address }}"
+        [ -n "${{ github.event.inputs.node_url }}"        ] && COMMAND="$COMMAND --node_url ${{ github.event.inputs.node_url }}"
+
+        COMMAND="$COMMAND resources/config.yml"
+        echo "Running: $COMMAND"
+        poetry run $COMMAND | tee stdout.log
+
+    - name: Run compressa-perf list
+      working-directory: packages/benchmarks
+      shell: bash
+      run: |
+        poetry run compressa-perf list --show-metrics --show-parameters > results.txt
+
+    # --------------------------------------------------------------------
+    # 5. Artifacts
+    # --------------------------------------------------------------------
+    - name: Upload stdout log
+      uses: actions/upload-artifact@v4
+      with:
+        name: stdout-log
+        path: packages/benchmarks/stdout.log
+
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: packages/benchmarks/results.txt

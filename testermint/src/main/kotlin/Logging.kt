@@ -49,6 +49,7 @@ interface HasConfig {
 
 class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
     var currentHeight = 0L
+    var minimumHeight = Long.MAX_VALUE
     val currentMessage = StringBuilder()
     val currentTimestamp: Instant? = null
 
@@ -83,14 +84,15 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
     }
 
     private fun log(logEntry: String) {
-        if (logEntry.contains("committed state")) {
-            // extract out height=123
-
+        if (logEntry.contains("indexed block events")) {
             "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
                 val height = it.groupValues[1].toLong()
                 if (height > currentHeight) {
                     Logger.info("New block, height={}", height)
                     currentHeight = height
+                    if (currentHeight < minimumHeight) {
+                        minimumHeight = currentHeight
+                    }
                 }
             }
         }

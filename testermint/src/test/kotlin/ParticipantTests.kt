@@ -1,14 +1,10 @@
 import com.productscience.EpochStage
-import com.productscience.LocalCluster
-import com.productscience.data.GovernanceMessage
-import com.productscience.data.GovernanceProposal
 import com.productscience.data.UpdateParams
-import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import java.time.Duration
 
 class ParticipantTests : TestermintTest() {
     @Test
@@ -25,6 +21,26 @@ class ParticipantTests : TestermintTest() {
             assertThat(end.reputation).isGreaterThan(start.reputation)
             assertThat(end.participantId).isEqualTo(start.participantId)
         }
+    }
+
+    @Test
+    fun `add node after snapshot`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Waiting for snapshot height")
+        genesis.node.waitForMinimumBlock(102)
+        val height = genesis.node.getStatus().syncInfo.latestBlockHeight
+        logSection("Adding a new node after snapshot height reached")
+        val biggerCluster = cluster.withAdditionalJoin()
+        assertThat(biggerCluster.joinPairs).hasSize(3)
+        val newPair = biggerCluster.joinPairs.find { it.name == "/join" + biggerCluster.joinPairs.size }
+        assertThat(newPair).isNotNull
+        logSection("Verifying new node has joined for " + newPair!!.name)
+        Thread.sleep(Duration.ofSeconds(30))
+        newPair.node.waitForMinimumBlock(height + 20)
+        logSection("Verifying state was loaded from snapshot")
+        val currentHeight = genesis.node.getStatus().syncInfo.latestBlockHeight
+        assertThat(newPair.node.logOutput.minimumHeight).isGreaterThan(99)
+        assertThat(newPair.node.logOutput.minimumHeight).isLessThan(currentHeight)
     }
 
     @Test

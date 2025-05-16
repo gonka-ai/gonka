@@ -2,10 +2,11 @@ package keeper
 
 import (
 	"context"
+	"math"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
-	"math"
 )
 
 type SettleParameters struct {

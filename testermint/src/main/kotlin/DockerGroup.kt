@@ -14,7 +14,6 @@ import java.time.Duration
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
-import kotlin.io.path.Path
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 
@@ -43,11 +42,12 @@ data class DockerGroup(
     val publicUrl: String = "http://$keyName-api:9000",
     val pocCallbackUrl: String = "http://$keyName-api:9100",
     val config: ApplicationConfig,
+    val useSnapshots: Boolean,
 ) {
     val composeFile = if (isGenesis) GENESIS_COMPOSE_FILE else NODE_COMPOSE_FILE
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
-        val envMap = this.getCommonEnvMap()
+        val envMap = this.getCommonEnvMap(useSnapshots)
         return ProcessBuilder("docker", *args)
             .directory(File(workingDirectory))
             .also { it.environment().putAll(envMap) }
@@ -56,13 +56,23 @@ data class DockerGroup(
     fun init() {
         tearDownExisting()
         setupFiles()
-        val dockerProcess = dockerProcess("compose", "-p", keyName, "-f", composeFile, "--project-directory", workingDirectory, "up", "-d")
+        val dockerProcess = dockerProcess(
+            "compose",
+            "-p",
+            keyName,
+            "-f",
+            composeFile,
+            "--project-directory",
+            workingDirectory,
+            "up",
+            "-d"
+        )
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.waitFor()
         // Just register the log events
-        getLocalInferencePairs(config, 10000)
+        getLocalInferencePairs(config)
     }
 
     fun tearDownExisting() {
@@ -70,7 +80,7 @@ data class DockerGroup(
         dockerProcess("compose", "-p", keyName, "--project-directory", workingDirectory, "down").start().waitFor()
     }
 
-    private fun getCommonEnvMap(): Map<String, String> {
+    private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
         return buildMap {
             put("KEY_NAME", keyName)
             put("NODE_HOST", "$keyName-node")
@@ -90,7 +100,15 @@ data class DockerGroup(
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", wiremockExternalPort.toString())
             put("GENESIS_OVERRIDES_FILE", genesisOverridesFile)
+            put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
+            put("SNAPSHOT_INTERVAL", "100")
+            put("SNAPSHOT_KEEP_RECENT", "5")
+
             genesisGroup?.let {
+                if (useSnapshots) {
+                    put("RPC_SERVER_URL_1", it.rpcUrl)
+                    put("RPC_SERVER_URL_2", it.rpcUrl.replace("genesis", "join1"))
+                }
                 put("SEED_NODE_RPC_URL", it.rpcUrl)
                 put("SEED_NODE_P2P_URL", it.p2pUrl)
                 put("SEED_API_URL", it.apiUrl)
@@ -151,7 +169,13 @@ data class DockerGroup(
     }
 }
 
-fun createDockerGroup(joinIter: Int, iteration: Int, genesisUrls: GenesisUrls?, config: ApplicationConfig): DockerGroup {
+fun createDockerGroup(
+    joinIter: Int,
+    iteration: Int,
+    genesisUrls: GenesisUrls?,
+    config: ApplicationConfig,
+    useSnapshots: Boolean
+): DockerGroup {
     val keyName = if (iteration == 0) "genesis" else "join$joinIter"
     val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_wiremock_$keyName.json"
     val repoRoot = getRepoRoot()
@@ -187,7 +211,8 @@ fun createDockerGroup(joinIter: Int, iteration: Int, genesisUrls: GenesisUrls?, 
         workingDirectory = repoRoot,
         genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
         genesisGroup = genesisUrls,
-        config = config
+        config = config,
+        useSnapshots = useSnapshots,
     )
 }
 
@@ -199,11 +224,18 @@ fun getRepoRoot(): String {
         ?: throw IllegalStateException("Repository root 'inference-ignite' not found")
 }
 
-fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig): List<DockerGroup> {
-    val genesisGroup = createDockerGroup(0, 0, null, config)
+fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentCluster: LocalCluster?): List<DockerGroup> {
+    val genesisGroup = createDockerGroup(0, 0, null, config, false)
+    val joinSize = currentCluster?.joinPairs?.size ?: 0
+    if (joinSize > joinCount) {
+        (joinCount until joinSize).mapIndexed { _, index ->
+            val actualIndex = (index + 1) * 10
+            createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
+        }.forEach { it.tearDownExisting() }
+    }
     val joinGroups = (1..joinCount).mapIndexed { index, _ ->
         val actualIndex = (index + 1) * 10
-        createDockerGroup(index+1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config)
+        createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
     }
     val allGroups = listOf(genesisGroup) + joinGroups
     Logger.info("Initializing cluster with {} nodes", allGroups.size)
@@ -241,16 +273,16 @@ fun initCluster(
 }
 
 fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean = false): LocalCluster {
-    val currentCluster = getLocalCluster(config, joinCount + 1)
-    val size = currentCluster?.joinPairs?.size
+    val currentCluster = getLocalCluster(config)
+    val size = currentCluster?.joinPairs?.size ?: 0
     if (!reboot && clusterMatchesConfig(currentCluster, joinCount, config)) {
         return currentCluster
     } else {
         if (!reboot) {
             logSection("Cluster does not match config, rebooting")
         }
-        initializeCluster(joinCount, config)
-        return getLocalCluster(config, joinCount + 1) ?: error("Local cluster not initialized")
+        initializeCluster(joinCount, config, currentCluster)
+        return getLocalCluster(config) ?: error("Local cluster not initialized")
     }
 }
 
@@ -265,8 +297,8 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
     return config.genesisSpec?.matches(genesisState.appState) != false
 }
 
-fun getLocalCluster(config: ApplicationConfig, maxPairs: Int): LocalCluster? {
-    val currentPairs = getLocalInferencePairs(config, maxPairs)
+fun getLocalCluster(config: ApplicationConfig): LocalCluster? {
+    val currentPairs = getLocalInferencePairs(config)
     val (genesis, join) = currentPairs.partition { it.name == "/${config.genesisName}" }
     if (genesis.size != 1) {
         Logger.error("Expected exactly one genesis pair, found ${genesis.size}", "")
@@ -282,20 +314,21 @@ data class LocalCluster(
 ) {
     val allPairs = listOf(genesis) + joinPairs
     fun withAdditionalJoin(joinCount: Int = 1): LocalCluster {
-        val currentMaxJoin = this.joinPairs.size + 1
+        val currentMaxJoin = this.joinPairs.size
         val newMaxJoin = currentMaxJoin + joinCount
         val newJoinGroups =
-            (currentMaxJoin..newMaxJoin).map {
+            (currentMaxJoin + 1..newMaxJoin).map {
                 createDockerGroup(
                     it,
                     iteration = it * 10,
                     genesisUrls = GenesisUrls(this.genesis.name.trimStart('/')),
-                    config = this.genesis.config
+                    config = this.genesis.config,
+                    useSnapshots = true
                 )
             }
         newJoinGroups.forEach { it.tearDownExisting() }
         newJoinGroups.forEach { it.init() }
-        return getLocalCluster(this.genesis.config, newMaxJoin + 1)!!
+        return getLocalCluster(this.genesis.config)!!
     }
 
     fun withConsumer(name: String, action: (Consumer) -> Unit) {
@@ -312,7 +345,11 @@ data class LocalCluster(
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
     companion object {
         fun create(localCluster: LocalCluster, name: String): Consumer {
-            val cli = ApplicationCLI(name, localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName))
+            val cli = ApplicationCLI(
+                name,
+                localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName),
+                LogOutput(name, "consumer")
+            )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)
             localCluster.genesis.api.addUnfundedInferenceParticipant(

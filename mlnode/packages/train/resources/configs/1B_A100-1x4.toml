@@ -1,0 +1,26 @@
+project = "1B-ft-xlam"
+
+name = "debug splitting"
+description = "debug the splitting of the dataset"
+group = "base"
+tags = ["1x4", "no-diloco"]
+
+[train]
+micro_bs = 8
+
+[optim]
+sched_type = "cosine"
+batch_size = 32
+warmup_steps = 50
+total_steps = 6_000
+
+lr = 5e-6
+
+adam_betas1 = 0.9
+adam_betas2 = 0.95
+weight_decay = 0.1
+
+[ckpt]
+interval = 600
+topk = 6
+path = "outputs/1B_4x1-lr"
