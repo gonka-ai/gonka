@@ -52,6 +52,7 @@ gcloud compute ssh k8s-worker-3 --zone us-central1-a --command "sudo rm -rf /srv
 
 Stop all
 ```bash
+# Delete all resources
 kubectl delete all --all -n genesis
 kubectl delete all --all -n join-k8s-worker-2
 kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-2
