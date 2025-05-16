@@ -4,6 +4,7 @@ services:
     image: ping-pub-explorer
     ports:
       - "5173:5173"
+      - "3000:3000"
     networks:
       - chain-public
     restart: unless-stopped
