@@ -22,7 +22,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: node
-        image: ghcr.io/product-science/inferenced:0.1.2
+        image: ghcr.io/product-science/inferenced
         command: ["sh", "./init-docker-genesis.sh"]
         ports:
         - containerPort: 26656

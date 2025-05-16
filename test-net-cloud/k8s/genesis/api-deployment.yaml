@@ -21,7 +21,7 @@ spec:
       - name: ghcr-credentials
       containers:
       - name: api
-        image: ghcr.io/product-science/api:0.1.2
+        image: ghcr.io/product-science/api
         ports:
         - containerPort: 9000
           name: public

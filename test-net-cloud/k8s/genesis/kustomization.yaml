@@ -14,3 +14,11 @@ resources:
   - inference-deployment.yaml
   - api-public-service.yaml
   - node-service.yaml
+
+images:
+  - name: ghcr.io/product-science/api
+    newTag: 0.1.2
+  - ghcr.io/product-science/inferenced
+    newTag: 0.1.2
+  - name: ghcr.io/product-science/mlnode
+    newTag: 3.0.4-alpha2
