@@ -16,11 +16,6 @@ import org.junit.jupiter.api.Tag
 class InitializationTests : TestermintTest() {
 
     @Test
-    fun init3() {
-        initializeCluster(2, inferenceConfig)
-    }
-
-    @Test
     fun initOrReuse() {
         val localCluster = setupLocalCluster(2, inferenceConfig)
         assertNotNull(localCluster)
@@ -40,7 +35,7 @@ class InitializationTests : TestermintTest() {
 
     @Test
     fun getGenesisState() {
-        val pairs = getLocalInferencePairs(inferenceConfig, 3)
+        val pairs = getLocalInferencePairs(inferenceConfig)
         val highestFunded = initialize(pairs)
         val genesis = highestFunded.node.getGenesisState()
 

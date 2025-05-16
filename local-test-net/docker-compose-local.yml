@@ -11,6 +11,8 @@ services:
       - RPC_SERVER_URL_2=${RPC_SERVER_URL_2}
       - RPC_SERVER_URL_1=${RPC_SERVER_URL_1}
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
+      - SNAPSHOT_INTERVAL=100
+      - SNAPSHOT_KEEP_RECENT=5
       - DEBUG=true
     ports:
       - "${RPC_PORT}:26657"

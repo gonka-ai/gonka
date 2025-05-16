@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 val nameExtractor = "(.+)-node".toRegex()
 
-fun getLocalInferencePairs(config: ApplicationConfig, expectedPairCount: Int): List<LocalInferencePair> {
+fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
     Logger.info("Getting local inference pairs")
     val dockerClient = DockerClientBuilder.getInstance()
         .build()
@@ -35,13 +35,8 @@ fun getLocalInferencePairs(config: ApplicationConfig, expectedPairCount: Int): L
         val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
         val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
         val configWithName = config.copy(pairName = name)
-        if (foundPairs > expectedPairCount) {
-            dockerClient.stopContainerCmd(chainContainer.id).exec()
-            dockerClient.stopContainerCmd(apiContainer.id).exec()
-            return@mapNotNull null
-        }
-        attachDockerLogs(dockerClient, name, "node", chainContainer.id)
-        attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
+        val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
+        val dapiLogs = attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
 
         val portMap = apiContainer.ports.associateBy { it.privatePort }
         Logger.info("Container ports: $portMap")
@@ -58,8 +53,8 @@ fun getLocalInferencePairs(config: ApplicationConfig, expectedPairCount: Int): L
         Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
 
         LocalInferencePair(
-            node = ApplicationCLI(chainContainer.id, configWithName),
-            api = ApplicationAPI(apiUrls, configWithName),
+            node = ApplicationCLI(chainContainer.id, configWithName, nodeLogs),
+            api = ApplicationAPI(apiUrls, configWithName, dapiLogs),
             mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name = name,
             config = configWithName
@@ -113,23 +108,25 @@ private fun DockerClient.executeCommand(
 //}
 
 
-private val attachedContainers = ConcurrentHashMap.newKeySet<String>()
+private val attachedContainers = ConcurrentHashMap<String, LogOutput>()
 
-private fun attachDockerLogs(
+fun attachDockerLogs(
     dockerClient: DockerClient,
     name: String,
     type: String,
     id: String,
-) {
-    if (attachedContainers.add(id)) {
-        dockerClient.logContainerCmd(id)
+): LogOutput {
+    return attachedContainers.computeIfAbsent(id) { containerId ->
+        val logOutput = LogOutput(name, type)
+        dockerClient.logContainerCmd(containerId)
             .withSince(Instant.now().epochSecond.toInt())
             .withStdErr(true)
             .withStdOut(true)
             .withFollowStream(true)
             // Timestamps allow LogOutput to detect multi-line messages
             .withTimestamps(true)
-            .exec(LogOutput(name, type))
+            .exec(logOutput)
+        logOutput
     }
 }
 
