@@ -10,6 +10,9 @@ services:
       - IS_GENESIS=true
       - INIT_TGBOT=false
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
+      - SNAPSHOT_INTERVAL=100
+      - SNAPSHOT_KEEP_RECENT=5
+      - DEBUG=true
     networks:
       - chain-public
     ports:
@@ -36,6 +39,7 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - DAPI_CHAIN_NODE__IS_GENESIS=true
       - NODE_CONFIG_PATH=/root/node_config.json
+      - DEBUG=true
     networks:
       - chain-public
 

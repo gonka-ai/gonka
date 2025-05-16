@@ -1,5 +1,14 @@
 #!/bin/sh
 
+fail() {
+  echo "$1" >&2
+  if [ -n "${DEBUG-}" ]; then
+    tail -f /dev/null
+  else
+    exit 1
+  fi
+}
+
 # Check if mandatory argument is provided
 if [ -z "$KEY_NAME" ]; then
   echo "Error: KEY_NAME is required."
@@ -21,14 +30,13 @@ if [ -z "$SEED_NODE_P2P_URL" ]; then
   exit 1
 fi
 
-# Display the parsed values (for debugging)
 echo "Using the following arguments"
 echo "KEY_NAME: $KEY_NAME"
 echo "SEEDS: $SEEDS"
 echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-1"
+CHAIN_ID="gonka-testnet-3"
 COIN_DENOM="icoin"
 STATE_DIR="/root/.inference"
 
@@ -63,14 +71,14 @@ if [ "$ACCOUNT_EXISTS" = true ]; then
       echo "TMKMS_PORT is not set, skipping"
     fi
 
-    echo "Running node..."
-    cosmovisor init /usr/bin/inferenced
+  echo "Running node..."
+  cosmovisor init /usr/bin/inferenced || fail "Failed to initialize cosmovisor"
 
-    # Idle the container in the event that cosmovisor fails
-    cosmovisor run start || {
-    echo "Cosmovisor failed, idling the container..."
-    tail -f /dev/null
-    }
+  if [ -n "${DEBUG-}" ]; then
+    cosmovisor run start || fail "Failed to start inferenced"
+  else
+    exec cosmovisor run start
+  fi
 fi
 
 echo "Configure node"
@@ -89,7 +97,6 @@ $APP_NAME config set client chain-id $CHAIN_ID
 $APP_NAME config set client keyring-backend $KEYRING_BACKEND
 $APP_NAME config set app minimum-gas-prices "0$COIN_DENOM"
 
-# create snapshots every N blocks and keep last M snapshots
 SNAPSHOT_INTERVAL=${SNAPSHOT_INTERVAL:-10}
 SNAPSHOT_KEEP_RECENT=${SNAPSHOT_KEEP_RECENT:-5}
 $APP_NAME config set app state-sync.snapshot-interval $SNAPSHOT_INTERVAL
@@ -163,10 +170,10 @@ else
 fi
 
 echo "Running node..."
-cosmovisor init /usr/bin/inferenced
+cosmovisor init /usr/bin/inferenced || fail "Failed to initialize cosmovisor"
 
-# Idle the container in the event that cosmovisor fails
-cosmovisor run start || {
-  echo "Cosmovisor failed, idling the container..."
-  tail -f /dev/null
-}
+if [ -n "${DEBUG-}" ]; then
+  cosmovisor run start || fail "Failed to start inferenced"
+else
+  exec cosmovisor run start
+fi

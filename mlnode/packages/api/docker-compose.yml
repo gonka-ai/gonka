@@ -1,0 +1,52 @@
+x-common-config: &common-config
+  env_file:
+    - ${PROJECT_ROOT}/.env
+    - ${PROJECT_ROOT}/packages/api/.env
+  shm_size: "120g"
+  volumes:
+    - ${CACHE_DIR}:/root/.cache
+
+services:
+  server:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/api/Dockerfile
+      target: app
+    command: python -m uvicorn api.app:app --host 0.0.0.0 --port 8080
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["${GPU_DEVICE_ID:-0}"]
+    restart: always
+
+  integration-tests:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/api/Dockerfile
+      target: test
+    environment:
+      - BATCH_RECIEVER_URL=http://batch-reciever:8080
+      - SERVER_URL=http://server:8080
+    depends_on:
+      - batch-reciever
+      - server
+
+  unit-tests:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/api/Dockerfile
+      target: test
+
+  batch-reciever:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/api/Dockerfile
+      target: test
+    working_dir: /app/packages/pow/tests
+    command: python -m uvicorn batch_reciever:app --host 0.0.0.0 --port 8080
