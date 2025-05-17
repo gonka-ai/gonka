@@ -11,7 +11,7 @@ build-with-keygen:
 		--platform $(PLATFORM) \
 		-f ./docker/Dockerfile_keygen \
 		--build-arg TMKMS_TOML=./template/tmkms.toml \
-		-t ghcr.io/decentralized-ai/tmkms-softsign-with-keygen:$(VERSION) \
+		-t ghcr.io/product-science/tmkms-softsign-with-keygen:$(VERSION) \
 		.
 
 build-with-import:
@@ -21,7 +21,7 @@ build-with-import:
 		--build-arg TMKMS_TOML=./template/tmkms.toml \
 		--build-arg PRIV_VALIDATOR_KEY=priv_validator_key.json \
 		--build-arg PRIV_VALIDATOR_STATE=priv_validator_state.json \
-		-t ghcr.io/decentralized-ai/tmkms-softsign-with-import:$(VERSION) \
+		-t ghcr.io/product-science/tmkms-softsign-with-import:$(VERSION) \
 		.
 
 release: build-with-keygen

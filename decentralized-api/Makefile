@@ -71,11 +71,11 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=ghcr.io/decentralized-ai/api:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		echo "Setting latest tag..."; \
-		docker tag $(DOCKER_TAG) ghcr.io/decentralized-ai/api:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/api:latest; \
 	fi
 
 docker-push:

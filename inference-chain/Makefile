@@ -78,12 +78,12 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=ghcr.io/decentralized-ai/inferenced:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/inferenced:$(VERSION))
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
     	echo "Setting latest tag..."; \
-		docker tag $(DOCKER_TAG) ghcr.io/decentralized-ai/inferenced:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/inferenced:latest; \
 	fi
 
 
