@@ -20,7 +20,7 @@ kubectl create namespace join-k8s-worker-2 # if not already created
 kubectl apply -k k3s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
 ```
 
-Stop join-worker-2
+Stop join-worker-2 and delete pvc
 ```bash
 kubectl delete all --all -n join-k8s-worker-2
 
