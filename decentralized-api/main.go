@@ -115,7 +115,7 @@ func main() {
 	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor)
+	publicServer := pserver.NewServer(config.GetApiConfig().ExplorerUrl, nodeBroker, config, recorder, trainingExecutor)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

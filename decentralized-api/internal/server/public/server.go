@@ -5,21 +5,26 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/logging"
 	"decentralized-api/training"
 	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
+	"net/url"
 )
 
 type Server struct {
-	e                *echo.Echo
-	nodeBroker       *broker.Broker
-	configManager    *apiconfig.ConfigManager
-	recorder         cosmosclient.CosmosMessageClient
-	trainingExecutor *training.Executor
+	e                 *echo.Echo
+	explorerTargetUrl *url.URL
+	nodeBroker        *broker.Broker
+	configManager     *apiconfig.ConfigManager
+	recorder          cosmosclient.CosmosMessageClient
+	trainingExecutor  *training.Executor
 }
 
 // TODO: think about rate limits
 func NewServer(
+	explorerUrl string,
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
@@ -33,10 +38,18 @@ func NewServer(
 		trainingExecutor: trainingExecutor,
 	}
 
+	explorerUrlParsed, err := url.Parse(explorerUrl)
+	if err != nil {
+		logging.Error("Failed to parse explorer url", types.Server, "error", err, "url", explorerUrl)
+	} else {
+		s.explorerTargetUrl = explorerUrlParsed
+	}
+
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
+	g.Any("explorer/*", s.getExplorerUI)
 
 	g.POST("chat/completions", s.postChat)
 	g.GET("chat/completions/:id", s.getChatById)
