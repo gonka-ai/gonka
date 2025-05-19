@@ -18,21 +18,6 @@ const EVENT = `
 data: {"id":"cmpl-3973dab1430143849df83d943ea0c7ac","object":"chat.completion.chunk","created":1726472629,"model":"unsloth/llama-3-8b-Instruct","choices":[{"index":0,"delta":{"content":"9"},"logprobs":{"content":[{"token":"9","logprob":0.0,"bytes":[57],"top_logprobs":[{"token":"9","logprob":0.0,"bytes":[57]},{"token":"8","logprob":-23.125,"bytes":[56]},{"token":"0","logprob":-24.125,"bytes":[48]}]}]},"finish_reason":null}]}
 `
 
-/*
-curl http://localhost:5000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -N \
-  -d '{
-        "model": "Qwen/Qwen2.5-7B-Instruct",
-        "temperature": 0.8,
-        "stream": true,
-        "stream_options": { "include_usage": true },
-        "messages": [
-          { "role": "user", "content": "Hi!" }
-        ]
-      }'
-*/
-
 func TestProcessingStreamedEvents(t *testing.T) {
 	dummyId := "dummy-inference-id"
 	processor := NewExecutorResponseProcessor(dummyId)
