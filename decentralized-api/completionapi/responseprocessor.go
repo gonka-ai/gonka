@@ -100,10 +100,15 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 		data := make([]Response, 0)
 		for _, event := range rt.streamedResponse {
 			trimmedEvent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event), "data:"))
+			if trimmedEvent == "[DONE]" {
+				// TODO: should we make sure somehow that [DONE] was indeed received?
+				continue
+			}
 			var response Response
 			if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
 				return nil, err
 			}
+			data = append(data, response)
 		}
 		streamedResponse := &StreamedResponse{
 			Data: data,

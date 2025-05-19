@@ -55,6 +55,10 @@ type Usage struct {
 	TotalTokens      uint64 `json:"total_tokens"`
 }
 
+func (u *Usage) IsEmpty() bool {
+	return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0
+}
+
 const DataPrefix = "data: "
 
 type SerializedStreamedResponse struct {
@@ -110,7 +114,12 @@ func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
 	if r.JsonResponse != nil {
 		return &r.JsonResponse.Usage, nil
 	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
-		return &r.StreamedResponse.Data[0].Usage, nil
+		for _, d := range r.StreamedResponse.Data {
+			if d.Usage.IsEmpty() {
+				continue
+			}
+			return &d.Usage, nil
+		}
 	}
 	return nil, nil
 }
