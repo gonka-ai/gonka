@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 )
 
 func (s *Server) postChat(ctx echo.Context) error {
@@ -246,18 +245,13 @@ func (s *Server) createInferenceFinishedTransaction(id string, transaction Infer
 		ExecutedBy:           accountName,
 	}
 
-	// Submit to the blockchain effectively AFTER we've served the request. Speed before certainty.
-	go func() {
-		// PRTODO: delete me and probably introduce retries if FinishInference returns not found
-		time.Sleep(10 * time.Second)
-		logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
-		err := s.recorder.FinishInference(message)
-		if err != nil {
-			logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
-		} else {
-			logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", id)
-		}
-	}()
+	logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
+	err := s.recorder.FinishInference(message)
+	if err != nil {
+		logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
+	} else {
+		logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", id)
+	}
 }
 
 func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string) (*inference.MsgStartInference, error) {
