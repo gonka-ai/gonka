@@ -82,3 +82,44 @@ func UnmarshalEvent(event string) (*Response, error) {
 
 	return &response, nil
 }
+
+type JsonOrStreamedResponse struct {
+	JsonResponse     *Response
+	StreamedResponse *StreamedResponse
+}
+
+func (r JsonOrStreamedResponse) GetModel() (string, error) {
+	if r.JsonResponse != nil {
+		return r.JsonResponse.Model, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
+		return r.StreamedResponse.Data[0].Model, nil
+	}
+	return "", nil
+}
+
+func (r JsonOrStreamedResponse) GetInferenceId() (string, error) {
+	if r.JsonResponse != nil {
+		return r.JsonResponse.ID, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
+		return r.StreamedResponse.Data[0].ID, nil
+	}
+	return "", nil
+}
+
+func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
+	if r.JsonResponse != nil {
+		return &r.JsonResponse.Usage, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
+		return &r.StreamedResponse.Data[0].Usage, nil
+	}
+	return nil, nil
+}
+
+func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
+	if r.JsonResponse != nil {
+		return json.Marshal(r.JsonResponse)
+	} else if r.StreamedResponse != nil {
+		return json.Marshal(r.StreamedResponse)
+	}
+	return nil, nil
+}

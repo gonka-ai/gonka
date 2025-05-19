@@ -1,6 +1,10 @@
 package completionapi
 
 import (
+	"bufio"
+	"encoding/json"
+	"github.com/stretchr/testify/require"
+	"os"
 	"strings"
 	"testing"
 )
@@ -13,6 +17,21 @@ func TestProcessingJsonResponse(t *testing.T) {
 const EVENT = `
 data: {"id":"cmpl-3973dab1430143849df83d943ea0c7ac","object":"chat.completion.chunk","created":1726472629,"model":"unsloth/llama-3-8b-Instruct","choices":[{"index":0,"delta":{"content":"9"},"logprobs":{"content":[{"token":"9","logprob":0.0,"bytes":[57],"top_logprobs":[{"token":"9","logprob":0.0,"bytes":[57]},{"token":"8","logprob":-23.125,"bytes":[56]},{"token":"0","logprob":-24.125,"bytes":[48]}]}]},"finish_reason":null}]}
 `
+
+/*
+curl http://localhost:5000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -N \
+  -d '{
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "temperature": 0.8,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+        "messages": [
+          { "role": "user", "content": "Hi!" }
+        ]
+      }'
+*/
 
 func TestProcessingStreamedEvents(t *testing.T) {
 	dummyId := "dummy-inference-id"
@@ -36,4 +55,49 @@ func TestProcessingStreamedEvents(t *testing.T) {
 	}
 
 	println(string(bytes))
+}
+
+func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
+	dummyId := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyId)
+
+	events := readLines(t, "responseprocessor_test_data.txt")
+	require.NotEmpty(t, events, "Read 0 events from responseprocessor_test_data.txt")
+	for _, event := range events {
+		_, err := processor.ProcessStreamedResponse(strings.TrimSpace(event))
+		require.NoError(t, err, "failed to process a line of a streamed response")
+	}
+
+	response, err := processor.GetResponse()
+	require.NoError(t, err, "GetResponse failed")
+
+	println("whatever")
+
+	res
+
+	_ = response
+}
+
+func readLines(t *testing.T, name string) []string {
+	t.Helper()
+
+	f, err := os.Open(name)
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" {
+			lines = append(lines, trimmedLine)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	return lines
 }

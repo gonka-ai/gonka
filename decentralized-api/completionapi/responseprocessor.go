@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -84,4 +85,32 @@ func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 		return json.Marshal(response)
 	}
 	return rt.jsonResponseBytes, nil
+}
+
+func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, error) {
+	if rt.jsonResponseBytes != nil {
+		var response Response
+		if err := json.Unmarshal(rt.jsonResponseBytes, &response); err != nil {
+			return nil, err
+		}
+		return &JsonOrStreamedResponse{
+			JsonResponse: &response,
+		}, nil
+	} else if rt.streamedResponse != nil {
+		data := make([]Response, 0)
+		for _, event := range rt.streamedResponse {
+			var response Response
+			if err := json.Unmarshal([]byte(event), &response); err != nil {
+				return nil, err
+			}
+		}
+		streamedResponse := &StreamedResponse{
+			Data: data,
+		}
+		return &JsonOrStreamedResponse{
+			StreamedResponse: streamedResponse,
+		}, nil
+	}
+
+	return nil, errors.New("ExecutorResponseProcessor: can't get response; both jsonResponseBytes and streamedResponse are empty")
 }

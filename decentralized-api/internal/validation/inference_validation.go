@@ -219,7 +219,7 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 		return nil, err
 	}
 
-	enforcedStr, err := originalResponse.GetEnforcedStr()
+	enforcedStr, err := GetEnforcedStr(originalResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -270,12 +270,7 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-type UnmarshalledResponse struct {
-	JsonResponse     *completionapi.Response
-	StreamedResponse *completionapi.StreamedResponse
-}
-
-func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
+func GetEnforcedStr(r *completionapi.JsonOrStreamedResponse) (string, error) {
 	if r.JsonResponse != nil {
 		if len(r.JsonResponse.Choices) == 0 {
 			return "", errors.New("JsonResponse has no choices")
@@ -321,11 +316,11 @@ func (r *UnmarshalledResponse) GetEnforcedStr() (string, error) {
 
 		return responseString, nil
 	} else {
-		return "", errors.New("UnmarshalledResponse has invalid state, both responses are nil")
+		return "", errors.New("JsonOrStreamedResponse has invalid state, both responses are nil")
 	}
 }
 
-func unmarshalResponse(inference *types.Inference) (*UnmarshalledResponse, error) {
+func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreamedResponse, error) {
 	var genericMap map[string]interface{}
 	if err := json.Unmarshal([]byte(inference.ResponsePayload), &genericMap); err != nil {
 		log.Printf("Failed to unmarshal inference.ResponsePayload into generic map. id = %v. err = %v", inference.InferenceId, err)
@@ -338,14 +333,14 @@ func unmarshalResponse(inference *types.Inference) (*UnmarshalledResponse, error
 		if err != nil {
 			return nil, err
 		}
-		return &UnmarshalledResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
+		return &completionapi.JsonOrStreamedResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
 	} else {
 		var originalResponse completionapi.Response
 		if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
 			log.Printf("Failed to unmarshal inference.ResponsePayload into Response. id = %v. err = %v", inference.InferenceId, err)
 			return nil, err
 		}
-		return &UnmarshalledResponse{JsonResponse: &originalResponse}, nil
+		return &completionapi.JsonOrStreamedResponse{JsonResponse: &originalResponse}, nil
 	}
 }
 
@@ -372,7 +367,7 @@ func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Resp
 	return unmarshalledEvents, nil
 }
 
-func extractLogits(response *UnmarshalledResponse) []completionapi.Logprob {
+func extractLogits(response *completionapi.JsonOrStreamedResponse) []completionapi.Logprob {
 	if response.JsonResponse != nil {
 		return extractLogitsFromJsonResponse(*response.JsonResponse)
 	} else if response.StreamedResponse != nil {
