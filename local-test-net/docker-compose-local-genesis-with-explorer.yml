@@ -1,12 +1,11 @@
 services:
   explorer:
     container_name: explorer
-    image: ping-pub-explorer:462489ce
+    image: gcr.io/decentralized-ai/ping-pub-explorer
     environment:
       - API_ENDPOINT=http://genesis-node:1317
       - RPC_ENDPOINT=http://genesis-node:26657
     ports:
-      - "5173:5173"
       - "3000:3000"
     networks:
       - chain-public
