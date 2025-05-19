@@ -197,14 +197,16 @@ func (s *Server) getExecutorForRequest(ctx context.Context, model string) (*Exec
 }
 
 func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.JsonOrStreamedResponse, modifiedRequestBodyBytes []byte, accountName string) error {
-	// FIXME: add hash
-	hash := "whatever"
-
 	promptHash, promptPayload, err := getPromptHash(modifiedRequestBodyBytes)
 	if err != nil {
 		return err
 	}
 
+	responseHash, err := response.GetHash()
+	if err != nil || responseHash == "" {
+		logging.Error("Failed to get responseHash from response", types.Inferences, "error", err)
+		return err
+	}
 	model, err := response.GetModel()
 	if err != nil || model == "" {
 		logging.Error("Failed to get model from response", types.Inferences, "error", err)
@@ -229,7 +231,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	transaction := InferenceTransaction{
 		PromptHash:           promptHash,
 		PromptPayload:        promptPayload,
-		ResponseHash:         hash,
+		ResponseHash:         responseHash,
 		ResponsePayload:      string(bodyBytes),
 		PromptTokenCount:     usage.PromptTokens,
 		CompletionTokenCount: usage.CompletionTokens,

@@ -1,7 +1,9 @@
 package completionapi
 
 import (
+	"decentralized-api/utils"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -131,4 +133,28 @@ func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
 		return json.Marshal(r.StreamedResponse)
 	}
 	return nil, nil
+}
+
+func (r JsonOrStreamedResponse) GetHash() (string, error) {
+	if r.JsonResponse != nil {
+		var content string
+		for _, choice := range r.JsonResponse.Choices {
+			content += choice.Message.Content
+		}
+		hash := utils.GenerateSHA256Hash(content)
+		return hash, nil
+	} else if r.StreamedResponse != nil {
+		var content string
+		for _, choice := range r.StreamedResponse.Data {
+			for _, c := range choice.Choices {
+				delta := c.Delta.Content
+				if delta != nil {
+					content += *delta
+				}
+			}
+		}
+		hash := utils.GenerateSHA256Hash(content)
+		return hash, nil
+	}
+	return "", errors.New("JsonOrStreamedResponse: can't get hash; neither response nor streamed response is set")
 }

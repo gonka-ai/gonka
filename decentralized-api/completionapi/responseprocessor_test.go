@@ -82,9 +82,9 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	require.NotNil(t, usage, "expected usage to be not nil")
 	require.Equal(t, *expectedUsage, *usage, "expected usage to be %v, got %v", *expectedUsage, *usage)
 
-	println("whatever")
-
-	_ = response
+	hash, err := response.GetHash()
+	require.NoError(t, err, "GetHash failed")
+	require.NotEmpty(t, hash, "expected hash to be not empty")
 }
 
 func readLines(t *testing.T, name string) []string {
