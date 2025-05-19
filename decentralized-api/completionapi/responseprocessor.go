@@ -99,8 +99,9 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 	} else if rt.streamedResponse != nil {
 		data := make([]Response, 0)
 		for _, event := range rt.streamedResponse {
+			trimmedEvent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event), "data:"))
 			var response Response
-			if err := json.Unmarshal([]byte(event), &response); err != nil {
+			if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
 				return nil, err
 			}
 		}

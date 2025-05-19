@@ -2,7 +2,6 @@ package completionapi
 
 import (
 	"bufio"
-	"encoding/json"
 	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
@@ -70,10 +69,20 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 
 	response, err := processor.GetResponse()
 	require.NoError(t, err, "GetResponse failed")
+	id, err := response.GetInferenceId()
+	require.Equal(t, dummyId, id, "expected inference id to be %s, got %s", dummyId, id)
+	model, err := response.GetModel()
+	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
+	usage, err := response.GetUsage()
+	expectedUsage := &Usage{
+		PromptTokens:     31,
+		TotalTokens:      41,
+		CompletionTokens: 10,
+	}
+	require.NotNil(t, usage, "expected usage to be not nil")
+	require.Equal(t, *expectedUsage, *usage, "expected usage to be %v, got %v", *expectedUsage, *usage)
 
 	println("whatever")
-
-	res
 
 	_ = response
 }
