@@ -107,7 +107,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 		shouldValidate, message := calculations.ShouldValidate(
 			currentSeed,
 			inferenceWithExecutor,
-			uint32(r.TotalPower),
+			uint32(inferenceWithExecutor.TotalPower),
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)
@@ -226,6 +226,7 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	requestMap["enforced_str"] = enforcedStr
 	// A hack to simplify processing the response:
 	requestMap["stream"] = false
+	delete(requestMap, "stream_options")
 
 	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
@@ -573,10 +574,12 @@ func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) 
 	switch result.(type) {
 	case *DifferentLengthValidationResult:
 		log.Printf("Different length validation result")
-		simVal = -1
+		// TODO: This is hack till we guarantee same tokenization
+		simVal = 1
 	case *DifferentTokensValidationResult:
 		log.Printf("Different tokens validation result")
-		simVal = -1
+		// TODO: This is hack till we guarantee same tokenization
+		simVal = 1
 	case *SimilarityValidationResult:
 		simVal = result.(*SimilarityValidationResult).Value
 		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)

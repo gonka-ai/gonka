@@ -212,8 +212,8 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		ValidatorKey: participant.ValidatorKey,
 		Weight:       claimedWeight,
 		InferenceUrl: participant.InferenceUrl,
-		Models:       participant.Models,
 		Seed:         &seed,
+		Models:       make([]string, 0),
 	}
 	return activeParticipant
 }

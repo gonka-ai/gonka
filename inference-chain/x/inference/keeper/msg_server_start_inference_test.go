@@ -30,13 +30,11 @@ func TestMsgServer_StartInference(t *testing.T) {
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Creator,
 		Url:     "url",
-		Models:  []string{"model1", "model2"},
 	})
 	require.NoError(t, err)
 	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Requester,
 		Url:     "url",
-		Models:  []string{"model1", "model2"},
 	})
 	mocks.BankKeeper.ExpectPay(sdkCtx, testutil.Requester, keeper.DefaultMaxTokens*keeper.PerTokenCost)
 	require.NoError(t, err)

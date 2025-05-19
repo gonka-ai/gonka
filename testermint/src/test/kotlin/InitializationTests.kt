@@ -16,11 +16,6 @@ import org.junit.jupiter.api.Tag
 class InitializationTests : TestermintTest() {
 
     @Test
-    fun init3() {
-        initializeCluster(2, inferenceConfig)
-    }
-
-    @Test
     fun initOrReuse() {
         val localCluster = setupLocalCluster(2, inferenceConfig)
         assertNotNull(localCluster)

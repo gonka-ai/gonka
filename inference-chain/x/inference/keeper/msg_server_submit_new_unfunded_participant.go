@@ -39,7 +39,6 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 		&types.MsgSubmitNewParticipant{
 			Creator:      msg.GetAddress(),
 			Url:          msg.GetUrl(),
-			Models:       msg.GetModels(),
 			ValidatorKey: msg.GetValidatorKey(),
 			WorkerKey:    msg.GetWorkerKey(),
 		})

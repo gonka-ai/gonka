@@ -55,14 +55,13 @@ type ActiveParticipantWithProof struct {
 }
 
 type ParticipantDto struct {
-	Id          string   `json:"id"`
-	Url         string   `json:"url"`
-	Models      []string `json:"models"`
-	CoinsOwed   int64    `json:"coins_owed"`
-	RefundsOwed int64    `json:"refunds_owed"`
-	Balance     int64    `json:"balance"`
-	VotingPower int64    `json:"voting_power"`
-	Reputation  float32  `json:"reputation"`
+	Id          string  `json:"id"`
+	Url         string  `json:"url"`
+	CoinsOwed   int64   `json:"coins_owed"`
+	RefundsOwed int64   `json:"refunds_owed"`
+	Balance     int64   `json:"balance"`
+	VotingPower int64   `json:"voting_power"`
+	Reputation  float32 `json:"reputation"`
 }
 
 type ParticipantsDto struct {
@@ -113,12 +112,11 @@ type Validator struct {
 }
 
 type SubmitUnfundedNewParticipantDto struct {
-	Address      string   `json:"address"`
-	Url          string   `json:"url"`
-	Models       []string `json:"models"`
-	ValidatorKey string   `json:"validator_key"`
-	PubKey       string   `json:"pub_key"`
-	WorkerKey    string   `json:"worker_key"`
+	Address      string `json:"address"`
+	Url          string `json:"url"`
+	ValidatorKey string `json:"validator_key"`
+	PubKey       string `json:"pub_key"`
+	WorkerKey    string `json:"worker_key"`
 }
 
 type UnitOfComputePriceProposalDto struct {

@@ -11,6 +11,12 @@
           "--quantization",
           "fp8"
         ]
+      },
+      "Qwen/Qwen2.5-7B-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
       }
     },
     "hardware": [

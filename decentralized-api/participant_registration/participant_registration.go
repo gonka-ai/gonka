@@ -107,17 +107,12 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	if err != nil {
 		return fmt.Errorf("failed to create worker key: %w", err)
 	}
-	uniqueModelsList, err := getUniqueModels(nodeBroker)
-	if err != nil {
-		return fmt.Errorf("failed to get unique models: %w", err)
-	}
 
 	publicUrl := configManager.GetApiConfig().PublicUrl
-	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl, "Models", uniqueModelsList)
+	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl)
 
 	msg := &inference.MsgSubmitNewParticipant{
 		Url:          publicUrl,
-		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		WorkerKey:    workerPublicKey,
 	}
@@ -168,7 +163,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	requestBody := public.SubmitUnfundedNewParticipantDto{
 		Address:      address,
 		Url:          configManager.GetApiConfig().PublicUrl,
-		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		PubKey:       pubKeyString,
 		WorkerKey:    workerKey,

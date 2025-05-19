@@ -29,8 +29,8 @@ inference-chain-release:
 
 tmkms-release:
 	@echo "Releasing tmkms..."
-	@make -C tkms release
-	@make -C tkms docker-push
+	@make -C tmkms release
+	@make -C tmkms docker-push
 
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
@@ -115,5 +115,5 @@ build-for-upgrade:
 	@make -C decentralized-api build-for-upgrade-arm
 
 build-for-upgrade-tests:
-	@make -C inference-chain build-for-upgrade
-	@make -C decentralized-api build-for-upgrade
+	@make -C inference-chain build-for-upgrade TESTS=1
+	@make -C decentralized-api build-for-upgrade TESTS=1

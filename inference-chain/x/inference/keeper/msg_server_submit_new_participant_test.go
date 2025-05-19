@@ -13,7 +13,6 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: "creator",
 		Url:     "url",
-		Models:  []string{"model1", "model2"},
 	})
 	require.NoError(t, err)
 	savedParticipant, found := k.GetParticipant(ctx, "creator")
@@ -27,7 +26,6 @@ func TestMsgServer_SubmitNewParticipant(t *testing.T) {
 		JoinHeight:        ctx2.BlockHeight(),
 		LastInferenceTime: 0,
 		InferenceUrl:      "url",
-		Models:            []string{"model1", "model2"},
 		Status:            types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: &types.CurrentEpochStats{},
 	}, savedParticipant)

@@ -44,6 +44,8 @@ func (k Keeper) GetInferenceValidationParameters(goCtx context.Context, req *typ
 			}
 		}
 		if found {
+			// Set the total power for this specific model
+			validation.TotalPower = uint64(currentEpochGroup.GroupData.TotalWeight)
 			validations = append(validations, &validation)
 		}
 	}
@@ -55,7 +57,6 @@ func (k Keeper) GetInferenceValidationParameters(goCtx context.Context, req *typ
 	validatorWeight := weights.Members[req.Requester]
 
 	return &types.QueryGetInferenceValidationParametersResponse{
-		TotalPower:     uint64(currentEpochGroup.GroupData.TotalWeight),
 		CurrentHeight:  uint64(blockHeight),
 		Details:        validations,
 		ValidatorPower: uint64(validatorWeight),

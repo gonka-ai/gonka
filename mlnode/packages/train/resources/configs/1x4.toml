@@ -1,0 +1,4 @@
+name = "1x4"
+description = "1x4"
+[ckpt]
+path = "outputs/1B_1x4"

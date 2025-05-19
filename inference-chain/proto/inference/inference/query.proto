@@ -309,6 +309,7 @@ message QueryGetRandomExecutorResponse {
 
 message QueryGetEpochGroupDataRequest {
   uint64 poc_start_block_height = 1;
+  string model_id = 2;
 }
 
 message QueryGetEpochGroupDataResponse {
@@ -466,11 +467,10 @@ message QueryGetInferenceValidationParametersRequest {
 }
 
 message QueryGetInferenceValidationParametersResponse {
-           uint64                     total_power     = 1;
-           uint64                     validator_power = 2;
-           uint64                     current_height  = 3;
-  repeated InferenceValidationDetails details         = 4;
-           ValidationParams           parameters      = 5;
+           uint64                     validator_power = 1;
+           uint64                     current_height  = 2;
+  repeated InferenceValidationDetails details         = 3;
+           ValidationParams           parameters      = 4;
 }
 
 message QueryGetEpochPerformanceSummaryRequest {
@@ -578,4 +578,3 @@ message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
 }
-

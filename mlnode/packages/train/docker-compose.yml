@@ -1,0 +1,54 @@
+x-common-config: &common-config
+  env_file:
+    - ${PROJECT_ROOT}/.env
+    - ${PROJECT_ROOT}/packages/train/.env
+  shm_size: "120g"
+  volumes:
+    - ${CACHE_DIR}:/root/.cache
+    - ${PROJECT_ROOT}/packages/train/outputs:/app/packages/train/outputs
+
+services:
+  server:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/train/Dockerfile
+      target: app
+    command: uvicorn zeroband.service.app:app --host=0.0.0.0 --port=8080
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["${GPU_DEVICE_ID:-0}"]
+
+  integration-tests:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/train/Dockerfile
+      target: test
+    environment:
+      - SERVER_URL=http://server:8080
+    depends_on:
+      - server
+
+  unit-tests:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/train/Dockerfile
+      target: test
+
+  unit-tests-gpu:
+    <<: *common-config
+    build:
+      context: ${PROJECT_ROOT}
+      dockerfile: packages/train/Dockerfile
+      target: test
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              device_ids: ["${GPU_DEVICE_ID:-0}"]
