@@ -1,0 +1,27 @@
+{
+  "id": "chatcmpl-25d88b4b7eb0458fa82588488da9d2a2",
+  "object": "chat.completion",
+  "created": 1747692816,
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "reasoning_content": null,
+        "content": "Hello! How can I assist you today?",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop",
+      "stop_reason": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 31,
+    "total_tokens": 41,
+    "completion_tokens": 10,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null
+}
