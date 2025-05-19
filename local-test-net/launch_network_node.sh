@@ -37,7 +37,7 @@ fi
 project_name="$KEY_NAME"
 
 docker compose -p "$project_name" down -v
-#rm -r ./prod-local/"$project_name" || true
+rm -r ./prod-local/"$project_name" || true
 
 echo "project_name=$project_name"
 
