@@ -1,0 +1,9 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: node
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-2 

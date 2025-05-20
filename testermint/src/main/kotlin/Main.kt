@@ -240,10 +240,10 @@ fun createGsonWithTxMessageSerializers(packageName: String): Gson {
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
     chainId = "prod-sim",
-    nodeImageName = "gcr.io/decentralized-ai/inferenced",
-    genesisNodeImage = "gcr.io/decentralized-ai/inferenced",
+    nodeImageName = "ghcr.io/product-science/inferenced",
+    genesisNodeImage = "ghcr.io/product-science/inferenced",
     wireMockImageName = "wiremock/wiremock:latest",
-    apiImageName = "gcr.io/decentralized-ai/api",
+    apiImageName = "ghcr.io/product-science/api",
     denom = "nicoin",
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back

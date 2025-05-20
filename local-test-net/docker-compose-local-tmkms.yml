@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: gcr.io/decentralized-ai/tmkms-softsign-with-keygen
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen
     container_name: ${KEY_NAME}-tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   chain-node:
     container_name: ${KEY_NAME}-node
-    image: gcr.io/decentralized-ai/inferenced
+    image: ghcr.io/product-science/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -33,7 +33,7 @@ services:
 
   api:
     container_name: ${KEY_NAME}-api
-    image: gcr.io/decentralized-ai/api
+    image: ghcr.io/product-science/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
       - ./${NODE_CONFIG}:/root/node_config.json

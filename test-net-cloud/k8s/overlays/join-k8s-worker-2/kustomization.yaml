@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../../join
+- api-public-service.yaml
+- node-service.yaml
+
+patches:
+- path: tmkms-deployment-patch.yaml
+- path: node-statefulset-patch.yaml
+- path: api-deployment-patch.yaml
+- path: inference-deployment-patch.yaml
+- path: config-patch.yaml

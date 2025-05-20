@@ -1,0 +1,14 @@
+name: Authenticate to GCP and setup gcloud
+description: Authenticate to GCP using identity workload federation approach and setup gcloud CLI
+runs:
+  using: "composite"
+  steps:
+  - id: 'gcp-auth'
+    name: 'Authenticate to Google Cloud'
+    uses: 'google-github-actions/auth@v1.1.1'
+    with:
+      workload_identity_provider: 'projects/552613898602/locations/global/workloadIdentityPools/github-pool/providers/github'
+      service_account: 'test-net-deploy@decentralized-ai.iam.gserviceaccount.com'
+  - id: 'gcloud-setup'
+    name: Set up gcloud Cloud SDK environment
+    uses: google-github-actions/setup-gcloud@v1.1.1
