@@ -94,13 +94,15 @@ type JsonOrStreamedResponse struct {
 	StreamedResponse *StreamedResponse
 }
 
+var JsonAndStreamedResponseAreEmtpy = errors.New("JsonOrStreamedResponse: both jsonResponse and streamedResponse are empty")
+
 func (r JsonOrStreamedResponse) GetModel() (string, error) {
 	if r.JsonResponse != nil {
 		return r.JsonResponse.Model, nil
 	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
 		return r.StreamedResponse.Data[0].Model, nil
 	}
-	return "", nil
+	return "", JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetInferenceId() (string, error) {
@@ -109,7 +111,7 @@ func (r JsonOrStreamedResponse) GetInferenceId() (string, error) {
 	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
 		return r.StreamedResponse.Data[0].ID, nil
 	}
-	return "", nil
+	return "", JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
@@ -122,8 +124,9 @@ func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
 			}
 			return &d.Usage, nil
 		}
+		return nil, errors.New("JsonOrStreamedResponse: no usage found in streamed response")
 	}
-	return nil, nil
+	return nil, JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
@@ -132,7 +135,7 @@ func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
 	} else if r.StreamedResponse != nil {
 		return json.Marshal(r.StreamedResponse)
 	}
-	return nil, nil
+	return nil, JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetHash() (string, error) {
@@ -156,5 +159,5 @@ func (r JsonOrStreamedResponse) GetHash() (string, error) {
 		hash := utils.GenerateSHA256Hash(content)
 		return hash, nil
 	}
-	return "", errors.New("JsonOrStreamedResponse: can't get hash; neither response nor streamed response is set")
+	return "", JsonAndStreamedResponseAreEmtpy
 }
