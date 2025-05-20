@@ -60,6 +60,11 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.GET("demo-day", func(c echo.Context) error {
+		return c.String(http.StatusOK, "It's demo day! 🎉🎉🎉")
+	})
+
 	return s
 }
 
