@@ -29,3 +29,4 @@ prod-local/
 /logdy
 /inference-chain/junit-report.xml
 /deploy/**/config.env
+/testermint/reboot.txt

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-config-cm # This name is referenced by genesis workloads
+data:
+  node_config.json: |
+    [
+      {
+        "id": "mlnode1",
+        "host": "inference",
+        "inference_port": 5000,
+        "poc_port": 8080,
+        "max_concurrent": 500,
+        "models": {
+          "Qwen/Qwen2.5-7B-Instruct": {
+            "args": [
+              "--quantization",
+              "fp8"
+            ]
+          }
+        }
+      }
+    ]
