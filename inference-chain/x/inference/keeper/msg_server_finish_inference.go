@@ -15,15 +15,37 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
 	if !found {
-		return nil, sdkerrors.Wrap(types.ErrInferenceNotFound, msg.InferenceId)
+		// If the inference doesn't exist, it means FinishInference came before StartInference
+		// Create a placeholder inference record that will be updated when StartInference comes
+		k.LogInfo("FinishInference received before StartInference", types.Inferences, "inference_id", msg.InferenceId)
+		existingInference = types.Inference{
+			Index:                msg.InferenceId,
+			InferenceId:          msg.InferenceId,
+			Status:               types.InferenceStatus_FINISHED,
+			ResponseHash:         msg.ResponseHash,
+			ResponsePayload:      msg.ResponsePayload,
+			PromptTokenCount:     msg.PromptTokenCount,
+			CompletionTokenCount: msg.CompletionTokenCount,
+			ExecutedBy:           msg.ExecutedBy,
+			EndBlockHeight:       ctx.BlockHeight(),
+			EndBlockTimestamp:    ctx.BlockTime().UnixMilli(),
+			// These fields will be updated when StartInference comes
+			MaxTokens: DefaultMaxTokens, // Use default for now
+		}
 	}
 	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
 	}
-	requester, found := k.GetParticipant(ctx, existingInference.RequestedBy)
-	if !found {
-		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.RequestedBy)
+
+	// If this is a placeholder inference (FinishInference came before StartInference),
+	// we don't have the requester information yet, so we'll skip this check
+	var requester types.Participant
+	if existingInference.RequestedBy != "" {
+		requester, found = k.GetParticipant(ctx, existingInference.RequestedBy)
+		if !found {
+			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, existingInference.RequestedBy)
+		}
 	}
 	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
@@ -41,6 +63,8 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	existingInference.ActualCost = CalculateCost(existingInference)
 	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
+
+	// Always save the inference, even if it's a placeholder
 	k.SetInference(ctx, existingInference)
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
@@ -49,11 +73,15 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	k.LogInfo("Executor CoinBalance credited for inference", types.Balances, "executor", executor.Address, "coin_balance", executor.CoinBalance, "actual_cost", existingInference.ActualCost)
 	executor.CurrentEpochStats.InferenceCount++
 
-	refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
-	if refundAmount > 0 {
-		err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address, "inference_refund:"+existingInference.InferenceId)
-		if err != nil {
-			k.LogError("Unable to Issue Refund for finished inference", types.Payments, err)
+	// Only issue a refund if we have requester information and an escrow amount
+	// (if FinishInference came before StartInference, we won't have this information yet)
+	if existingInference.RequestedBy != "" && existingInference.EscrowAmount > 0 {
+		refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
+		if refundAmount > 0 {
+			err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address, "inference_refund:"+existingInference.InferenceId)
+			if err != nil {
+				k.LogError("Unable to Issue Refund for finished inference", types.Payments, err)
+			}
 		}
 	}
 
