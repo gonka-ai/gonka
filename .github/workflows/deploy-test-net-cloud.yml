@@ -1,0 +1,216 @@
+name: Deploy Test Net Cloud
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-test-net-cloud:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write' # Added for pushing to GHCR
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Required for git describe --always to work accurately
+
+      - name: Get commit short version
+        id: git_version
+        run: echo "COMMIT_TAG=$(git describe --always)" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Images if not exist
+        env:
+          COMMIT_TAG: ${{ env.COMMIT_TAG }}
+          # GITHUB_TOKEN is automatically available to docker login action, make targets might need it if they implement their own login
+        shell: bash
+        run: |
+          set -e # exit on error
+          echo "Commit tag is: $COMMIT_TAG"
+
+          # Format: "kustomize_name image_url make_target"
+          # kustomize_name is the 'name' field in kustomization.yaml images list
+          # image_url is the full URL of the image repository
+          # make_target is the make target to build and push this specific image
+          images_to_manage=(
+            "api ghcr.io/product-science/api decentralized-api-release"
+            "node ghcr.io/product-science/inferenced inference-chain-release"
+            # Add more images here in the same format to extend
+          )
+
+          for img_info in "${images_to_manage[@]}"; do
+            read -r kustomize_name image_url make_target <<< "$img_info"
+            echo "--------------------------------------------------"
+            echo "Processing image: $kustomize_name (${image_url})"
+            echo "Target tag: $COMMIT_TAG"
+            echo "Make target: $make_target"
+            echo "--------------------------------------------------"
+
+            echo "Checking for image: ${image_url}:${COMMIT_TAG}"
+            if docker manifest inspect "${image_url}:${COMMIT_TAG}" > /dev/null 2>&1; then
+              echo "Image ${image_url}:${COMMIT_TAG} already exists in ghcr.io."
+            else
+              echo "Image ${image_url}:${COMMIT_TAG} not found in ghcr.io."
+              echo "Building and pushing using target: ${make_target} with VERSION=${COMMIT_TAG}..."
+              # The VERSION env var should be picked up by the Makefiles
+              # (assuming sub-Makefiles inherit it or use VERSION ?= default)
+              VERSION=$COMMIT_TAG make $make_target
+              echo "Finished building and pushing ${image_url}:${COMMIT_TAG}."
+            fi
+          done
+
+      - name: Install yq
+        run: |
+          echo "Installing yq..."
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update Kustomization Image Tags
+        env:
+          COMMIT_TAG: ${{ env.COMMIT_TAG }}
+        shell: bash
+        run: |
+          KUSTOMIZATION_FILE="test-net-cloud/k8s/image-versions/kustomization.yaml"
+          echo "Updating $KUSTOMIZATION_FILE with tag $COMMIT_TAG using yq"
+
+          # Same list as in the build step for consistency
+          images_to_manage=(
+            "api ghcr.io/product-science/api decentralized-api-release"
+            "node ghcr.io/product-science/inferenced inference-chain-release"
+            # Add more images here if their tags in kustomization.yaml need updating
+          )
+
+          for img_info in "${images_to_manage[@]}"; do
+            read -r kustomize_name _ _ <<< "$img_info" # We only need kustomize_name here
+            echo "Updating newTag for image '$kustomize_name' in $KUSTOMIZATION_FILE"
+            # This command finds an image by its 'name' (kustomize_name) and updates its 'newTag'.
+            # It handles cases where the image might not be present without erroring,
+            # though in this workflow, we expect them to be defined.
+            yq e "(.images[] | select(.name == \"$kustomize_name\").newTag) = strenv(COMMIT_TAG)" -i $KUSTOMIZATION_FILE
+          done
+          echo "Successfully updated $KUSTOMIZATION_FILE."
+
+      - name: Cat Kustomization File
+        run: |
+          echo "Contents of test-net-cloud/k8s/image-versions/kustomization.yaml after update:"
+          cat test-net-cloud/k8s/image-versions/kustomization.yaml
+
+      - uses: ./.github/actions/gcp-auth-and-gcloud-setup
+
+      - name: Define GCE/K8s parameters
+        id: params
+        run: |
+          echo "GCE_PROJECT_ID=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
+          echo "GCE_ZONE=us-central1-a" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_NAME=k8s-control-plane" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_USER=dev" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_1_NAME=k8s-worker-1" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_2_NAME=k8s-worker-2" >> $GITHUB_OUTPUT
+          echo "K8S_WORKER_3_NAME=k8s-worker-3" >> $GITHUB_OUTPUT
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Print kubectl and kustomize versions
+        run: |
+          echo "kubectl client version:"
+          kubectl version --client -o yaml # -o yaml gives more structured output
+
+      - name: Configure kubectl
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
+          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER }}
+        run: |
+          echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
+          mkdir -p $HOME/.kube
+          gcloud compute scp ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
+          export KUBECONFIG=$HOME/.kube/config
+          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
+
+          # ---- IMPORTANT: SSH Tunnel (if K8s API server is not directly accessible) ----
+          # If your K8s API server isn't publicly accessible, you'll need an SSH tunnel.
+          # 1. Uncomment and adapt the following lines.
+          # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
+          #
+          echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
+          gcloud compute ssh ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
+            --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
+          sleep 5 # Give tunnel time to establish
+          echo "Kubeconfig modified to use tunnel."
+          # ---- End SSH Tunnel Section ----
+
+          echo "Verifying kubectl connection..."
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=30s
+
+      - name: Stop existing Kubernetes resources
+        run: |
+          echo "Deleting resources in genesis namespace..."
+          kubectl delete all --all -n genesis --ignore-not-found=true --request-timeout=2m
+          echo "Deleting resources in join-k8s-worker-2 namespace..."
+          kubectl delete all --all -n join-k8s-worker-2 --ignore-not-found=true --request-timeout=2m
+          kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-2 --ignore-not-found=true --request-timeout=1m
+          echo "Deleting resources in join-k8s-worker-3 namespace..."
+          kubectl delete all --all -n join-k8s-worker-3 --ignore-not-found=true --request-timeout=2m
+          kubectl delete pvc tmkms-data-pvc -n join-k8s-worker-3 --ignore-not-found=true --request-timeout=1m
+        continue-on-error: true
+
+      - name: Clean data on GCE instances
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_WORKER_1_NAME: ${{ steps.params.outputs.K8S_WORKER_1_NAME }}
+          K8S_WORKER_2_NAME: ${{ steps.params.outputs.K8S_WORKER_2_NAME }}
+          K8S_WORKER_3_NAME: ${{ steps.params.outputs.K8S_WORKER_3_NAME }}
+        run: |
+          echo "Cleaning data on ${K8S_WORKER_1_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_1_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+          echo "Cleaning data on ${K8S_WORKER_2_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_2_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+          echo "Cleaning data on ${K8S_WORKER_3_NAME}..."
+          gcloud compute ssh ${K8S_WORKER_3_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} --command "sudo rm -rf /srv/dai"
+
+      - name: Deploy Kubernetes resources
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
+        run: |
+          echo "About to deploy kubernetes resouces"
+          pwd
+          ls
+          # Applying kustomizations from the test-net-cloud/k8s directory (relative to repo root)
+          echo "Applying genesis manifests..."
+          kubectl apply -k test-net-cloud/k8s/genesis -n genesis
+          echo "Waiting for 15 seconds for genesis node to initialize..."
+          sleep 15
+          echo "Applying join-k8s-worker-2 manifests..."
+          kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-2 -n join-k8s-worker-2
+          echo "Applying join-k8s-worker-3 manifests..."
+          kubectl apply -k test-net-cloud/k8s/overlays/join-k8s-worker-3 -n join-k8s-worker-3
+
+      - name: Verify deployments
+        env:
+          KUBECONFIG: ${{ env.KUBECONFIG }} # Ensure KUBECONFIG is available
+        run: |
+          echo "Waiting for 60 seconds for pods to stabilize..."
+          sleep 60
+          echo "Pods in genesis namespace:"
+          kubectl get pods -n genesis -o wide
+          echo "Pods in join-k8s-worker-2 namespace:"
+          kubectl get pods -n join-k8s-worker-2 -o wide
+          echo "Pods in join-k8s-worker-3 namespace:"
+          kubectl get pods -n join-k8s-worker-3 -o wide
+          echo "PersistentVolumeClaims in relevant namespaces:"
+          kubectl get pvc -n join-k8s-worker-2
+          kubectl get pvc -n join-k8s-worker-3

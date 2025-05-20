@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tmkms-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce # Suitable for a single TMKMS pod
+  resources:
+    requests:
+      storage: 1Gi # Adjust size as needed for TMKMS data
+  # storageClassName: <your-storage-class> # Optional: specify if you have a particular storage class

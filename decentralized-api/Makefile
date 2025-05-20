@@ -71,25 +71,20 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/api:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		echo "Setting latest tag..."; \
-		docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/api:latest; \
 	fi
 
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
-	@echo "pushing to Google Cloud Artifact Registry"
-	@docker push gcr.io/decentralized-ai/api:$(VERSION)
-	@docker tag gcr.io/decentralized-ai/api:$(VERSION) ghcr.io/product-science/api:$(VERSION)
 	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/api:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
-		@docker push gcr.io/decentralized-ai/api:latest; \
 		@docker tag ghcr.io/product-science/api:$(VERSION) ghcr.io/product-science/api:latest; \
 		@docker push ghcr.io/product-science/api:latest; \
 	fi
