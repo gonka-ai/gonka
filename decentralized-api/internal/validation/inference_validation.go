@@ -111,7 +111,7 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 			uint32(r.ValidatorPower),
 			uint32(inferenceWithExecutor.ExecutorPower),
 			params.Params.ValidationParams)
-		logging.Debug("Should validate", types.Validation, "message", message, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed)
+		logging.Info(message, types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "seed", currentSeed, "validator", transactionRecorder.Address)
 		if shouldValidate {
 			toValidateIds = append(toValidateIds, inferenceWithExecutor.InferenceId)
 		}
@@ -146,7 +146,7 @@ func logInferencesToSample(inferences []*types.InferenceValidationDetails) {
 		})
 	}
 
-	logging.Debug("Inferences to sample", types.Validation, "ids", ids)
+	logging.Info("Inferences to sample", types.Validation, "ids", ids)
 }
 
 func logInferencesToValidate(toValidate []string) {

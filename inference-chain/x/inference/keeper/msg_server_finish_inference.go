@@ -30,7 +30,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
 		return nil, err
 	}
-
+	modelEpochGroup, err := k.GetEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
+	if err != nil {
+		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
+		return nil, err
+	}
 	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
 	existingInference.ResponsePayload = msg.ResponsePayload
@@ -83,6 +87,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
+		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
 	}
 	k.LogDebug(
 		"Adding Inference Validation Details",
@@ -95,7 +100,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		"traffic_basis", inferenceDetails.TrafficBasis,
 	)
 	k.SetInferenceValidationDetails(ctx, inferenceDetails)
-	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
 
 	return &types.MsgFinishInferenceResponse{}, nil
 }

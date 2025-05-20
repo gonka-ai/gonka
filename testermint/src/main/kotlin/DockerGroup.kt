@@ -269,6 +269,9 @@ fun initCluster(
         return initCluster(joinCount, config, reboot = true)
     }
     logSection("Cluster Initialized")
+    cluster.allPairs.forEach {
+        Logger.info("${it.name} has account ${it.node.getAddress()}", "")
+    }
     return cluster to cluster.genesis
 }
 

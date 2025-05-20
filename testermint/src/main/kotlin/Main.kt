@@ -130,6 +130,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.getParams()
+        it.node.getAddress()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
