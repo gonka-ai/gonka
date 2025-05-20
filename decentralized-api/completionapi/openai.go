@@ -139,25 +139,30 @@ func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
 }
 
 func (r JsonOrStreamedResponse) GetHash() (string, error) {
+	var builder strings.Builder
 	if r.JsonResponse != nil {
-		var content string
 		for _, choice := range r.JsonResponse.Choices {
-			content += choice.Message.Content
+			builder.WriteString(choice.Message.Content)
 		}
-		hash := utils.GenerateSHA256Hash(content)
-		return hash, nil
+
 	} else if r.StreamedResponse != nil {
-		var content string
 		for _, choice := range r.StreamedResponse.Data {
 			for _, c := range choice.Choices {
 				delta := c.Delta.Content
 				if delta != nil {
-					content += *delta
+					builder.WriteString(*delta)
 				}
 			}
 		}
-		hash := utils.GenerateSHA256Hash(content)
-		return hash, nil
+	} else {
+		return "", JsonAndStreamedResponseAreEmtpy
 	}
-	return "", JsonAndStreamedResponseAreEmtpy
+
+	content := builder.String()
+	if content == "" {
+		return "", errors.New("JsonOrStreamedResponse: empty content")
+	}
+
+	hash := utils.GenerateSHA256Hash(content)
+	return hash, nil
 }
