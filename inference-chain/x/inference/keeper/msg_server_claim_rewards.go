@@ -205,6 +205,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	for _, subModelId := range mainEpochData.SubGroupModels {
 		_, subWeightMap, subTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.PocStartHeight, subModelId)
 		if !found {
+			k.LogWarn("Sub epoch data not found", types.Claims, "height", msg.PocStartHeight, "modelId", subModelId)
 			continue
 		}
 
@@ -223,8 +224,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelId := inference.Model
 		weightMap, exists := modelWeightMaps[modelId]
 		if !exists {
-			// If no specific model weight map exists, use the main one
-			weightMap = mainWeightMap
+			return nil, types.ErrInferenceHasInvalidModel
 		}
 
 		// Check if validator is in the weight map for this model
