@@ -80,6 +80,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
@@ -228,7 +229,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
-		logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
