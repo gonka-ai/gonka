@@ -128,6 +128,10 @@ service Query {
 
   }
 
+  rpc PreviousEpochGroupData (QueryPreviousEpochGroupDataRequest) returns (QueryPreviousEpochGroupDataResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/previous_epoch_group_data";
+  }
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
@@ -175,12 +179,17 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
 
   }
+
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
-
   }
 
-  // Queries a list of TrainingTask items.
+  rpc EpochPerformanceSummaryByParticipants (QueryParticipantsEpochPerformanceSummaryRequest)
+      returns (QueryParticipantsEpochPerformanceSummaryResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}";
+  }
+
+    // Queries a list of TrainingTask items.
   rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task";
 
@@ -231,8 +240,6 @@ service Query {
   // Queries a list of InProgressTrainingTasks items.
   rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
-
-
   }
 
   // Queries a list of PartialUpgrade items.
@@ -402,6 +409,12 @@ message QueryCurrentEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
+message QueryPreviousEpochGroupDataRequest {}
+
+message QueryPreviousEpochGroupDataResponse {
+  EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
+}
+
 message QueryModelsAllRequest {}
 
 message QueryModelsAllResponse {
@@ -480,6 +493,16 @@ message QueryGetEpochPerformanceSummaryRequest {
 
 message QueryGetEpochPerformanceSummaryResponse {
   EpochPerformanceSummary epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryParticipantsEpochPerformanceSummaryRequest {
+  uint64 epochStartHeight = 1;
+  repeated  string participantId    = 2;
+}
+
+message QueryParticipantsEpochPerformanceSummaryResponse {
+  repeated EpochPerformanceSummary                epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination              = 2;
 }
 
 message QueryAllEpochPerformanceSummaryRequest {

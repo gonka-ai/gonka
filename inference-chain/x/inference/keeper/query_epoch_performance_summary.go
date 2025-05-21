@@ -54,3 +54,16 @@ func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryGet
 
 	return &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: val}, nil
 }
+
+func (k Keeper) EpochPerformanceSummaryByParticipants(ctx context.Context, req *types.QueryParticipantsEpochPerformanceSummaryRequest) (*types.QueryParticipantsEpochPerformanceSummaryResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+
+	val := k.GetParticipantsEpochSummaries(
+		ctx,
+		req.ParticipantId,
+		req.EpochStartHeight,
+	)
+	return &types.QueryParticipantsEpochPerformanceSummaryResponse{EpochPerformanceSummary: val}, nil
+}

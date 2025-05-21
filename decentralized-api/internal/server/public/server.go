@@ -68,11 +68,13 @@ func NewServer(
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
-	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
+	g.GET("epochs/:epoch/participants-summaries", s.getEpochSummaryInfo)
 	return s
 }
 

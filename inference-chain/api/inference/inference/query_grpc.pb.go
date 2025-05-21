@@ -19,45 +19,47 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName                           = "/inference.inference.Query/Params"
-	Query_Inference_FullMethodName                        = "/inference.inference.Query/Inference"
-	Query_InferenceAll_FullMethodName                     = "/inference.inference.Query/InferenceAll"
-	Query_Participant_FullMethodName                      = "/inference.inference.Query/Participant"
-	Query_ParticipantAll_FullMethodName                   = "/inference.inference.Query/ParticipantAll"
-	Query_InferenceParticipant_FullMethodName             = "/inference.inference.Query/InferenceParticipant"
-	Query_GetRandomExecutor_FullMethodName                = "/inference.inference.Query/GetRandomExecutor"
-	Query_EpochGroupData_FullMethodName                   = "/inference.inference.Query/EpochGroupData"
-	Query_EpochGroupDataAll_FullMethodName                = "/inference.inference.Query/EpochGroupDataAll"
-	Query_SettleAmount_FullMethodName                     = "/inference.inference.Query/SettleAmount"
-	Query_SettleAmountAll_FullMethodName                  = "/inference.inference.Query/SettleAmountAll"
-	Query_EpochGroupValidations_FullMethodName            = "/inference.inference.Query/EpochGroupValidations"
-	Query_EpochGroupValidationsAll_FullMethodName         = "/inference.inference.Query/EpochGroupValidationsAll"
-	Query_PocBatchesForStage_FullMethodName               = "/inference.inference.Query/PocBatchesForStage"
-	Query_GetCurrentEpoch_FullMethodName                  = "/inference.inference.Query/GetCurrentEpoch"
-	Query_TokenomicsData_FullMethodName                   = "/inference.inference.Query/TokenomicsData"
-	Query_GetUnitOfComputePriceProposal_FullMethodName    = "/inference.inference.Query/GetUnitOfComputePriceProposal"
-	Query_CurrentEpochGroupData_FullMethodName            = "/inference.inference.Query/CurrentEpochGroupData"
-	Query_ModelsAll_FullMethodName                        = "/inference.inference.Query/ModelsAll"
-	Query_TopMiner_FullMethodName                         = "/inference.inference.Query/TopMiner"
-	Query_TopMinerAll_FullMethodName                      = "/inference.inference.Query/TopMinerAll"
-	Query_InferenceTimeout_FullMethodName                 = "/inference.inference.Query/InferenceTimeout"
-	Query_InferenceTimeoutAll_FullMethodName              = "/inference.inference.Query/InferenceTimeoutAll"
-	Query_InferenceValidationDetails_FullMethodName       = "/inference.inference.Query/InferenceValidationDetails"
-	Query_InferenceValidationDetailsAll_FullMethodName    = "/inference.inference.Query/InferenceValidationDetailsAll"
-	Query_GetInferenceValidationParameters_FullMethodName = "/inference.inference.Query/GetInferenceValidationParameters"
-	Query_EpochPerformanceSummary_FullMethodName          = "/inference.inference.Query/EpochPerformanceSummary"
-	Query_EpochPerformanceSummaryAll_FullMethodName       = "/inference.inference.Query/EpochPerformanceSummaryAll"
-	Query_TrainingTask_FullMethodName                     = "/inference.inference.Query/TrainingTask"
-	Query_HardwareNodes_FullMethodName                    = "/inference.inference.Query/HardwareNodes"
-	Query_HardwareNodesAll_FullMethodName                 = "/inference.inference.Query/HardwareNodesAll"
-	Query_QueuedTrainingTasks_FullMethodName              = "/inference.inference.Query/QueuedTrainingTasks"
-	Query_TrainingTaskAll_FullMethodName                  = "/inference.inference.Query/TrainingTaskAll"
-	Query_GetParticipantCurrentStats_FullMethodName       = "/inference.inference.Query/GetParticipantCurrentStats"
-	Query_GetAllParticipantCurrentStats_FullMethodName    = "/inference.inference.Query/GetAllParticipantCurrentStats"
-	Query_GetMinimumValidationAverage_FullMethodName      = "/inference.inference.Query/GetMinimumValidationAverage"
-	Query_InProgressTrainingTasks_FullMethodName          = "/inference.inference.Query/InProgressTrainingTasks"
-	Query_PartialUpgrade_FullMethodName                   = "/inference.inference.Query/PartialUpgrade"
-	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
+	Query_Params_FullMethodName                                = "/inference.inference.Query/Params"
+	Query_Inference_FullMethodName                             = "/inference.inference.Query/Inference"
+	Query_InferenceAll_FullMethodName                          = "/inference.inference.Query/InferenceAll"
+	Query_Participant_FullMethodName                           = "/inference.inference.Query/Participant"
+	Query_ParticipantAll_FullMethodName                        = "/inference.inference.Query/ParticipantAll"
+	Query_InferenceParticipant_FullMethodName                  = "/inference.inference.Query/InferenceParticipant"
+	Query_GetRandomExecutor_FullMethodName                     = "/inference.inference.Query/GetRandomExecutor"
+	Query_EpochGroupData_FullMethodName                        = "/inference.inference.Query/EpochGroupData"
+	Query_EpochGroupDataAll_FullMethodName                     = "/inference.inference.Query/EpochGroupDataAll"
+	Query_SettleAmount_FullMethodName                          = "/inference.inference.Query/SettleAmount"
+	Query_SettleAmountAll_FullMethodName                       = "/inference.inference.Query/SettleAmountAll"
+	Query_EpochGroupValidations_FullMethodName                 = "/inference.inference.Query/EpochGroupValidations"
+	Query_EpochGroupValidationsAll_FullMethodName              = "/inference.inference.Query/EpochGroupValidationsAll"
+	Query_PocBatchesForStage_FullMethodName                    = "/inference.inference.Query/PocBatchesForStage"
+	Query_GetCurrentEpoch_FullMethodName                       = "/inference.inference.Query/GetCurrentEpoch"
+	Query_TokenomicsData_FullMethodName                        = "/inference.inference.Query/TokenomicsData"
+	Query_GetUnitOfComputePriceProposal_FullMethodName         = "/inference.inference.Query/GetUnitOfComputePriceProposal"
+	Query_CurrentEpochGroupData_FullMethodName                 = "/inference.inference.Query/CurrentEpochGroupData"
+	Query_PreviousEpochGroupData_FullMethodName                = "/inference.inference.Query/PreviousEpochGroupData"
+	Query_ModelsAll_FullMethodName                             = "/inference.inference.Query/ModelsAll"
+	Query_TopMiner_FullMethodName                              = "/inference.inference.Query/TopMiner"
+	Query_TopMinerAll_FullMethodName                           = "/inference.inference.Query/TopMinerAll"
+	Query_InferenceTimeout_FullMethodName                      = "/inference.inference.Query/InferenceTimeout"
+	Query_InferenceTimeoutAll_FullMethodName                   = "/inference.inference.Query/InferenceTimeoutAll"
+	Query_InferenceValidationDetails_FullMethodName            = "/inference.inference.Query/InferenceValidationDetails"
+	Query_InferenceValidationDetailsAll_FullMethodName         = "/inference.inference.Query/InferenceValidationDetailsAll"
+	Query_GetInferenceValidationParameters_FullMethodName      = "/inference.inference.Query/GetInferenceValidationParameters"
+	Query_EpochPerformanceSummary_FullMethodName               = "/inference.inference.Query/EpochPerformanceSummary"
+	Query_EpochPerformanceSummaryAll_FullMethodName            = "/inference.inference.Query/EpochPerformanceSummaryAll"
+	Query_EpochPerformanceSummaryByParticipants_FullMethodName = "/inference.inference.Query/EpochPerformanceSummaryByParticipants"
+	Query_TrainingTask_FullMethodName                          = "/inference.inference.Query/TrainingTask"
+	Query_HardwareNodes_FullMethodName                         = "/inference.inference.Query/HardwareNodes"
+	Query_HardwareNodesAll_FullMethodName                      = "/inference.inference.Query/HardwareNodesAll"
+	Query_QueuedTrainingTasks_FullMethodName                   = "/inference.inference.Query/QueuedTrainingTasks"
+	Query_TrainingTaskAll_FullMethodName                       = "/inference.inference.Query/TrainingTaskAll"
+	Query_GetParticipantCurrentStats_FullMethodName            = "/inference.inference.Query/GetParticipantCurrentStats"
+	Query_GetAllParticipantCurrentStats_FullMethodName         = "/inference.inference.Query/GetAllParticipantCurrentStats"
+	Query_GetMinimumValidationAverage_FullMethodName           = "/inference.inference.Query/GetMinimumValidationAverage"
+	Query_InProgressTrainingTasks_FullMethodName               = "/inference.inference.Query/InProgressTrainingTasks"
+	Query_PartialUpgrade_FullMethodName                        = "/inference.inference.Query/PartialUpgrade"
+	Query_PartialUpgradeAll_FullMethodName                     = "/inference.inference.Query/PartialUpgradeAll"
 )
 
 // QueryClient is the client API for Query service.
@@ -95,6 +97,7 @@ type QueryClient interface {
 	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
+	PreviousEpochGroupData(ctx context.Context, in *QueryPreviousEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryPreviousEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
 	// Queries a list of TopMiner items.
@@ -111,6 +114,7 @@ type QueryClient interface {
 	// Queries a list of EpochPerformanceSummary items.
 	EpochPerformanceSummary(ctx context.Context, in *QueryGetEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryGetEpochPerformanceSummaryResponse, error)
 	EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error)
+	EpochPerformanceSummaryByParticipants(ctx context.Context, in *QueryParticipantsEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryParticipantsEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(ctx context.Context, in *QueryTrainingTaskRequest, opts ...grpc.CallOption) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
@@ -304,6 +308,15 @@ func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurren
 	return out, nil
 }
 
+func (c *queryClient) PreviousEpochGroupData(ctx context.Context, in *QueryPreviousEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryPreviousEpochGroupDataResponse, error) {
+	out := new(QueryPreviousEpochGroupDataResponse)
+	err := c.cc.Invoke(ctx, Query_PreviousEpochGroupData_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error) {
 	out := new(QueryModelsAllResponse)
 	err := c.cc.Invoke(ctx, Query_ModelsAll_FullMethodName, in, out, opts...)
@@ -388,6 +401,15 @@ func (c *queryClient) EpochPerformanceSummary(ctx context.Context, in *QueryGetE
 func (c *queryClient) EpochPerformanceSummaryAll(ctx context.Context, in *QueryAllEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryAllEpochPerformanceSummaryResponse, error) {
 	out := new(QueryAllEpochPerformanceSummaryResponse)
 	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummaryAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EpochPerformanceSummaryByParticipants(ctx context.Context, in *QueryParticipantsEpochPerformanceSummaryRequest, opts ...grpc.CallOption) (*QueryParticipantsEpochPerformanceSummaryResponse, error) {
+	out := new(QueryParticipantsEpochPerformanceSummaryResponse)
+	err := c.cc.Invoke(ctx, Query_EpochPerformanceSummaryByParticipants_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +550,7 @@ type QueryServer interface {
 	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
+	PreviousEpochGroupData(context.Context, *QueryPreviousEpochGroupDataRequest) (*QueryPreviousEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
 	// Queries a list of TopMiner items.
@@ -544,6 +567,7 @@ type QueryServer interface {
 	// Queries a list of EpochPerformanceSummary items.
 	EpochPerformanceSummary(context.Context, *QueryGetEpochPerformanceSummaryRequest) (*QueryGetEpochPerformanceSummaryResponse, error)
 	EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error)
+	EpochPerformanceSummaryByParticipants(context.Context, *QueryParticipantsEpochPerformanceSummaryRequest) (*QueryParticipantsEpochPerformanceSummaryResponse, error)
 	// Queries a list of TrainingTask items.
 	TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error)
 	// Queries a list of HardwareNodes items.
@@ -626,6 +650,9 @@ func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *
 func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CurrentEpochGroupData not implemented")
 }
+func (UnimplementedQueryServer) PreviousEpochGroupData(context.Context, *QueryPreviousEpochGroupDataRequest) (*QueryPreviousEpochGroupDataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreviousEpochGroupData not implemented")
+}
 func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
 }
@@ -655,6 +682,9 @@ func (UnimplementedQueryServer) EpochPerformanceSummary(context.Context, *QueryG
 }
 func (UnimplementedQueryServer) EpochPerformanceSummaryAll(context.Context, *QueryAllEpochPerformanceSummaryRequest) (*QueryAllEpochPerformanceSummaryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryAll not implemented")
+}
+func (UnimplementedQueryServer) EpochPerformanceSummaryByParticipants(context.Context, *QueryParticipantsEpochPerformanceSummaryRequest) (*QueryParticipantsEpochPerformanceSummaryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EpochPerformanceSummaryByParticipants not implemented")
 }
 func (UnimplementedQueryServer) TrainingTask(context.Context, *QueryTrainingTaskRequest) (*QueryTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TrainingTask not implemented")
@@ -1026,6 +1056,24 @@ func _Query_CurrentEpochGroupData_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PreviousEpochGroupData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPreviousEpochGroupDataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PreviousEpochGroupData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PreviousEpochGroupData_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PreviousEpochGroupData(ctx, req.(*QueryPreviousEpochGroupDataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ModelsAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryModelsAllRequest)
 	if err := dec(in); err != nil {
@@ -1202,6 +1250,24 @@ func _Query_EpochPerformanceSummaryAll_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).EpochPerformanceSummaryAll(ctx, req.(*QueryAllEpochPerformanceSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EpochPerformanceSummaryByParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryParticipantsEpochPerformanceSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EpochPerformanceSummaryByParticipants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EpochPerformanceSummaryByParticipants(ctx, req.(*QueryParticipantsEpochPerformanceSummaryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1484,6 +1550,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_CurrentEpochGroupData_Handler,
 		},
 		{
+			MethodName: "PreviousEpochGroupData",
+			Handler:    _Query_PreviousEpochGroupData_Handler,
+		},
+		{
 			MethodName: "ModelsAll",
 			Handler:    _Query_ModelsAll_Handler,
 		},
@@ -1522,6 +1592,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EpochPerformanceSummaryAll",
 			Handler:    _Query_EpochPerformanceSummaryAll_Handler,
+		},
+		{
+			MethodName: "EpochPerformanceSummaryByParticipants",
+			Handler:    _Query_EpochPerformanceSummaryByParticipants_Handler,
 		},
 		{
 			MethodName: "TrainingTask",
