@@ -36,6 +36,8 @@ spec:
         env:
         - name: NODE_CONFIG_PATH
           value: "/root/node_config.json"
+        - name: DAPI_API__POC_CALLBACK_URL
+          value: "http://api-private:9100"
         - name: DAPI_API__PUBLIC_SERVER_PORT
           value: "9000"
         - name: DAPI_API__ML_SERVER_PORT
@@ -44,12 +46,10 @@ spec:
           value: "9200"
         - name: DAPI_API__ML_GRPC_SERVER_PORT
           value: "9300"
-        - name: DAPI_API__POC_CALLBACK_URL
-          value: "http://api-private:9100"
-        - name: DAPI_CHAIN_NODE__URL
-          value: "http://node:26657"
         - name: DAPI_CHAIN_NODE__SEED_API_URL
           value: "http://34.9.136.116:30000"
+        - name: DAPI_CHAIN_NODE__URL
+          value: "http://node:26657"
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference
