@@ -155,38 +155,99 @@ func (k msgServer) getValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRe
 	return wasValidated
 }
 
-func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) ([]string, error) {
-	epochData, found := k.GetEpochGroupData(ctx, msg.PocStartHeight, "")
+func (k msgServer) getEpochGroupWeightData(ctx sdk.Context, pocStartHeight uint64, modelId string) (*types.EpochGroupData, map[string]int64, int64, bool) {
+	epochData, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
-		k.LogError("Epoch data not found", types.Claims, "height", msg.PocStartHeight)
-		return nil, types.ErrCurrentEpochGroupNotFound
+		if modelId == "" {
+			k.LogError("Epoch data not found", types.Claims, "height", pocStartHeight)
+		} else {
+			k.LogWarn("Sub epoch data not found", types.Claims, "height", pocStartHeight, "modelId", modelId)
+		}
+		return nil, nil, 0, false
 	}
 
-	totalWeight := int64(0)
+	// Build weight map and total weight for the epoch group
 	weightMap := make(map[string]int64)
+	totalWeight := int64(0)
 	for _, weight := range epochData.ValidationWeights {
 		totalWeight += weight.Weight
 		weightMap[weight.MemberAddress] = weight.Weight
 	}
-	validatorPower, found := weightMap[msg.Creator]
+
+	k.LogInfo("Epoch group weight data", types.Claims, "height", pocStartHeight, "modelId", modelId, "totalWeight", totalWeight)
+
+	return &epochData, weightMap, totalWeight, true
+}
+
+func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgClaimRewards) ([]string, error) {
+	// Get the main epoch data
+	mainEpochData, mainWeightMap, mainTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.PocStartHeight, "")
 	if !found {
-		k.LogError("Validator not found in weight map", types.Claims, "validator", msg.Creator)
+		return nil, types.ErrCurrentEpochGroupNotFound
+	}
+
+	// Create a map to store weight maps for each model
+	modelWeightMaps := make(map[string]map[string]int64)
+	modelTotalWeights := make(map[string]int64)
+
+	// Store main model data
+	modelWeightMaps[""] = mainWeightMap
+	modelTotalWeights[""] = mainTotalWeight
+
+	// Check if validator is in the main weight map
+	_, found = mainWeightMap[msg.Creator]
+	if !found {
+		k.LogError("Validator not found in main weight map", types.Claims, "validator", msg.Creator)
 		return nil, types.ErrParticipantNotFound
 	}
+
+	// Get sub models from the main epoch data
+	for _, subModelId := range mainEpochData.SubGroupModels {
+		_, subWeightMap, subTotalWeight, found := k.getEpochGroupWeightData(ctx, msg.PocStartHeight, subModelId)
+		if !found {
+			k.LogWarn("Sub epoch data not found", types.Claims, "height", msg.PocStartHeight, "modelId", subModelId)
+			continue
+		}
+
+		modelWeightMaps[subModelId] = subWeightMap
+		modelTotalWeights[subModelId] = subTotalWeight
+	}
+
 	mustBeValidated := make([]string, 0)
-	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, epochData.EpochGroupId)
+	finishedInferences := k.GetInferenceValidationDetailsForEpoch(ctx, mainEpochData.EpochGroupId)
 	for _, inference := range finishedInferences {
 		if inference.ExecutorId == msg.Creator {
 			continue
 		}
-		executorPower, found := weightMap[inference.ExecutorId]
+
+		// Determine which model this inference belongs to
+		modelId := inference.Model
+		weightMap, exists := modelWeightMaps[modelId]
+		if !exists {
+			return nil, types.ErrInferenceHasInvalidModel
+		}
+
+		// Check if validator is in the weight map for this model
+		validatorPowerForModel, found := weightMap[msg.Creator]
 		if !found {
-			k.LogWarn("Executor not found in weight map", types.Claims, "executor", inference.ExecutorId)
+			k.LogInfo("Validator not found in weight map for model", types.Claims, "validator", msg.Creator, "model", modelId)
 			continue
 		}
-		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPower), uint32(executorPower),
+
+		// Check if executor is in the weight map for this model
+		executorPower, found := weightMap[inference.ExecutorId]
+		if !found {
+			k.LogWarn("Executor not found in weight map", types.Claims, "executor", inference.ExecutorId, "model", modelId)
+			continue
+		}
+
+		// Get the total weight for this model
+		totalWeight := modelTotalWeights[modelId]
+
+		k.LogInfo("Getting validation", types.Claims, "seed", msg.Seed, "totalWeight", totalWeight, "executorPower", executorPower, "validatorPower", validatorPowerForModel)
+		shouldValidate, s := calculations.ShouldValidate(msg.Seed, &inference, uint32(totalWeight), uint32(validatorPowerForModel), uint32(executorPower),
 			k.Keeper.GetParams(ctx).ValidationParams)
-		k.LogDebug("ValidationDecision", types.Claims, "text", s, "inference", inference.InferenceId, "seed", msg.Seed)
+		k.LogInfo(s, types.Claims, "inference", inference.InferenceId, "seed", msg.Seed, "model", modelId, "validator", msg.Creator)
 		if shouldValidate {
 			mustBeValidated = append(mustBeValidated, inference.InferenceId)
 		}

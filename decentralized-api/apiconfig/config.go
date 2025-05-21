@@ -93,6 +93,7 @@ type ApiConfig struct {
 	PublicServerPort int    `koanf:"public_server_port"`
 	MLServerPort     int    `koanf:"ml_server_port"`
 	AdminServerPort  int    `koanf:"admin_server_port"`
+	TestMode         bool   `koanf:"test_mode"`
 }
 
 type ChainNodeConfig struct {

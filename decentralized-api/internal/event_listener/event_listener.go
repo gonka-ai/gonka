@@ -23,6 +23,7 @@ import (
 
 const (
 	finishInferenceAction      = "/inference.inference.MsgFinishInference"
+	startInferenceAction       = "/inference.inference.MsgStartInference"
 	validationAction           = "/inference.inference.MsgValidation"
 	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
 	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
@@ -74,6 +75,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	el.ws = ws
 
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
 	subscribeToEvents(el.ws, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
@@ -254,7 +256,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	//	}
 	//}
 	switch action {
-	case finishInferenceAction:
+	case startInferenceAction, finishInferenceAction:
 		if el.isNodeSynced() {
 			el.validator.SampleInferenceToValidate(
 				event.Result.Events["inference_finished.inference_id"],

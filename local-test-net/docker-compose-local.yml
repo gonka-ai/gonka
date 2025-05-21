@@ -1,7 +1,7 @@
 services:
   chain-node:
     container_name: ${KEY_NAME}-node
-    image: gcr.io/decentralized-ai/inferenced
+    image: ghcr.io/product-science/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -22,7 +22,7 @@ services:
 
   api:
     container_name: ${KEY_NAME}-api
-    image: gcr.io/decentralized-ai/api
+    image: ghcr.io/product-science/api
     volumes:
         - ./prod-local/${KEY_NAME}:/root/.inference
         - ./${NODE_CONFIG}:/root/node_config.json
@@ -38,6 +38,7 @@ services:
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
+      - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
       - NODE_CONFIG_PATH=/root/node_config.json
       - DEBUG=true
