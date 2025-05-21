@@ -3,20 +3,26 @@ package keeper
 // Mocks for simple Keepers, just store in memory as if in the KV Store
 import (
 	"context"
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"sync"
 )
 
 // InMemoryEpochGroupDataKeeper is an in-memory implementation of EpochGroupDataKeeper.
 type InMemoryEpochGroupDataKeeper struct {
-	data map[uint64]types.EpochGroupData
+	data map[string]types.EpochGroupData
 	mu   sync.RWMutex
+}
+
+// generateKey creates a unique key from pocStartBlockHeight and modelId.
+func (keeper *InMemoryEpochGroupDataKeeper) generateKey(pocStartBlockHeight uint64, modelId string) string {
+	return fmt.Sprintf("%d/%s", pocStartBlockHeight, modelId)
 }
 
 // NewInMemoryEpochGroupDataKeeper creates a new instance of InMemoryEpochGroupDataKeeper.
 func NewInMemoryEpochGroupDataKeeper() *InMemoryEpochGroupDataKeeper {
 	return &InMemoryEpochGroupDataKeeper{
-		data: make(map[uint64]types.EpochGroupData),
+		data: make(map[string]types.EpochGroupData),
 	}
 }
 
@@ -24,22 +30,25 @@ func NewInMemoryEpochGroupDataKeeper() *InMemoryEpochGroupDataKeeper {
 func (keeper *InMemoryEpochGroupDataKeeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	keeper.data[epochGroupData.PocStartBlockHeight] = epochGroupData
+	key := keeper.generateKey(epochGroupData.PocStartBlockHeight, epochGroupData.ModelId)
+	keeper.data[key] = epochGroupData
 }
 
-// GetEpochGroupData retrieves the EpochGroupData by PocStartBlockHeight.
-func (keeper *InMemoryEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (val types.EpochGroupData, found bool) {
+// GetEpochGroupData retrieves the EpochGroupData by PocStartBlockHeight and modelId.
+func (keeper *InMemoryEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val types.EpochGroupData, found bool) {
 	keeper.mu.RLock()
 	defer keeper.mu.RUnlock()
-	val, found = keeper.data[pocStartBlockHeight]
+	key := keeper.generateKey(pocStartBlockHeight, modelId)
+	val, found = keeper.data[key]
 	return
 }
 
-// RemoveEpochGroupData removes the EpochGroupData by PocStartBlockHeight.
-func (keeper *InMemoryEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) {
+// RemoveEpochGroupData removes the EpochGroupData by PocStartBlockHeight and modelId.
+func (keeper *InMemoryEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	delete(keeper.data, pocStartBlockHeight)
+	key := keeper.generateKey(pocStartBlockHeight, modelId)
+	delete(keeper.data, key)
 }
 
 // GetAllEpochGroupData retrieves all stored EpochGroupData.
@@ -58,14 +67,14 @@ func main() {
 	ctx := context.Background()
 	keeper := NewInMemoryEpochGroupDataKeeper()
 
-	data1 := types.EpochGroupData{PocStartBlockHeight: 100}
-	data2 := types.EpochGroupData{PocStartBlockHeight: 200}
+	data1 := types.EpochGroupData{PocStartBlockHeight: 100, ModelId: ""}
+	data2 := types.EpochGroupData{PocStartBlockHeight: 200, ModelId: "model1"}
 
 	keeper.SetEpochGroupData(ctx, data1)
 	keeper.SetEpochGroupData(ctx, data2)
 
 	// Retrieve data
-	if val, found := keeper.GetEpochGroupData(ctx, 100); found {
+	if val, found := keeper.GetEpochGroupData(ctx, 100, ""); found {
 		println("Found EpochGroupData with PocStartBlockHeight:", val.PocStartBlockHeight)
 	}
 
@@ -74,10 +83,10 @@ func main() {
 	println("Total EpochGroupData count:", len(allData))
 
 	// Remove data
-	keeper.RemoveEpochGroupData(ctx, 100)
+	keeper.RemoveEpochGroupData(ctx, 100, "")
 
 	// Verify removal
-	if _, found := keeper.GetEpochGroupData(ctx, 100); !found {
+	if _, found := keeper.GetEpochGroupData(ctx, 100, ""); !found {
 		println("EpochGroupData with PocStartBlockHeight 100 not found")
 	}
 }

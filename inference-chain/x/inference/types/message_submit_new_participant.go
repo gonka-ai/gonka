@@ -12,7 +12,6 @@ func NewMsgSubmitNewParticipant(creator string, url string, models []string) *Ms
 	return &MsgSubmitNewParticipant{
 		Creator: creator,
 		Url:     url,
-		Models:  models,
 	}
 }
 

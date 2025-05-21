@@ -956,8 +956,8 @@ github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZN
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/posener/complete v1.1.1/go.mod h1:em0nMJCgc9GFtwrmVmEMR/ZL6WyhyjMBndrE9hABlRI=
-github.com/product-science/cosmos-sdk v0.50.9-ps2 h1:6SyxQmPcfKeVCFsuqq18e4vc/IVqNs9v6DA9cDZjyrE=
-github.com/product-science/cosmos-sdk v0.50.9-ps2/go.mod h1:Ofz1DyMDldOf1ehydu2rIXejsrtWka9LwoytzkXVE5c=
+github.com/product-science/cosmos-sdk v0.50.9-ps3 h1:0QGo6xm0YU2OiHKz4hq2inW1v5FOAHAqPI0vfSsJNrQ=
+github.com/product-science/cosmos-sdk v0.50.9-ps3/go.mod h1:Ofz1DyMDldOf1ehydu2rIXejsrtWka9LwoytzkXVE5c=
 github.com/prometheus/client_golang v0.9.1/go.mod h1:7SWBe2y4D6OKWSNQJUaRYU/AaXPKyh/dDVn+NZz0KFw=
 github.com/prometheus/client_golang v0.9.3-0.20190127221311-3c4408c8b829/go.mod h1:p2iRAGwDERtqlqzRXnrOVns+ignqQo//hLXqYxZYVNs=
 github.com/prometheus/client_golang v1.0.0/go.mod h1:db9x61etRT2tGnBNRi70OPL5FsnadC4Ky3P0J6CfImo=

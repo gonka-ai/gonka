@@ -9,14 +9,14 @@ data class InferencePayload(
     val responsePayload: String?,
     val promptTokenCount: Int?,
     val completionTokenCount: Int?,
-    val requestedBy: String,
+    val requestedBy: String?,
     val executedBy: String?,
     val status: Int,
     val startBlockHeight: Long,
     val endBlockHeight: Long?,
     val startBlockTimestamp: Long,
     val endBlockTimestamp: Long?,
-    val model: String,
+    val model: String?,
     val maxTokens: Int,
     val actualCost: Long?,
     val escrowAmount: Long?,
@@ -49,6 +49,12 @@ data class InferencePayload(
         )
 
     }
+
+    fun checkComplete(): Boolean =
+        !this.requestedBy.isNullOrEmpty() &&
+            !this.executedBy.isNullOrEmpty() &&
+            !this.model.isNullOrEmpty() &&
+            this.status > 0
 }
 
 enum class InferenceStatus(val value: Int) {
@@ -63,6 +69,7 @@ enum class InferenceStatus(val value: Int) {
 data class InferencesWrapper(
     val inference: List<InferencePayload> = listOf()
 )
+
 data class InferenceTimeoutsWrapper(
     val inferenceTimeout: List<InferenceTimeout> = listOf()
 )

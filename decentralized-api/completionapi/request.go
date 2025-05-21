@@ -27,8 +27,12 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		requestMap["top_logprobs"] = 5
 	}
 
-	if _, ok := requestMap["seed"]; !ok {
-		requestMap["seed"] = defaultSeed
+	if doStream, ok := requestMap["stream"]; ok && doStream.(bool) {
+		if _, ok := requestMap["stream_options"]; !ok {
+			requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
+		} else {
+			requestMap["stream_options"].(map[string]interface{})["include_usage"] = true
+		}
 	}
 
 	modifiedRequestBytes, err := json.Marshal(requestMap)

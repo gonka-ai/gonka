@@ -94,6 +94,7 @@ type ApiConfig struct {
 	MLServerPort     int    `koanf:"ml_server_port"`
 	AdminServerPort  int    `koanf:"admin_server_port"`
 	MlGrpcServerPort int    `koanf:"ml_grpc_server_port"`
+	TestMode         bool   `koanf:"test_mode"`
 }
 
 type ChainNodeConfig struct {

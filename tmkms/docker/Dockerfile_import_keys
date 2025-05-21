@@ -1,0 +1,30 @@
+FROM rust:latest
+
+ENV RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"
+
+RUN apt-get update && apt-get install -y \
+  libusb-1.0-0-dev \
+  pkg-config \
+  --no-install-recommends && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN cargo install tmkms --features=softsign --version=0.12.0
+
+WORKDIR /root
+
+RUN tmkms init /app/tmkms_init_data
+
+ARG TMKMS_TOML=tmkms.toml
+ARG PRIV_VALIDATOR_KEY=priv_validator_key.json
+ARG PRIV_VALIDATOR_STATE=priv_validator_state.json
+
+COPY ${TMKMS_TOML} /app/tmkms_init_data/tmkms.toml
+COPY ${PRIV_VALIDATOR_KEY} /app/tmkms_init_data/secrets/priv_validator_key.json
+COPY ${PRIV_VALIDATOR_STATE} /app/tmkms_init_data/state/priv_validator_state.json
+
+COPY docker/init.sh /root/init.sh
+RUN chmod +x /root/init.sh
+
+RUN tmkms softsign import /app/tmkms_init_data/secrets/priv_validator_key.json /app/tmkms_init_data/secrets/priv_validator_key.softsign
+
+ENTRYPOINT ["/root/init.sh"]

@@ -14,6 +14,8 @@ ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
 GENESIS_OVERRIDES_FILE ?= inference-chain/prod_genesis_overrides.json
+TESTS ?= 0
+TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
 
 install:
 	@echo "Installing locally with ldflags..."
@@ -56,6 +58,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "GOARCH:    $(GOARCH)"
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
+	@echo "TAGS:      $(if $(filter 1,$(TESTS)),upgraded,not set)"
 
 	@DOCKER_BUILDKIT=1 \
 	docker build \
@@ -63,7 +66,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
-		--build-arg TAGS='upgraded' \
+		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..
@@ -75,12 +78,12 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/inferenced:$(VERSION))
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
     	echo "Setting latest tag..."; \
-		docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/inferenced:latest; \
 	fi
 
 
@@ -88,19 +91,13 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	@echo "pushing to Google Cloud Artifact Registry"
-	@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
-	@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) ghcr.io/product-science/inferenced:$(VERSION)
 	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/inferenced:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
-		@echo "Pushing latest tag to Google Cloud Artifact Registry"; \
-		@docker push gcr.io/decentralized-ai/inferenced:latest; \
-		@echo "Pushing latest tag to GitHub Container Registry"; \
 		@docker tag ghcr.io/product-science/inferenced:$(VERSION) ghcr.io/product-science/inferenced:latest; \
+		@echo "Pushing latest tag to GitHub Container Registry"; \
 		@docker push ghcr.io/product-science/inferenced:latest; \
 	fi
 

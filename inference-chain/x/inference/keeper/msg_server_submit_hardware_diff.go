@@ -41,8 +41,8 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 	slices.SortFunc(updatedNodes.HardwareNodes, func(a, b *types.HardwareNode) int {
 		return strings.Compare(a.LocalId, b.LocalId)
 	})
-	k.LogInfo("Updating hardware nodes", types.Nodes, "nodes", updatedNodes)
 
+	k.LogInfo("Updating hardware nodes", types.Nodes, "nodes", updatedNodes)
 	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", types.Nodes, "err", err)
 		return nil, err

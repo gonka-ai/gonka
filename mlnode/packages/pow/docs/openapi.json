@@ -1,0 +1,461 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Pow API",
+    "description": "API for PoC",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/pow/init": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Init",
+        "operationId": "init_api_v1_pow_init_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PowInitRequestUrl"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/init/generate": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Init Generate",
+        "operationId": "init_generate_api_v1_pow_init_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PowInitRequestUrl"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/init/validate": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Init Validate",
+        "operationId": "init_validate_api_v1_pow_init_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PowInitRequestUrl"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/phase/generate": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Start Generate",
+        "operationId": "start_generate_api_v1_pow_phase_generate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/phase/validate": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Start Validate",
+        "operationId": "start_validate_api_v1_pow_phase_validate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/validate": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Validate",
+        "operationId": "validate_api_v1_pow_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProofBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/status": {
+      "get": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Status",
+        "operationId": "status_api_v1_pow_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pow/stop": {
+      "post": {
+        "tags": [
+          "API v1"
+        ],
+        "summary": "Stop",
+        "operationId": "stop_api_v1_pow_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Params": {
+        "properties": {
+          "dim": {
+            "type": "integer",
+            "title": "Dim",
+            "default": 2048
+          },
+          "n_layers": {
+            "type": "integer",
+            "title": "N Layers",
+            "default": 16
+          },
+          "n_heads": {
+            "type": "integer",
+            "title": "N Heads",
+            "default": 16
+          },
+          "n_kv_heads": {
+            "type": "integer",
+            "title": "N Kv Heads",
+            "default": 16
+          },
+          "vocab_size": {
+            "type": "integer",
+            "title": "Vocab Size",
+            "default": 8192
+          },
+          "ffn_dim_multiplier": {
+            "type": "number",
+            "title": "Ffn Dim Multiplier",
+            "default": 1.3
+          },
+          "multiple_of": {
+            "type": "integer",
+            "title": "Multiple Of",
+            "default": 1024
+          },
+          "norm_eps": {
+            "type": "number",
+            "title": "Norm Eps",
+            "default": 1e-05
+          },
+          "rope_theta": {
+            "type": "number",
+            "title": "Rope Theta",
+            "default": 500000.0
+          },
+          "use_scaled_rope": {
+            "type": "boolean",
+            "title": "Use Scaled Rope",
+            "default": true
+          },
+          "seq_len": {
+            "type": "integer",
+            "title": "Seq Len",
+            "default": 16
+          }
+        },
+        "type": "object",
+        "title": "Params"
+      },
+      "PowInitRequestUrl": {
+        "properties": {
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id",
+            "default": -1
+          },
+          "node_count": {
+            "type": "integer",
+            "title": "Node Count",
+            "default": -1
+          },
+          "block_hash": {
+            "type": "string",
+            "title": "Block Hash"
+          },
+          "block_height": {
+            "type": "integer",
+            "title": "Block Height"
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key"
+          },
+          "batch_size": {
+            "type": "integer",
+            "title": "Batch Size"
+          },
+          "r_target": {
+            "type": "number",
+            "title": "R Target"
+          },
+          "fraud_threshold": {
+            "type": "number",
+            "title": "Fraud Threshold"
+          },
+          "params": {
+            "$ref": "#/components/schemas/Params",
+            "default": {
+              "dim": 2048,
+              "n_layers": 16,
+              "n_heads": 16,
+              "n_kv_heads": 16,
+              "vocab_size": 8192,
+              "ffn_dim_multiplier": 1.3,
+              "multiple_of": 1024,
+              "norm_eps": 1e-05,
+              "rope_theta": 500000.0,
+              "use_scaled_rope": true,
+              "seq_len": 16
+            }
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "block_hash",
+          "block_height",
+          "public_key",
+          "batch_size",
+          "r_target",
+          "fraud_threshold",
+          "url"
+        ],
+        "title": "PowInitRequestUrl"
+      },
+      "ProofBatch": {
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "title": "Public Key"
+          },
+          "block_hash": {
+            "type": "string",
+            "title": "Block Hash"
+          },
+          "block_height": {
+            "type": "integer",
+            "title": "Block Height"
+          },
+          "nonces": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Nonces"
+          },
+          "dist": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Dist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "public_key",
+          "block_hash",
+          "block_height",
+          "nonces",
+          "dist"
+        ],
+        "title": "ProofBatch"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

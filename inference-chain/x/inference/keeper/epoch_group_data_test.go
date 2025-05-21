@@ -22,6 +22,7 @@ func createNEpochGroupData(keeper keeper.Keeper, ctx context.Context, n int) []t
 	for i := range items {
 		items[i].PocStartBlockHeight = uint64(i)
 		items[i].MemberSeedSignatures = []*types.SeedSignature{}
+		items[i].ModelId = ""
 		keeper.SetEpochGroupData(ctx, items[i])
 	}
 	return items
@@ -32,6 +33,7 @@ func TestRawRoundTrip(t *testing.T) {
 	cdc := codec.NewProtoCodec(registry)
 	epochGroupData := types.EpochGroupData{
 		PocStartBlockHeight: 1,
+		ModelId:             "",
 	}
 	bytes := cdc.MustMarshal(&epochGroupData)
 	roundTripped := types.EpochGroupData{}
@@ -45,6 +47,7 @@ func TestEpochGroupDataGet(t *testing.T) {
 	for _, item := range items {
 		rst, found := keeper.GetEpochGroupData(ctx,
 			item.PocStartBlockHeight,
+			"",
 		)
 		require.True(t, found)
 		// This will be nil if MemberSeedSignature is empty!!
@@ -61,9 +64,11 @@ func TestEpochGroupDataRemove(t *testing.T) {
 	for _, item := range items {
 		keeper.RemoveEpochGroupData(ctx,
 			item.PocStartBlockHeight,
+			"",
 		)
 		_, found := keeper.GetEpochGroupData(ctx,
 			item.PocStartBlockHeight,
+			"",
 		)
 		require.False(t, found)
 	}

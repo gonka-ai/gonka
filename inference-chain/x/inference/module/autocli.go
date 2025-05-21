@@ -287,9 +287,9 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "SubmitNewParticipant",
-					Use:            "submit-new-participant [url] [models]",
+					Use:            "submit-new-participant [url]",
 					Short:          "Send a submitNewParticipant tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "url"}, {ProtoField: "models"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "url"}},
 				},
 				{
 					RpcMethod:      "Validation",
@@ -299,9 +299,9 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
-					Use:            "submit-new-unfunded-participant [address] [url] [models] [pub-key] [validator-key]",
+					Use:            "submit-new-unfunded-participant [address] [url] [pub-key] [validator-key]",
 					Short:          "Send a submitNewUnfundedParticipant tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "models"}, {ProtoField: "pub_key"}, {ProtoField: "validator_key"}},
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "pub_key"}, {ProtoField: "validator_key"}},
 				},
 				{
 					RpcMethod:      "InvalidateInference",

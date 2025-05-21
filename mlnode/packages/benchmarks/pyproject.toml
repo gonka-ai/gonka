@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "benchmarks"
+version = "0.1.0"
+description = "MLNode package with validation testing, performance testing, and simulation"
+readme = "README.md"
+authors = [
+    "Gleb Morgachev <gleb.morgachev@productscience.ai>",
+    "Tamaz Gadaev <tamaz@productscience.ai>",
+    "Egor Shulgin <egor.shulgin@productscience.ai>"
+]
+packages = [{include = "validation", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = "^2.4.1"
+tqdm = ">=4.66.0"
+pydantic = "^2.9.2"
+scipy = ">=1.15.1"
+pandas = ">=2.2.3"
+seaborn = ">=0.13.2"
+scikit-learn = ">=1.4.2"
+
+compressa-perf = {git = "https://github.com/product-science/compressa-perf.git", branch = "main"}
+mlnode-common = { path = "../common", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

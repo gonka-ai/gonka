@@ -3,37 +3,7 @@ package com.productscience
 import com.github.kittinunf.fuel.core.FuelError
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import com.productscience.data.AppState
-import com.productscience.data.Coin
-import com.productscience.data.Decimal
-import com.productscience.data.DoubleSerializer
-import com.productscience.data.DurationDeserializer
-import com.productscience.data.DurationSerializer
-import com.productscience.data.EpochParams
-import com.productscience.data.FloatSerializer
-import com.productscience.data.GenesisOnlyParams
-import com.productscience.data.GovParams
-import com.productscience.data.GovState
-import com.productscience.data.InferenceNode
-import com.productscience.data.ModelConfig
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferencePayload
-import com.productscience.data.InferenceState
-import com.productscience.data.InstantDeserializer
-import com.productscience.data.LongSerializer
-import com.productscience.data.MessageSerializer
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.Participant
-import com.productscience.data.PubKey
-import com.productscience.data.Pubkey2
-import com.productscience.data.Pubkey2Deserializer
-import com.productscience.data.GovernanceMessage
-import com.productscience.data.LongDeserializer
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
-import com.productscience.data.UnfundedInferenceParticipant
-import com.productscience.data.ValidationParams
-import com.productscience.data.spec
+import com.productscience.data.*
 import org.reflections.Reflections
 import org.tinylog.kotlin.Logger
 import java.time.Duration
@@ -54,9 +24,18 @@ fun main() {
     println("RBC:" + inference.requesterBalanceChange)
 }
 
-fun getInferenceResult(highestFunded: LocalInferencePair): InferenceResult {
+fun getInferenceResult(
+    highestFunded: LocalInferencePair,
+    modelName: String? = null,
+    seed: Int? = null
+): InferenceResult {
     val beforeInferenceParticipants = highestFunded.api.getParticipants()
-    val inference = makeInferenceRequest(highestFunded, inferenceRequest)
+    val inferenceObject = inferenceRequestObject
+        .copy(seed = seed ?: inferenceRequestObject.seed)
+        .copy(model = modelName ?: inferenceRequestObject.model)
+    val payload = inferenceObject.toJson()
+
+    val inference = makeInferenceRequest(highestFunded, payload)
     val afterInference = highestFunded.api.getParticipants()
     return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
 }
@@ -114,10 +93,10 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
         highestFunded.node.waitForNextBlock()
         try {
             highestFunded.api.getInference(inferenceId)
-        } catch(_: FuelError) {
+        } catch (_: FuelError) {
             InferencePayload.empty()
         }
-    }.take(5).firstOrNull { it.status == 1 || it.status == 2 }
+    }.take(5).firstOrNull { it.checkComplete() }
     check(inference != null) { "Inference never logged in chain" }
     return inference
 }
@@ -129,6 +108,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.getParams()
+        it.node.getAddress()
     }
 
     val balances = pairs.zip(pairs.map { it.node.getSelfBalance(it.node.config.denom) })
@@ -152,7 +132,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
-        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength*2).toInt()) {
+        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt()) {
             val address = pair.node.getAddress()
             val stats = pair.node.getParticipantCurrentStats()
             val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
@@ -239,10 +219,10 @@ fun createGsonWithTxMessageSerializers(packageName: String): Gson {
 val inferenceConfig = ApplicationConfig(
     appName = "inferenced",
     chainId = "prod-sim",
-    nodeImageName = "gcr.io/decentralized-ai/inferenced",
-    genesisNodeImage = "gcr.io/decentralized-ai/inferenced",
+    nodeImageName = "ghcr.io/product-science/inferenced",
+    genesisNodeImage = "ghcr.io/product-science/inferenced",
     wireMockImageName = "wiremock/wiremock:latest",
-    apiImageName = "gcr.io/decentralized-ai/api",
+    apiImageName = "ghcr.io/product-science/api",
     denom = "nicoin",
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back
@@ -281,74 +261,37 @@ fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = s
     }
 }
 
-val inferenceRequest = """
-    {
-      "model" : "unsloth/llama-3-8b-Instruct",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
 
-val inferenceRequestModel2 = """
-    {
-      "model" : "my-secret-model",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
+data class ChatMessage(
+    val role: String,
+    val content: String,
+    val toolCalls: List<Any> = emptyList()
+)
 
-val inferenceRequestNoSuchModel = """
-    {
-      "model" : "theres-no-model",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25
-    }
-""".trimIndent()
+data class InferenceRequestPayload(
+    val model: String,
+    val temperature: Double,
+    val messages: List<ChatMessage>,
+    val seed: Int,
+    val stream: Boolean = false
+) {
+    fun toJson() = cosmosJson.toJson(this)
+}
 
-val inferenceRequestStream = """
-    {
-      "model" : "unsloth/llama-3-8b-Instruct",
-      "temperature" : 0.8,
-      "messages": [{
-          "role": "system",
-          "content": "Regardless of the language of the question, answer in english"
-        },
-        {
-            "role": "user",
-            "content": "When did Hawaii become a state"
-        }
-      ],
-      "seed" : -25,
-      "stream" : true
-    }
-""".trimIndent()
+val inferenceRequestObject = InferenceRequestPayload(
+    model = "unsloth/llama-3-8b-Instruct",
+    temperature = 0.8,
+    messages = listOf(
+        ChatMessage("system", "Regardless of the language of the question, answer in english"),
+        ChatMessage("user", "When did Hawaii become a state")
+    ),
+    seed = -25
+)
+
+val inferenceRequest = cosmosJson.toJson(inferenceRequestObject)
+
+val inferenceRequestStreamObject = inferenceRequestObject.copy(stream = true)
+val inferenceRequestStream = cosmosJson.toJson(inferenceRequestStreamObject)
 
 const val defaultModel = "unsloth/llama-3-8b-Instruct"
 

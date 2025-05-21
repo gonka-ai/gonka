@@ -12,7 +12,7 @@ echo "KEYRING_BACKEND: $KEYRING_BACKEND"
 
 KEY_NAME="genesis"
 APP_NAME="inferenced"
-CHAIN_ID="gonka-testnet-1"
+CHAIN_ID="gonka-testnet-3"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 # Init the chain:
@@ -49,6 +49,10 @@ sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
 sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml
 #sed -Ei 's/^log_level = "info"$/log_level = "debug"/g' $STATE_DIR/config/config.toml
+#if [ -n "${DEBUG-}" ]; then
+#  sed -i 's/^log_level = "info"/log_level = "debug"/' "$STATE_DIR/config/config.toml"
+#fi
+
 
 echo "Creating the key"
 # Create a key

@@ -1,0 +1,33 @@
+project = "1B-ft-xlam"
+
+name = "refactor test 3090"
+description = "3090 micro bs2"
+group = "base"
+tags = ["1x1", "no-diloco"]
+
+[train]
+micro_bs = 2 # change this base on the gpu
+eval_interval = 50
+
+[data]
+seq_length = 1024
+
+[optim]
+sched_type = "cosine"
+batch_size = 32
+warmup_steps = 50
+total_steps = 6_000
+
+adam_betas1 = 0.9
+adam_betas2 = 0.95
+weight_decay = 0.1
+
+lr = 5e-6
+
+[diloco]
+inner_steps = 50
+
+[ckpt]
+interval = 1000
+topk = 6
+path = "outputs/1B_4x1-lr"
