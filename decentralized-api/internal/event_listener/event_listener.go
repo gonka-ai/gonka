@@ -238,6 +238,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
+		logging.Warn("Event height not reached yet, skipping", types.EventProcessing, "event", event)
 		return
 	}
 
