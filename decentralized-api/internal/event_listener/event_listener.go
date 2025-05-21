@@ -177,7 +177,7 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 			}
 
 			if event.Result.Data.Type == newBlockEventType {
-				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
+				logging.Info("New block event received", types.EventProcessing, "ID", event.ID)
 				blockQueue.In <- &event
 				continue
 			}
