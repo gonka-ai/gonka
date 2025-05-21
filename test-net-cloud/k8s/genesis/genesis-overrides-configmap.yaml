@@ -30,7 +30,7 @@ data:
             "epochParams": {
               "epoch_length": "20000",
               "epoch_multiplier": "1",
-              "epoch_shift": "19950",
+              "epoch_shift": "19980",
               "poc_stage_duration": "60",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
