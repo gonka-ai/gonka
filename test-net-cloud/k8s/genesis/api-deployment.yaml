@@ -28,7 +28,9 @@ spec:
         - containerPort: 9100
           name: ml-server
         - containerPort: 9200
-          name: admin 
+          name: admin
+        - containerPort: 9300
+          name: ml-grpc-server
         env:
         - name: KEY_NAME
           value: "genesis"
@@ -51,6 +53,8 @@ spec:
           value: "9100"
         - name: DAPI_API__ADMIN_SERVER_PORT
           value: "9200"
+        - name: DAPI_API__ML_GRPC_SERVER_PORT
+          value: "9300"
         volumeMounts:
         - name: data
           mountPath: /root/.inference
