@@ -3,6 +3,7 @@ package training
 import (
 	"context"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"fmt"
 	"github.com/cometbft/cometbft/libs/rand"
@@ -410,6 +411,7 @@ type lockTrainingNodesDto struct {
 }
 
 func confirmAvailability(client *http.Client, participantUrl string, taskId uint64, nodeIds []string) error {
+	logging.Debug("confirmAvailability", types.Training, "participantUrl", participantUrl, "taskId", taskId, "nodeIds", nodeIds)
 	url := participantUrl + "/v1/training/lock-nodes"
 	payload := lockTrainingNodesDto{
 		TrainingTaskId: taskId,
