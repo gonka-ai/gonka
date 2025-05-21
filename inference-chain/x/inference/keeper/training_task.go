@@ -87,6 +87,7 @@ func (k Keeper) StartTask(ctx sdk.Context, taskId uint64, assignees []*types.Tra
 
 	// Here update the task object
 	task.Assignees = assignees
+	task.AssignedAtBlockHeight = uint64(ctx.BlockHeight())
 	updatedBz := k.cdc.MustMarshal(&task)
 	store.Set(taskKey, updatedBz)
 

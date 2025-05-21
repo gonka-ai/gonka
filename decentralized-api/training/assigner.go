@@ -223,6 +223,11 @@ func (a *Assigner) checkTaskIsStillClaimed() {
 		slog.Info(logTag+"Task is no longer claimed by me", "taskId", a.task.task.Id)
 		a.task = nil
 	}
+
+	if resp.Task.AssignedAtBlockHeight > 0 {
+		slog.Info(logTag+"Task is already assigned", "taskId", a.task.task.Id)
+		a.task = nil
+	}
 }
 
 type participantHardwareNodes struct {
