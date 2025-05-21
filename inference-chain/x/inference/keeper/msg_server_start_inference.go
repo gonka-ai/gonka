@@ -17,7 +17,6 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	// If the inference already exists, it might be because FinishInference came before StartInference
 	// In that case, we need to update the existing inference record with the start information
 	if found && existingInference.Status != types.InferenceStatus_FINISHED {
-		// If the inference exists and is not in FINISHED state (which would indicate FinishInference came first),
 		// then it's a duplicate StartInference, which is an error
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
 	}
@@ -107,6 +106,13 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	} else {
 		currentEpochGroup.GroupData.NumberOfRequests++
 		k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
+	}
+
+	if inference.IsCompleted() {
+		err := k.handleInferenceCompleted(ctx, currentEpochGroup, inference)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &types.MsgStartInferenceResponse{

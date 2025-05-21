@@ -5,6 +5,7 @@ import (
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -52,7 +53,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
 		return nil, err
 	}
-
 	existingInference.Status = types.InferenceStatus_FINISHED
 	existingInference.ResponseHash = msg.ResponseHash
 	existingInference.ResponsePayload = msg.ResponsePayload
@@ -75,7 +75,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	// Only issue a refund if we have requester information and an escrow amount
 	// (if FinishInference came before StartInference, we won't have this information yet)
-	if existingInference.RequestedBy != "" && existingInference.EscrowAmount > 0 {
+	if existingInference.IsCompleted() && existingInference.EscrowAmount > 0 {
 		refundAmount := existingInference.EscrowAmount - existingInference.ActualCost
 		if refundAmount > 0 {
 			err = k.IssueRefund(ctx, uint64(refundAmount), requester.Address, "inference_refund:"+existingInference.InferenceId)
@@ -87,20 +87,36 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.SetParticipant(ctx, executor)
 
+	if existingInference.IsCompleted() {
+		err := k.handleInferenceCompleted(ctx, currentEpochGroup, existingInference)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &types.MsgFinishInferenceResponse{}, nil
+}
+
+func (k msgServer) handleInferenceCompleted(ctx sdk.Context, currentEpochGroup *epochgroup.EpochGroup, existingInference types.Inference) error {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			"inference_finished",
-			sdk.NewAttribute("inference_id", msg.InferenceId),
+			sdk.NewAttribute("inference_id", existingInference.InferenceId),
 		),
 	)
 	executorPower := uint64(0)
 	executorReputation := int32(0)
 	for _, weight := range currentEpochGroup.GroupData.ValidationWeights {
-		if weight.MemberAddress == executor.Address {
+		if weight.MemberAddress == existingInference.ExecutedBy {
 			executorPower = uint64(weight.Weight)
 			executorReputation = weight.Reputation
 			break
 		}
+	}
+	modelEpochGroup, err := k.GetEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
+	if err != nil {
+		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
+		return err
 	}
 
 	inferenceDetails := types.InferenceValidationDetails{
@@ -111,6 +127,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
+		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
 	}
 	k.LogDebug(
 		"Adding Inference Validation Details",
@@ -123,7 +140,5 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		"traffic_basis", inferenceDetails.TrafficBasis,
 	)
 	k.SetInferenceValidationDetails(ctx, inferenceDetails)
-	k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)
-
-	return &types.MsgFinishInferenceResponse{}, nil
+	return nil
 }

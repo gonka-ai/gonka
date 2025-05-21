@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 func (s *Server) postChat(ctx echo.Context) error {
@@ -75,6 +76,9 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	go func() {
 		logging.Debug("Starting inference", types.Inferences, "id", inferenceRequest.InferenceId)
+		if s.configManager.GetApiConfig().TestMode && request.OpenAiRequest.Seed == 8675309 {
+			time.Sleep(10 * time.Second)
+		}
 		err := s.recorder.StartInference(inferenceRequest)
 		if err != nil {
 			logging.Error("Failed to submit MsgStartInference", types.Inferences, "id", inferenceRequest.InferenceId, "error", err)

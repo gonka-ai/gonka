@@ -53,15 +53,17 @@ var loggingStarted = false
 
 class LogTestWatcher : TestWatcher {
     override fun testSuccessful(context: ExtensionContext) {
-        logSection("Test passed: ${context.displayName}")
+        val displayName = context.testClass.get().simpleName + "-" + context.displayName.trimEnd('(', ')')
+        logSection("Test passed: $displayName")
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testSuccessful(context)
     }
 
     override fun testFailed(context: ExtensionContext, cause: Throwable) {
-        logSection("Test failed: ${context.displayName}")
-        Logger.error(cause, "Test failed:{}", context.displayName)
+        val displayName = context.testClass.get().simpleName + "-" + context.displayName.trimEnd('(', ')')
+        logSection("Test failed: $displayName")
+        Logger.error(cause, "Test failed:{}", displayName)
         TestFilesWriter.currentTest = null
         ThreadContext.remove("test")
         super.testFailed(context, cause)
