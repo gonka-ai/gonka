@@ -67,3 +67,4 @@ jobs:
           echo "Verifying kubectl connection..."
           kubectl cluster-info
           kubectl get nodes --request-timeout=30s
+          kubectl get pods --all-namespaces --field-selector spec.nodeName=k8s-worker-1 -o wide
