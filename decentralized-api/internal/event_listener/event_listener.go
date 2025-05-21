@@ -228,6 +228,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
+		logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
@@ -248,7 +249,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	}
 
 	action := actions[0]
-	logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
+	logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
@@ -272,7 +273,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
 		if el.isNodeSynced() {
-			logging.Debug("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
+			logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
 			taskIds := event.Result.Events["training_task_assigned.task_id"]
 			if taskIds == nil {
 				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
@@ -288,7 +289,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 			}
 		}
 	default:
-		logging.Debug("Unhandled action received", types.EventProcessing, "action", action)
+		logging.Warn("Unhandled action received", types.EventProcessing, "action", action)
 	}
 }
 
