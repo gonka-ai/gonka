@@ -170,19 +170,30 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 				continue
 			}
 
+			logging.Debug("Raw websocket message received", types.EventProcessing, "raw_message_bytes", string(message))
+
 			var event chainevents.JSONRPCResponse
 			if err = json.Unmarshal(message, &event); err != nil {
-				logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "message", message)
+				logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "raw_message_bytes", string(message))
 				continue
 			}
 
-			if event.Result.Data.Type == newBlockEventType {
-				logging.Info("New block event received", types.EventProcessing, "ID", event.ID)
+			// Detailed logging for event type evaluation
+			isNewBlockTypeComparison := event.Result.Data.Type == newBlockEventType
+			logging.Info("Event unmarshalled. Evaluating type...", types.EventProcessing,
+				"event_id", event.ID,
+				"subscription_query", event.Result.Query,
+				"result_data_type", event.Result.Data.Type,
+				"comparing_against_type", newBlockEventType,
+				"is_new_block_event_type_result", isNewBlockTypeComparison)
+
+			if isNewBlockTypeComparison {
+				logging.Info("Event classified as NewBlock", types.EventProcessing, "ID", event.ID, "subscription_query", event.Result.Query, "result_data_type", event.Result.Data.Type)
 				blockQueue.In <- &event
 				continue
 			}
 
-			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+			logging.Info("Adding event to the main event queue (classified as non-NewBlock)", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID, "subscription_query", event.Result.Query)
 			select {
 			case mainQueue.In <- &event:
 				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
