@@ -23,9 +23,10 @@ const (
 )
 
 type Client struct {
-	pocUrl       string
-	inferenceUrl string
-	client       http.Client
+	pocUrl                string
+	inferenceUrl          string
+	client                http.Client
+	mlGrpcCallbackAddress string
 }
 
 func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
@@ -35,6 +36,7 @@ func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
 		client: http.Client{
 			Timeout: 5 * time.Minute,
 		},
+		mlGrpcCallbackAddress: "api-private:9300", // TODO: PRTODO: make this configurable
 	}
 }
 
@@ -149,7 +151,7 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 	trainEnv := TrainEnv{
 		TaskId:          taskId,
 		NodeId:          globalNodeId.ToString(),
-		StoreApiUrl:     "api-private:9300", // TODO: PRTODO: propagate from config file!
+		StoreApiUrl:     api.mlGrpcCallbackAddress,
 		GlobalAddr:      masterNodeAddr,
 		GlobalPort:      defaultGlobalTrainingPort,
 		GlobalRank:      strconv.Itoa(rank),
