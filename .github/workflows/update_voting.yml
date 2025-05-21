@@ -9,7 +9,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: ./.github/actions/gcp-auth-and-gcloud-setup
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Required for git describe --always to work accurately
 
       - name: Define GCE/K8s parameters
         id: params
@@ -21,6 +23,8 @@ jobs:
           echo "K8S_WORKER_1_NAME=k8s-worker-1" >> $GITHUB_OUTPUT
           echo "K8S_WORKER_2_NAME=k8s-worker-2" >> $GITHUB_OUTPUT
           echo "K8S_WORKER_3_NAME=k8s-worker-3" >> $GITHUB_OUTPUT
+
+      - uses: ./.github/actions/gcp-auth-and-gcloud-setup
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
