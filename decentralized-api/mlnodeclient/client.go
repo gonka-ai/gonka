@@ -89,6 +89,7 @@ type Checkpoint struct {
 type TrainEnv struct {
 	TaskId          uint64 `json:"TASK_ID"`
 	NodeId          string `json:"NODE_ID"`
+	StoreApiUrl     string `json:"STORE_API_URL"`
 	GlobalAddr      string `json:"GLOBAL_ADDR"`
 	GlobalPort      string `json:"GLOBAL_PORT"`
 	GlobalRank      string `json:"GLOBAL_RANK"`
@@ -148,6 +149,7 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 	trainEnv := TrainEnv{
 		TaskId:          taskId,
 		NodeId:          globalNodeId.ToString(),
+		StoreApiUrl:     "api-private:9300", // TODO: PRTODO: propagate from config file!
 		GlobalAddr:      masterNodeAddr,
 		GlobalPort:      defaultGlobalTrainingPort,
 		GlobalRank:      strconv.Itoa(rank),

@@ -443,7 +443,7 @@ func (b *Broker) startTraining(command StartTrainingCommand) {
 			return
 		}
 
-		client := mlnodeclient.NewNodeClient(node.Node.PoCUrl(), node.Node.InferenceUrl())
+		client := newNodeClient(&node.Node)
 
 		err := client.Stop()
 		if err != nil {
