@@ -8,6 +8,11 @@ jobs:
   vote_for_update:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write' # Added for pushing to GHCR
+
     steps:
       - uses: actions/checkout@v3
         with:
