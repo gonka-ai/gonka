@@ -150,6 +150,29 @@ func NewJsonOrStreamedResponseFromLines(lines []string) (*JsonOrStreamedResponse
 	}, nil
 }
 
+func NewJsonOrStreamedResponseFromLinesFromResponsePayload(payload string) (*JsonOrStreamedResponse, error) {
+	var genericMap map[string]interface{}
+	bytes := []byte(payload)
+	if err := json.Unmarshal(bytes, &genericMap); err != nil {
+		logging.Error("Failed to unmarshal response payload into var genericMap map[string]interface{}", types.Inferences, "err", err)
+		return nil, err
+	}
+
+	if _, exists := genericMap["events"]; exists {
+		logging.Info("Unmarshalling streamed response", types.Inferences)
+
+		var serialized SerializedStreamedResponse
+		if err := json.Unmarshal(bytes, &serialized); err != nil {
+			logging.Error("Failed to unmarshal response payload into SerializedStreamedResponse", types.Inferences, "err", err)
+			return nil, err
+		}
+
+		return NewJsonOrStreamedResponseFromLines(serialized.Events)
+	} else {
+		return NewJsonOrStreamedResponseFromBytes(bytes)
+	}
+}
+
 var JsonAndStreamedResponseAreEmtpy = errors.New("JsonOrStreamedResponse: both jsonResponse and streamedResponse are empty")
 
 func (r JsonOrStreamedResponse) GetModel() (string, error) {

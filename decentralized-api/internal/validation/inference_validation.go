@@ -321,19 +321,17 @@ func GetEnforcedStr(r *completionapi.JsonOrStreamedResponse) (string, error) {
 }
 
 func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreamedResponse, error) {
-	var genericMap map[string]interface{}
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &genericMap); err != nil {
-		log.Printf("Failed to unmarshal inference.ResponsePayload into generic map. id = %v. err = %v", inference.InferenceId, err)
-		return nil, err
+	resp, err := completionapi.NewJsonOrStreamedResponseFromLinesFromResponsePayload(inference.ResponsePayload)
+
+	if err != nil {
+		logging.Error("Failed to unmarshal inference.ResponsePayload.", types.Validation, "id", inference.InferenceId, "error", err)
+	} else if resp != nil && resp.JsonResponse != nil {
+		logging.Info("Unmarshalled inference.ResponsePayload into JsonResponse", types.Validation, "id", inference.InferenceId, "response", resp.JsonResponse.Resp)
+	} else if resp != nil && resp.StreamedResponse != nil {
+		logging.Info("Unmarshalled inference.ResponsePayload into StreamedResponse", types.Validation, "id", inference.InferenceId, "response", resp.StreamedResponse.Resp)
 	}
 
-	if events, exists := genericMap["events"]; exists {
-		logging.Info("Unmarshalling streamed response", types.Validation, "inference_id", inference.InferenceId)
-		eventsCasted := events.([]string)
-		return completionapi.NewJsonOrStreamedResponseFromLines(eventsCasted)
-	} else {
-		return completionapi.NewJsonOrStreamedResponseFromBytes([]byte(inference.ResponsePayload))
-	}
+	return resp, err
 }
 
 func extractLogits(response *completionapi.JsonOrStreamedResponse) []completionapi.Logprob {
