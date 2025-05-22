@@ -326,9 +326,9 @@ func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreame
 	if err != nil {
 		logging.Error("Failed to unmarshal inference.ResponsePayload.", types.Validation, "id", inference.InferenceId, "error", err)
 	} else if resp != nil && resp.JsonResponse != nil {
-		logging.Info("Unmarshalled inference.ResponsePayload into JsonResponse", types.Validation, "id", inference.InferenceId, "response", resp.JsonResponse.Resp)
+		logging.Info("Unmarshalled inference.ResponsePayload into JsonResponse", types.Validation, "id", inference.InferenceId)
 	} else if resp != nil && resp.StreamedResponse != nil {
-		logging.Info("Unmarshalled inference.ResponsePayload into StreamedResponse", types.Validation, "id", inference.InferenceId, "response", resp.StreamedResponse.Resp)
+		logging.Info("Unmarshalled inference.ResponsePayload into StreamedResponse", types.Validation, "id", inference.InferenceId)
 	}
 
 	return resp, err
