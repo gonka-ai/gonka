@@ -51,6 +51,7 @@ func NewServer(
 
 	g.POST("models", s.registerModel)
 	g.POST("tx/send", s.sendTransaction)
+	//g.GET("status", s.getAdminStatus)
 	return s
 }
 
