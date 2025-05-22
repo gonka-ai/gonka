@@ -170,7 +170,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 
 	jsonOrStreamedResponse, err := responseProcessor.GetResponse()
 	if err != nil || jsonOrStreamedResponse == nil {
-		logging.Error("Failed to get response from inference node", types.Inferences, "error", err)
+		logging.Error("Failed to parse response data into jsonOrStreamedResponse", types.Inferences, "error", err)
 		return err
 	}
 

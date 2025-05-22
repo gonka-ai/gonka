@@ -28,10 +28,10 @@ data:
         "inference": {
           "params": {
             "epochParams": {
-              "epoch_length": "250",
+              "epoch_length": "20000",
               "epoch_multiplier": "1",
-              "epoch_shift": "200",
-              "poc_stage_duration": "60",
+              "epoch_shift": "19980",
+              "poc_stage_duration": "30",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
               "poc_validation_duration": "20",
