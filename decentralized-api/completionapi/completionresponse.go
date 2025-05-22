@@ -191,7 +191,7 @@ func (r *StreamedCompletionResponse) ExtractLogits() []Logprob {
 func NewCompletionResponseFromBytes(bytes []byte) (CompletionResponse, error) {
 	var response Response
 	if err := json.Unmarshal(bytes, &response); err != nil {
-		logging.Error("Failed to unmarshall json response into completionapi.Response", types.Inferences, "responseString", string(bytes), "err", err)
+		logging.Error("Failed to unmarshal json response into completionapi.Response", types.Inferences, "responseString", string(bytes), "err", err)
 		return nil, err
 	}
 
@@ -212,7 +212,7 @@ func NewCompletionResponseFromLines(lines []string) (CompletionResponse, error) 
 
 		var response Response
 		if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
-			logging.Error("Failed to unmarshall streamed response line into completionapi.Response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
+			logging.Error("Failed to unmarshal streamed response line into completionapi.Response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
 			return nil, err
 		}
 		data = append(data, response)
@@ -235,7 +235,7 @@ func NewCompletionResponseFromLinesFromResponsePayload(payload string) (Completi
 	}
 
 	if _, exists := genericMap["events"]; exists {
-		logging.Info("Unmarshalling streamed response", types.Inferences)
+		logging.Info("Unmarshaling streamed response", types.Inferences)
 
 		var serialized SerializedStreamedResponse
 		if err := json.Unmarshal(bytes, &serialized); err != nil {
