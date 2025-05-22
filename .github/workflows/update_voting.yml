@@ -3,68 +3,87 @@ on:
   pull_request:
     branches:
       - '**'
+  workflow_run:
+    workflows: [ "Build and Release to race-releases" ]
+    types:
+      - completed
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
   vote_for_update:
     runs-on: ubuntu-latest
+    # Run if manually dispatched OR if triggered by a successful workflow_run
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     permissions:
       contents: 'read'
       id-token: 'write'
-      packages: 'write' # Added for pushing to GHCR
+      packages: 'write'
+      actions: 'read' # Still needed if workflow_run triggers and we download artifact
 
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0 # Required for git describe --always to work accurately
+          fetch-depth: 0
 
-      - uses: ./.github/actions/gcp-auth-and-gcloud-setup
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-      - name: Define GCE/K8s parameters
-        id: params
+      - name: Download release tag artifact (if triggered by workflow_run)
+        if: github.event_name == 'workflow_run' # Only run this step if triggered by another workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: release-tag-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          # Artifact will be downloaded to GITHUB_WORKSPACE (e.g., release_tag.txt)
+          # No explicit path needed, it downloads to the root.
+        # Continue even if artifact download fails for some reason, next step handles missing file.
+        continue-on-error: true
+
+
+      - name: Determine Release Tag
+        id: release_info
         run: |
-          echo "GCE_PROJECT_ID=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
-          echo "GCE_ZONE=us-central1-a" >> $GITHUB_OUTPUT
-          echo "K8S_CONTROL_PLANE_NAME=k8s-control-plane" >> $GITHUB_OUTPUT
-          echo "K8S_CONTROL_PLANE_USER=dev" >> $GITHUB_OUTPUT
-          echo "K8S_WORKER_1_NAME=k8s-worker-1" >> $GITHUB_OUTPUT
-          echo "K8S_WORKER_2_NAME=k8s-worker-2" >> $GITHUB_OUTPUT
-          echo "K8S_WORKER_3_NAME=k8s-worker-3" >> $GITHUB_OUTPUT
+          DEFAULT_TAG="v0.0.0-manual-test" # Default tag for manual runs or if artifact is missing
+          TAG_VALUE="$DEFAULT_TAG"
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "Workflow triggered by 'workflow_run'."
+            if [[ -f release_tag.txt ]]; then
+              TAG_VALUE=$(cat release_tag.txt)
+              echo "Using tag from downloaded artifact: $TAG_VALUE"
+            else
+              echo "WARNING: 'workflow_run' trigger but release_tag.txt not found (or download failed). Using default tag: $TAG_VALUE"
+            fi
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Workflow triggered by 'workflow_dispatch'. Using default tag: $TAG_VALUE"
+          else
+            echo "Workflow triggered by '${{ github.event_name }}'. Using default tag: $TAG_VALUE"
+          fi
+          echo "Final Release Tag: $TAG_VALUE"
+          echo "release_tag=$TAG_VALUE" >> $GITHUB_OUTPUT
+
+      - uses: ./.github/actions/gcp-auth-and-gcloud-setup # Assumes this sets up gcloud CLI
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Print kubectl and kustomize versions
+      - name: Define GCE/K8s parameters for script
+        id: params
         run: |
-          echo "kubectl client version:"
-          kubectl version --client -o yaml # -o yaml gives more structured output
+          echo "GCE_PROJECT_ID_PARAM=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
+          echo "GCE_ZONE_PARAM=us-central1-a" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_NAME_PARAM=k8s-control-plane" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_USER_PARAM=dev" >> $GITHUB_OUTPUT
 
-      - name: Configure kubectl
+      - name: Execute Voting Update Script (Python)
         env:
-          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
-          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
-          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
-          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER }}
-        run: |
-          echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
-          mkdir -p $HOME/.kube
-          gcloud compute scp ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
-          export KUBECONFIG=$HOME/.kube/config
-          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
-
-          # ---- IMPORTANT: SSH Tunnel (if K8s API server is not directly accessible) ----
-          # If your K8s API server isn't publicly accessible, you'll need an SSH tunnel.
-          # 1. Uncomment and adapt the following lines.
-          # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
-          #
-          echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
-          gcloud compute ssh ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
-            --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
-          sleep 5 # Give tunnel time to establish
-          echo "Kubeconfig modified to use tunnel."
-          # ---- End SSH Tunnel Section ----
-
-          echo "Verifying kubectl connection..."
-          kubectl cluster-info
-          kubectl get nodes --request-timeout=30s
-          kubectl get pods --all-namespaces --field-selector spec.nodeName=k8s-worker-1 -o wide
+          RELEASE_TAG: ${{ steps.release_info.outputs.release_tag }}
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID_PARAM }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE_PARAM }}
+          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME_PARAM }}
+          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER_PARAM }}
+          PYTHONUNBUFFERED: "1"
+        run: python ./scripts/execute_voting_update.py
