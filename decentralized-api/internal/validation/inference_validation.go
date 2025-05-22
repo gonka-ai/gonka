@@ -336,29 +336,6 @@ func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreame
 	}
 }
 
-func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Response, error) {
-	var streamedResponse completionapi.SerializedStreamedResponse
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse); err != nil {
-		log.Printf("Failed to unmarshal inference.ResponsePayload into SerializedStreamedResponse. id = %v. err = %v", inference.InferenceId, err)
-		return nil, err
-	}
-	log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
-
-	var unmarshalledEvents []completionapi.Response
-	for _, line := range streamedResponse.Events {
-		event, err := completionapi.UnmarshalEvent(line)
-		if err != nil {
-			return nil, err
-		}
-		if event != nil {
-			unmarshalledEvents = append(unmarshalledEvents, *event)
-		}
-	}
-	log.Printf("Unmarshalled events. inference.id = %s", inference.InferenceId)
-
-	return unmarshalledEvents, nil
-}
-
 func extractLogits(response *completionapi.JsonOrStreamedResponse) []completionapi.Logprob {
 	if response.JsonResponse != nil {
 		return extractLogitsFromJsonResponse(response.JsonResponse.Resp)
