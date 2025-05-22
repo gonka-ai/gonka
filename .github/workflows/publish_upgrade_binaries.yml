@@ -64,5 +64,5 @@ jobs:
           # --- Files to Upload ---
           # Provide a multiline string of glob patterns for files to upload
           files: |
-            ./public/html/v2/inferenced/*
-            ./public/html/v2/dapi/*
+            ./public-html/v2/inferenced/*
+            ./public-html/v2/dapi/*
