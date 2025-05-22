@@ -106,6 +106,12 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 				// TODO: should we make sure somehow that [DONE] was indeed received?
 				continue
 			}
+
+			if trimmedEvent == "" {
+				logging.Info("Skipping empty line!!!", types.Inferences, "event", event)
+				continue
+			}
+
 			var response Response
 			if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
 				logging.Error("Failed to unmarshall streamed response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)

@@ -46,7 +46,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		line := scanner.Text()
 
 		// DEBUG LOG
-		logging.Debug("Chunk", types.Inferences, "line", line)
+		logging.Info("Chunk", types.Inferences, "line", line)
 
 		var lineToProxy = line
 		if responseProcessor != nil {
@@ -58,7 +58,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			}
 		}
 
-		logging.Debug("Chunk to proxy", types.Inferences, "line", lineToProxy)
+		logging.Info("Chunk to proxy", types.Inferences, "line", lineToProxy)
 
 		// Forward the line to the client
 		_, err := fmt.Fprintln(w, lineToProxy)
