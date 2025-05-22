@@ -1,5 +1,5 @@
 # .github/workflows/build-and-release-to-repo-b.yml (in RepoA)
-name: Build and Release to RepoB
+name: Build and Release to race-releases
 
 on:
   pull_request: # for now
@@ -13,8 +13,6 @@ on:
 jobs:
   build_and_release:
     runs-on: ubuntu-latest
-    permissions: {} # No default GITHUB_TOKEN permissions for this job
-
     steps:
       - name: Set up Go
         uses: actions/setup-go@v3.0.0
