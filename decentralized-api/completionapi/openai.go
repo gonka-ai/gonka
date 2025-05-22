@@ -105,7 +105,7 @@ type JsonOrStreamedResponse struct {
 func NewJsonOrStreamedResponseFromBytes(bytes []byte) (*JsonOrStreamedResponse, error) {
 	var response Response
 	if err := json.Unmarshal(bytes, &response); err != nil {
-		logging.Error("Failed to unmarshall json response into completionapi.Response", types.Inferences, "responseString", string(bytes), "err", err)
+		logging.Error("Failed to unmarshal json response into completionapi.Response", types.Inferences, "responseString", string(bytes), "err", err)
 		return nil, err
 	}
 
