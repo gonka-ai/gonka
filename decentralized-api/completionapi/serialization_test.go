@@ -656,7 +656,6 @@ func TestStreamedResponseSerialization(t *testing.T) {
 
 	bytes, err := resp.GetBodyBytes()
 	bytesString := string(bytes)
-	_ = bytesString
 
 	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytesString)
 	require.NoError(t, err)
