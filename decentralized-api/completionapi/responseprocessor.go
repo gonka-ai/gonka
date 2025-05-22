@@ -93,6 +93,7 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 	if rt.jsonResponseBytes != nil {
 		var response Response
 		if err := json.Unmarshal(rt.jsonResponseBytes, &response); err != nil {
+			logging.Error("Failed to unmarshall json response into completionapi.Response", types.Inferences, "responseString", string(rt.jsonResponseBytes), "err", err)
 			return nil, err
 		}
 		return &JsonOrStreamedResponse{
@@ -109,7 +110,7 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 
 			var response Response
 			if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
-				logging.Error("Failed to unmarshall streamed response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
+				logging.Error("Failed to unmarshall streamed response line into completionapi.Response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
 				return nil, err
 			}
 			data = append(data, response)
