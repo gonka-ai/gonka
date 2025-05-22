@@ -129,6 +129,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 
 	success := <-command.Response
 	if success {
+		e.tasks[taskId] = struct{}{}
 		logging.Info(logTagExecutor+"Training started", types.Training, "taskId", taskId)
 		slog.Info(logTagExecutor+"Training started", "taskId", taskId)
 	} else {
@@ -234,8 +235,11 @@ func (e *Executor) checkInProgressTasksOnChain() {
 	// 3. For each task, check if it's already in the map
 	for _, t := range tasks {
 		if _, ok := e.tasks[t.Id]; !ok {
+			logging.Info(logTagExecutor+"Task not found in the set", types.Training, "taskId", t.Id)
 			// TODO: add a task to the map
 			// e.tasks[t.Id] = struct{}{}
+		} else {
+			logging.Info(logTagExecutor+"Task found in the set", types.Training, "taskId", t.Id)
 		}
 	}
 
