@@ -37,7 +37,8 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
 ################################################################################
 # Final image
 ################################################################################
-FROM alpine:edge AS final
+ARG TARGETPLATFORM
+FROM --platform=$TARGETPLATFORM alpine:3.18 AS final
 
 RUN apk update && \
     apk add --no-cache sed ca-certificates && \
