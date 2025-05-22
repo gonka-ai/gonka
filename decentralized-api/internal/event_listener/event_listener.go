@@ -78,6 +78,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
@@ -173,13 +174,21 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 				continue
 			}
 
-			if event.Result.Data.Type == newBlockEventType {
-				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
+			isNewBlockTypeComparison := event.Result.Data.Type == newBlockEventType
+			logging.Info("Event unmarshalled. Evaluating type...", types.EventProcessing,
+				"event_id", event.ID,
+				"subscription_query", event.Result.Query,
+				"result_data_type", event.Result.Data.Type,
+				"comparing_against_type", newBlockEventType,
+				"is_new_block_event_type_result", isNewBlockTypeComparison)
+
+			if isNewBlockTypeComparison {
+				logging.Info("Event classified as NewBlock", types.EventProcessing, "ID", event.ID, "subscription_query", event.Result.Query, "result_data_type", event.Result.Data.Type)
 				blockQueue.In <- &event
 				continue
 			}
 
-			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+			logging.Info("Adding event to the main event queue (classified as non-NewBlock)", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID, "subscription_query", event.Result.Query)
 			select {
 			case mainQueue.In <- &event:
 				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
@@ -226,6 +235,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
