@@ -650,18 +650,18 @@ func TestStreamedResponseSerialization(t *testing.T) {
 	lines := readLines(t, "test_data/response_streamed.txt")
 	require.NotEmpty(t, lines, "Read 0 events from responseprocessor_test_data.txt")
 
-	resp, err := NewJsonOrStreamedResponseFromLines(lines)
+	resp, err := NewCompletionResponseFromLines(lines)
 	require.NoError(t, err)
-	require.NotNil(t, resp.StreamedResponse)
+	require.IsType(t, &StreamedCompletionResponse{}, resp)
 
 	bytes, err := resp.GetBodyBytes()
 	bytesString := string(bytes)
 	_ = bytesString
 
-	resp2, err := NewJsonOrStreamedResponseFromLinesFromResponsePayload(bytesString)
+	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytesString)
 	require.NoError(t, err)
-	require.NotNil(t, resp2.StreamedResponse)
+	require.IsType(t, &StreamedCompletionResponse{}, resp2)
 
-	require.Equal(t, len(resp.StreamedResponse.Lines), len(resp2.StreamedResponse.Lines))
-	require.Equal(t, len(resp.StreamedResponse.Resp.Data), len(resp2.StreamedResponse.Resp.Data))
+	require.Equal(t, len(resp.(*StreamedCompletionResponse).Lines), len(resp2.(*StreamedCompletionResponse).Lines))
+	require.Equal(t, len(resp.(*StreamedCompletionResponse).Resp.Data), len(resp2.(*StreamedCompletionResponse).Resp.Data))
 }
