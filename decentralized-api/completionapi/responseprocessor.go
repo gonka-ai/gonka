@@ -102,13 +102,8 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 		data := make([]Response, 0)
 		for _, event := range rt.streamedResponse {
 			trimmedEvent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event), "data:"))
-			if trimmedEvent == "[DONE]" {
+			if trimmedEvent == "[DONE]" || trimmedEvent == "" {
 				// TODO: should we make sure somehow that [DONE] was indeed received?
-				continue
-			}
-
-			if trimmedEvent == "" {
-				logging.Info("Skipping empty line!!!", types.Inferences, "event", event)
 				continue
 			}
 
