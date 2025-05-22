@@ -1,9 +1,11 @@
 package completionapi
 
 import (
+	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
 	"errors"
+	"github.com/productscience/inference/x/inference/types"
 	"strings"
 )
 
@@ -90,35 +92,89 @@ func UnmarshalEvent(event string) (*Response, error) {
 }
 
 type JsonOrStreamedResponse struct {
-	JsonResponse     *Response
-	StreamedResponse *StreamedResponse
+	JsonResponse *struct {
+		Bytes []byte
+		Resp  Response
+	}
+	StreamedResponse *struct {
+		Lines []string
+		Resp  StreamedResponse
+	}
+}
+
+func NewJsonOrStreamedResponseFromBytes(bytes []byte) (*JsonOrStreamedResponse, error) {
+	var response Response
+	if err := json.Unmarshal(bytes, &response); err != nil {
+		logging.Error("Failed to unmarshall json response into completionapi.Response", types.Inferences, "responseString", string(bytes), "err", err)
+		return nil, err
+	}
+
+	return &JsonOrStreamedResponse{
+		JsonResponse: &struct {
+			Bytes []byte
+			Resp  Response
+		}{
+			Bytes: bytes,
+			Resp:  response,
+		},
+	}, nil
+}
+
+func NewJsonOrStreamedResponseFromLines(lines []string) (*JsonOrStreamedResponse, error) {
+	data := make([]Response, 0)
+	for _, event := range lines {
+		trimmedEvent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event), "data:"))
+		if trimmedEvent == "[DONE]" || trimmedEvent == "" {
+			// TODO: should we make sure somehow that [DONE] was indeed received?
+			continue
+		}
+
+		var response Response
+		if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
+			logging.Error("Failed to unmarshall streamed response line into completionapi.Response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
+			return nil, err
+		}
+		data = append(data, response)
+	}
+	streamedResponse := StreamedResponse{
+		Data: data,
+	}
+	return &JsonOrStreamedResponse{
+		StreamedResponse: &struct {
+			Lines []string
+			Resp  StreamedResponse
+		}{
+			Lines: lines,
+			Resp:  streamedResponse,
+		},
+	}, nil
 }
 
 var JsonAndStreamedResponseAreEmtpy = errors.New("JsonOrStreamedResponse: both jsonResponse and streamedResponse are empty")
 
 func (r JsonOrStreamedResponse) GetModel() (string, error) {
 	if r.JsonResponse != nil {
-		return r.JsonResponse.Model, nil
-	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
-		return r.StreamedResponse.Data[0].Model, nil
+		return r.JsonResponse.Resp.Model, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Resp.Data) > 0 {
+		return r.StreamedResponse.Resp.Data[0].Model, nil
 	}
 	return "", JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetInferenceId() (string, error) {
 	if r.JsonResponse != nil {
-		return r.JsonResponse.ID, nil
-	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
-		return r.StreamedResponse.Data[0].ID, nil
+		return r.JsonResponse.Resp.ID, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Resp.Data) > 0 {
+		return r.StreamedResponse.Resp.Data[0].ID, nil
 	}
 	return "", JsonAndStreamedResponseAreEmtpy
 }
 
 func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
 	if r.JsonResponse != nil {
-		return &r.JsonResponse.Usage, nil
-	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Data) > 0 {
-		for _, d := range r.StreamedResponse.Data {
+		return &r.JsonResponse.Resp.Usage, nil
+	} else if r.StreamedResponse != nil && len(r.StreamedResponse.Resp.Data) > 0 {
+		for _, d := range r.StreamedResponse.Resp.Data {
 			if d.Usage.IsEmpty() {
 				continue
 			}
@@ -131,9 +187,12 @@ func (r JsonOrStreamedResponse) GetUsage() (*Usage, error) {
 
 func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
 	if r.JsonResponse != nil {
-		return json.Marshal(r.JsonResponse)
+		return r.JsonResponse.Bytes, nil
 	} else if r.StreamedResponse != nil {
-		return json.Marshal(r.StreamedResponse)
+		serialized := SerializedStreamedResponse{
+			Events: r.StreamedResponse.Lines,
+		}
+		return json.Marshal(&serialized)
 	}
 	return nil, JsonAndStreamedResponseAreEmtpy
 }
@@ -141,12 +200,12 @@ func (r JsonOrStreamedResponse) GetBodyBytes() ([]byte, error) {
 func (r JsonOrStreamedResponse) GetHash() (string, error) {
 	var builder strings.Builder
 	if r.JsonResponse != nil {
-		for _, choice := range r.JsonResponse.Choices {
+		for _, choice := range r.JsonResponse.Resp.Choices {
 			builder.WriteString(choice.Message.Content)
 		}
 
 	} else if r.StreamedResponse != nil {
-		for _, choice := range r.StreamedResponse.Data {
+		for _, choice := range r.StreamedResponse.Resp.Data {
 			for _, c := range choice.Choices {
 				delta := c.Delta.Content
 				if delta != nil {

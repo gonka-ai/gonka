@@ -272,18 +272,18 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 
 func GetEnforcedStr(r *completionapi.JsonOrStreamedResponse) (string, error) {
 	if r.JsonResponse != nil {
-		if len(r.JsonResponse.Choices) == 0 {
+		if len(r.JsonResponse.Resp.Choices) == 0 {
 			return "", errors.New("JsonResponse has no choices")
 		}
 
-		if len(r.JsonResponse.Choices) > 1 {
+		if len(r.JsonResponse.Resp.Choices) > 1 {
 			// TODO: We should learn how to process/validate multiple options completions
-			logging.Warn("More than one choice in a non-steamed inference response, defaulting to first one", types.Validation, "choices", r.JsonResponse.Choices)
+			logging.Warn("More than one choice in a non-steamed inference response, defaulting to first one", types.Validation, "choices", r.JsonResponse.Resp.Choices)
 		}
 
-		content := r.JsonResponse.Choices[0].Message.Content
+		content := r.JsonResponse.Resp.Choices[0].Message.Content
 		if content == "" {
-			logging.Error("Model return empty response", types.Validation, "inference_id", r.JsonResponse.ID)
+			logging.Error("Model return empty response", types.Validation, "inference_id", r.JsonResponse.Resp.ID)
 			return "", errors.New("JsonResponse has no content")
 		}
 
@@ -291,7 +291,7 @@ func GetEnforcedStr(r *completionapi.JsonOrStreamedResponse) (string, error) {
 	} else if r.StreamedResponse != nil {
 		var id = ""
 		var stringBuilder strings.Builder
-		for _, event := range r.StreamedResponse.Data {
+		for _, event := range r.StreamedResponse.Resp.Data {
 			id = event.ID
 			if len(event.Choices) == 0 {
 				continue
@@ -327,20 +327,12 @@ func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreame
 		return nil, err
 	}
 
-	if _, exists := genericMap["events"]; exists {
-		// It's likely a SerializedStreamedResponse
-		events, err := unmarshalStreamedResponse(inference)
-		if err != nil {
-			return nil, err
-		}
-		return &completionapi.JsonOrStreamedResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
+	if events, exists := genericMap["events"]; exists {
+		logging.Info("Unmarshalling streamed response", types.Validation, "inference_id", inference.InferenceId)
+		eventsCasted := events.([]string)
+		return completionapi.NewJsonOrStreamedResponseFromLines(eventsCasted)
 	} else {
-		var originalResponse completionapi.Response
-		if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
-			log.Printf("Failed to unmarshal inference.ResponsePayload into Response. id = %v. err = %v", inference.InferenceId, err)
-			return nil, err
-		}
-		return &completionapi.JsonOrStreamedResponse{JsonResponse: &originalResponse}, nil
+		return completionapi.NewJsonOrStreamedResponseFromBytes([]byte(inference.ResponsePayload))
 	}
 }
 
@@ -369,9 +361,9 @@ func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Resp
 
 func extractLogits(response *completionapi.JsonOrStreamedResponse) []completionapi.Logprob {
 	if response.JsonResponse != nil {
-		return extractLogitsFromJsonResponse(*response.JsonResponse)
+		return extractLogitsFromJsonResponse(response.JsonResponse.Resp)
 	} else if response.StreamedResponse != nil {
-		return extractLogitsFromStreamedResponse(*response.StreamedResponse)
+		return extractLogitsFromStreamedResponse(response.StreamedResponse.Resp)
 	} else {
 		return nil
 	}
