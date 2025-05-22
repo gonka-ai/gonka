@@ -34,6 +34,12 @@ RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     ./cmd/inferenced/main.go
 
 ################################################################################
+# Binary Exporter stage (for --output optimization)
+################################################################################
+FROM scratch AS binary-exporter
+COPY --from=builder /app/inference-chain/build/inferenced /inferenced
+
+################################################################################
 # Final stage
 ################################################################################
 ARG TARGETPLATFORM
