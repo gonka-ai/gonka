@@ -13,7 +13,7 @@ jobs:
   vote_for_update:
     runs-on: ubuntu-latest
     # Run if manually dispatched OR if triggered by a successful workflow_run
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    # if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     permissions:
       contents: 'read'
