@@ -90,9 +90,7 @@ class MultiModelTests : TestermintTest() {
         logSection("making inferences")
         val participants = genesis.api.getParticipants()
         val models = listOf(defaultModel, newModelName)
-        val inferences = generateSequence { getInferenceResult(genesis, models.random()) }.take(5)
+        val inferences = runParallelInferences(genesis, 10, maxConcurrentRequests = 10)
         verifySettledInferences(genesis, inferences, participants)
     }
-
-
 }

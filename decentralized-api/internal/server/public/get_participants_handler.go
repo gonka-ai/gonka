@@ -113,21 +113,21 @@ func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProo
 
 	block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
 	if err != nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
+		logging.Error("Failed to get block for active participants", types.Participants, "error", err)
 		return nil, err
 	}
 
 	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
 	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
 	if err != nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
+		logging.Error("Failed to get block for next height", types.Participants, "error", err)
 		return nil, err
 	}
 
 	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
 	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
 	if err != nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
+		logging.Error("Failed to get block for previous height", types.Participants, "error", err)
 		return nil, err
 	}
 

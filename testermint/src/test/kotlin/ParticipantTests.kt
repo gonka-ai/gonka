@@ -1,5 +1,12 @@
+import com.productscience.ApplicationAPI
 import com.productscience.EpochStage
 import com.productscience.LocalCluster
+import com.productscience.SERVER_TYPE_ADMIN
+import com.productscience.SERVER_TYPE_CHAIN
+import com.productscience.SERVER_TYPE_ML
+import com.productscience.SERVER_TYPE_PUBLIC
+import com.productscience.SERVER_TYPE_VERIFIER
+import com.productscience.data.GenesisValidator
 import com.productscience.data.GovernanceMessage
 import com.productscience.data.GovernanceProposal
 import com.productscience.data.UpdateParams
@@ -9,8 +16,73 @@ import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.tinylog.kotlin.Logger
 
 class ParticipantTests : TestermintTest() {
+
+    @Test
+    fun `verify active participants proof`() {
+        logSection("Verify Active Participants Proof")
+
+        val (_, genesis) = initCluster()
+
+        // Create a new API with additional URLs for verifier
+        val apiUrls = mutableMapOf<String, String>()
+        apiUrls.putAll(genesis.api.urls)
+
+        // Add URL for verifier
+        val publicUrl = apiUrls[SERVER_TYPE_PUBLIC] ?: ""
+        apiUrls[SERVER_TYPE_VERIFIER] = publicUrl
+
+        val api = ApplicationAPI(apiUrls, genesis.config, genesis.node)
+
+        // Get current active participants
+        val currentActiveParticipants = api.getActiveParticipants()
+        val currentEpoch = currentActiveParticipants.activeParticipants.epochGroupId
+
+        Logger.info("Current epoch: $currentEpoch")
+
+        var prevValidators: List<GenesisValidator>? = null
+
+        for (i in 1L..currentEpoch) {
+            if (i == 1L) {
+                // For the first epoch, get validators from genesis
+                prevValidators = api.getGenesisValidators()
+                Logger.info("Genesis validators: $prevValidators")
+            }
+
+            // Get active participants for this epoch
+            val activeParticipants = api.getActiveParticipantsByEpoch(i.toString())
+
+            // Verify proof
+            val proofValid = api.verifyProof(activeParticipants)
+            assertThat(proofValid as Boolean).isTrue()
+            Logger.info("Proof verification for epoch $i: $proofValid")
+
+            // Verify block with previous validators
+            val blockValid = activeParticipants.block?.get(2)?.let { block ->
+                prevValidators?.let { validators ->
+                    api.verifyBlock(block, validators)
+                } ?: false
+            } ?: false
+
+            assertThat(blockValid as Boolean).isTrue()
+            Logger.info("Block verification for epoch $i: $blockValid")
+
+            // Update previous validators for next iteration
+            prevValidators = api.extractValidatorsFromActiveParticipants(activeParticipants)
+            Logger.info("Verified epoch $i. prevValidators: $prevValidators")
+        }
+    }
+
+    @Test
+    fun `get active participants`() {
+        val (_, genesis) = initCluster()
+        logSection("Getting current active participants")
+        val participants = genesis.api.getActiveParticipants()
+        Logger.info(participants.toString())
+        assertThat(participants.activeParticipants.participants).hasSize(3)
+    }
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()

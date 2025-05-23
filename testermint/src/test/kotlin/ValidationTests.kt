@@ -1,7 +1,6 @@
 import com.productscience.*
 import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceStatus
-import com.productscience.data.ModelConfig
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -19,12 +18,11 @@ class ValidationTests : TestermintTest() {
     fun `test valid in parallel`() {
         val (_, genesis) = initCluster()
         logSection("Making inference requests in parallel")
-        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
-        Logger.info("Statuses: $statuses")
+        val inferences = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
 
         logSection("Verifying inference statuses")
-        assertThat(statuses.map { status ->
-            InferenceStatus.entries.first { it.value == status }
+        assertThat(inferences.map { inference ->
+            InferenceStatus.entries.first { it.value == inference.status }
         }).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
@@ -103,7 +101,7 @@ fun runParallelInferences(
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
     models: List<String> = listOf(defaultModel)
-): List<Int> = runBlocking {
+): List<InferencePayload> = runBlocking {
     // Launch coroutines with async and collect the deferred results
 
     val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
@@ -119,10 +117,9 @@ fun runParallelInferences(
 
     genesis.node.waitForNextBlock(waitForBlocks)
 
-    // Return statuses
+    // Return inferences
     results.map { result ->
-        val inference = genesis.api.getInference(result.id)
-        inference.status
+        genesis.api.getInference(result.id)
     }
 }
 

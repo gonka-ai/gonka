@@ -19,6 +19,33 @@ data class AppState(
     val bank: BankState,
     val gov: GovState,
     val inference: InferenceState,
+    val genutil: GenutilState? = null,
+)
+
+data class GenutilState(
+    val genTxs: List<GenTx>? = null,
+)
+
+data class GenTx(
+    val body: TxBody? = null,
+)
+
+data class TxBody(
+    val messages: List<GenesisMessage>? = null,
+)
+
+data class GenesisMessage(
+    @com.google.gson.annotations.SerializedName("@type") val type: String? = null,
+    val pubkey: GenesisPubkey? = null,
+    val value: GenesisValue? = null,
+)
+
+data class GenesisPubkey(
+    val key: String? = null,
+)
+
+data class GenesisValue(
+    val amount: String? = null,
 )
 
 data class InferenceState(
