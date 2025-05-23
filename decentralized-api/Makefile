@@ -104,8 +104,10 @@ build-for-upgrade:
 	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-amd64
 	@zip -X -j ../public-html/v2/dapi/decentralized-api-amd64.zip ../public-html/v2/dapi/decentralized-api-amd64
-	@echo "--> generating shasum for decentralized-api.zip"
+	@echo "--> generating shasum for decentralized-api-amd64.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "decentralized-api-amd64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip)" >> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
 	$(eval PLATFORM=linux/arm64)
@@ -120,8 +122,10 @@ build-for-upgrade-arm:
 	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-arm64
 	@zip -X -j ../public-html/v2/dapi/decentralized-api-arm64.zip ../public-html/v2/dapi/decentralized-api-arm64
-	@echo "--> generating shasum for decentralized-api.zip"
+	@echo "--> generating shasum for decentralized-api-arm64.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "decentralized-api-arm64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip)" >> ../public-html/v2/checksums.txt
 
 #################################################
 # CROSS-COMPILATION SECTION
