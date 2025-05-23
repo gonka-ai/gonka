@@ -123,7 +123,7 @@ func LoadMetadataToSdk(metadata banktypes.Metadata) error {
 
 // ExportGenesis returns the module's exported genesis.
 func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
-	genesis := types.DefaultGenesis()
+	genesis := &types.GenesisState{}
 	genesis.Params = k.GetParams(ctx)
 
 	genesis.InferenceList = k.GetAllInference(ctx)
@@ -139,6 +139,10 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesisOnlyParams, found := k.GetGenesisOnlyParams(ctx)
 	if found {
 		genesis.GenesisOnlyParams = genesisOnlyParams
+	}
+	contractsParams, found := k.GetContractsParams(ctx)
+	if found {
+		genesis.ContractsParams = contractsParams
 	}
 	genesis.ModelList = getModels(&ctx, &k)
 	genesis.TopMinerList = k.GetAllTopMiner(ctx)

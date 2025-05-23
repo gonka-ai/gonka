@@ -1,6 +1,8 @@
 package types
 
 import (
+	"strings"
+
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -61,6 +63,16 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	_, ok := math.NewIntFromString(msg.Amount)
 	if !ok {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "invalid amount")
+	}
+
+	// Require that OwnerPubKey is not empty
+	if msg.OwnerPubKey == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "owner pub key cannot be empty")
+	}
+
+	// Validate OwnerPubKey as a hex string (starts with "0x" and has even length)
+	if !strings.HasPrefix(msg.OwnerPubKey, "0x") || (len(msg.OwnerPubKey)-2)%2 != 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "invalid owner pub key format (expected hex string starting with 0x)")
 	}
 
 	return nil
