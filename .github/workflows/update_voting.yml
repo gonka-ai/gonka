@@ -86,4 +86,4 @@ jobs:
           K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME_PARAM }}
           K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER_PARAM }}
           PYTHONUNBUFFERED: "1"
-        run: python ./scripts/execute_voting_update.py
+        run: python ./.github/scripts/execute_voting_update.py
