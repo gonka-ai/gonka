@@ -1,8 +1,10 @@
 package completionapi
 
 import (
+	"decentralized-api/logging"
 	"encoding/json"
 	"errors"
+	"github.com/productscience/inference/x/inference/types"
 	"strings"
 )
 
@@ -91,6 +93,7 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 	if rt.jsonResponseBytes != nil {
 		var response Response
 		if err := json.Unmarshal(rt.jsonResponseBytes, &response); err != nil {
+			logging.Error("Failed to unmarshall json response into completionapi.Response", types.Inferences, "responseString", string(rt.jsonResponseBytes), "err", err)
 			return nil, err
 		}
 		return &JsonOrStreamedResponse{
@@ -100,12 +103,14 @@ func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, err
 		data := make([]Response, 0)
 		for _, event := range rt.streamedResponse {
 			trimmedEvent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(event), "data:"))
-			if trimmedEvent == "[DONE]" {
+			if trimmedEvent == "[DONE]" || trimmedEvent == "" {
 				// TODO: should we make sure somehow that [DONE] was indeed received?
 				continue
 			}
+
 			var response Response
 			if err := json.Unmarshal([]byte(trimmedEvent), &response); err != nil {
+				logging.Error("Failed to unmarshall streamed response line into completionapi.Response", types.Inferences, "event", event, "trimmedEvent", trimmedEvent, "err", err)
 				return nil, err
 			}
 			data = append(data, response)
