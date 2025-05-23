@@ -83,7 +83,9 @@ func (el *EventListener) openWsConnAndSubscribe() {
 		trainingTaskAssignedAction,
 	)
 
-	// New set of subscriptions (3 total)
+	// WARNING: It looks like Tendermint can't support more than 5 subscriptions per websocket
+	//  at least I wasn't receiving any from subscriptions 6 and 7,
+	// 	so this is why I have now a combinedTxActionsQuery
 	subscribeToEvents(el.ws, 1, combinedTxActionsQuery)
 	subscribeToEvents(el.ws, 2, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
