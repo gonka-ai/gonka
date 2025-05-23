@@ -13,12 +13,13 @@ import (
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/productscience/inference/x/inference/types"
 	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -74,13 +75,20 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	}
 	el.ws = ws
 
-	subscribeToEvents(el.ws, 1, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
-	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
-	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
-	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(el.ws, 5, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
-	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
-	subscribeToEvents(el.ws, 7, "tm.event='Tx'")
+	// Define the combined query for most message.action based Tx events
+	combinedTxActionsQuery := fmt.Sprintf("tm.event='Tx' AND (message.action='%s' OR message.action='%s' OR message.action='%s' OR message.action='%s')",
+		finishInferenceAction,
+		startInferenceAction,
+		submitGovProposalAction,
+		trainingTaskAssignedAction,
+	)
+
+	// New set of subscriptions (3 total)
+	subscribeToEvents(el.ws, 1, combinedTxActionsQuery)
+	subscribeToEvents(el.ws, 2, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+
+	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
 
 func (el *EventListener) Start(ctx context.Context) {
