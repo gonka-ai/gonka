@@ -3,6 +3,7 @@ package com.productscience
 import com.github.tomakehurst.wiremock.client.MappingBuilder
 import com.github.tomakehurst.wiremock.client.WireMock
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
+import com.github.tomakehurst.wiremock.client.WireMock.equalToJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
 import com.productscience.data.OpenAIResponse
@@ -12,21 +13,32 @@ class InferenceMock(port: Int, val name: String) {
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
 
-    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "") =
+    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "", model: String? = null) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
-                .willReturn(aResponse()
-                    .withFixedDelay(delay.toInt())
-                    .withStatus(200)
-                    .withBody(response))
-
+                .apply {
+                    if (model != null) {
+                        withRequestBody(equalToJson("""{"model": "$model"}""", true, true))
+                    }
+                }
+                .willReturn(
+                    aResponse()
+                        .withFixedDelay(delay.toInt())
+                        .withStatus(200)
+                        .withBody(response)
+                )
         )
 
-    fun setInferenceResponse(openAIResponse: OpenAIResponse, delay: Int = 0, segment: String = "") =
+    fun setInferenceResponse(
+        openAIResponse: OpenAIResponse,
+        delay: Int = 0,
+        segment: String = "",
+        model: String? = null
+    ) =
         this.setInferenceResponse(
             openAiJson.toJson(openAIResponse), delay, segment)
 
-    fun setPocResponse(weight: Long) {
+    fun setPocResponse(weight: Long, scenarioName: String = "ModelState") {
         val nonces = (1..weight).toList()
         val dist = nonces.map { it.toDouble() / weight }
         val body = """
@@ -40,6 +52,8 @@ class InferenceMock(port: Int, val name: String) {
         """.trimIndent()
         this.givenThat(
             post(urlEqualTo("/api/v1/pow/init/generate"))
+                .inScenario("ModelState")
+                .willSetStateTo("POW")
                 .willReturn(
                     aResponse()
                         .withStatus(200)

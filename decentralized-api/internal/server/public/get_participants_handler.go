@@ -198,7 +198,6 @@ func (s *Server) getAllParticipants(ctx echo.Context) error {
 		participants[i] = ParticipantDto{
 			Id:          p.Address,
 			Url:         p.InferenceUrl,
-			Models:      p.Models,
 			CoinsOwed:   p.CoinBalance,
 			Balance:     pBalance,
 			VotingPower: int64(p.Weight),

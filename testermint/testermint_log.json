@@ -1,0 +1,88 @@
+{
+  "testermint_log": {
+    "title": "Testermint Logs",
+    "description": "Format for Testermint logs for the iCoin blockchain",
+    "regex": {
+      "std": {
+        "pattern": "^(?<timestamp>\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?<level>\\w+)\\s*-\\s*(?:\\[(?<context>[^\\]]+)\\]\\s*)?(?<service>[\\w.-]+):(?<pair>pair=[^\\s]+)\\s+\"(?<message>.*)",
+        "timestamp-format": [
+          "%H:%M:%S.%L"
+        ]
+      }
+    },
+    "level-field": "level",
+    "level": {
+      "trace": "TRACE",
+      "debug": "DEBUG",
+      "info": "INFO",
+      "warning": "WARN",
+      "error": "ERROR"
+    },
+    "partitions": {
+      "test_section": {
+        "pattern": "TestSection:(.+)"
+      }
+    },
+    "highlights": {
+      "new_block": {
+        "pattern": "^.+New block, height=.+$",
+        "underline": true
+      },
+      "test_section": {
+        "pattern": "(TestSection:.+)",
+        "color": "yellow"
+      },
+      "subsystem": {
+        "pattern": "subsystem=\\w+",
+        "color" : "cyan"
+      },
+      "dapi": {
+        "pattern": "(dapi):pair=",
+        "color": "black",
+        "background-color": "ivory"
+      },
+      "node": {
+        "pattern": "(node):pair=",
+        "background-color": "gray"
+      },
+      "test": {
+        "pattern": "(test):pair="
+      },
+      "waiting": {
+        "pattern": "(Waiting for state: .+)operation="
+      }
+    },
+    "value": {
+      "timestamp": {
+        "kind": "string"
+      },
+      "level": {
+        "kind": "string",
+        "identifier": true
+      },
+      "context": {
+        "kind": "string"
+      },
+      "service": {
+        "kind": "string"
+      },
+      "pair": {
+        "kind": "string"
+      },
+      "message": {
+        "kind": "string"
+      }
+    },
+    "sample": [
+      {
+        "line": "17:35:36.836 INFO  - node:pair=/join2    \"service start impl=multiAppConn module=proxy msg=\"Starting multiAppConn service\"\" operation=init"
+      },
+      {
+        "line": "17:36:40.186 TRACE - test:pair=/genesis  \"Response Data: true"
+      },
+      {
+        "line": "17:37:17.114 INFO  - dapi:pair=/genesis  \"[sync nodes] Fetched chain nodes subsystem=Nodes size=1\" operation=init"
+      }
+    ]
+  }
+}

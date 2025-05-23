@@ -12,8 +12,7 @@ import java.time.Duration
 class TrainingTests : TestermintTest() {
     @Test
     fun test() {
-        val pairs = getLocalInferencePairs(inferenceConfig)
-        val instance = pairs[0]
+        val (cluster, instance) = initCluster()
         val result = instance.node.exec(listOf("inferenced", "query", "inference", "hardware-nodes-all"))
         println("NODES!!!")
         println(result)

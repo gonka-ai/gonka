@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+data:
+  KEY_NAME: "join-k8s-worker-2"
+  DAPI_API__PUBLIC_URL: "35.192.7.224:30010"
+  P2P_EXTERNAL_ADDRESS: "35.192.7.224:30011"

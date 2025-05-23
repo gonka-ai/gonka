@@ -701,6 +701,21 @@ func (mr *MockStakingKeeperMockRecorder) SetComputeValidators(ctx, computeResult
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetComputeValidators", reflect.TypeOf((*MockStakingKeeper)(nil).SetComputeValidators), ctx, computeResults)
 }
 
+// GetAllValidators mocks base method.
+func (m *MockStakingKeeper) GetAllValidators(ctx context.Context) ([]types1.Validator, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllValidators", ctx)
+	ret0, _ := ret[0].([]types1.Validator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllValidators indicates an expected call of GetAllValidators.
+func (mr *MockStakingKeeperMockRecorder) GetAllValidators(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllValidators", reflect.TypeOf((*MockStakingKeeper)(nil).GetAllValidators), ctx)
+}
+
 // MockParticipantKeeper is a mock of ParticipantKeeper interface.
 type MockParticipantKeeper struct {
 	ctrl     *gomock.Controller
@@ -845,30 +860,30 @@ func (mr *MockEpochGroupDataKeeperMockRecorder) GetAllEpochGroupData(ctx any) *g
 }
 
 // GetEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (types2.EpochGroupData, bool) {
+func (m *MockEpochGroupDataKeeper) GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (types2.EpochGroupData, bool) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetEpochGroupData", ctx, pocStartBlockHeight)
+	ret := m.ctrl.Call(m, "GetEpochGroupData", ctx, pocStartBlockHeight, modelId)
 	ret0, _ := ret[0].(types2.EpochGroupData)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
 // GetEpochGroupData indicates an expected call of GetEpochGroupData.
-func (mr *MockEpochGroupDataKeeperMockRecorder) GetEpochGroupData(ctx, pocStartBlockHeight any) *gomock.Call {
+func (mr *MockEpochGroupDataKeeperMockRecorder) GetEpochGroupData(ctx, pocStartBlockHeight, modelId any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).GetEpochGroupData), ctx, pocStartBlockHeight)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).GetEpochGroupData), ctx, pocStartBlockHeight, modelId)
 }
 
 // RemoveEpochGroupData mocks base method.
-func (m *MockEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) {
+func (m *MockEpochGroupDataKeeper) RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "RemoveEpochGroupData", ctx, pocStartBlockHeight)
+	m.ctrl.Call(m, "RemoveEpochGroupData", ctx, pocStartBlockHeight, modelId)
 }
 
 // RemoveEpochGroupData indicates an expected call of RemoveEpochGroupData.
-func (mr *MockEpochGroupDataKeeperMockRecorder) RemoveEpochGroupData(ctx, pocStartBlockHeight any) *gomock.Call {
+func (mr *MockEpochGroupDataKeeperMockRecorder) RemoveEpochGroupData(ctx, pocStartBlockHeight, modelId any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).RemoveEpochGroupData), ctx, pocStartBlockHeight)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveEpochGroupData", reflect.TypeOf((*MockEpochGroupDataKeeper)(nil).RemoveEpochGroupData), ctx, pocStartBlockHeight, modelId)
 }
 
 // SetEpochGroupData mocks base method.

@@ -107,17 +107,12 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	if err != nil {
 		return fmt.Errorf("failed to create worker key: %w", err)
 	}
-	uniqueModelsList, err := getUniqueModels(nodeBroker)
-	if err != nil {
-		return fmt.Errorf("failed to get unique models: %w", err)
-	}
 
 	publicUrl := configManager.GetApiConfig().PublicUrl
-	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl, "Models", uniqueModelsList)
+	logging.Info("Registering genesis participant", types.Participants, "validatorKey", validatorKeyString, "Url", publicUrl)
 
 	msg := &inference.MsgSubmitNewParticipant{
 		Url:          publicUrl,
-		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		WorkerKey:    workerPublicKey,
 	}
@@ -168,7 +163,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	requestBody := public.SubmitUnfundedNewParticipantDto{
 		Address:      address,
 		Url:          configManager.GetApiConfig().PublicUrl,
-		Models:       uniqueModelsList,
 		ValidatorKey: validatorKeyString,
 		PubKey:       pubKeyString,
 		WorkerKey:    workerKey,
@@ -176,16 +170,14 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	requestUrl, err := url.JoinPath(configManager.GetChainNodeConfig().SeedApiUrl, "/v1/participants")
 	if err != nil {
-		return fmt.Errorf("Failed to join URL path: %w", err)
+		return fmt.Errorf("failed to join URL path: %w", err)
 	}
 
-	// Serialize request body to JSON
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	// Create the POST request
 	req, err := http.NewRequest(http.MethodPost, requestUrl, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -194,7 +186,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 
 	logging.Info("Sending request to seed node", types.Participants, "url", requestUrl)
 
-	// Send the request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -202,11 +193,9 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	}
 	defer resp.Body.Close()
 
-	// Handle the response
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("received non-OK response: %s", resp.Status)
 	}
-
 	return nil
 }
 

@@ -46,6 +46,7 @@ func (k Keeper) EpochGroupData(ctx context.Context, req *types.QueryGetEpochGrou
 	val, found := k.GetEpochGroupData(
 		ctx,
 		req.PocStartBlockHeight,
+		req.ModelId,
 	)
 	if !found {
 		return nil, status.Error(codes.NotFound, "not found")

@@ -90,7 +90,7 @@ import (
 )
 
 const (
-	AccountAddressPrefix = "cosmos"
+	AccountAddressPrefix = "gonka"
 	Name                 = "inference"
 )
 

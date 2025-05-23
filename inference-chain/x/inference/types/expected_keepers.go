@@ -76,6 +76,7 @@ type ValidatorSet interface {
 
 type StakingKeeper interface {
 	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types.Validator, error)
+	GetAllValidators(ctx context.Context) (validators []types.Validator, err error)
 }
 
 type ParticipantKeeper interface {
@@ -89,7 +90,7 @@ type ParticipantKeeper interface {
 
 type EpochGroupDataKeeper interface {
 	SetEpochGroupData(ctx context.Context, epochGroupData EpochGroupData)
-	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64) (val EpochGroupData, found bool)
-	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64)
+	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)
+	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string)
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
 }

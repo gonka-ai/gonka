@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "mlnode"
+version = "0.1.0"
+description = "MLNode"
+authors = [
+    "Gleb Morgachev <gleb.morgachev@productscience.ai>",
+    "Tamaz Gadaev <tamaz@productscience.ai>",
+    "Egor Shulgin <egor.shulgin@productscience.ai>"
+]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+mlnode-common = {path = "packages/common", develop = true}
+mlnode-pow = {path = "packages/pow", develop = true}
+mlnode-train = {path = "packages/train", develop = true}
+mlnode-api = {path = "packages/api", develop = true}
+benchmarks = {path = "packages/benchmarks", develop = true}
+
+pytest = "^7.4.3"
+pytest-timeout = "^2.3.1"
+pytest-asyncio = "^0.23.1"
+requests = "^2.31.0"
+
+[build-system]
+requires = [
+    "poetry-core",
+    "setuptools>=42",
+    "wheel",
+]
+build-backend = "setuptools.build_meta"

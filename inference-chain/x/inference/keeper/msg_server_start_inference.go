@@ -12,8 +12,13 @@ const DefaultMaxTokens = 5000
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	k.LogInfo("StartInference", types.Inferences, "inferenceId", msg.InferenceId, "creator", msg.Creator, "requestedBy", msg.RequestedBy, "model", msg.Model)
-	_, found := k.GetInference(ctx, msg.InferenceId)
-	if found {
+
+	existingInference, found := k.GetInference(ctx, msg.InferenceId)
+	// If the inference already exists, it might be because FinishInference came before StartInference
+	// In that case, we need to update the existing inference record with the start information
+	if found && existingInference.Status != types.InferenceStatus_FINISHED {
+		// If the inference exists and is not in FINISHED state (which would indicate FinishInference came first),
+		// then it's a duplicate StartInference, which is an error
 		return nil, sdkerrors.Wrap(types.ErrInferenceIdExists, msg.InferenceId)
 	}
 
@@ -27,26 +32,67 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy)
 	}
 
-	inference := types.Inference{
-		Index:               msg.InferenceId,
-		InferenceId:         msg.InferenceId,
-		PromptHash:          msg.PromptHash,
-		PromptPayload:       msg.PromptPayload,
-		RequestedBy:         msg.RequestedBy,
-		Status:              types.InferenceStatus_STARTED,
-		Model:               msg.Model,
-		StartBlockHeight:    ctx.BlockHeight(),
-		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
-		// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-		MaxTokens:   DefaultMaxTokens,
-		AssignedTo:  msg.AssignedTo,
-		NodeVersion: msg.NodeVersion,
+	var inference types.Inference
+	if existingInference.Status == types.InferenceStatus_FINISHED {
+		// If the inference exists and is in FINISHED state, it means FinishInference came first
+		// Update the existing inference with the start information, but keep the finish information
+		k.LogInfo("StartInference received after FinishInference", types.Inferences, "inferenceId", msg.InferenceId)
+		inference = existingInference
+		inference.PromptHash = msg.PromptHash
+		inference.PromptPayload = msg.PromptPayload
+		inference.RequestedBy = msg.RequestedBy
+		inference.Model = msg.Model
+		inference.StartBlockHeight = ctx.BlockHeight()
+		inference.StartBlockTimestamp = ctx.BlockTime().UnixMilli()
+		inference.MaxTokens = DefaultMaxTokens
+		inference.AssignedTo = msg.AssignedTo
+		inference.NodeVersion = msg.NodeVersion
+	} else {
+		// Normal case: StartInference comes first
+		inference = types.Inference{
+			Index:               msg.InferenceId,
+			InferenceId:         msg.InferenceId,
+			PromptHash:          msg.PromptHash,
+			PromptPayload:       msg.PromptPayload,
+			RequestedBy:         msg.RequestedBy,
+			Status:              types.InferenceStatus_STARTED,
+			Model:               msg.Model,
+			StartBlockHeight:    ctx.BlockHeight(),
+			StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
+			// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
+			MaxTokens:   DefaultMaxTokens,
+			AssignedTo:  msg.AssignedTo,
+			NodeVersion: msg.NodeVersion,
+		}
 	}
-	escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
-	if err != nil {
-		return nil, err
+
+	// Only put payment in escrow if it hasn't been done already
+	// (if FinishInference came first, we'll need to do this now)
+	if inference.EscrowAmount == 0 {
+		// If StartInference happens after FinishInference, we need to use the actual token counts
+		// for the escrow amount calculation, not the MaxTokens amount
+		if inference.Status == types.InferenceStatus_FINISHED {
+			// We already have the actual token counts from FinishInference
+			// Make sure ActualCost is calculated based on those token counts
+			if inference.ActualCost == 0 {
+				inference.ActualCost = CalculateCost(inference)
+			}
+			// Use the actual cost for escrow
+			escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
+			if err != nil {
+				return nil, err
+			}
+			inference.EscrowAmount = escrowAmount
+		} else {
+			// Normal case: StartInference comes first
+			escrowAmount, err := k.PutPaymentInEscrow(ctx, &inference)
+			if err != nil {
+				return nil, err
+			}
+			inference.EscrowAmount = escrowAmount
+		}
 	}
-	inference.EscrowAmount = escrowAmount
+
 	k.SetInference(ctx, inference)
 	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
 	k.SetInferenceTimeout(ctx, types.InferenceTimeout{

@@ -5,7 +5,6 @@ import (
 	"context"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
-	utils2 "decentralized-api/internal/utils"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 )
 
 func (s *Server) postChat(ctx echo.Context) error {
@@ -166,13 +164,13 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	proxyResponse(resp, w, true, responseProcessor)
 
-	responseBodyBytes, err := responseProcessor.GetResponseBytes()
-	if err != nil {
-		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
-		return nil
+	jsonOrStreamedResponse, err := responseProcessor.GetResponse()
+	if err != nil || jsonOrStreamedResponse == nil {
+		logging.Error("Failed to get response from inference node", types.Inferences, "error", err)
+		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, responseBodyBytes, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
+	err = s.sendInferenceTransaction(request.InferenceId, *jsonOrStreamedResponse, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -197,26 +195,47 @@ func (s *Server) getExecutorForRequest(ctx context.Context, model string) (*Exec
 	}, nil
 }
 
-func (s *Server) sendInferenceTransaction(inferenceId string, responseBodyBytes []byte, modifiedRequestBodyBytes []byte, accountName string) error {
-	hash, response, err := utils2.GetResponseHash(responseBodyBytes)
+func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.JsonOrStreamedResponse, modifiedRequestBodyBytes []byte, accountName string) error {
+	promptHash, promptPayload, err := getPromptHash(modifiedRequestBodyBytes)
 	if err != nil {
 		return err
 	}
 
-	promptHash, promptPayload, err := getPromptHash(modifiedRequestBodyBytes)
+	responseHash, err := response.GetHash()
+	if err != nil || responseHash == "" {
+		logging.Error("Failed to get responseHash from response", types.Inferences, "error", err)
+		return err
+	}
+	model, err := response.GetModel()
+	if err != nil || model == "" {
+		logging.Error("Failed to get model from response", types.Inferences, "error", err)
+		return err
+	}
+	id, err := response.GetInferenceId()
+	if err != nil || id == "" {
+		logging.Error("Failed to get id from response", types.Inferences, "error", err)
+		return err
+	}
+	usage, err := response.GetUsage()
 	if err != nil {
+		logging.Error("Failed to get usage from response", types.Inferences, "error", err)
+		return err
+	}
+	bodyBytes, err := response.GetBodyBytes()
+	if err != nil || bodyBytes == nil {
+		logging.Error("Failed to get body bytes from response", types.Inferences, "error", err)
 		return err
 	}
 
 	transaction := InferenceTransaction{
 		PromptHash:           promptHash,
 		PromptPayload:        promptPayload,
-		ResponseHash:         hash,
-		ResponsePayload:      string(responseBodyBytes),
-		PromptTokenCount:     response.Usage.PromptTokens,
-		CompletionTokenCount: response.Usage.CompletionTokens,
-		Model:                response.Model,
-		Id:                   response.ID,
+		ResponseHash:         responseHash,
+		ResponsePayload:      string(bodyBytes),
+		PromptTokenCount:     usage.PromptTokens,
+		CompletionTokenCount: usage.CompletionTokens,
+		Model:                model,
+		Id:                   id,
 	}
 
 	if s.recorder != nil {
@@ -246,18 +265,13 @@ func (s *Server) createInferenceFinishedTransaction(id string, transaction Infer
 		ExecutedBy:           accountName,
 	}
 
-	// Submit to the blockchain effectively AFTER we've served the request. Speed before certainty.
-	go func() {
-		// PRTODO: delete me and probably introduce retries if FinishInference returns not found
-		time.Sleep(10 * time.Second)
-		logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
-		err := s.recorder.FinishInference(message)
-		if err != nil {
-			logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
-		} else {
-			logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", id)
-		}
-	}()
+	logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
+	err := s.recorder.FinishInference(message)
+	if err != nil {
+		logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
+	} else {
+		logging.Debug("Submitted MsgFinishInference", types.Inferences, "inferenceId", id)
+	}
 }
 
 func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string) (*inference.MsgStartInference, error) {

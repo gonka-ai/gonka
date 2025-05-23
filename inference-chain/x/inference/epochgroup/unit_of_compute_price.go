@@ -13,7 +13,7 @@ type weightedProposal struct {
 }
 
 func (eg *EpochGroup) ComputeUnitOfComputePrice(ctx context.Context, proposals []*types.UnitOfComputePriceProposal, defaultProposal uint64) (uint64, error) {
-	members, err := eg.getGroupMembers(ctx)
+	members, err := eg.GetGroupMembers(ctx)
 	eg.Logger.LogInfo("unitOfCompute: ", types.Pricing, "len(members)", len(members))
 	if err != nil {
 		return 0, err

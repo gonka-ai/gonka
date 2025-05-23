@@ -13,6 +13,7 @@ import java.time.Instant
 data class ApplicationCLI(
     val containerId: String,
     override val config: ApplicationConfig,
+    val logOutput: LogOutput
 ) : HasConfig, Closeable {
     private val dockerClient = DockerClientBuilder.getInstance()
         .build()
@@ -119,16 +120,19 @@ data class ApplicationCLI(
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long) {
+    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
         wrapLog("waitForMinimumBlock", false) {
-            waitForState({ it.syncInfo.latestBlockHeight >= minBlockHeight }, "block height $minBlockHeight")
+            waitForState(
+                { it.syncInfo.latestBlockHeight >= minBlockHeight },
+                "$waitingFor:block height $minBlockHeight"
+            )
         }
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
         wrapLog("waitForNextBlock", false) {
             val currentState = getStatus()
-            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait)
+            waitForMinimumBlock(currentState.syncInfo.latestBlockHeight + blocksToWait, "$blocksToWait blocks")
         }
     }
 
@@ -187,8 +191,20 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "bank", "balance", address, denom))
     }
 
+    fun getGovParams(): GovState = wrapLog("getGovParams", false) {
+        execAndParse(listOf("query", "gov", "params"))
+    }
+
     fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
         execAndParse(listOf("query", "inference", "params"))
+    }
+
+    fun getValidators(): ValidatorsResponse = wrapLog("getValidators", false) {
+        execAndParse(listOf("query", "staking", "validators"))
+    }
+
+    fun getCometValidators(): CometValidatorsResponse = wrapLog("getCometValidators", false) {
+        execAndParse(listOf("query", "comet-validator-set"))
     }
 
     data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
@@ -242,7 +258,7 @@ data class ApplicationCLI(
         execResponse.awaitCompletion()
         Logger.trace("Command complete: output={}", output.output)
         if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
-            val error = output.output.last().lines().last()
+            val error = output.output.joinToString(separator = "").lines().last { it.isNotBlank() }
             throw getExecException(error)
         }
         return output.output
@@ -279,7 +295,7 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "tx", "--type=hash", txHash))
     }
 
-    fun writeFileToContainer(content: String, fileName: String) {
+    fun writeFileToContainer(content: String, fileName: String) = wrapLog("writeFileToContainer", false) {
         try {
             // Write content using echo command
             val writeCommand = listOf(
@@ -336,6 +352,18 @@ data class ApplicationCLI(
             }
         }
         error("Transaction not processed after $maxWait attempts")
+    }
+
+    fun getValidatorAddress(): String {
+        return exec(listOf(config.execName, "comet", "show-address"))[0]
+    }
+
+    fun getValidatorInfo(): Pubkey2 = wrapLog("getValidatorInfo", infoLevel = false) {
+        execAndParse(listOf("comet", "show-validator"), includeOutputFlag = false)
+    }
+
+    fun getGovernanceProposals(): GovernanceProposals = wrapLog("getGovernanceProposals", infoLevel = false) {
+        execAndParse(listOf("query", "gov", "proposals"))
     }
 
 }
