@@ -264,10 +264,12 @@ message MsgBridgeExchange {
   string originChain            = 2;  // e.g., "ethereum"
   string contractAddress        = 3;  // original chain smart contract address
   string ownerAddress           = 4;  // token owner's address on the origin chain
-  string amount                 = 5;  // amount of tokens being bridged
-  string blockNumber            = 6;  // block number where the transaction occurred
-  string receiptIndex           = 7;  // index of the transaction receipt in the block
-  string receiptsRoot           = 8;  // merkle root of receipts trie for transaction verification
+  string ownerPubKey            = 5;  // public key of the token owner
+  string amount                 = 6;  // amount of tokens being bridged
+  string blockNumber            = 7;  // block number where the transaction occurred
+  string receiptIndex           = 8;  // index of the transaction receipt in the block
+  string receiptsRoot           = 9;  // merkle root of receipts trie for transaction verification
+  
 }
 
 message MsgBridgeExchangeResponse {

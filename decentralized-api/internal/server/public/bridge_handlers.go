@@ -2,6 +2,8 @@ package public
 
 import (
 	"decentralized-api/cosmosclient"
+	cosmos_client "decentralized-api/cosmosclient"
+
 	"log/slog"
 	"sort"
 	"strconv"
@@ -164,22 +166,32 @@ func (q *BridgeQueue) processReceipt(receipt BridgeReceipt, block BridgeBlock) {
 		"chain", block.OriginChain,
 		"contract", receipt.ContractAddress,
 		"owner", receipt.OwnerAddress,
+		"publicKey", receipt.OwnerPubKey,
 		"amount", receipt.Amount,
 		"blockNumber", block.BlockNumber,
 		"receiptIndex", receipt.ReceiptIndex)
+
+	// Derive Cosmos address from public key
+	cosmosAddress, err := cosmos_client.PubKeyToAddress(receipt.OwnerPubKey)
+	if err != nil {
+		slog.Error("Failed to derive Cosmos address from public key",
+			"error", err,
+			"publicKey", receipt.OwnerPubKey)
+		return
+	}
 
 	msg := &types.MsgBridgeExchange{
 		Validator:       q.recorder.GetAddress(),
 		OriginChain:     block.OriginChain,
 		ContractAddress: receipt.ContractAddress,
-		OwnerAddress:    receipt.OwnerAddress,
+		OwnerAddress:    cosmosAddress,
 		Amount:          receipt.Amount,
 		BlockNumber:     block.BlockNumber,
 		ReceiptIndex:    receipt.ReceiptIndex,
 		ReceiptsRoot:    block.ReceiptsRoot,
 	}
 
-	err := q.recorder.BridgeExchange(msg)
+	err = q.recorder.BridgeExchange(msg)
 	if err != nil {
 		slog.Error("Error processing bridge exchange",
 			"error", err,

@@ -39,7 +39,37 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 				BlockNumber:     "12345",
 				ReceiptIndex:    "0",
 				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
+				OwnerPubKey:     "0x1234567890123456789012345678901234567890123456789012345678901234",
 			},
+		},
+		{
+			name: "missing public key",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0x1234567890123456789012345678901234567890",
+				OwnerAddress:    "0x1234567890123456789012345678901234567890",
+				Amount:          "1000000",
+				BlockNumber:     "12345",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		},
+		{
+			name: "invalid public key format",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0x1234567890123456789012345678901234567890",
+				OwnerAddress:    "0x1234567890123456789012345678901234567890",
+				Amount:          "1000000",
+				BlockNumber:     "12345",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0x1234567890123456789012345678901234567890123456789012345678901234",
+				OwnerPubKey:     "invalid_pubkey",
+			},
+			err: sdkerrors.ErrInvalidRequest,
 		},
 	}
 	for _, tt := range tests {
