@@ -74,13 +74,13 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	}
 	el.ws = ws
 
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
-	subscribeToEvents(el.ws, "tm.event='NewBlock'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
-	subscribeToEvents(el.ws, "tm.event='Tx'")
+	subscribeToEvents(el.ws, 1, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
+	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(el.ws, 5, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
+	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, 7, "tm.event='Tx'")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
