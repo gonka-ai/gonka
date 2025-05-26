@@ -38,6 +38,9 @@ RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
 ################################################################################
 FROM alpine:3.18 AS final
 
+ARG GOOS
+ARG GOARCH
+
 RUN apk update && \
     apk add --no-cache sed ca-certificates && \
     rm -rf /var/cache/apk/*
@@ -51,12 +54,13 @@ ENV DAEMON_HOME=/root/.inference
 ENV DAEMON_NAME=inferenced
 ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
 ENV DAEMON_RESTART_AFTER_UPGRADE=true
+ENV DAEMON_DOWNLOAD_RETRIES=-1
 
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/init-docker.sh /root/init-docker.sh
 COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
-COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
+COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
 
