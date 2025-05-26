@@ -60,7 +60,7 @@ class ValidationTests : TestermintTest() {
             generateSequence { getInferenceResult(genesis) }
                 .filter {
                     Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                    it.executorBefore.id == oddPair.node.addresss
+                    it.executorBefore.id == oddPair.node.getAddress()
                 }
                 .take(5)
                 .toList()
@@ -82,7 +82,7 @@ class ValidationTests : TestermintTest() {
         logSection("Getting invalid invalidation")
         val invalidResult =
             generateSequence { getInferenceResult(genesis) }
-                .first { it.executorBefore.id != oddPair.node.addresss }
+                .first { it.executorBefore.id != oddPair.node.getAddress() }
         // The oddPair will mark it as invalid and force a vote, which should fail (valid)
 
         Logger.warn("Got invalid result, waiting for validation.")
@@ -139,10 +139,10 @@ fun getInferenceValidationState(
             .take(10)
             .firstOrNull {
                 Logger.warn("Got result: ${it.executorBefore.id} ${it.executorAfter.id}")
-                it.executorBefore.id == oddPair.node.addresss
+                it.executorBefore.id == oddPair.node.getAddress()
             }
     if (invalidResult == null) {
-        error("Did not get result from invalid pair(${oddPair.node.addresss}) in time")
+        error("Did not get result from invalid pair(${oddPair.node.getAddress()}) in time")
     }
 
     Logger.warn(
