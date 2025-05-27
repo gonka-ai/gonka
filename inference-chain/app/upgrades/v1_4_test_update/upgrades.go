@@ -1,4 +1,4 @@
-package v0526test
+package v1_4_test_update
 
 import (
 	"context"
@@ -12,6 +12,7 @@ func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, vm module.VersionMap) (module.VersionMap, error) {
+		fmt.Printf("Update handler for %s", UpgradeName)
 
 		for moduleName, version := range vm {
 			fmt.Printf("Module: %s, Version: %d\n", moduleName, version)
