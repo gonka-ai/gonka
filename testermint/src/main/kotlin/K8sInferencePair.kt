@@ -3,6 +3,7 @@ package com.productscience
 import io.kubernetes.client.PortForward
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.Configuration
+import io.kubernetes.client.openapi.apis.CoordinationV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.Streams
@@ -43,42 +44,60 @@ private val attachedLogs = ConcurrentHashMap<String, LogOutput>()
 
 /**
  * Gets Kubernetes inference pairs by finding worker nodes and their pods.
+ * Returns a K8sInferencePairsWithLease instance that holds both the pairs and the lease.
+ * The lease is held until the returned instance is closed.
  *
  * @param config The application configuration
- * @return A list of LocalInferencePair objects representing the Kubernetes inference pairs
+ * @param leaseTimeoutSeconds The timeout for the lease in seconds (default: 30)
+ * @return A K8sInferencePairsWithLease instance that holds the pairs and the lease
  */
-fun getK8sInferencePairs(config: ApplicationConfig): List<LocalInferencePair> {
+fun getK8sInferencePairs(
+    config: ApplicationConfig,
+    leaseTimeoutSeconds: Int = 30
+): K8sInferencePairsWithLease {
     Logger.info("Getting Kubernetes inference pairs")
+    val leaseName = "t8t-tests"
+    val namespace = "default"
+    val coreV1Api = initializeKubernetesClient()
+    val coordinationV1Api = CoordinationV1Api()
+
+    // Create the K8sInferencePairsWithLease instance early to use its lease methods
+    val k8sPairsWithLease = K8sInferencePairsWithLease(
+        pairs = emptyList(), // Will be populated later
+        coordinationV1Api = coordinationV1Api,
+        namespace = namespace,
+        leaseName = leaseName
+    )
 
     try {
-        // Initialize Kubernetes client
-        val coreV1Api = initializeKubernetesClient()
+        val leaseSuccess = k8sPairsWithLease.getOrWaitForLease(10) // Wait for up to 10 minutes
+        check(leaseSuccess) { "Failed to acquire lease after waiting 10 minutes" }
 
-        // Get all namespaces
         val namespaces = coreV1Api.listNamespace(null, null, null, null, null, null, null, null, null, null)
         Logger.info("Found ${namespaces.items.size} namespaces")
 
         val inferencePairs = mutableListOf<LocalInferencePair>()
-
-        // Process genesis namespace
         processGenesisNamespace(coreV1Api, namespaces, inferencePairs, config)
-
-        // Process join namespaces
         processJoinNamespaces(coreV1Api, namespaces, inferencePairs, config)
 
         Logger.info("Found ${inferencePairs.size} Kubernetes inference pairs, waiting for ports to settle")
         Thread.sleep(Duration.ofSeconds(10))
-        return inferencePairs
+
+        k8sPairsWithLease.pairs = inferencePairs
+        return k8sPairsWithLease
 
     } catch (e: ApiException) {
-        Logger.error("Kubernetes API error: ${e.message}")
-        throw IllegalStateException("Failed to get Kubernetes inference pairs", e)
+        k8sPairsWithLease.releaseLeaseIfAcquired()
+        Logger.error(e, "Kubernetes API error")
+        throw e
     } catch (e: IOException) {
+        k8sPairsWithLease.releaseLeaseIfAcquired()
         Logger.error("IO error: ${e.message}")
         throw IllegalStateException("Failed to get Kubernetes inference pairs", e)
     } catch (e: Exception) {
-        Logger.error("Unexpected error: ${e.message}")
-        throw IllegalStateException("Failed to get Kubernetes inference pairs", e)
+        k8sPairsWithLease.releaseLeaseIfAcquired()
+        Logger.error(e, "Error getting Kubernetes")
+        throw e
     }
 }
 

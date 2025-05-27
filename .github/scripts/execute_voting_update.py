@@ -184,7 +184,7 @@ class Node:
         command.extend([
             self.node_pod, 
             "--",
-            ".inference/cosmovisor/current/bin/inferenced"
+            "inferenced"
         ])
 
         # Add the provided arguments
@@ -195,6 +195,235 @@ class Node:
 
         # Return the stdout as a string
         return result.stdout.strip() if result.stdout else ""
+
+    def exec_inferenced_with_retry(self, args):
+        """
+        Execute the inferenced command on the node_pod using kubectl exec,
+        but don't exit on error - instead, propagate the exception for retry logic to handle.
+
+        Args:
+            args (list): List of arguments to pass to the inferenced command.
+
+        Returns:
+            str: The stdout output from the command execution.
+
+        Raises:
+            subprocess.CalledProcessError: If the command execution fails.
+            FileNotFoundError: If the command is not found.
+        """
+        if not self.node_pod:
+            raise ValueError("No node_pod specified for this Node")
+
+        # Construct the kubectl exec command
+        command = ["kubectl", "exec"]
+
+        # Add namespace if available
+        if self.node_pod_namespace:
+            command.extend(["-n", self.node_pod_namespace])
+
+        # Add pod name and command
+        command.extend([
+            self.node_pod, 
+            "--",
+            "inferenced"
+        ])
+
+        # Add the provided arguments
+        command.extend(args)
+
+        # Execute the command directly with subprocess.run
+        print(f"Executing: {' '.join(command)}")
+        process = subprocess.run(command, check=True, capture_output=True, text=True)
+
+        # Return the stdout as a string
+        return process.stdout.strip() if process.stdout else ""
+
+    def get_keys(self):
+        """
+        Get the list of keys from the node.
+
+        Returns:
+            list: A list of key objects.
+        """
+        output = self.exec_inferenced(["keys", "list", "--output", "json"])
+        return json.loads(output)
+
+    def generate_upgrade_proposal(self, upgrade_name, upgrade_height, upgrade_info, title=None, summary="", deposit="100000nicoin", from_address=None, chain_id="prod-sim"):
+        """
+        Generate an upgrade proposal transaction.
+
+        Args:
+            upgrade_name (str): The name of the upgrade.
+            upgrade_height (int): The block height at which the upgrade should occur.
+            upgrade_info (dict): Information about the upgrade, including binaries and versions.
+            title (str, optional): The title of the proposal. Defaults to upgrade_name if not provided.
+            summary (str, optional): A summary of the proposal.
+            deposit (str, optional): The deposit amount for the proposal.
+            from_address (str, optional): The address to use for the proposal. If not provided, uses the first key.
+            chain_id (str, optional): The chain ID to use for the transaction.
+
+        Returns:
+            dict: The generated transaction.
+        """
+        if title is None:
+            title = upgrade_name
+
+        # If from_address is not provided, use the first key
+        if from_address is None:
+            keys = self.get_keys()
+            if not keys:
+                raise ValueError("No keys found on the node")
+            from_address = keys[0]["address"]
+
+        # Convert upgrade_info to a JSON string with minimal output
+        upgrade_info_str = json.dumps(upgrade_info, separators=(',', ':'))
+        print(f"Upgrade info: {upgrade_info_str}")
+        # Build the command
+        cmd = [
+            "tx", "upgrade", "software-upgrade", upgrade_name,
+            "--title", title,
+            "--upgrade-height", str(upgrade_height),
+            "--upgrade-info", upgrade_info_str,
+            "--summary", summary,
+            "--deposit", deposit,
+            "--from", from_address,
+            "--chain-id", chain_id,
+            "--yes",
+            "--broadcast-mode", "sync",
+            "--output", "json",
+            "--gas", "auto"
+        ]
+
+        # Execute the command
+        output = self.exec_inferenced(cmd)
+
+        # Parse the output as JSON
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            print(f"Error parsing JSON output: {output}")
+            raise
+
+    def submit_transaction(self, transaction):
+        """
+        Submit a transaction to the API.
+
+        Args:
+            transaction (dict): The transaction to submit.
+
+        Returns:
+            dict: The response from the API.
+        """
+        return self.admin_request("admin/v1/tx/send", method="POST", payload=transaction)
+
+    def wait_for_transaction(self, tx_response, max_retries=30, retry_interval=2):
+        """
+        Wait for a transaction to be posted and check its status.
+
+        This method takes the response from sending a transaction (which contains a txhash),
+        then uses the node_pod to query the transaction status until it's ready or max_retries is reached.
+
+        The exec command itself will fail if the transaction is not ready, not just return unparseable output.
+        This method handles both cases - exec failure and unparseable output.
+
+        Args:
+            tx_response (dict): The response from sending a transaction, containing a txhash.
+            max_retries (int, optional): Maximum number of retry attempts. Defaults to 30.
+            retry_interval (int, optional): Time in seconds between retries. Defaults to 2.
+
+        Returns:
+            dict: The transaction details once it's ready, or None if the transaction failed or timed out.
+        """
+        if not tx_response or 'txhash' not in tx_response:
+            print("Error: Invalid transaction response, missing txhash")
+            return None
+
+        txhash = tx_response['txhash']
+        print(f"Waiting for transaction {txhash} to be posted...")
+
+        for attempt in range(max_retries):
+            try:
+                # Query the transaction status using the node_pod with the retry-friendly method
+                cmd = ["query", "tx", "--type=hash", txhash, "--output", "json"]
+                output = self.exec_inferenced_with_retry(cmd)
+
+                # Try to parse the output as JSON
+                try:
+                    tx_details = json.loads(output)
+                    # If we get here, the transaction has been posted successfully
+                    print(f"Transaction {txhash} posted successfully (attempt {attempt+1})")
+                    return tx_details
+                except json.JSONDecodeError:
+                    # If we can't parse the output as JSON, the transaction might not be posted yet
+                    print(f"Transaction {txhash} not yet posted - invalid JSON response (attempt {attempt+1})")
+                    print(f"Raw output: {output}")
+
+            except subprocess.CalledProcessError as e:
+                # Handle the case where the exec command itself fails (expected when TX is not ready)
+                print(f"Transaction {txhash} not yet posted - exec failed (attempt {attempt+1})")
+                if hasattr(e, 'stderr') and e.stderr:
+                    print(f"Error output: {e.stderr}")
+
+            except Exception as e:
+                # Handle any other unexpected errors
+                print(f"Unexpected error checking transaction status (attempt {attempt+1}): {str(e)}")
+
+            # Wait before retrying
+            if attempt < max_retries - 1:
+                print(f"Waiting {retry_interval} seconds before retrying...")
+                time.sleep(retry_interval)
+
+        print(f"Transaction {txhash} not posted after {max_retries} attempts")
+        return None
+
+    def get_upgrade_json(self, upgrade_name, upgrade_height, node_binaries=None, api_binaries=None, node_version="",
+                         title=None, summary="For testing", deposit="500000nicoin", from_address=None):
+        """
+        Submit an upgrade proposal.
+
+        Args:
+            upgrade_name (str): The name of the upgrade.
+            upgrade_height (int): The block height at which the upgrade should occur.
+            node_binaries (dict, optional): Dictionary mapping platform to node binary URLs.
+            api_binaries (dict, optional): Dictionary mapping platform to API binary URLs.
+            node_version (str, optional): The version of the node.
+            title (str, optional): The title of the proposal. Defaults to upgrade_name if not provided.
+            summary (str, optional): A summary of the proposal.
+            deposit (str, optional): The deposit amount for the proposal.
+            from_address (str, optional): The address to use for the proposal. If not provided, uses the first key.
+            chain_id (str, optional): The chain ID to use for the transaction.
+
+        Returns:
+            dict: The response from the API.
+        """
+        # Set default values for binaries if not provided
+        if node_binaries is None:
+            node_binaries = {}
+        if api_binaries is None:
+            api_binaries = {}
+
+        # Create the upgrade info
+        upgrade_info = {
+            "binaries": node_binaries,
+            "api_binaries": api_binaries,
+            "node_version": node_version
+        }
+
+        # Generate and submit the upgrade proposal directly
+        return self.exec_inferenced([
+            "tx", "upgrade", "software-upgrade", upgrade_name,
+            "--title", title or upgrade_name,
+            "--upgrade-height", str(upgrade_height),
+            "--upgrade-info", json.dumps(upgrade_info, separators=(',', ':')),
+            "--summary", summary,
+            "--deposit", deposit,
+            "--from", from_address or self.get_keys()[0]["address"],
+            "--yes",
+            "--broadcast-mode", "sync",
+            "--output", "json",
+            "--gas", "auto",
+            "--generate-only"
+        ])
 
 def run_command(command, **kwargs):
     """Helper function to run a shell command and print its output."""
@@ -393,9 +622,10 @@ def main():
     # Actual voting update logic
     print("--- Performing Voting Update Actions ---")
     print(f"Using Release Tag: {env_vars['release_tag']}")
-
+    return
     # Get worker nodes and their pods
     worker_nodes = get_worker_nodes_with_pods()
+
 
     # Print the results
     print(f"Found {len(worker_nodes)} worker nodes:")
@@ -405,15 +635,59 @@ def main():
         print(f"  Node Pod: {node.node_pod}")
         print(f"  Admin port: localhost:{node.admin_port_local} -> {node.api_pod}:9200")
         print(f"  Public port: localhost:{node.public_port_local} -> {node.api_pod}:9000")
+    time.sleep(10)
 
     first_node = worker_nodes[0]
     print(first_node.exec_inferenced(["version"]))
-    # Example: run_command(["kubectl", "apply", "-f", "your-voting-config.yaml", "--namespace", "your-namespace"])
-    # Example: run_command(["kubectl", "set", "image", "deployment/my-app", f"my-container=your-image:{env_vars['release_tag']}"])
-    # ... add your kubectl commands or further script calls here ...
 
-    print(first_node.admin_request("admin/v1/nodes"))
-    print("--- Voting Update Script (Python) Finished ---")
+    # Example of using the submit_upgrade function
+    if env_vars.get('release_tag') and len(worker_nodes) > 0:
+        print("--- Submitting Upgrade Proposal ---")
+
+        # Example upgrade parameters
+        upgrade_name = f"v{env_vars['release_tag']}"
+        upgrade_height = 60  # Example height, should be determined based on current chain height
+
+        # Example binary URLs
+        node_binaries = {
+            "linux/amd64": f"https://github.com/product-science/race-releases/releases/download/release%2Fv0.1.5/inferenced-amd64.zip?checksum=sha256:cc438e023be7bef75f98a34aaaf184d73196ecbaa4c6c59c8acbbb79d69d1a0b"
+        }
+        api_binaries = {
+            "linux/amd64": f"https://github.com/product-science/race-releases/releases/download/release%2Fv0.1.5/decentralized-api-amd64.zip?checksum=sha256:5611b9bbc6416f30188451f7f49c9d2d93dd497b50c3c1dd29b44e65f40f8841"
+        }
+        print(first_node.admin_request("admin/v1/nodes"))
+
+        # Submit the upgrade proposal
+        try:
+            response = first_node.get_upgrade_json(
+                upgrade_name=upgrade_name,
+                upgrade_height=upgrade_height,
+                node_binaries=node_binaries,
+                api_binaries=api_binaries,
+                node_version="",
+                title=upgrade_name,
+                summary=f"Upgrade to {upgrade_name}",
+                deposit="500000nicoin",
+                from_address="genesis"
+            )
+        except Exception as e:
+            print(f"Error submitting upgrade proposal: {e}")
+
+        response_obj = json.loads(response)
+        print(f"Upgrade proposal prepared, ready to send: {json.dumps(response_obj, indent=2)}")
+
+        # Send the transaction
+        tx_response = first_node.admin_request("admin/v1/tx/send", method="POST", payload=response_obj)
+        print(f"Transaction sent, response: {json.dumps(tx_response, indent=2)}")
+
+        # Wait for the transaction to be posted and get its details
+        tx_details = first_node.wait_for_transaction(tx_response)
+        if tx_details:
+            print(f"Transaction details: {json.dumps(tx_details, indent=2)}")
+        else:
+            print("Failed to get transaction details")
+
+    # print("--- Voting Update Script (Python) Finished ---")
 
 if __name__ == "__main__":
     main()
