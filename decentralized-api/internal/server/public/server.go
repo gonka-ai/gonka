@@ -5,8 +5,12 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/logging"
 	"decentralized-api/training"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/cosmos/cosmos-sdk/version"
 	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 )
 
@@ -60,6 +64,32 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.GET("/version", func(ctx echo.Context) error {
+		cometClient := recorder.NewCometQueryClient()
+		resp, err := cometClient.GetNodeInfo(*recorder.GetContext(), &cmtservice.GetNodeInfoRequest{})
+		if err != nil {
+			logging.Error("Failed to get node info from cosmos node", types.Server, "error", err)
+			return ctx.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "failed to get node info",
+			})
+		}
+		nodeVersion := resp.ApplicationVersion
+
+		return ctx.JSON(http.StatusOK, map[string]any{
+			"api_version": map[string]string{
+				"application_name": version.AppName,
+				"version":          version.Version,
+				"commit":           version.Commit,
+			},
+			"node_version": map[string]string{
+				"application_name": nodeVersion.Name,
+				"version":          nodeVersion.Version,
+				"commit":           nodeVersion.GitCommit,
+			},
+		})
+	})
+
 	return s
 }
 
