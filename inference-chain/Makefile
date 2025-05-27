@@ -13,6 +13,10 @@ ldflags = \
   -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
   -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT)
 
+# Component-specific names
+BINARY_NAME := inferenced
+COMPONENT_SUBDIR := inferenced
+
 GENESIS_OVERRIDES_FILE ?= inference-chain/prod_genesis_overrides.json
 TESTS ?= 0
 TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
@@ -101,6 +105,36 @@ docker-push:
 		@docker push ghcr.io/product-science/inferenced:latest; \
 	fi
 
+# Macro to process upgrade artifacts (copy, zip, checksum, add to urls)
+# Arg: ARCH
+define PROCESS_UPGRADE_ARTIFACT
+    $(eval _P_ARCH := $(1))
+
+    @echo "--- Processing upgrade artifact for inferenced-$(_P_ARCH) ---"
+    @mkdir -p ../public-html/v2/inferenced
+    @echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced-$(_P_ARCH)"
+    @cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-$(_P_ARCH)
+    @echo "--> zipping inferenced-$(_P_ARCH) binary"
+    # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+    @TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-$(_P_ARCH)
+    @echo "--- Verifying $(_P_ARCH) zip file before shasum (pre-zip step for inferenced-$(_P_ARCH)) ---"
+    @ls -l ../public-html/v2/inferenced/inferenced-$(_P_ARCH)
+    @zip -X -j ../public-html/v2/inferenced/inferenced-$(_P_ARCH).zip ../public-html/v2/inferenced/inferenced-$(_P_ARCH)
+    @echo "--- Verifying $(_P_ARCH) zip file existence and size (post-zip for inferenced-$(_P_ARCH)) ---"
+    @ls -l ../public-html/v2/inferenced/inferenced-$(_P_ARCH).zip
+    @echo "--> generating shasum for inferenced-$(_P_ARCH).zip"
+    @echo "--- Raw shasum output for $(_P_ARCH) (inferenced-$(_P_ARCH).zip) (before cut) ---"
+    @shasum -a 256 ../public-html/v2/inferenced/inferenced-$(_P_ARCH).zip
+
+    $(eval _TMP_SHA256 := $(shell shasum -a 256 ../public-html/v2/inferenced/inferenced-$(_P_ARCH).zip 2>/dev/null | cut -d' ' -f1))
+
+    @echo "$(_P_ARCH) SHA256 for inferenced: $(_TMP_SHA256)"
+    @echo "--> appending to ../public-html/v2/checksums.txt"
+    @echo "inferenced-$(_P_ARCH).zip $(_TMP_SHA256)" >> ../public-html/v2/checksums.txt
+    @echo "--> appending to ../public-html/v2/urls.txt"
+    @echo "https://github.com/product-science/race-releases/releases/download/release%2F$(VERSION)/inferenced-$(_P_ARCH).zip?checksum=sha256:$(_TMP_SHA256)" >> ../public-html/v2/urls.txt
+endef
+
 build-for-upgrade:
 	$(eval PLATFORM=linux/amd64)
 	$(eval GOOS=linux)
@@ -110,16 +144,7 @@ build-for-upgrade:
 	@echo "--> clearing out ../public-html/v2/inferenced"
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
-	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-amd64
-	@echo "--> zipping inferenced binary"
-# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
-	@zip -X -j ../public-html/v2/inferenced/inferenced-amd64.zip ../public-html/v2/inferenced/inferenced-amd64
-	@echo "--> generating shasum for inferenced-amd64.zip"
-	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
-	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
+	$(call PROCESS_UPGRADE_ARTIFACT,amd64)
 
 build-for-upgrade-arm:
 	$(eval PLATFORM=linux/arm64)
@@ -127,17 +152,8 @@ build-for-upgrade-arm:
 	$(eval GOARCH=arm64)
 	$(eval DOCKER_FILE=Dockerfile)
 	$(DOCKER_BUILD_UPGRADE)
-	@mkdir -p ../public-html/v2/inferenced
-	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-arm64
-	@echo "--> zipping inferenced binary"
-# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64
-	@zip -X -j ../public-html/v2/inferenced/inferenced-arm64.zip ../public-html/v2/inferenced/inferenced-arm64
-	@echo "--> generating shasum for inferenced-arm64.zip"
-	@shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip
-	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-arm64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip)" >> ../public-html/v2/checksums.txt
+	# Note: No clearing of COMPONENT_SUBDIR for arm, assume build-for-upgrade already cleared it
+	$(call PROCESS_UPGRADE_ARTIFACT,arm64)
 
 #################################################
 # CROSS-COMPILATION SECTION
