@@ -110,6 +110,7 @@ local-build: api-local-build node-local-build api-test node-test
 
 build-for-upgrade:
 	@rm public-html/v2/checksums.txt || true
+	@rm public-html/v2/urls.txt || true
 	@make -C inference-chain build-for-upgrade
 	@make -C inference-chain build-for-upgrade-arm
 	@make -C decentralized-api build-for-upgrade
