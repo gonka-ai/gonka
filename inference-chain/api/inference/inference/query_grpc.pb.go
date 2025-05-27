@@ -8,6 +8,7 @@ package inference
 
 import (
 	context "context"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -140,6 +141,13 @@ type queryClient struct {
 
 func NewQueryClient(cc grpc.ClientConnInterface) QueryClient {
 	return &queryClient{cc}
+}
+
+func NewQueryClient2() {
+	client := cmtservice.NewServiceClient()
+	client.GetNodeInfo()
+	client := tmservice.NewServiceClient(icc.Client.Context())
+
 }
 
 func (c *queryClient) Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error) {
