@@ -125,6 +125,7 @@ jobs:
       - name: Run k8sUpgrade Test
         env:
           RELEASE_TAG: ${{ steps.release_info.outputs.release_tag }}
+          KUBECONFIG: ${{ env.KUBECONFIG }}
         run: |
           cd testermint
           sudo ./gradlew test --tests "KubernetesTests.k8sUpgrade"
