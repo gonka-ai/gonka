@@ -9,6 +9,7 @@ import io.kubernetes.client.util.Config
 import io.kubernetes.client.util.Streams
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
+import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.ServerSocket
@@ -107,9 +108,108 @@ fun getK8sInferencePairs(
  * @return The CoreV1Api client
  */
 private fun initializeKubernetesClient(): CoreV1Api {
-    val client = Config.defaultClient()
-    Configuration.setDefaultApiClient(client)
-    return CoreV1Api()
+    Logger.info("Initializing Kubernetes client")
+    
+    // Log environment variables
+    val kubeconfig = System.getenv("KUBECONFIG")
+    val homeDir = System.getProperty("user.home")
+    val defaultKubeConfigPath = "$homeDir/.kube/config"
+    Logger.info("Environment variables:")
+    Logger.info("  KUBECONFIG: ${kubeconfig ?: "not set"}")
+    Logger.info("  HOME directory: $homeDir")
+    
+    // Check if kubeconfig file exists
+    val kubeConfigFile = if (kubeconfig != null) {
+        File(kubeconfig)
+    } else {
+        File(defaultKubeConfigPath)
+    }
+    
+    Logger.info("Checking kubeconfig file: ${kubeConfigFile.absolutePath}")
+    if (kubeConfigFile.exists()) {
+        Logger.info("  Kubeconfig file exists: Yes")
+        Logger.info("  Kubeconfig file size: ${kubeConfigFile.length()} bytes")
+        Logger.info("  Kubeconfig file readable: ${kubeConfigFile.canRead()}")
+        Logger.info("  Kubeconfig file permissions: ${kubeConfigFile.getFilePermissionsString()}")
+        
+        // Log first few lines of the kubeconfig file (without sensitive data)
+        try {
+            val firstLines = kubeConfigFile.readLines().take(5).joinToString("\n") { line ->
+                // Mask sensitive data
+                if (line.contains("token:") || line.contains("password:") || line.contains("secret:")) {
+                    val parts = line.split(":")
+                    "${parts[0]}: [REDACTED]"
+                } else {
+                    line
+                }
+            }
+            Logger.info("  Kubeconfig file preview (first 5 lines):\n$firstLines")
+        } catch (e: Exception) {
+            Logger.warn("  Could not read kubeconfig file: ${e.message}")
+        }
+    } else {
+        Logger.warn("  Kubeconfig file does not exist!")
+    }
+    
+    // Check for in-cluster config
+    val serviceAccountPath = File(Config.SERVICEACCOUNT_ROOT)
+    Logger.info("Checking for in-cluster service account at: ${serviceAccountPath.absolutePath}")
+    Logger.info("  Service account exists: ${serviceAccountPath.exists()}")
+    if (serviceAccountPath.exists()) {
+        val tokenFile = File(Config.SERVICEACCOUNT_TOKEN_PATH)
+        val caFile = File(Config.SERVICEACCOUNT_CA_PATH)
+        Logger.info("  Token file exists: ${tokenFile.exists()}")
+        Logger.info("  CA file exists: ${caFile.exists()}")
+    }
+    
+    // Check Kubernetes service environment variables
+    val k8sServiceHost = System.getenv(Config.ENV_SERVICE_HOST)
+    val k8sServicePort = System.getenv(Config.ENV_SERVICE_PORT)
+    Logger.info("Kubernetes service environment variables:")
+    Logger.info("  ${Config.ENV_SERVICE_HOST}: ${k8sServiceHost ?: "not set"}")
+    Logger.info("  ${Config.ENV_SERVICE_PORT}: ${k8sServicePort ?: "not set"}")
+    
+    try {
+        Logger.info("Creating Kubernetes client...")
+        val client = Config.defaultClient()
+        Logger.info("Successfully created Kubernetes client")
+        Logger.info("  Client base path: ${client.basePath}")
+        Logger.info("  Authentication enabled: ${client.authentications.isNotEmpty()}")
+        Logger.info("  Verifying SSL: ${client.isVerifyingSsl}")
+        
+        Configuration.setDefaultApiClient(client)
+        val coreApi = CoreV1Api()
+        
+        // Test the API connection
+        try {
+            Logger.info("Testing API connection...")
+            val nodes = coreApi.listNode(null, null, null, null, null, null, null, null, 1, null)
+            Logger.info("API connection successful! Found ${nodes.items.size} nodes")
+        } catch (e: Exception) {
+            Logger.error("Failed to connect to Kubernetes API: ${e.message}")
+            Logger.error("API connection error details:", e)
+        }
+        
+        return coreApi
+    } catch (e: Exception) {
+        Logger.error("Failed to initialize Kubernetes client: ${e.message}")
+        Logger.error("Initialization error details:", e)
+        throw e
+    }
+}
+
+/**
+ * Extension function to get file permissions as a string
+ */
+private fun File.getFilePermissionsString(): String {
+    return if (this.exists()) {
+        val canRead = if (this.canRead()) "r" else "-"
+        val canWrite = if (this.canWrite()) "w" else "-"
+        val canExecute = if (this.canExecute()) "x" else "-"
+        "$canRead$canWrite$canExecute"
+    } else {
+        "file doesn't exist"
+    }
 }
 
 /**
