@@ -78,12 +78,87 @@ jobs:
           echo "K8S_CONTROL_PLANE_NAME_PARAM=k8s-control-plane" >> $GITHUB_OUTPUT
           echo "K8S_CONTROL_PLANE_USER_PARAM=dev" >> $GITHUB_OUTPUT
 
-      - name: Execute Voting Update Script (Python)
+      - name: Configure kubectl
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
+          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER }}
+        run: |
+          echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
+          mkdir -p $HOME/.kube
+          gcloud compute scp ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
+          export KUBECONFIG=$HOME/.kube/config
+          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
+
+          # ---- IMPORTANT: SSH Tunnel (if K8s API server is not directly accessible) ----
+          # If your K8s API server isn't publicly accessible, you'll need an SSH tunnel.
+          # 1. Uncomment and adapt the following lines.
+          # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
+          #
+          echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
+          gcloud compute ssh ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
+            --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
+          sleep 5 # Give tunnel time to establish
+          echo "Kubeconfig modified to use tunnel."
+          # ---- End SSH Tunnel Section ----
+
+          echo "Verifying kubectl connection..."
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=30s
+          kubectl get pods --all-namespaces --field-selector spec.nodeName=k8s-worker-1 -o wide
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Make Docker Images
+        env:
+          GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
+        run: sudo make build-docker
+
+      - name: Make Upgrade Build
+        run: sudo make build-for-upgrade-tests
+
+      - name: Start test chain
+        working-directory: local-test-net
+        run: sudo ./launch.sh
+
+      - name: Run k8sUpgrade Test
         env:
           RELEASE_TAG: ${{ steps.release_info.outputs.release_tag }}
-          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID_PARAM }}
-          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE_PARAM }}
-          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME_PARAM }}
-          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER_PARAM }}
-          PYTHONUNBUFFERED: "1"
-        run: python ./.github/scripts/execute_voting_update.py
+        run: |
+          cd testermint
+          sudo ./gradlew test --tests "KubernetesTests.k8sUpgrade"
+
+      - name: Archive Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-upgrade-test-logs
+          path: ./testermint/logs
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: K8s Upgrade Test
+          path: ./testermint/build/test-results/**/*.xml
+          reporter: java-junit
