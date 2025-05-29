@@ -61,7 +61,7 @@ func NewServer(
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
 
-	g.GET("/versions", s.getVersions)
+	g.GET("versions", s.getVersions)
 
 	return s
 }
