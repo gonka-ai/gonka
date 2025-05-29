@@ -139,20 +139,6 @@ private fun initializeKubernetesClient(): CoreV1Api {
 }
 
 /**
- * Extension function to get file permissions as a string
- */
-private fun File.getFilePermissionsString(): String {
-    return if (this.exists()) {
-        val canRead = if (this.canRead()) "r" else "-"
-        val canWrite = if (this.canWrite()) "w" else "-"
-        val canExecute = if (this.canExecute()) "x" else "-"
-        "$canRead$canWrite$canExecute"
-    } else {
-        "file doesn't exist"
-    }
-}
-
-/**
  * Processes the genesis namespace to find and create an inference pair.
  *
  * @param coreV1Api The Kubernetes CoreV1Api client
