@@ -67,6 +67,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
+		--target binary-exporter \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..
@@ -111,7 +112,7 @@ build-for-upgrade:
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-amd64
+	@cp ./output/inferenced ../public-html/v2/inferenced/inferenced-amd64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
@@ -122,14 +123,12 @@ build-for-upgrade:
 	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
-	$(eval PLATFORM=linux/arm64)
-	$(eval GOOS=linux)
-	$(eval GOARCH=arm64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_UPGRADE)
+	@mkdir -p build
+	@echo "--> building inferenced for ARM64 using direct Go cross-compilation"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(ldflags)" -o ./build/inferenced-arm64 ./cmd/inferenced/main.go
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-arm64
+	@cp ./build/inferenced-arm64 ../public-html/v2/inferenced/inferenced-arm64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64

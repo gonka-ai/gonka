@@ -35,9 +35,16 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     -o ./build/dapi
 
 ################################################################################
+# Binary Exporter stage (for --output optimization)
+################################################################################
+FROM scratch AS binary-exporter
+COPY --from=builder /app/decentralized-api/build/dapi /decentralized-api
+
+################################################################################
 # Final image
 ################################################################################
-FROM alpine:edge AS final
+ARG TARGETPLATFORM
+FROM --platform=$TARGETPLATFORM alpine:3.18 AS final
 
 ARG GOOS
 ARG GOARCH
