@@ -12,7 +12,7 @@ import (
 type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
-	mlClient *mlnodeclient.Client
+	mlClient mlnodeclient.MLNodeClient
 	jobs     chan func() error
 	shutdown chan struct{}
 	wg       sync.WaitGroup
@@ -25,6 +25,19 @@ func NewNodeWorker(nodeId string, node *NodeWithState) *NodeWorker {
 		node:     node,
 		mlClient: newNodeClient(&node.Node),
 		jobs:     make(chan func() error, 10), // Buffer for 10 jobs
+		shutdown: make(chan struct{}),
+	}
+	go worker.run()
+	return worker
+}
+
+// NewNodeWorkerWithClient creates a new worker with a custom client (for testing)
+func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodeclient.MLNodeClient) *NodeWorker {
+	worker := &NodeWorker{
+		nodeId:   nodeId,
+		node:     node,
+		mlClient: client,
+		jobs:     make(chan func() error, 10),
 		shutdown: make(chan struct{}),
 	}
 	go worker.run()

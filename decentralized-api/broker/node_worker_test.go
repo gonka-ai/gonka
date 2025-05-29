@@ -13,37 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Mock ML client for testing
-type mockMLClient struct{}
-
-func (m *mockMLClient) GetPowStatus() (*mlnodeclient.PowStatusResponse, error) {
-	return &mlnodeclient.PowStatusResponse{Status: mlnodeclient.POW_IDLE}, nil
-}
-
-func (m *mockMLClient) NodeState() (*mlnodeclient.StateResponse, error) {
-	return &mlnodeclient.StateResponse{State: mlnodeclient.MlNodeState_STOPPED}, nil
-}
-
-func (m *mockMLClient) Stop() error {
-	return nil
-}
-
-func (m *mockMLClient) InitGenerate(dto mlnodeclient.InitDto) error {
-	return nil
-}
-
-func (m *mockMLClient) InferenceHealth() (bool, error) {
-	return true, nil
-}
-
-func (m *mockMLClient) InferenceUp(model string, args []string) error {
-	return nil
-}
-
-func (m *mockMLClient) StartTraining(taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
-	return nil
-}
-
 func createTestNode(id string) *NodeWithState {
 	return &NodeWithState{
 		Node: Node{
@@ -65,7 +34,8 @@ func createTestNode(id string) *NodeWithState {
 
 func TestNodeWorker_BasicOperation(t *testing.T) {
 	node := createTestNode("test-node-1")
-	worker := NewNodeWorker("test-node-1", node)
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
 	// Test successful job submission
@@ -84,7 +54,8 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 
 func TestNodeWorker_ErrorHandling(t *testing.T) {
 	node := createTestNode("test-node-1")
-	worker := NewNodeWorker("test-node-1", node)
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
 	// Submit job that returns error
@@ -102,7 +73,8 @@ func TestNodeWorker_ErrorHandling(t *testing.T) {
 
 func TestNodeWorker_QueueFull(t *testing.T) {
 	node := createTestNode("test-node-1")
-	worker := NewNodeWorker("test-node-1", node)
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
 	// Fill the queue with slow jobs
@@ -129,7 +101,8 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {
 	node := createTestNode("test-node-1")
-	worker := NewNodeWorker("test-node-1", node)
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 
 	// Submit jobs that will execute during shutdown
 	var executedCount int32
@@ -151,6 +124,31 @@ func TestNodeWorker_GracefulShutdown(t *testing.T) {
 		"All queued jobs should execute before shutdown completes")
 }
 
+func TestNodeWorker_MLClientInteraction(t *testing.T) {
+	node := createTestNode("test-node-1")
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
+	defer worker.Shutdown()
+
+	// Test Stop operation
+	worker.Submit(func() error {
+		return mockClient.Stop()
+	})
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, mockClient.StopCalled, "Stop should be called once")
+	assert.Equal(t, mlnodeclient.MlNodeState_STOPPED, mockClient.CurrentState, "State should be STOPPED")
+
+	// Test InferenceUp operation
+	worker.Submit(func() error {
+		return mockClient.InferenceUp("test-model", []string{"--arg1", "--arg2"})
+	})
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, mockClient.InferenceUpCalled, "InferenceUp should be called once")
+	assert.Equal(t, "test-model", mockClient.LastInferenceModel, "Model should be captured")
+	assert.Equal(t, []string{"--arg1", "--arg2"}, mockClient.LastInferenceArgs, "Args should be captured")
+	assert.Equal(t, mlnodeclient.MlNodeState_INFERENCE, mockClient.CurrentState, "State should be INFERENCE")
+}
+
 func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 	group := NewNodeWorkGroup()
 
@@ -158,8 +156,8 @@ func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 	node1 := createTestNode("node-1")
 	node2 := createTestNode("node-2")
 
-	worker1 := NewNodeWorker("node-1", node1)
-	worker2 := NewNodeWorker("node-2", node2)
+	worker1 := NewNodeWorkerWithClient("node-1", node1, mlnodeclient.NewMockClient())
+	worker2 := NewNodeWorkerWithClient("node-2", node2, mlnodeclient.NewMockClient())
 
 	group.AddWorker("node-1", worker1)
 	group.AddWorker("node-2", worker2)
@@ -188,7 +186,7 @@ func TestNodeWorkGroup_ExecuteOnAll(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		nodeId := fmt.Sprintf("node-%d", i)
 		nodes[i] = createTestNode(nodeId)
-		worker := NewNodeWorker(nodeId, nodes[i])
+		worker := NewNodeWorkerWithClient(nodeId, nodes[i], mlnodeclient.NewMockClient())
 		group.AddWorker(nodeId, worker)
 	}
 
@@ -223,7 +221,7 @@ func TestNodeWorkGroup_ExecuteOnNodes(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		nodeId := fmt.Sprintf("node-%d", i)
 		node := createTestNode(nodeId)
-		worker := NewNodeWorker(nodeId, node)
+		worker := NewNodeWorkerWithClient(nodeId, node, mlnodeclient.NewMockClient())
 		group.AddWorker(nodeId, worker)
 	}
 
@@ -262,7 +260,7 @@ func TestNodeWorkGroup_ConcurrentExecution(t *testing.T) {
 	for i := 0; i < nodeCount; i++ {
 		nodeId := fmt.Sprintf("node-%d", i)
 		node := createTestNode(nodeId)
-		worker := NewNodeWorker(nodeId, node)
+		worker := NewNodeWorkerWithClient(nodeId, node, mlnodeclient.NewMockClient())
 		group.AddWorker(nodeId, worker)
 	}
 
@@ -305,7 +303,7 @@ func TestNodeWorkGroup_ThreadSafety(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			nodeId := fmt.Sprintf("node-%d", i)
 			node := createTestNode(nodeId)
-			worker := NewNodeWorker(nodeId, node)
+			worker := NewNodeWorkerWithClient(nodeId, node, mlnodeclient.NewMockClient())
 			group.AddWorker(nodeId, worker)
 			time.Sleep(5 * time.Millisecond)
 		}
@@ -361,7 +359,7 @@ func TestNodeWorkGroup_ErrorPropagation(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		nodeId := fmt.Sprintf("node-%d", i)
 		node := createTestNode(nodeId)
-		worker := NewNodeWorker(nodeId, node)
+		worker := NewNodeWorkerWithClient(nodeId, node, mlnodeclient.NewMockClient())
 		group.AddWorker(nodeId, worker)
 	}
 
