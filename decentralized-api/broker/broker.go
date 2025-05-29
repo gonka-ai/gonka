@@ -30,6 +30,7 @@ type Broker struct {
 	nodes          map[string]*NodeWithState
 	curMaxNodesNum atomic.Uint64
 	client         cosmosclient.CosmosMessageClient
+	nodeWorkGroup  *NodeWorkGroup
 }
 
 type ModelArgs struct {
@@ -100,9 +101,10 @@ type NodeResponse struct {
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
-		commands: make(chan Command, 100),
-		nodes:    make(map[string]*NodeWithState),
-		client:   client,
+		commands:      make(chan Command, 100),
+		nodes:         make(map[string]*NodeWithState),
+		client:        client,
+		nodeWorkGroup: NewNodeWorkGroup(),
 	}
 
 	go broker.processCommands()
@@ -222,7 +224,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 		Version:          command.Node.Version,
 	}
 
-	b.nodes[command.Node.Id] = &NodeWithState{
+	nodeWithState := &NodeWithState{
 		Node: node,
 		State: NodeState{
 			LockCount:       0,
@@ -232,6 +234,13 @@ func (b *Broker) registerNode(command RegisterNode) {
 			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
 		},
 	}
+
+	b.nodes[command.Node.Id] = nodeWithState
+
+	// Create and register a worker for this node
+	worker := NewNodeWorker(command.Node.Id, nodeWithState)
+	b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
+
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
 	command.Response <- &command.Node
 }
@@ -241,6 +250,9 @@ func newNodeClient(node *Node) *mlnodeclient.Client {
 }
 
 func (b *Broker) removeNode(command RemoveNode) {
+	// Remove the worker first (it will wait for pending jobs)
+	b.nodeWorkGroup.RemoveWorker(command.NodeId)
+
 	if _, ok := b.nodes[command.NodeId]; !ok {
 		command.Response <- false
 		return
@@ -549,33 +561,65 @@ func nodeReconciliationWorker(broker *Broker) {
 }
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
+	// Collect nodes that need reconciliation
+	needsReconciliation := make([]string, 0)
 	for nodeId, node := range b.nodes {
-		// TODO: maybe also skip if status is unknown or smth?
-
-		if node.State.Status == node.State.IntendedStatus {
-			continue // Node is already in the intended state
-		}
-
-		logging.Info("Node state mismatch detected", types.Nodes,
-			"node_id", nodeId,
-			"current_state", node.State.Status.String(),
-			"intended_state", node.State.IntendedStatus.String())
-
-		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
-			logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
-				types.Nodes, "node_id", nodeId)
-			continue
-		}
-
-		if node.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
-			(node.State.Status == types.HardwareNodeStatus_UNKNOWN ||
-				node.State.Status == types.HardwareNodeStatus_STOPPED ||
-				node.State.Status == types.HardwareNodeStatus_FAILED) {
-			b.restoreNodeToInferenceState(node)
+		if node.State.Status != node.State.IntendedStatus {
+			needsReconciliation = append(needsReconciliation, nodeId)
+			logging.Info("Node state mismatch detected", types.Nodes,
+				"node_id", nodeId,
+				"current_state", node.State.Status.String(),
+				"intended_state", node.State.IntendedStatus.String())
 		}
 	}
 
+	if len(needsReconciliation) == 0 {
+		logging.Debug("All nodes are in their intended state", types.Nodes)
+		command.Response <- true
+		return
+	}
+
+	// Limit concurrent reconciliations
+	const maxConcurrentReconciliations = 5
+	nodesToReconcile := needsReconciliation
+	if len(nodesToReconcile) > maxConcurrentReconciliations {
+		nodesToReconcile = nodesToReconcile[:maxConcurrentReconciliations]
+		logging.Info("Limiting reconciliation batch", types.Nodes,
+			"total_needs_reconciliation", len(needsReconciliation),
+			"batch_size", maxConcurrentReconciliations)
+	}
+
+	// Execute reconciliation on selected nodes
+	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodesToReconcile, func(nodeId string, node *NodeWithState) func() error {
+		return func() error {
+			switch node.State.IntendedStatus {
+			case types.HardwareNodeStatus_INFERENCE:
+				return b.reconcileNodeToInference(node)
+			case types.HardwareNodeStatus_POC:
+				logging.Info("POC reconciliation not yet implemented", types.Nodes, "node_id", nodeId)
+				return nil
+			default:
+				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
+					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
+				return nil
+			}
+		}
+	})
+
+	logging.Info("Reconciliation batch completed", types.Nodes,
+		"submitted", submitted, "failed", failed, "batch_size", len(nodesToReconcile))
+
 	command.Response <- true
+}
+
+func (b *Broker) reconcileNodeToInference(node *NodeWithState) error {
+	if node.State.Status == types.HardwareNodeStatus_UNKNOWN ||
+		node.State.Status == types.HardwareNodeStatus_STOPPED ||
+		node.State.Status == types.HardwareNodeStatus_FAILED {
+
+		b.restoreNodeToInferenceState(node)
+	}
+	return nil
 }
 
 func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
@@ -724,28 +768,54 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 }
 
 func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
+	// Update intended status for all nodes
 	for _, node := range b.nodes {
 		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-
-		client := newNodeClient(&node.Node)
-
-		err := client.Stop()
-		if err != nil {
-			logging.Error("Failed to stop node for inference up", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-			continue
-		} else {
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-		}
-
-		err = inferenceUp(&node.Node, client)
-		if err != nil {
-			logging.Error("Failed to bring up inference", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-		} else {
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-		}
 	}
+
+	// Execute inference up on all nodes in parallel
+	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
+		return func() error {
+			client := newNodeClient(&node.Node)
+
+			// Check if already in inference state (idempotent)
+			state, err := client.NodeState()
+			if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
+				healthy, _ := client.InferenceHealth()
+				if healthy {
+					logging.Info("Node already in healthy inference state", types.Nodes, "node_id", nodeId)
+					node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+					return nil
+				}
+			}
+
+			// Stop node first
+			err = client.Stop()
+			if err != nil {
+				logging.Error("Failed to stop node for inference up", types.Nodes,
+					"node_id", node.Node.Id, "error", err)
+				node.State.Failure("Failed to stop for inference")
+				return err
+			}
+			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
+
+			// Start inference
+			err = inferenceUp(&node.Node, client)
+			if err != nil {
+				logging.Error("Failed to bring up inference", types.Nodes,
+					"node_id", node.Node.Id, "error", err)
+				node.State.Failure("Failed to start inference")
+				return err
+			}
+
+			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+			logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", nodeId)
+			return nil
+		}
+	})
+
+	logging.Info("InferenceUpAllCommand completed", types.Nodes,
+		"submitted", submitted, "failed", failed, "total", len(b.nodes))
 
 	command.Response <- true
 }
