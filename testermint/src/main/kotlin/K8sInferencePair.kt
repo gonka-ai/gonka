@@ -109,66 +109,6 @@ fun getK8sInferencePairs(
  */
 private fun initializeKubernetesClient(): CoreV1Api {
     Logger.info("Initializing Kubernetes client")
-
-    // Log environment variables
-    val kubeconfig = System.getenv("KUBECONFIG")
-    val homeDir = System.getProperty("user.home")
-    val defaultKubeConfigPath = "$homeDir/.kube/config"
-    Logger.info("Environment variables:")
-    Logger.info("  KUBECONFIG: ${kubeconfig ?: "not set"}")
-    Logger.info("  HOME directory: $homeDir")
-
-    // Check if kubeconfig file exists
-    val kubeConfigFile = if (kubeconfig != null) {
-        File(kubeconfig)
-    } else {
-        File(defaultKubeConfigPath)
-    }
-
-    Logger.info("Checking kubeconfig file: ${kubeConfigFile.absolutePath}")
-    if (kubeConfigFile.exists()) {
-        Logger.info("  Kubeconfig file exists: Yes")
-        Logger.info("  Kubeconfig file size: ${kubeConfigFile.length()} bytes")
-        Logger.info("  Kubeconfig file readable: ${kubeConfigFile.canRead()}")
-        Logger.info("  Kubeconfig file permissions: ${kubeConfigFile.getFilePermissionsString()}")
-
-        // Log first few lines of the kubeconfig file (without sensitive data)
-        try {
-            val firstLines = kubeConfigFile.readLines().take(5).joinToString("\n") { line ->
-                // Mask sensitive data
-                if (line.contains("token:") || line.contains("password:") || line.contains("secret:")) {
-                    val parts = line.split(":")
-                    "${parts[0]}: [REDACTED]"
-                } else {
-                    line
-                }
-            }
-            Logger.info("  Kubeconfig file preview (first 5 lines):\n$firstLines")
-        } catch (e: Exception) {
-            Logger.warn("  Could not read kubeconfig file: ${e.message}")
-        }
-    } else {
-        Logger.warn("  Kubeconfig file does not exist!")
-    }
-
-    // Check for in-cluster config
-    val serviceAccountPath = File(Config.SERVICEACCOUNT_ROOT)
-    Logger.info("Checking for in-cluster service account at: ${serviceAccountPath.absolutePath}")
-    Logger.info("  Service account exists: ${serviceAccountPath.exists()}")
-    if (serviceAccountPath.exists()) {
-        val tokenFile = File(Config.SERVICEACCOUNT_TOKEN_PATH)
-        val caFile = File(Config.SERVICEACCOUNT_CA_PATH)
-        Logger.info("  Token file exists: ${tokenFile.exists()}")
-        Logger.info("  CA file exists: ${caFile.exists()}")
-    }
-
-    // Check Kubernetes service environment variables
-    val k8sServiceHost = System.getenv(Config.ENV_SERVICE_HOST)
-    val k8sServicePort = System.getenv(Config.ENV_SERVICE_PORT)
-    Logger.info("Kubernetes service environment variables:")
-    Logger.info("  ${Config.ENV_SERVICE_HOST}: ${k8sServiceHost ?: "not set"}")
-    Logger.info("  ${Config.ENV_SERVICE_PORT}: ${k8sServicePort ?: "not set"}")
-
     try {
         Logger.info("Creating Kubernetes client...")
         val client = Config.defaultClient()
