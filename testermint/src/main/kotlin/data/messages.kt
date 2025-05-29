@@ -71,3 +71,24 @@ data class GovernanceProposals(
     val proposals: List<GovernanceProposalResponse>,
 )
 
+data class ProposalVoteOption(
+    val option: Int,
+    val weight: String
+)
+
+data class ProposalVote(
+    val proposal_id: String,
+    val voter: String,
+    val options: List<ProposalVoteOption>
+)
+
+data class ProposalVotePagination(
+    val total: String
+)
+
+data class ProposalVotes(
+    val votes: List<ProposalVote>,
+    val pagination: ProposalVotePagination
+)
+
+

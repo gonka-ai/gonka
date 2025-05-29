@@ -20,6 +20,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.10")
     implementation("org.reflections:reflections:0.10.2")
+    // Kubernetes Java client
+    implementation("io.kubernetes:client-java:18.0.1")
     testImplementation(kotlin("test"))
     // Add AssertJ for fluent assertions
     testImplementation("org.assertj:assertj-core:3.26.3")
