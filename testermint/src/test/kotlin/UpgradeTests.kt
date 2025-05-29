@@ -107,20 +107,20 @@ class UpgradeTests : TestermintTest() {
         val sha = getSha256Checksum(localPath)
         return "http://genesis-wiremock:8080/$path?checksum=sha256:$sha"
     }
+}
 
-    private fun getSha256Checksum(filePath: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val file = File(filePath)
-        file.inputStream().use { fis ->
-            val buffer = ByteArray(8192)
-            var bytesRead = fis.read(buffer)
-            while (bytesRead != -1) {
-                digest.update(buffer, 0, bytesRead)
-                bytesRead = fis.read(buffer)
-            }
+fun getSha256Checksum(filePath: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val file = File(filePath)
+    file.inputStream().use { fis ->
+        val buffer = ByteArray(8192)
+        var bytesRead = fis.read(buffer)
+        while (bytesRead != -1) {
+            digest.update(buffer, 0, bytesRead)
+            bytesRead = fis.read(buffer)
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 
