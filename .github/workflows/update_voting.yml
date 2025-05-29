@@ -37,11 +37,19 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{secrets.GITHUB_TOKEN}}
           # Use the GITHUB_TOKEN to authenticate and download the artifact
-          # Artifact will be downloaded to GITHUB_WORKSPACE (e.g., release_tag.txt)
-          # No explicit path needed, it downloads to the root.
+          # Artifact is downloaded as a .zip that needs to be extracted
         # Continue even if artifact download fails for some reason, next step handles missing file.
         continue-on-error: true
-
+      
+      - name: Extract artifact (if needed)
+        if: github.event_name == 'workflow_run'
+        run: |
+          # Find and unzip any .zip files in the workspace
+          find . -name "*.zip" -exec unzip -o {} \;
+          # List files for debugging purposes
+          echo "Files after extraction:"
+          ls -la
+        continue-on-error: true
 
       - name: Determine Release Tag
         id: release_info
