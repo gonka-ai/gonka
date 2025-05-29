@@ -49,7 +49,7 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	events := readLines(t, "test_data/response_streamed.txt")
 	require.NotEmpty(t, events, "Read 0 events from responseprocessor_test_data.txt")
 	for _, event := range events {
-		_, err := processor.ProcessStreamedResponse(strings.TrimSpace(event))
+		_, err := processor.ProcessStreamedResponse(event)
 		require.NoError(t, err, "failed to process a line of a streamed response")
 	}
 
@@ -86,10 +86,7 @@ func readLines(t *testing.T, name string) []string {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine != "" {
-			lines = append(lines, trimmedLine)
-		}
+		lines = append(lines, line)
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan: %v", err)

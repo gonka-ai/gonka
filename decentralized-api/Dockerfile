@@ -35,9 +35,19 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     -o ./build/dapi
 
 ################################################################################
+# Binary Exporter stage (for --output optimization)
+################################################################################
+FROM scratch AS binary-exporter
+COPY --from=builder /app/decentralized-api/build/dapi /decentralized-api
+
+################################################################################
 # Final image
 ################################################################################
-FROM alpine:edge AS final
+ARG TARGETPLATFORM
+FROM --platform=$TARGETPLATFORM alpine:3.18 AS final
+
+ARG GOOS
+ARG GOARCH
 
 RUN apk update && \
     apk add --no-cache sed ca-certificates && \
@@ -49,12 +59,13 @@ ENV DAEMON_HOME=/root/.dapi
 ENV DAEMON_NAME=decentralized-api
 ENV DAEMON_ALLOW_DOWNLOAD_BINARIES=true
 ENV DAEMON_RESTART_AFTER_UPGRADE=true
+ENV DAEMON_DOWNLOAD_RETRIES=-1
 
 # Copy over binaries from the build-env
 COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
-COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
+COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 
 ENV API_CONFIG_PATH=/root/api-config.yaml
 
