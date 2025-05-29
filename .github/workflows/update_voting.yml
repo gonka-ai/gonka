@@ -29,17 +29,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
       - name: Download release tag artifact (if triggered by workflow_run)
         if: github.event_name == 'workflow_run' # Only run this step if triggered by another workflow
         uses: actions/download-artifact@v4
         with:
           name: release-tag-artifact
           run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          # Use the GITHUB_TOKEN to authenticate and download the artifact
           # Artifact will be downloaded to GITHUB_WORKSPACE (e.g., release_tag.txt)
           # No explicit path needed, it downloads to the root.
         # Continue even if artifact download fails for some reason, next step handles missing file.
