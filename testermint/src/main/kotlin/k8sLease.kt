@@ -7,6 +7,8 @@ import io.kubernetes.client.openapi.models.V1LeaseSpec
 import io.kubernetes.client.openapi.models.V1ObjectMeta
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -279,10 +281,8 @@ class K8sInferencePairsWithLease(
 
 fun V1Lease.isAvailable(): Boolean = spec == null || spec?.holderIdentity == null ||
         (spec?.acquireTime == null && spec?.renewTime == null) ||
-        (spec?.acquireTime ?: spec?.renewTime)?.let {
-            it.isAfter(
-                it.plusSeconds(
-                    (spec?.leaseDurationSeconds ?: 0).toLong()
-                )
-            )
+        (spec?.renewTime ?: spec?.acquireTime)?.let { leaseTime ->
+            val leaseDuration = (spec?.leaseDurationSeconds ?: 0).toLong()
+            val expirationTime = leaseTime.plusSeconds(leaseDuration)
+            OffsetDateTime.now().isAfter(expirationTime)
         } ?: true
