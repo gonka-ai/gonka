@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
@@ -219,7 +218,7 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 		return nil, err
 	}
 
-	enforcedStr, err := GetEnforcedStr(originalResponse)
+	enforcedStr, err := originalResponse.GetEnforcedStr()
 	if err != nil {
 		return nil, err
 	}
@@ -255,13 +254,14 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	}
 
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
-	var responseValidation completionapi.Response
-	if err = json.Unmarshal(respBodyBytes, &responseValidation); err != nil {
+	responseValidation, err := completionapi.NewCompletionResponseFromBytes(respBodyBytes)
+	if err != nil {
+		logging.Error("Failed to unmarshal responseValidation", types.Validation, "id", inference.InferenceId, "error", err)
 		return nil, err
 	}
 
-	originalLogits := extractLogits(originalResponse)
-	validationLogits := extractLogitsFromJsonResponse(responseValidation)
+	originalLogits := originalResponse.ExtractLogits()
+	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{
 		InferenceId:   inference.InferenceId,
 		ResponseBytes: respBodyBytes,
@@ -270,130 +270,23 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	return compareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
-func GetEnforcedStr(r *completionapi.JsonOrStreamedResponse) (string, error) {
-	if r.JsonResponse != nil {
-		if len(r.JsonResponse.Choices) == 0 {
-			return "", errors.New("JsonResponse has no choices")
-		}
+func unmarshalResponse(inference *types.Inference) (completionapi.CompletionResponse, error) {
+	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(inference.ResponsePayload)
 
-		if len(r.JsonResponse.Choices) > 1 {
-			// TODO: We should learn how to process/validate multiple options completions
-			logging.Warn("More than one choice in a non-steamed inference response, defaulting to first one", types.Validation, "choices", r.JsonResponse.Choices)
-		}
-
-		content := r.JsonResponse.Choices[0].Message.Content
-		if content == "" {
-			logging.Error("Model return empty response", types.Validation, "inference_id", r.JsonResponse.ID)
-			return "", errors.New("JsonResponse has no content")
-		}
-
-		return content, nil
-	} else if r.StreamedResponse != nil {
-		var id = ""
-		var stringBuilder strings.Builder
-		for _, event := range r.StreamedResponse.Data {
-			id = event.ID
-			if len(event.Choices) == 0 {
-				continue
-			}
-
-			if len(event.Choices) > 1 {
-				// TODO: We should learn how to process/validate multiple options completions
-				logging.Warn("More than one choice in a streamed inference response, defaulting to first one", types.Validation, "inferenceId", event.ID, "choices", event.Choices)
-			}
-
-			content := event.Choices[0].Delta.Content
-			if content != nil {
-				stringBuilder.WriteString(*content)
-			}
-		}
-
-		responseString := stringBuilder.String()
-		if responseString == "" {
-			logging.Error("Model return empty response", types.Validation, "inference_id", id)
-			return "", errors.New("StreamedResponse has no content")
-		}
-
-		return responseString, nil
-	} else {
-		return "", errors.New("JsonOrStreamedResponse has invalid state, both responses are nil")
-	}
-}
-
-func unmarshalResponse(inference *types.Inference) (*completionapi.JsonOrStreamedResponse, error) {
-	var genericMap map[string]interface{}
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &genericMap); err != nil {
-		log.Printf("Failed to unmarshal inference.ResponsePayload into generic map. id = %v. err = %v", inference.InferenceId, err)
-		return nil, err
+	if err != nil {
+		logging.Error("Failed to unmarshal inference.ResponsePayload.", types.Validation, "id", inference.InferenceId, "error", err)
 	}
 
-	if _, exists := genericMap["events"]; exists {
-		// It's likely a SerializedStreamedResponse
-		events, err := unmarshalStreamedResponse(inference)
-		if err != nil {
-			return nil, err
-		}
-		return &completionapi.JsonOrStreamedResponse{StreamedResponse: &completionapi.StreamedResponse{Data: events}}, nil
-	} else {
-		var originalResponse completionapi.Response
-		if err := json.Unmarshal([]byte(inference.ResponsePayload), &originalResponse); err != nil {
-			log.Printf("Failed to unmarshal inference.ResponsePayload into Response. id = %v. err = %v", inference.InferenceId, err)
-			return nil, err
-		}
-		return &completionapi.JsonOrStreamedResponse{JsonResponse: &originalResponse}, nil
+	switch resp.(type) {
+	case *completionapi.StreamedCompletionResponse:
+		logging.Info("Unmarshalled inference.ResponsePayload into StreamedResponse", types.Validation, "id", inference.InferenceId)
+	case *completionapi.JsonCompletionResponse:
+		logging.Info("Unmarshalled inference.ResponsePayload into JsonResponse", types.Validation, "id", inference.InferenceId)
+	default:
+		logging.Error("Failed to unmarshal inference.ResponsePayload into StreamedResponse or JsonResponse", types.Validation, "id", inference.InferenceId)
 	}
-}
 
-func unmarshalStreamedResponse(inference *types.Inference) ([]completionapi.Response, error) {
-	var streamedResponse completionapi.SerializedStreamedResponse
-	if err := json.Unmarshal([]byte(inference.ResponsePayload), &streamedResponse); err != nil {
-		log.Printf("Failed to unmarshal inference.ResponsePayload into SerializedStreamedResponse. id = %v. err = %v", inference.InferenceId, err)
-		return nil, err
-	}
-	log.Printf("Unmarshalled streamed response. inference.id = %s", inference.InferenceId)
-
-	var unmarshalledEvents []completionapi.Response
-	for _, line := range streamedResponse.Events {
-		event, err := completionapi.UnmarshalEvent(line)
-		if err != nil {
-			return nil, err
-		}
-		if event != nil {
-			unmarshalledEvents = append(unmarshalledEvents, *event)
-		}
-	}
-	log.Printf("Unmarshalled events. inference.id = %s", inference.InferenceId)
-
-	return unmarshalledEvents, nil
-}
-
-func extractLogits(response *completionapi.JsonOrStreamedResponse) []completionapi.Logprob {
-	if response.JsonResponse != nil {
-		return extractLogitsFromJsonResponse(*response.JsonResponse)
-	} else if response.StreamedResponse != nil {
-		return extractLogitsFromStreamedResponse(*response.StreamedResponse)
-	} else {
-		return nil
-	}
-}
-
-func extractLogitsFromJsonResponse(response completionapi.Response) []completionapi.Logprob {
-	var logits []completionapi.Logprob
-	// Concatenate all logrpobs
-	for _, c := range response.Choices {
-		logits = append(logits, c.Logprobs.Content...)
-	}
-	return logits
-}
-
-func extractLogitsFromStreamedResponse(response completionapi.StreamedResponse) []completionapi.Logprob {
-	var logits []completionapi.Logprob
-	for _, r := range response.Data {
-		for _, c := range r.Choices {
-			logits = append(logits, c.Logprobs.Content...)
-		}
-	}
-	return logits
+	return resp, err
 }
 
 type ValidationResult interface {
