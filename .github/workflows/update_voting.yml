@@ -1,13 +1,16 @@
 name: Update Voting Configuration
 on:
-  pull_request:
-    branches:
-      - '**'
   workflow_run:
     workflows: [ "Build and Release to race-releases" ]
     types:
       - completed
   workflow_dispatch: # Allows manual triggering
+    inputs:
+      release_tag:
+        description: 'Release tag to use for testing'
+        required: false
+        type: string
+        default: 'v0.0.0-manual-test'
 
 jobs:
   vote_for_update:
@@ -58,7 +61,12 @@ jobs:
               echo "WARNING: 'workflow_run' trigger but release_tag.txt not found (or download failed). Using default tag: $TAG_VALUE"
             fi
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Workflow triggered by 'workflow_dispatch'. Using default tag: $TAG_VALUE"
+            if [[ -n "${{ inputs.release_tag }}" ]]; then
+              TAG_VALUE="${{ inputs.release_tag }}"
+              echo "Using provided release tag: $TAG_VALUE"
+            else
+              echo "No release tag provided. Using default tag: $TAG_VALUE"
+            fi
           else
             echo "Workflow triggered by '${{ github.event_name }}'. Using default tag: $TAG_VALUE"
           fi
