@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import org.tinylog.Logger
 import java.io.File
 import java.net.URL
+import java.net.URLEncoder
 import java.time.Duration
 
 @Tag("unstable")
@@ -111,7 +112,8 @@ class KubernetesTests : TestermintTest() {
     }
 
     private fun getGithubPath(releaseTag: String, fileName: String): String {
-        val path = "https://github.com/product-science/race-releases/releases/download/release%2F$releaseTag/$fileName"
+        val safeReleaseTag = URLEncoder.encode(releaseTag, "UTF-8")
+        val path = "https://github.com/product-science/race-releases/releases/download/$safeReleaseTag/$fileName"
         val tempDir = File("downloads")
         downloadFile(path, fileName)
         val sha = getSha256Checksum(File(tempDir, fileName).absolutePath)
