@@ -2,6 +2,7 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 /*
@@ -31,6 +33,8 @@ type Broker struct {
 	curMaxNodesNum atomic.Uint64
 	client         cosmosclient.CosmosMessageClient
 	nodeWorkGroup  *NodeWorkGroup
+	phaseTracker   *chainphase.ChainPhaseTracker
+	configManager  *apiconfig.ConfigManager
 }
 
 type ModelArgs struct {
@@ -99,18 +103,21 @@ type NodeResponse struct {
 	State *NodeState `json:"state"`
 }
 
-func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
+func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, configManager *apiconfig.ConfigManager) *Broker {
 	broker := &Broker{
-		commands:      make(chan Command, 100),
+		commands:      make(chan Command, 10000),
 		nodes:         make(map[string]*NodeWithState),
 		client:        client,
-		nodeWorkGroup: NewNodeWorkGroup(),
+		phaseTracker:  phaseTracker,
+		configManager: configManager,
 	}
+	// Initialize NodeWorkGroup
+	broker.nodeWorkGroup = NewNodeWorkGroup()
 
 	go broker.processCommands()
 	go nodeSyncWorker(broker)
-	go nodeStatusQueryWorker(broker)
 	go nodeReconciliationWorker(broker)
+	go nodeStatusQueryWorker(broker)
 	return broker
 }
 
@@ -561,6 +568,21 @@ func nodeReconciliationWorker(broker *Broker) {
 }
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
+	// Get current phase from the tracker
+	var intendedStatus types.HardwareNodeStatus
+	if b.phaseTracker != nil {
+		intendedStatus = b.phaseTracker.GetIntendedNodeStatus()
+		// Update intended status for all nodes based on current phase
+		for _, node := range b.nodes {
+			node.State.IntendedStatus = intendedStatus
+		}
+
+		phase, _ := b.phaseTracker.GetCurrentPhase()
+		logging.Info("Reconciling nodes based on current phase", types.Nodes,
+			"phase", phase.String(),
+			"intended_status", intendedStatus.String())
+	}
+
 	// Collect nodes that need reconciliation
 	needsReconciliation := make(map[string]NodeWorkerCommand)
 	for nodeId, node := range b.nodes {
@@ -574,9 +596,38 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			case types.HardwareNodeStatus_INFERENCE:
 				needsReconciliation[nodeId] = InferenceUpNodeCommand{}
 			case types.HardwareNodeStatus_POC:
-				logging.Info("POC reconciliation not yet implemented for command pattern", types.Nodes, "node_id", nodeId)
-				// needsReconciliation[nodeId] = StartPoCNodeCommand{ /* params needed */}
-				needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation (command) not implemented"}
+				// Get PoC parameters from phase tracker
+				if b.phaseTracker != nil {
+					pocHeight, pocHash, isInPoC := b.phaseTracker.GetPoCParameters()
+					if isInPoC && pocHeight > 0 {
+						// Get pubKey from the cosmos client
+						account := b.client.GetAccount()
+						pubKey, err := account.Record.GetPubKey()
+						if err != nil {
+							logging.Error("Failed to get public key for PoC reconciliation", types.Nodes,
+								"node_id", nodeId, "error", err)
+							needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: failed to get pubkey"}
+							continue
+						}
+						pubKeyString := utils.PubKeyToHexString(pubKey)
+						callbackUrl := b.configManager.GetApiConfig().PoCCallbackUrl
+						totalNodes := len(b.nodes)
+
+						needsReconciliation[nodeId] = StartPoCNodeCommand{
+							BlockHeight: pocHeight,
+							BlockHash:   pocHash,
+							PubKey:      pubKeyString,
+							CallbackUrl: callbackUrl,
+							TotalNodes:  totalNodes,
+						}
+					} else {
+						logging.Warn("Cannot reconcile to PoC: missing PoC parameters", types.Nodes,
+							"node_id", nodeId)
+						needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: missing parameters"}
+					}
+				} else {
+					needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: no phase tracker"}
+				}
 			default:
 				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
 					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())

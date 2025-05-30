@@ -2,6 +2,7 @@ package poc
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/logging"
@@ -12,7 +13,13 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chainevents.JSONRPCResponse, transactionRecorder cosmosclient.InferenceCosmosClient, configManager *apiconfig.ConfigManager) {
+func ProcessNewBlockEvent(
+	nodePoCOrchestrator *NodePoCOrchestrator,
+	event *chainevents.JSONRPCResponse,
+	transactionRecorder cosmosclient.InferenceCosmosClient,
+	configManager *apiconfig.ConfigManager,
+	phaseTracker *chainphase.ChainPhaseTracker,
+) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
 		return
@@ -49,6 +56,11 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 
 	epochParams := nodePoCOrchestrator.GetParams().EpochParams
 	logging.Debug("New block event received", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
+
+	// Update the phase tracker with the new block information
+	if phaseTracker != nil && epochParams != nil {
+		phaseTracker.UpdateBlockHeight(blockHeight, epochParams, blockHash)
+	}
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)

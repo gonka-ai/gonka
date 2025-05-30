@@ -4,16 +4,18 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
+	"net"
+
 	"github.com/productscience/inference/api/inference/inference"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	"net"
 
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
@@ -64,7 +66,8 @@ func main() {
 		panic(err)
 	}
 
-	nodeBroker := broker.NewBroker(recorder)
+	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, config)
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
@@ -112,7 +115,7 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker)
 	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 

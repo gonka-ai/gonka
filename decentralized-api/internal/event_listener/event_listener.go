@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
@@ -42,6 +43,7 @@ type EventListener struct {
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
+	phaseTracker        *chainphase.ChainPhaseTracker
 
 	ws *websocket.Conn
 }
@@ -53,6 +55,7 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	phaseTracker *chainphase.ChainPhaseTracker,
 ) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
@@ -61,6 +64,7 @@ func NewEventListener(
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
+		phaseTracker:        phaseTracker,
 	}
 }
 
@@ -220,8 +224,13 @@ func (el *EventListener) startSyncStatusChecker() {
 			continue
 		}
 		// The node is "synced" if it's NOT catching up.
-		el.updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
-		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
+		isSynced := !status.SyncInfo.CatchingUp
+		el.updateNodeSyncStatus(isSynced)
+		// Update sync status in phase tracker
+		if el.phaseTracker != nil {
+			el.phaseTracker.SetSyncStatus(isSynced)
+		}
+		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", isSynced, "height", status.SyncInfo.LatestBlockHeight)
 	}
 }
 
@@ -239,9 +248,15 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		if el.isNodeSynced() {
-			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
+			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager, el.phaseTracker)
+		} else {
+			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager, el.phaseTracker)
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
+		// Update sync status in phase tracker
+		if el.phaseTracker != nil {
+			el.phaseTracker.SetSyncStatus(el.isNodeSynced())
+		}
 	case txEventType:
 		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
