@@ -131,6 +131,7 @@ func main() {
 	adminServer.Start(addr)
 
 	<-ctx.Done()
+	os.Exit(1) // Exit with an error for cosmovisor to restart the process
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
