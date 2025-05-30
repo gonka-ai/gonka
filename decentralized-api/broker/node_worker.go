@@ -12,8 +12,8 @@ import (
 type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
-	mlClient mlnodeclient.MLNodeClient // Changed to interface
-	commands chan NodeWorkerCommand    // Changed from func() error
+	mlClient mlnodeclient.MLNodeClient
+	commands chan NodeWorkerCommand
 	shutdown chan struct{}
 	wg       sync.WaitGroup
 }
@@ -76,7 +76,6 @@ func (w *NodeWorker) Submit(cmd NodeWorkerCommand) bool {
 	case w.commands <- cmd:
 		return true
 	default:
-		// Queue is full
 		w.wg.Done()
 		return false
 	}
