@@ -89,7 +89,7 @@ type Checkpoint struct {
 }
 
 type TrainEnv struct {
-	TaskId          uint64 `json:"TASK_ID"`
+	TaskId          string `json:"TASK_ID"`
 	NodeId          string `json:"NODE_ID"`
 	StoreApiUrl     string `json:"STORE_API_URL"`
 	GlobalAddr      string `json:"GLOBAL_ADDR"`
@@ -149,7 +149,7 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 		LocalNodeId: nodeId,
 	}
 	trainEnv := TrainEnv{
-		TaskId:          taskId,
+		TaskId:          strconv.FormatUint(taskId, 10),
 		NodeId:          globalNodeId.ToString(),
 		StoreApiUrl:     api.mlGrpcCallbackAddress,
 		GlobalAddr:      masterNodeAddr,
