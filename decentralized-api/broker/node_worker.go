@@ -12,8 +12,8 @@ import (
 type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
-	mlClient mlnodeclient.MLNodeClient
-	jobs     chan func() error
+	mlClient mlnodeclient.MLNodeClient // Changed to interface
+	commands chan NodeWorkerCommand    // Changed from func() error
 	shutdown chan struct{}
 	wg       sync.WaitGroup
 }
@@ -24,7 +24,7 @@ func NewNodeWorker(nodeId string, node *NodeWithState) *NodeWorker {
 		nodeId:   nodeId,
 		node:     node,
 		mlClient: newNodeClient(&node.Node),
-		jobs:     make(chan func() error, 10), // Buffer for 10 jobs
+		commands: make(chan NodeWorkerCommand, 10), // Buffer for 10 commands
 		shutdown: make(chan struct{}),
 	}
 	go worker.run()
@@ -37,7 +37,7 @@ func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodecl
 		nodeId:   nodeId,
 		node:     node,
 		mlClient: client,
-		jobs:     make(chan func() error, 10),
+		commands: make(chan NodeWorkerCommand, 10),
 		shutdown: make(chan struct{}),
 	}
 	go worker.run()
@@ -48,18 +48,18 @@ func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodecl
 func (w *NodeWorker) run() {
 	for {
 		select {
-		case job := <-w.jobs:
-			if err := job(); err != nil {
-				logging.Error("Node job execution failed", types.Nodes,
+		case cmd := <-w.commands:
+			if err := cmd.Execute(w); err != nil {
+				logging.Error("Node command execution failed", types.Nodes,
 					"node_id", w.nodeId, "error", err)
 			}
 			w.wg.Done()
 		case <-w.shutdown:
-			// Drain remaining jobs before shutting down
-			close(w.jobs)
-			for job := range w.jobs {
-				if err := job(); err != nil {
-					logging.Error("Node job execution failed during shutdown", types.Nodes,
+			// Drain remaining commands before shutting down
+			close(w.commands)
+			for cmd := range w.commands {
+				if err := cmd.Execute(w); err != nil {
+					logging.Error("Node command execution failed during shutdown", types.Nodes,
 						"node_id", w.nodeId, "error", err)
 				}
 				w.wg.Done()
@@ -69,11 +69,11 @@ func (w *NodeWorker) run() {
 	}
 }
 
-// Submit queues a job for execution on this node
-func (w *NodeWorker) Submit(job func() error) bool {
+// Submit queues a command for execution on this node
+func (w *NodeWorker) Submit(cmd NodeWorkerCommand) bool {
 	w.wg.Add(1)
 	select {
-	case w.jobs <- job:
+	case w.commands <- cmd:
 		return true
 	default:
 		// Queue is full
@@ -85,7 +85,7 @@ func (w *NodeWorker) Submit(job func() error) bool {
 // Shutdown gracefully stops the worker
 func (w *NodeWorker) Shutdown() {
 	close(w.shutdown)
-	w.wg.Wait()
+	w.wg.Wait() // Wait for all pending commands to complete
 }
 
 // NodeWorkGroup manages parallel execution across multiple node workers
@@ -119,8 +119,8 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	}
 }
 
-// ExecuteOnAll submits jobs to all workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnAll(jobFactory func(nodeId string, node *NodeWithState) func() error) (submitted, failed int) {
+// ExecuteOnAll submits commands to all workers and waits for completion
+func (g *NodeWorkGroup) ExecuteOnAll(cmdFactory func(nodeId string, node *NodeWithState) NodeWorkerCommand) (submitted, failed int) {
 	g.mu.RLock()
 	workersCopy := make(map[string]*NodeWorker)
 	for k, v := range g.workers {
@@ -128,19 +128,19 @@ func (g *NodeWorkGroup) ExecuteOnAll(jobFactory func(nodeId string, node *NodeWi
 	}
 	g.mu.RUnlock()
 
-	// Submit jobs to all workers
+	// Submit commands to all workers
 	for nodeId, worker := range workersCopy {
-		job := jobFactory(nodeId, worker.node)
-		if worker.Submit(job) {
+		cmd := cmdFactory(nodeId, worker.node)
+		if worker.Submit(cmd) {
 			submitted++
 		} else {
 			failed++
-			logging.Error("Failed to submit job to worker", types.Nodes,
+			logging.Error("Failed to submit command to worker", types.Nodes,
 				"node_id", nodeId, "reason", "queue full")
 		}
 	}
 
-	// Wait for all submitted jobs to complete
+	// Wait for all submitted commands to complete
 	for _, worker := range workersCopy {
 		worker.wg.Wait()
 	}
@@ -148,8 +148,8 @@ func (g *NodeWorkGroup) ExecuteOnAll(jobFactory func(nodeId string, node *NodeWi
 	return submitted, failed
 }
 
-// ExecuteOnNodes submits jobs to specific workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, jobFactory func(nodeId string, node *NodeWithState) func() error) (submitted, failed int) {
+// ExecuteOnNodes submits commands to specific workers and waits for completion
+func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmdFactory func(nodeId string, node *NodeWithState) NodeWorkerCommand) (submitted, failed int) {
 	g.mu.RLock()
 	selectedWorkers := make(map[string]*NodeWorker)
 	for _, nodeId := range nodeIds {
@@ -159,19 +159,19 @@ func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, jobFactory func(nodeId 
 	}
 	g.mu.RUnlock()
 
-	// Submit jobs to selected workers
+	// Submit commands to selected workers
 	for nodeId, worker := range selectedWorkers {
-		job := jobFactory(nodeId, worker.node)
-		if worker.Submit(job) {
+		cmd := cmdFactory(nodeId, worker.node)
+		if worker.Submit(cmd) {
 			submitted++
 		} else {
 			failed++
-			logging.Error("Failed to submit job to worker", types.Nodes,
+			logging.Error("Failed to submit command to worker", types.Nodes,
 				"node_id", nodeId, "reason", "queue full")
 		}
 	}
 
-	// Wait for all submitted jobs to complete
+	// Wait for all submitted commands to complete
 	for _, worker := range selectedWorkers {
 		worker.wg.Wait()
 	}

@@ -590,19 +590,19 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	}
 
 	// Execute reconciliation on selected nodes
-	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodesToReconcile, func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			switch node.State.IntendedStatus {
-			case types.HardwareNodeStatus_INFERENCE:
-				return b.reconcileNodeToInference(node)
-			case types.HardwareNodeStatus_POC:
-				logging.Info("POC reconciliation not yet implemented", types.Nodes, "node_id", nodeId)
-				return nil
-			default:
-				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
-					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
-				return nil
-			}
+	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodesToReconcile, func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		switch node.State.IntendedStatus {
+		case types.HardwareNodeStatus_INFERENCE:
+			return InferenceUpNodeCommand{}
+		case types.HardwareNodeStatus_POC:
+			logging.Info("POC reconciliation not yet implemented", types.Nodes, "node_id", nodeId)
+			// Return a no-op command for now
+			return &NoOpNodeCommand{Message: "POC reconciliation not implemented"}
+		default:
+			logging.Info("Reconciliation for state not yet implemented", types.Nodes,
+				"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
+			// Return a no-op command for now
+			return &NoOpNodeCommand{Message: "Unknown state reconciliation"}
 		}
 	})
 
@@ -774,44 +774,8 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 	}
 
 	// Execute inference up on all nodes in parallel
-	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			client := newNodeClient(&node.Node)
-
-			// Check if already in inference state (idempotent)
-			state, err := client.NodeState()
-			if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
-				healthy, _ := client.InferenceHealth()
-				if healthy {
-					logging.Info("Node already in healthy inference state", types.Nodes, "node_id", nodeId)
-					node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-					return nil
-				}
-			}
-
-			// Stop node first
-			err = client.Stop()
-			if err != nil {
-				logging.Error("Failed to stop node for inference up", types.Nodes,
-					"node_id", node.Node.Id, "error", err)
-				node.State.Failure("Failed to stop for inference")
-				return err
-			}
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-
-			// Start inference
-			err = inferenceUp(&node.Node, client)
-			if err != nil {
-				logging.Error("Failed to bring up inference", types.Nodes,
-					"node_id", node.Node.Id, "error", err)
-				node.State.Failure("Failed to start inference")
-				return err
-			}
-
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-			logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", nodeId)
-			return nil
-		}
+	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		return InferenceUpNodeCommand{}
 	})
 
 	logging.Info("InferenceUpAllCommand completed", types.Nodes,

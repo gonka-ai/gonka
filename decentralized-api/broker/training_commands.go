@@ -45,40 +45,14 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 	}
 
 	// Execute training start on selected nodes in parallel
-	submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeIds, func(nodeId string, node *NodeWithState) func() error {
-		// Capture parameters for this specific node
+	submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeIds, func(nodeId string, node *NodeWithState) NodeWorkerCommand {
 		rank := c.nodeRanks[nodeId]
-		participant := broker.client.GetAddress()
-		taskId := c.taskId
-		masterAddr := c.masterNodeAddress
-		worldSize := c.worldSize
-
-		return func() error {
-			client := newNodeClient(&node.Node)
-
-			// Stop node first
-			err := client.Stop()
-			if err != nil {
-				logging.Error("Error stopping node for training", types.Nodes,
-					"node_id", nodeId, "error", err)
-				node.State.Failure("Failed to stop for training")
-				return err
-			}
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-
-			// Start training
-			err = client.StartTraining(taskId, participant, nodeId, masterAddr, rank, worldSize)
-			if err != nil {
-				logging.Error("Error starting training", types.Nodes,
-					"node_id", nodeId, "error", err)
-				node.State.Failure("Failed to start training")
-				return err
-			}
-
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_TRAINING)
-			logging.Info("Successfully started training on node", types.Training,
-				"node_id", nodeId, "rank", rank, "task_id", taskId)
-			return nil
+		return StartTrainingNodeCommand{
+			TaskId:         c.taskId,
+			Participant:    broker.client.GetAddress(),
+			MasterNodeAddr: c.masterNodeAddress,
+			Rank:           rank,
+			WorldSize:      c.worldSize,
 		}
 	})
 

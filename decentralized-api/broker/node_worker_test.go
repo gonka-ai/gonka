@@ -38,18 +38,21 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
-	// Test successful job submission
+	// Test successful command submission
 	executed := false
-	success := worker.Submit(func() error {
-		executed = true
-		return nil
-	})
+	cmd := &TestCommand{
+		ExecuteFn: func() error {
+			executed = true
+			return nil
+		},
+	}
+	success := worker.Submit(cmd)
 
-	assert.True(t, success, "Job submission should succeed")
+	assert.True(t, success, "Command submission should succeed")
 
-	// Wait for job execution
+	// Wait for command execution
 	time.Sleep(50 * time.Millisecond)
-	assert.True(t, executed, "Job should have been executed")
+	assert.True(t, executed, "Command should have been executed")
 }
 
 func TestNodeWorker_ErrorHandling(t *testing.T) {
@@ -58,15 +61,18 @@ func TestNodeWorker_ErrorHandling(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
-	// Submit job that returns error
+	// Submit command that returns error
 	testErr := errors.New("test error")
-	success := worker.Submit(func() error {
-		return testErr
-	})
+	cmd := &TestCommand{
+		ExecuteFn: func() error {
+			return testErr
+		},
+	}
+	success := worker.Submit(cmd)
 
-	assert.True(t, success, "Job submission should succeed even if job will error")
+	assert.True(t, success, "Command submission should succeed even if command will error")
 
-	// Wait for job execution
+	// Wait for command execution
 	time.Sleep(50 * time.Millisecond)
 	// No panic should occur, error should be logged
 }
@@ -77,26 +83,28 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 	defer worker.Shutdown()
 
-	// Fill the queue with slow jobs
-	slowJobSubmitted := 0
+	// Fill the queue with slow commands
+	slowCmdSubmitted := 0
 	for i := 0; i < 10; i++ { // Queue size is 10
-		success := worker.Submit(func() error {
-			time.Sleep(100 * time.Millisecond)
-			return nil
-		})
+		cmd := &TestCommand{
+			ExecuteFn: func() error {
+				time.Sleep(100 * time.Millisecond)
+				return nil
+			},
+		}
+		success := worker.Submit(cmd)
 		if success {
-			slowJobSubmitted++
+			slowCmdSubmitted++
 		}
 	}
 
-	assert.Equal(t, 10, slowJobSubmitted, "Should submit exactly 10 jobs (queue size)")
+	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
 
 	// Try to submit one more - should fail
-	success := worker.Submit(func() error {
-		return nil
-	})
+	cmd := &TestCommand{ExecuteFn: func() error { return nil }}
+	success := worker.Submit(cmd)
 
-	assert.False(t, success, "Job submission should fail when queue is full")
+	assert.False(t, success, "Command submission should fail when queue is full")
 }
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {
@@ -104,24 +112,27 @@ func TestNodeWorker_GracefulShutdown(t *testing.T) {
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient)
 
-	// Submit jobs that will execute during shutdown
+	// Submit commands that will execute during shutdown
 	var executedCount int32
 	for i := 0; i < 5; i++ {
-		worker.Submit(func() error {
-			atomic.AddInt32(&executedCount, 1)
-			time.Sleep(10 * time.Millisecond)
-			return nil
-		})
+		cmd := &TestCommand{
+			ExecuteFn: func() error {
+				atomic.AddInt32(&executedCount, 1)
+				time.Sleep(10 * time.Millisecond)
+				return nil
+			},
+		}
+		worker.Submit(cmd)
 	}
 
-	// Give first job time to start
+	// Give first command time to start
 	time.Sleep(5 * time.Millisecond)
 
-	// Shutdown should wait for all jobs
+	// Shutdown should wait for all commands
 	worker.Shutdown()
 
 	assert.Equal(t, int32(5), atomic.LoadInt32(&executedCount),
-		"All queued jobs should execute before shutdown completes")
+		"All queued commands should execute before shutdown completes")
 }
 
 func TestNodeWorker_MLClientInteraction(t *testing.T) {
@@ -131,17 +142,18 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 	defer worker.Shutdown()
 
 	// Test Stop operation
-	worker.Submit(func() error {
-		return mockClient.Stop()
-	})
+	stopCmd := StopNodeCommand{}
+	worker.Submit(stopCmd)
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 1, mockClient.StopCalled, "Stop should be called once")
 	assert.Equal(t, mlnodeclient.MlNodeState_STOPPED, mockClient.CurrentState, "State should be STOPPED")
 
 	// Test InferenceUp operation
-	worker.Submit(func() error {
-		return mockClient.InferenceUp("test-model", []string{"--arg1", "--arg2"})
-	})
+	node.Node.Models = map[string]ModelArgs{
+		"test-model": {Args: []string{"--arg1", "--arg2"}},
+	}
+	inferenceCmd := InferenceUpNodeCommand{}
+	worker.Submit(inferenceCmd)
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 1, mockClient.InferenceUpCalled, "InferenceUp should be called once")
 	assert.Equal(t, "test-model", mockClient.LastInferenceModel, "Model should be captured")
@@ -190,21 +202,23 @@ func TestNodeWorkGroup_ExecuteOnAll(t *testing.T) {
 		group.AddWorker(nodeId, worker)
 	}
 
-	// Execute job on all nodes
+	// Execute command on all nodes
 	var executedCount int32
 	var executedNodes sync.Map
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			atomic.AddInt32(&executedCount, 1)
-			executedNodes.Store(nodeId, true)
-			return nil
+	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		return &TestCommand{
+			ExecuteFn: func() error {
+				atomic.AddInt32(&executedCount, 1)
+				executedNodes.Store(nodeId, true)
+				return nil
+			},
 		}
 	})
 
 	assert.Equal(t, 3, submitted, "Should submit to all 3 nodes")
 	assert.Equal(t, 0, failed, "No submissions should fail")
-	assert.Equal(t, int32(3), atomic.LoadInt32(&executedCount), "All jobs should execute")
+	assert.Equal(t, int32(3), atomic.LoadInt32(&executedCount), "All commands should execute")
 
 	// Verify all nodes executed
 	for i := 0; i < 3; i++ {
@@ -229,10 +243,12 @@ func TestNodeWorkGroup_ExecuteOnNodes(t *testing.T) {
 	targetNodes := []string{"node-1", "node-3"}
 	var executedNodes sync.Map
 
-	submitted, failed := group.ExecuteOnNodes(targetNodes, func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			executedNodes.Store(nodeId, true)
-			return nil
+	submitted, failed := group.ExecuteOnNodes(targetNodes, func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		return &TestCommand{
+			ExecuteFn: func() error {
+				executedNodes.Store(nodeId, true)
+				return nil
+			},
 		}
 	})
 
@@ -270,12 +286,14 @@ func TestNodeWorkGroup_ConcurrentExecution(t *testing.T) {
 
 	startTime := time.Now()
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			startTimes.Store(nodeId, time.Now())
-			time.Sleep(50 * time.Millisecond) // Simulate work
-			endTimes.Store(nodeId, time.Now())
-			return nil
+	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		return &TestCommand{
+			ExecuteFn: func() error {
+				startTimes.Store(nodeId, time.Now())
+				time.Sleep(50 * time.Millisecond) // Simulate work
+				endTimes.Store(nodeId, time.Now())
+				return nil
+			},
 		}
 	})
 
@@ -293,7 +311,7 @@ func TestNodeWorkGroup_ConcurrentExecution(t *testing.T) {
 func TestNodeWorkGroup_ThreadSafety(t *testing.T) {
 	group := NewNodeWorkGroup()
 
-	// Concurrently add/remove workers and execute jobs
+	// Concurrently add/remove workers and execute commands
 	var wg sync.WaitGroup
 
 	// Worker adder goroutine
@@ -321,16 +339,18 @@ func TestNodeWorkGroup_ThreadSafety(t *testing.T) {
 		}
 	}()
 
-	// Job executor goroutine
+	// Command executor goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
 			time.Sleep(20 * time.Millisecond)
-			group.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
-				return func() error {
-					// Simple job
-					return nil
+			group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+				return &TestCommand{
+					ExecuteFn: func() error {
+						// Simple command
+						return nil
+					},
 				}
 			})
 		}
@@ -363,23 +383,37 @@ func TestNodeWorkGroup_ErrorPropagation(t *testing.T) {
 		group.AddWorker(nodeId, worker)
 	}
 
-	// Execute jobs where some fail
+	// Execute commands where some fail
 	var successCount int32
 	var errorCount int32
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) func() error {
-		return func() error {
-			if nodeId == "node-1" {
-				atomic.AddInt32(&errorCount, 1)
-				return errors.New("simulated error")
-			}
-			atomic.AddInt32(&successCount, 1)
-			return nil
+	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
+		return &TestCommand{
+			ExecuteFn: func() error {
+				if nodeId == "node-1" {
+					atomic.AddInt32(&errorCount, 1)
+					return errors.New("simulated error")
+				}
+				atomic.AddInt32(&successCount, 1)
+				return nil
+			},
 		}
 	})
 
 	assert.Equal(t, 3, submitted)
-	assert.Equal(t, 0, failed) // Failed means couldn't submit, not job error
-	assert.Equal(t, int32(2), atomic.LoadInt32(&successCount), "2 jobs should succeed")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&errorCount), "1 job should error")
+	assert.Equal(t, 0, failed) // Failed means couldn't submit, not command error
+	assert.Equal(t, int32(2), atomic.LoadInt32(&successCount), "2 commands should succeed")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&errorCount), "1 command should error")
+}
+
+// TestCommand is a simple command for testing
+type TestCommand struct {
+	ExecuteFn func() error
+}
+
+func (c *TestCommand) Execute(worker *NodeWorker) error {
+	if c.ExecuteFn != nil {
+		return c.ExecuteFn()
+	}
+	return nil
 }
