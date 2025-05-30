@@ -123,6 +123,13 @@ func (c InferenceUpNodeCommand) Execute(worker *NodeWorker) error {
 		break
 	}
 
+	if model == "" {
+		logging.Error("No inference model set in config", types.Nodes,
+			"node_id", worker.nodeId)
+		worker.node.State.Failure("No inference model set in config")
+		return errors.New("no model available for inference")
+	}
+
 	err = worker.mlClient.InferenceUp(model, modelArgs)
 	if err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes,

@@ -548,7 +548,7 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 }
 
 func nodeReconciliationWorker(broker *Broker) {
-	ticker := time.NewTicker(2 * time.Minute) // Reconcile every 2 minutes
+	ticker := time.NewTicker(5 * time.Second) // Reconcile every 2 minutes
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -572,8 +572,11 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	var intendedStatus types.HardwareNodeStatus
 	if b.phaseTracker != nil {
 		intendedStatus = b.phaseTracker.GetIntendedNodeStatus()
-		// Update intended status for all nodes based on current phase
 		for _, node := range b.nodes {
+			if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
+				continue
+			}
+
 			node.State.IntendedStatus = intendedStatus
 		}
 
