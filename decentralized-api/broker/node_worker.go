@@ -119,8 +119,8 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	}
 }
 
-// ExecuteOnAll submits commands to all workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnAll(cmdFactory func(nodeId string, node *NodeWithState) NodeWorkerCommand) (submitted, failed int) {
+// ExecuteOnAll submits a command to all workers and waits for completion
+func (g *NodeWorkGroup) ExecuteOnAll(cmd NodeWorkerCommand) (submitted, failed int) {
 	g.mu.RLock()
 	workersCopy := make(map[string]*NodeWorker)
 	for k, v := range g.workers {
@@ -128,9 +128,8 @@ func (g *NodeWorkGroup) ExecuteOnAll(cmdFactory func(nodeId string, node *NodeWi
 	}
 	g.mu.RUnlock()
 
-	// Submit commands to all workers
+	// Submit command to all workers
 	for nodeId, worker := range workersCopy {
-		cmd := cmdFactory(nodeId, worker.node)
 		if worker.Submit(cmd) {
 			submitted++
 		} else {
@@ -148,8 +147,8 @@ func (g *NodeWorkGroup) ExecuteOnAll(cmdFactory func(nodeId string, node *NodeWi
 	return submitted, failed
 }
 
-// ExecuteOnNodes submits commands to specific workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmdFactory func(nodeId string, node *NodeWithState) NodeWorkerCommand) (submitted, failed int) {
+// ExecuteOnNodes submits a command to specific workers and waits for completion
+func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmd NodeWorkerCommand) (submitted, failed int) {
 	g.mu.RLock()
 	selectedWorkers := make(map[string]*NodeWorker)
 	for _, nodeId := range nodeIds {
@@ -159,9 +158,8 @@ func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmdFactory func(nodeId 
 	}
 	g.mu.RUnlock()
 
-	// Submit commands to selected workers
+	// Submit command to selected workers
 	for nodeId, worker := range selectedWorkers {
-		cmd := cmdFactory(nodeId, worker.node)
 		if worker.Submit(cmd) {
 			submitted++
 		} else {

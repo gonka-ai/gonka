@@ -41,7 +41,7 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 	// Test successful command submission
 	executed := false
 	cmd := &TestCommand{
-		ExecuteFn: func() error {
+		ExecuteFn: func(worker *NodeWorker) error {
 			executed = true
 			return nil
 		},
@@ -64,7 +64,7 @@ func TestNodeWorker_ErrorHandling(t *testing.T) {
 	// Submit command that returns error
 	testErr := errors.New("test error")
 	cmd := &TestCommand{
-		ExecuteFn: func() error {
+		ExecuteFn: func(worker *NodeWorker) error {
 			return testErr
 		},
 	}
@@ -87,7 +87,7 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	slowCmdSubmitted := 0
 	for i := 0; i < 10; i++ { // Queue size is 10
 		cmd := &TestCommand{
-			ExecuteFn: func() error {
+			ExecuteFn: func(worker *NodeWorker) error {
 				time.Sleep(100 * time.Millisecond)
 				return nil
 			},
@@ -101,7 +101,7 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
 
 	// Try to submit one more - should fail
-	cmd := &TestCommand{ExecuteFn: func() error { return nil }}
+	cmd := &TestCommand{ExecuteFn: func(worker *NodeWorker) error { return nil }}
 	success := worker.Submit(cmd)
 
 	assert.False(t, success, "Command submission should fail when queue is full")
@@ -116,7 +116,7 @@ func TestNodeWorker_GracefulShutdown(t *testing.T) {
 	var executedCount int32
 	for i := 0; i < 5; i++ {
 		cmd := &TestCommand{
-			ExecuteFn: func() error {
+			ExecuteFn: func(worker *NodeWorker) error {
 				atomic.AddInt32(&executedCount, 1)
 				time.Sleep(10 * time.Millisecond)
 				return nil
@@ -206,14 +206,12 @@ func TestNodeWorkGroup_ExecuteOnAll(t *testing.T) {
 	var executedCount int32
 	var executedNodes sync.Map
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return &TestCommand{
-			ExecuteFn: func() error {
-				atomic.AddInt32(&executedCount, 1)
-				executedNodes.Store(nodeId, true)
-				return nil
-			},
-		}
+	submitted, failed := group.ExecuteOnAll(&TestCommand{
+		ExecuteFn: func(worker *NodeWorker) error {
+			atomic.AddInt32(&executedCount, 1)
+			executedNodes.Store(worker.node.Node.Id, true)
+			return nil
+		},
 	})
 
 	assert.Equal(t, 3, submitted, "Should submit to all 3 nodes")
@@ -243,13 +241,11 @@ func TestNodeWorkGroup_ExecuteOnNodes(t *testing.T) {
 	targetNodes := []string{"node-1", "node-3"}
 	var executedNodes sync.Map
 
-	submitted, failed := group.ExecuteOnNodes(targetNodes, func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return &TestCommand{
-			ExecuteFn: func() error {
-				executedNodes.Store(nodeId, true)
-				return nil
-			},
-		}
+	submitted, failed := group.ExecuteOnNodes(targetNodes, &TestCommand{
+		ExecuteFn: func(worker *NodeWorker) error {
+			executedNodes.Store(worker.node.Node.Id, true)
+			return nil
+		},
 	})
 
 	assert.Equal(t, 2, submitted, "Should submit to 2 specific nodes")
@@ -286,15 +282,13 @@ func TestNodeWorkGroup_ConcurrentExecution(t *testing.T) {
 
 	startTime := time.Now()
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return &TestCommand{
-			ExecuteFn: func() error {
-				startTimes.Store(nodeId, time.Now())
-				time.Sleep(50 * time.Millisecond) // Simulate work
-				endTimes.Store(nodeId, time.Now())
-				return nil
-			},
-		}
+	submitted, failed := group.ExecuteOnAll(&TestCommand{
+		ExecuteFn: func(worker *NodeWorker) error {
+			startTimes.Store(worker.nodeId, time.Now())
+			time.Sleep(50 * time.Millisecond) // Simulate work
+			endTimes.Store(worker.nodeId, time.Now())
+			return nil
+		},
 	})
 
 	totalDuration := time.Since(startTime)
@@ -345,13 +339,11 @@ func TestNodeWorkGroup_ThreadSafety(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
 			time.Sleep(20 * time.Millisecond)
-			group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-				return &TestCommand{
-					ExecuteFn: func() error {
-						// Simple command
-						return nil
-					},
-				}
+			group.ExecuteOnAll(&TestCommand{
+				ExecuteFn: func(worker *NodeWorker) error {
+					// Simple command
+					return nil
+				},
 			})
 		}
 	}()
@@ -387,17 +379,15 @@ func TestNodeWorkGroup_ErrorPropagation(t *testing.T) {
 	var successCount int32
 	var errorCount int32
 
-	submitted, failed := group.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return &TestCommand{
-			ExecuteFn: func() error {
-				if nodeId == "node-1" {
-					atomic.AddInt32(&errorCount, 1)
-					return errors.New("simulated error")
-				}
-				atomic.AddInt32(&successCount, 1)
-				return nil
-			},
-		}
+	submitted, failed := group.ExecuteOnAll(&TestCommand{
+		ExecuteFn: func(worker *NodeWorker) error {
+			if worker.nodeId == "node-1" {
+				atomic.AddInt32(&errorCount, 1)
+				return errors.New("simulated error")
+			}
+			atomic.AddInt32(&successCount, 1)
+			return nil
+		},
 	})
 
 	assert.Equal(t, 3, submitted)
@@ -408,12 +398,12 @@ func TestNodeWorkGroup_ErrorPropagation(t *testing.T) {
 
 // TestCommand is a simple command for testing
 type TestCommand struct {
-	ExecuteFn func() error
+	ExecuteFn func(worker *NodeWorker) error
 }
 
 func (c *TestCommand) Execute(worker *NodeWorker) error {
 	if c.ExecuteFn != nil {
-		return c.ExecuteFn()
+		return c.ExecuteFn(worker)
 	}
 	return nil
 }

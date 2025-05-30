@@ -3,6 +3,7 @@ package broker
 import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"errors"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -140,11 +141,17 @@ type StartTrainingNodeCommand struct {
 	TaskId         uint64
 	Participant    string
 	MasterNodeAddr string
-	Rank           int
+	NodeRanks      map[string]int
 	WorldSize      int
 }
 
 func (c StartTrainingNodeCommand) Execute(worker *NodeWorker) error {
+	rank, ok := c.NodeRanks[worker.nodeId]
+	if !ok {
+		logging.Error("Rank not found for node in StartTrainingNodeCommand", types.Training, "node_id", worker.nodeId)
+		return errors.New("rank not found for node")
+	}
+
 	// Stop node first
 	err := worker.mlClient.Stop()
 	if err != nil {
@@ -161,7 +168,7 @@ func (c StartTrainingNodeCommand) Execute(worker *NodeWorker) error {
 		c.Participant,
 		worker.nodeId,
 		c.MasterNodeAddr,
-		c.Rank,
+		rank,
 		c.WorldSize,
 	)
 	if err != nil {
@@ -173,7 +180,7 @@ func (c StartTrainingNodeCommand) Execute(worker *NodeWorker) error {
 
 	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_TRAINING)
 	logging.Info("Successfully started training on node", types.Training,
-		"node_id", worker.nodeId, "rank", c.Rank, "task_id", c.TaskId)
+		"node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
 	return nil
 }
 

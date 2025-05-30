@@ -562,14 +562,26 @@ func nodeReconciliationWorker(broker *Broker) {
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	// Collect nodes that need reconciliation
-	needsReconciliation := make([]string, 0)
+	needsReconciliation := make(map[string]NodeWorkerCommand)
 	for nodeId, node := range b.nodes {
 		if node.State.Status != node.State.IntendedStatus {
-			needsReconciliation = append(needsReconciliation, nodeId)
 			logging.Info("Node state mismatch detected", types.Nodes,
 				"node_id", nodeId,
 				"current_state", node.State.Status.String(),
 				"intended_state", node.State.IntendedStatus.String())
+
+			switch node.State.IntendedStatus {
+			case types.HardwareNodeStatus_INFERENCE:
+				needsReconciliation[nodeId] = InferenceUpNodeCommand{}
+			case types.HardwareNodeStatus_POC:
+				logging.Info("POC reconciliation not yet implemented for command pattern", types.Nodes, "node_id", nodeId)
+				// needsReconciliation[nodeId] = StartPoCNodeCommand{ /* params needed */}
+				needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation (command) not implemented"}
+			default:
+				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
+					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
+				needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "Unknown state reconciliation"}
+			}
 		}
 	}
 
@@ -579,35 +591,46 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		return
 	}
 
-	// Limit concurrent reconciliations
+	// Limit concurrent reconciliations and execute
 	const maxConcurrentReconciliations = 5
-	nodesToReconcile := needsReconciliation
-	if len(nodesToReconcile) > maxConcurrentReconciliations {
-		nodesToReconcile = nodesToReconcile[:maxConcurrentReconciliations]
-		logging.Info("Limiting reconciliation batch", types.Nodes,
-			"total_needs_reconciliation", len(needsReconciliation),
-			"batch_size", maxConcurrentReconciliations)
+	submitted := 0
+	failed := 0
+	processed := 0
+
+	for nodeId, cmd := range needsReconciliation {
+		if processed >= maxConcurrentReconciliations {
+			logging.Info("Limiting reconciliation batch", types.Nodes,
+				"total_needs_reconciliation", len(needsReconciliation),
+				"batch_size", maxConcurrentReconciliations)
+			break
+		}
+		if worker, exists := b.nodeWorkGroup.GetWorker(nodeId); exists {
+			if worker.Submit(cmd) {
+				submitted++
+			} else {
+				failed++
+				logging.Error("Failed to submit reconciliation command to worker", types.Nodes,
+					"node_id", nodeId, "reason", "queue full")
+			}
+		} else {
+			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", nodeId)
+			failed++ // Count as failed if worker doesn't exist
+		}
+		processed++
 	}
 
-	// Execute reconciliation on selected nodes
-	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodesToReconcile, func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		switch node.State.IntendedStatus {
-		case types.HardwareNodeStatus_INFERENCE:
-			return InferenceUpNodeCommand{}
-		case types.HardwareNodeStatus_POC:
-			logging.Info("POC reconciliation not yet implemented", types.Nodes, "node_id", nodeId)
-			// Return a no-op command for now
-			return &NoOpNodeCommand{Message: "POC reconciliation not implemented"}
-		default:
-			logging.Info("Reconciliation for state not yet implemented", types.Nodes,
-				"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
-			// Return a no-op command for now
-			return &NoOpNodeCommand{Message: "Unknown state reconciliation"}
+	// Wait for submitted commands
+	for nodeId := range needsReconciliation {
+		if worker, exists := b.nodeWorkGroup.GetWorker(nodeId); exists {
+			// Check if this cmd was actually submitted (could be tricky if map iteration order matters)
+			// For simplicity, just wait on all workers that had commands.
+			// A better way would be to track submitted workers.
+			worker.wg.Wait()
 		}
-	})
+	}
 
 	logging.Info("Reconciliation batch completed", types.Nodes,
-		"submitted", submitted, "failed", failed, "batch_size", len(nodesToReconcile))
+		"submitted", submitted, "failed", failed, "batch_size", processed)
 
 	command.Response <- true
 }
@@ -773,10 +796,11 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 
+	// Create a single command instance
+	cmd := InferenceUpNodeCommand{}
+
 	// Execute inference up on all nodes in parallel
-	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return InferenceUpNodeCommand{}
-	})
+	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(cmd)
 
 	logging.Info("InferenceUpAllCommand completed", types.Nodes,
 		"submitted", submitted, "failed", failed, "total", len(b.nodes))

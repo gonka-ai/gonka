@@ -25,15 +25,17 @@ func (c StartPocCommand) Execute(broker *Broker) {
 		n.State.IntendedStatus = types.HardwareNodeStatus_POC
 	}
 
-	submitted, failed := broker.nodeWorkGroup.ExecuteOnAll(func(nodeId string, node *NodeWithState) NodeWorkerCommand {
-		return StartPoCNodeCommand{
-			BlockHeight: c.BlockHeight,
-			BlockHash:   c.BlockHash,
-			PubKey:      c.PubKey,
-			CallbackUrl: c.CallbackUrl,
-			TotalNodes:  totalNodes,
-		}
-	})
+	// Create a single command instance
+	cmd := StartPoCNodeCommand{
+		BlockHeight: c.BlockHeight,
+		BlockHash:   c.BlockHash,
+		PubKey:      c.PubKey,
+		CallbackUrl: c.CallbackUrl,
+		TotalNodes:  totalNodes,
+	}
+
+	// Execute PoC start on all nodes in parallel
+	submitted, failed := broker.nodeWorkGroup.ExecuteOnAll(cmd)
 
 	logging.Info("StartPocCommand completed", types.PoC,
 		"submitted", submitted, "failed", failed, "total", totalNodes)
