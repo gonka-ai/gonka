@@ -58,8 +58,8 @@ func ProcessNewBlockEvent(
 	logging.Debug("New block event received", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 
 	// Update the phase tracker with the new block information
-	if phaseTracker != nil && epochParams != nil {
-		phaseTracker.UpdateBlockHeight(blockHeight, epochParams, blockHash)
+	if phaseTracker != nil {
+		phaseTracker.UpdateBlockHeight(blockHeight, blockHash)
 	}
 
 	if epochParams.IsStartOfPoCStage(blockHeight) {

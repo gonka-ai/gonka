@@ -66,7 +66,7 @@ func main() {
 		panic(err)
 	}
 
-	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+	chainPhaseTracker := chainphase.NewChainPhaseTracker(context.Background(), *recorder)
 	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, config)
 	nodes := config.GetNodes()
 	for _, node := range nodes {
