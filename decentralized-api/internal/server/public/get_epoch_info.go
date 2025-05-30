@@ -18,10 +18,14 @@ func (s *Server) getEpochSummaryInfo(ctx echo.Context) error {
 		return ErrInvalidEpochId
 	}
 
+	logging.Info("getEpochSummaryInfo epoch start height", types.Server, "epochStartHeight", epochStartHeight)
+
 	participantIDs := ctx.QueryParams()["participantIds"]
 	if len(participantIDs) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "no participantIds provided")
 	}
+
+	logging.Info("getEpochSummaryInfo participantIds", types.Server, "participantIDs", participantIDs)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
 	summaries, err := queryClient.EpochPerformanceSummaryByParticipants(ctx.Request().Context(), &types.QueryParticipantsEpochPerformanceSummaryRequest{
@@ -50,7 +54,7 @@ func (s *Server) getEpochStartBlockHeight(epochStr string) (uint64, error) {
 	case "latest":
 		epoch, err := queryClient.PreviousEpochGroupData(*s.recorder.GetContext(), &types.QueryPreviousEpochGroupDataRequest{})
 		if err != nil {
-			logging.Error("Failed to get current epoch", types.Participants, "error", err)
+			logging.Error("Failed to get previous epoch", types.Participants, "error", err)
 			return 0, err
 		}
 		blockStartHeight = epoch.EpochGroupData.PocStartBlockHeight

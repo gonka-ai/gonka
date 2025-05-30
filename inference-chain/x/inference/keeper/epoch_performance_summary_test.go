@@ -65,3 +65,25 @@ func TestEpochPerformanceSummaryGetAll(t *testing.T) {
 		nullify.Fill(keeper.GetAllEpochPerformanceSummary(ctx)),
 	)
 }
+
+func TestEpochPerformanceSummaryGetByParticipants(t *testing.T) {
+	keeper, ctx := keepertest.InferenceKeeper(t)
+	items := createNEpochPerformanceSummary(keeper, ctx, 10)
+
+	expectedItems := items[:1]
+	require.ElementsMatch(t,
+		nullify.Fill(expectedItems),
+		nullify.Fill(keeper.GetParticipantsEpochSummaries(ctx, []string{"0", "1", "2"}, 0)),
+	)
+
+	extraItem := types.EpochPerformanceSummary{}
+	extraItem.EpochStartHeight = uint64(1)
+	extraItem.ParticipantId = "2"
+
+	keeper.SetEpochPerformanceSummary(ctx, extraItem)
+	expectedItems = append(items[1:2], extraItem)
+	require.ElementsMatch(t,
+		nullify.Fill(expectedItems),
+		nullify.Fill(keeper.GetParticipantsEpochSummaries(ctx, []string{"0", "1", "2"}, 1)),
+	)
+}

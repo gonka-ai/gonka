@@ -71,15 +71,14 @@ service Query {
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
-
   }
+
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
-
   }
 
   // Queries a list of SettleAmount items.
-  rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
+  rpc SettleAmount  (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
 
   }
