@@ -75,20 +75,13 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	}
 	el.ws = ws
 
-	// Define the combined query for most message.action based Tx events
-	combinedTxActionsQuery := fmt.Sprintf("tm.event='Tx' AND (message.action='%s' OR message.action='%s' OR message.action='%s' OR message.action='%s')",
-		finishInferenceAction,
-		startInferenceAction,
-		submitGovProposalAction,
-		trainingTaskAssignedAction,
-	)
-
 	// WARNING: It looks like Tendermint can't support more than 5 subscriptions per websocket
-	//  at least I wasn't receiving any from subscriptions 6 and 7,
-	// 	so this is why I have now a combinedTxActionsQuery
-	subscribeToEvents(el.ws, 1, combinedTxActionsQuery)
-	subscribeToEvents(el.ws, 2, "tm.event='NewBlock'")
-	subscribeToEvents(el.ws, 3, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	// If we want to add more subscription we should subscribe to all TX and filter on our side
+	subscribeToEvents(el.ws, 1, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
+	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
