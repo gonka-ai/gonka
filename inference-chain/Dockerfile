@@ -3,7 +3,7 @@
 ################################################################################
 # Build stage
 ################################################################################
-FROM golang:1.23.5-bookworm AS builder
+FROM golang:alpine AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
@@ -12,14 +12,20 @@ ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
     CGO_ENABLED=1 \
     GO111MODULE=on \
-    GOCACHE=/root/.cache/go-build
+    GOCACHE=/root/.cache/go-build \
+    CGO_CFLAGS="-I/lib" \
+    CGO_LDFLAGS="-L/lib" \
+    # Override the wasmvm library path to use our musl version
+    LD_LIBRARY_PATH=/lib
 
-RUN apt-get update && \
-    apt-get install -y make gcc build-essential git && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache make gcc musl-dev git
 
-RUN wget -O /lib/libwasmvm.x86_64.so https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm.x86_64.so \
-    && echo "b0c3b761e5f00e45bdafebcfe9c03bd703b88b3f535c944ca8e27ef9b891cd10 /lib/libwasmvm.x86_64.so" | sha256sum -c
+# Use the musl libc version of wasmvm and create a symlink for the linker
+RUN wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.x86_64.a \
+    && echo "e660a38efb2930b34ee6f6b0bb12730adccb040b6ab701b8f82f34453a426ae7 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
+    && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
+    # Remove the glibc version from the Go module cache
+    && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.x86_64.so
 
 RUN wget -O /root/cw20_base.wasm \
     https://github.com/CosmWasm/cw-plus/releases/download/v2.0.0/cw20_base.wasm \
@@ -38,7 +44,7 @@ ARG LDFLAGS
 ARG TAGS=""
 RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
-    go build -mod=readonly -ldflags "${LDFLAGS}" -tags="${TAGS}"\
+    go build -mod=readonly -tags="muslc ${TAGS}" -ldflags "${LDFLAGS}" \
     -o ./build/inferenced \
     ./cmd/inferenced/main.go
 
@@ -51,11 +57,12 @@ RUN mkdir -p /tmp/deps && \
 # ################################################################################
 # # Final stage
 # ################################################################################
-FROM debian:bookworm-slim AS final
+FROM alpine:3.18 AS final
 
-RUN apt-get update && \
-    apt-get install -y sed ca-certificates jq && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk update && \
+    apk add --no-cache sed ca-certificates gcc musl-dev && \
+    rm -rf /var/cache/apk/*
+RUN apk update && apk add --no-cache jq
 
 ARG GENESIS_OVERRIDES_FILE=inference-chain/prod_genesis_overrides.json
 
@@ -76,7 +83,7 @@ COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY ./cosmovisor/v1.7.0/linux-amd64/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
-COPY --from=builder /lib/libwasmvm.x86_64.so /lib/libwasmvm.x86_64.so
+COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.x86_64.a
 COPY --from=builder /root/cw20_base.wasm /root/cw20_base.wasm
 
 RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
