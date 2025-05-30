@@ -8,7 +8,7 @@ import (
 )
 
 func TestSingleNode(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -34,7 +34,7 @@ func TestSingleNode(t *testing.T) {
 }
 
 func TestNodeRemoval(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -65,7 +65,7 @@ func TestNodeRemoval(t *testing.T) {
 }
 
 func TestModelMismatch(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -83,7 +83,7 @@ func TestModelMismatch(t *testing.T) {
 }
 
 func TestHighConcurrency(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -103,7 +103,7 @@ func TestHighConcurrency(t *testing.T) {
 }
 
 func TestVersionFiltering(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	v1node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -141,7 +141,7 @@ func TestVersionFiltering(t *testing.T) {
 }
 
 func TestMultipleNodes(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node1 := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -189,7 +189,7 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 }
 
 func TestReleaseNode(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -221,7 +221,7 @@ func TestReleaseNode(t *testing.T) {
 }
 
 func TestRoundTripSegment(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:             "localhost",
 		InferenceSegment: "/is",
@@ -249,7 +249,7 @@ func TestRoundTripSegment(t *testing.T) {
 }
 
 func TestCapacityCheck(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewBroker(nil, nil, nil)
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
