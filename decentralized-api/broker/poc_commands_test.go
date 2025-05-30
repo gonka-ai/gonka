@@ -15,9 +15,11 @@ func TestStartPocCommand_Success(t *testing.T) {
 	node1 := createTestNode("node-1")
 	node2 := createTestNode("node-2")
 
-	// Create mock clients
+	// Create mock clients, starting in a non-stopped state to ensure Stop() is called
 	mockClient1 := mlnodeclient.NewMockClient()
+	mockClient1.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient2 := mlnodeclient.NewMockClient()
+	mockClient2.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 
 	// Create node workers with mock clients
 	worker1 := NewNodeWorkerWithClient("node-1", node1, mockClient1)
@@ -29,6 +31,7 @@ func TestStartPocCommand_Success(t *testing.T) {
 	workGroup.AddWorker("node-2", worker2)
 
 	// Create mock broker
+	// Provide a mock CosmosMessageClient for GetAddress()
 	broker := &Broker{
 		nodes: map[string]*NodeWithState{
 			"node-1": node1,
@@ -118,8 +121,9 @@ func TestStartPocCommand_StopFails(t *testing.T) {
 	// Create test node
 	node := createTestNode("node-1")
 
-	// Create mock client that fails on Stop
+	// Create mock client that fails on Stop, initially in a non-stopped state
 	mockClient := mlnodeclient.NewMockClient()
+	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient.StopError = errors.New("stop failed")
 
 	// Create node worker with mock client
