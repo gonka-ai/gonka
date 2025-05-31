@@ -16,4 +16,5 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler("v0.1.4-21", v1_4_test_update.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
 	app.UpgradeKeeper.SetUpgradeHandler("v0.1.4-22", v1_4_test_update.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
 	app.UpgradeKeeper.SetUpgradeHandler("v0.1.4-23", v1_4_test_update.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
+	app.UpgradeKeeper.SetUpgradeHandler("v0.1.4-24", v1_4_test_update.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
 }
