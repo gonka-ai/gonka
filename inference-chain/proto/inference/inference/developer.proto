@@ -1,0 +1,21 @@
+syntax = "proto3";
+package inference.inference;
+
+import "inference/inference/inference.proto";
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message DeveloperStatsByEpoch {
+  uint64 epoch_id = 1;
+  map<string, InferenceStats> inferences = 2;
+}
+
+message InferenceStats {
+  InferenceStatus status = 1;
+  uint64 ai_tokens_used = 2;
+}
+
+message DeveloperStatsByTime {
+  uint64 epoch_id = 1;
+  int64 timestamp = 2;
+  InferenceStats inference = 3;
+}

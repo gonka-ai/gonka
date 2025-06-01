@@ -37,4 +37,3 @@ message CurrentEpochStats {
   uint64 validated_inferences = 6;
   uint64 invalidated_inferences = 7;
 }
-

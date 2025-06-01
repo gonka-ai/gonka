@@ -183,12 +183,7 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
   }
 
-  rpc EpochPerformanceSummaryByParticipants (QueryParticipantsEpochPerformanceSummaryRequest)
-      returns (QueryParticipantsEpochPerformanceSummaryResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}";
-  }
-
-    // Queries a list of TrainingTask items.
+  // Queries a list of TrainingTask items.
   rpc TrainingTask (QueryTrainingTaskRequest) returns (QueryTrainingTaskResponse) {
     option (google.api.http).get = "/productscience/inference/inference/training_task";
 
@@ -229,6 +224,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/get_all_participant_current_stats";
 
   }
+
+  rpc GetParticipantsFullStats (QueryParticipantsFullStatsRequest)
+      returns (QueryParticipantsFullStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants_stats";
+  }
+
 
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
@@ -494,16 +495,6 @@ message QueryGetEpochPerformanceSummaryResponse {
   EpochPerformanceSummary epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
 }
 
-message QueryParticipantsEpochPerformanceSummaryRequest {
-  uint64 epochStartHeight = 1;
-  repeated  string participantId    = 2;
-}
-
-message QueryParticipantsEpochPerformanceSummaryResponse {
-  repeated EpochPerformanceSummary                epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
-  cosmos.base.query.v1beta1.PageResponse pagination              = 2;
-}
-
 message QueryAllEpochPerformanceSummaryRequest {
   cosmos.base.query.v1beta1.PageRequest pagination = 1;
 }
@@ -568,6 +559,20 @@ message ParticipantCurrentStats {
   string participant_id = 1;
   uint64 weight         = 2;
   int32  reputation     = 3;
+}
+
+message ParticipantFullStats {
+  string address = 1;
+  int32  reputation = 2;
+  uint64 rewarded_coins_current_epoch = 3;
+  uint64 earned_coins_current_epoch = 4;
+  uint64 rewarded_coins_latest_epoch = 5;
+}
+
+message QueryParticipantsFullStatsRequest {}
+
+message QueryParticipantsFullStatsResponse {
+  repeated ParticipantFullStats participants_stats = 1;
 }
 
 message QueryGetMinimumValidationAverageRequest {}

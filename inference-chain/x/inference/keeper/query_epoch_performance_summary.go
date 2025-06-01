@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -55,16 +54,39 @@ func (k Keeper) EpochPerformanceSummary(ctx context.Context, req *types.QueryGet
 	return &types.QueryGetEpochPerformanceSummaryResponse{EpochPerformanceSummary: val}, nil
 }
 
-func (k Keeper) EpochPerformanceSummaryByParticipants(ctx context.Context, req *types.QueryParticipantsEpochPerformanceSummaryRequest) (*types.QueryParticipantsEpochPerformanceSummaryResponse, error) {
+/*func (k Keeper) EpochPerformanceSummaryByParticipants(ctx context.Context, req *types.QueryParticipantsEpochPerformanceSummaryRequest) (*types.QueryParticipantsEpochPerformanceSummaryResponse, error) {
 	if req == nil || len(req.ParticipantId) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	k.LogInfo("EpochPerformanceSummaryByParticipants", types.System, "req.ParticipantId", req.ParticipantId, "req.EpochStartHeight", req.EpochStartHeight)
+	var blockStartHeight uint64
+	switch req.GetEpoch() {
+	case "current":
+		epoch, err := k.GetCurrentEpochGroup(ctx)
+		if err != nil {
+			k.LogError("Failed to get current epoch group", types.EpochGroup, err)
+			return nil, err
+		}
+
+		blockStartHeight = epoch.GroupData.PocStartBlockHeight
+	case "latest":
+		epoch, err := k.GetPreviousEpochGroup(ctx)
+		if err != nil {
+			k.LogError("Failed to get previous epoch group", types.EpochGroup, err)
+			return nil, err
+		}
+		blockStartHeight = epoch.GroupData.PocStartBlockHeight
+	default:
+		return nil, status.Error(codes.InvalidArgument, "invalid epoch")
+	}
+
+	k.LogInfo("EpochPerformanceSummaryByParticipants", types.System, "req.ParticipantId", req.ParticipantId, "req.EpochStartHeight", blockStartHeight)
+
 	val := k.GetParticipantsEpochSummaries(
 		ctx,
 		req.ParticipantId,
-		req.EpochStartHeight,
+		blockStartHeight,
 	)
 	return &types.QueryParticipantsEpochPerformanceSummaryResponse{EpochPerformanceSummary: val}, nil
 }
+*/
