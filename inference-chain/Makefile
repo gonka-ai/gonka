@@ -67,6 +67,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
+		--target binary-exporter \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..
@@ -78,12 +79,12 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/inferenced:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/inferenced:$(VERSION))
 	$(eval GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
     	echo "Setting latest tag..."; \
-		docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/inferenced:latest; \
 	fi
 
 
@@ -91,19 +92,13 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	@echo "pushing to Google Cloud Artifact Registry"
-	@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
-	@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) ghcr.io/product-science/inferenced:$(VERSION)
 	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/inferenced:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) gcr.io/decentralized-ai/inferenced:latest; \
-		@echo "Pushing latest tag to Google Cloud Artifact Registry"; \
-		@docker push gcr.io/decentralized-ai/inferenced:latest; \
-		@echo "Pushing latest tag to GitHub Container Registry"; \
 		@docker tag ghcr.io/product-science/inferenced:$(VERSION) ghcr.io/product-science/inferenced:latest; \
+		@echo "Pushing latest tag to GitHub Container Registry"; \
 		@docker push ghcr.io/product-science/inferenced:latest; \
 	fi
 
@@ -117,30 +112,31 @@ build-for-upgrade:
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-amd64
+	@cp ./output/inferenced ../public-html/v2/inferenced/inferenced-amd64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
 	@zip -X -j ../public-html/v2/inferenced/inferenced-amd64.zip ../public-html/v2/inferenced/inferenced-amd64
-	@echo "--> generating shasum for inferenced.zip"
+	@echo "--> generating shasum for inferenced-amd64.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
-	$(eval PLATFORM=linux/arm64)
-	$(eval GOOS=linux)
-	$(eval GOARCH=arm64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_UPGRADE)
+	@mkdir -p build
+	@echo "--> building inferenced for ARM64 using direct Go cross-compilation"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(ldflags)" -o ./build/inferenced-arm64 ./cmd/inferenced/main.go
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/usr/bin/inferenced ../public-html/v2/inferenced/inferenced-arm64
+	@cp ./build/inferenced-arm64 ../public-html/v2/inferenced/inferenced-arm64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64
 	@zip -X -j ../public-html/v2/inferenced/inferenced-arm64.zip ../public-html/v2/inferenced/inferenced-arm64
-	@echo "--> generating shasum for inferenced.zip"
+	@echo "--> generating shasum for inferenced-arm64.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip
-
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "inferenced-arm64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip)" >> ../public-html/v2/checksums.txt
 
 #################################################
 # CROSS-COMPILATION SECTION

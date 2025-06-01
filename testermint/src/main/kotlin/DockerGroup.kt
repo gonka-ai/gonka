@@ -269,6 +269,9 @@ fun initCluster(
         return initCluster(joinCount, config, reboot = true)
     }
     logSection("Cluster Initialized")
+    cluster.allPairs.forEach {
+        Logger.info("${it.name} has account ${it.node.getAddress()}", "")
+    }
     return cluster to cluster.genesis
 }
 
@@ -345,10 +348,16 @@ data class LocalCluster(
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
     companion object {
         fun create(localCluster: LocalCluster, name: String): Consumer {
-            val cli = ApplicationCLI(
+            // TODO: Add Kube creation
+            val newConfig = localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName)
+            val dockerExec = DockerExecutor(
                 name,
-                localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName),
-                LogOutput(name, "consumer")
+                newConfig,
+            )
+            val cli = ApplicationCLI(
+                newConfig,
+                LogOutput(name, "consumer"),
+                dockerExec
             )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)

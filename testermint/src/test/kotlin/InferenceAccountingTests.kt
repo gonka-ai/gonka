@@ -1,20 +1,5 @@
-import com.productscience.EpochStage
-import com.productscience.InferenceResult
-import com.productscience.LocalCluster
-import com.productscience.LocalInferencePair
-import com.productscience.data.AppState
-import com.productscience.data.GenesisOnlyParams
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferencePayload
-import com.productscience.data.InferenceState
-import com.productscience.data.InferenceStatus
-import com.productscience.data.Participant
-import com.productscience.data.spec
-import com.productscience.getInferenceResult
-import com.productscience.inferenceConfig
-import com.productscience.inferenceRequest
-import com.productscience.initCluster
-import com.productscience.logSection
+import com.productscience.*
+import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
@@ -26,6 +11,7 @@ import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.test.assertNotNull
 
+val DELAY_SEED = 8675309
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
 
@@ -46,6 +32,26 @@ class InferenceAccountingTests : TestermintTest() {
                 beforeBalances.first { it.id == address }.coinsOwed + change
             )
         }
+    }
+
+    @Test
+    fun `start comes after finish inference`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing Claims")
+        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making inferences")
+        val participants = genesis.api.getParticipants()
+
+        participants.forEach {
+            Logger.info("Participant: ${it.id}, Balance: ${it.balance}")
+        }
+        logSection("Making inference")
+        val inferences: Sequence<InferenceResult> = generateSequence {
+            getInferenceResult(genesis, seed = DELAY_SEED)
+        }.take(2)
+        verifySettledInferences(genesis, inferences, participants)
+
     }
 
     fun expectedCoinBalanceChanges(inferences: List<InferencePayload>): Map<String, Long> {
@@ -133,7 +139,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(genesis.node.addresss)
+        assertThat(topMiner.address).isEqualTo(genesis.node.getAddress())
         val startTime = topMiner.firstQualifiedStarted
         assertThat(topMiner.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner.lastUpdatedTime).isEqualTo(startTime)
@@ -144,7 +150,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners2 = genesis.node.getTopMiners()
         assertThat(topMiners2.topMiner).hasSize(1)
         val topMiner2 = topMiners2.topMiner.first()
-        assertThat(topMiner2.address).isEqualTo(genesis.node.addresss)
+        assertThat(topMiner2.address).isEqualTo(genesis.node.getAddress())
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(3))
@@ -172,9 +178,9 @@ class InferenceAccountingTests : TestermintTest() {
         val blockUntilReward = genesis.node.getGenesisState().appState.inference.genesisOnlyParams.topRewardPeriod / 5
         val settlesUntilReward = blockUntilReward / genesis.getParams().epochParams.epochLength
         logSection("Making Inferences")
-        (0 until settlesUntilReward+1).forEach { i ->
-            logSection("Making set $i of ${settlesUntilReward+1} inferences")
-        // Odds of not getting either one of the requests or some of the validations are tiny
+        (0 until settlesUntilReward + 1).forEach { i ->
+            logSection("Making set $i of ${settlesUntilReward + 1} inferences")
+            // Odds of not getting either one of the requests or some of the validations are tiny
             genesis.makeInferenceRequest(inferenceRequest)
             genesis.makeInferenceRequest(inferenceRequest)
             genesis.makeInferenceRequest(inferenceRequest)
@@ -186,7 +192,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(firstJoin.node.addresss)
+        assertThat(topMiner.address).isEqualTo(firstJoin.node.getAddress())
         val standardizedExpectedReward = getTopMinerReward(localCluster)
         val currentBalance = firstJoin.node.getSelfBalance("nicoin")
         // greater, because it's done validation work at some point, no doubt.
@@ -206,7 +212,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster: LocalCluster,
         failingAddress: String,
         requestingNode: LocalInferencePair = cluster.genesis,
-        requester: String? = cluster.genesis.node.addresss,
+        requester: String? = cluster.genesis.node.getAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
@@ -245,7 +251,7 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
         localCluster.allPairs.forEach { it.mock?.setInferenceResponse("This is invalid json!!!") }
-        var failure:Exception? = null
+        var failure: Exception? = null
         try {
             genesis.makeInferenceRequest(inferenceRequest)
         } catch (e: Exception) {
@@ -262,7 +268,8 @@ class InferenceAccountingTests : TestermintTest() {
         genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
         genesis.waitForStage(EpochStage.START_OF_POC)
         logSection("Verifying inference was expired and refunded")
-        val canceledInference = localCluster.joinPairs.first().api.getInference(timeouts.inferenceTimeout.first().inferenceId)
+        val canceledInference =
+            localCluster.joinPairs.first().api.getInference(timeouts.inferenceTimeout.first().inferenceId)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
         assertThat(canceledInference.executedBy).isNull()
         val afterTimeouts = genesis.node.getInferenceTimeouts()
@@ -335,7 +342,8 @@ fun verifySettledInferences(
     }
 
     payouts.forEach { (address, change) ->
-        assertThat(actualChanges[address]).`as` { "Participant $address settle change" }.isCloseTo(change, Offset.offset(3))
+        assertThat(actualChanges[address]).`as` { "Participant $address settle change" }
+            .isCloseTo(change, Offset.offset(3))
         Logger.info("Participant: $address, Settle Change: $change")
     }
 }
@@ -349,7 +357,7 @@ fun calculateBalanceChanges(
         when (inference.status) {
             InferenceStatus.STARTED.value -> {
                 require(inference.escrowAmount != null) { "Escrow amount is null for started inference" }
-                payouts.add(inference.requestedBy, inference.escrowAmount, "initial escrow")
+                payouts.add(inference.requestedBy!!, inference.escrowAmount, "initial escrow")
             }
             // no payouts
             InferenceStatus.FINISHED.value -> {
@@ -357,10 +365,10 @@ fun calculateBalanceChanges(
                 require(inference.assignedTo != null) { "Assigned to is null for finished inference" }
                 require(inference.escrowAmount != null) { "Escrow amount is null for finished inference" }
                 // refund from escrow
-                payouts.add(inference.requestedBy, -inference.actualCost, "actual cost")
-                payouts.add(inference.assignedTo, inference.actualCost, "full inference")
+                payouts.add(inference.requestedBy!!, -inference.actualCost, "actual cost")
+                payouts.add(inference.assignedTo!!, inference.actualCost, "full inference")
                 payouts.add(
-                    inference.assignedTo,
+                    inference.assignedTo!!,
                     calculateRewards(inferenceParams, inference.actualCost),
                     "reward for inference"
                 )
@@ -399,12 +407,12 @@ fun calculateBalanceChanges(
                 }
 
                 // refund from escrow
-                payouts.add(inference.requestedBy, -inference.actualCost, "actual cost")
+                payouts.add(inference.requestedBy!!, -inference.actualCost, "actual cost")
             }
 
             InferenceStatus.EXPIRED.value, InferenceStatus.INVALIDATED.value -> {
                 // full refund
-                payouts.add(inference.requestedBy, 0, "full refund of expired or invalidated")
+                payouts.add(inference.requestedBy!!, 0, "full refund of expired or invalidated")
             }
         }
     }
@@ -415,6 +423,7 @@ fun MutableMap<String, Long>.add(key: String, amount: Long, reason: String) {
     Logger.info("$key:$amount for $reason")
     this[key] = (this[key] ?: 0) + amount
 }
+
 fun calculateCoinRewards(
     preSettle: List<Participant>,
     params: InferenceParams,

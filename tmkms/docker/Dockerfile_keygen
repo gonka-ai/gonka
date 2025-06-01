@@ -12,10 +12,10 @@ RUN cargo install tmkms --features=softsign --version=0.12.0
 
 WORKDIR /root
 
-RUN tmkms init .tmkms
+RUN tmkms init /app/tmkms_init_data
 
 ARG TMKMS_TOML=tmkms.toml
-COPY ${TMKMS_TOML} /root/.tmkms/tmkms.toml
+COPY ${TMKMS_TOML} /app/tmkms_init_data/tmkms.toml
 COPY docker/init.sh /root/init.sh
 RUN chmod +x /root/init.sh
 

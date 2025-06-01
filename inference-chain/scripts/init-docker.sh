@@ -124,6 +124,10 @@ $APP_NAME config set app state-sync.snapshot-keep-recent $SNAPSHOT_KEEP_RECENT
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
 
+#if [ -n "${DEBUG-}" ]; then
+#  sed -i 's/^log_level = "info"/log_level = "debug"/' "$STATE_DIR/config/config.toml"
+#fi
+
 if [ -n "$P2P_EXTERNAL_ADDRESS" ]; then
   echo "Setting the external address for P2P to $P2P_EXTERNAL_ADDRESS"
   $APP_NAME config set config p2p.external_address "$P2P_EXTERNAL_ADDRESS" --skip-validate

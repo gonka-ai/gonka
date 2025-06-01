@@ -1,10 +1,5 @@
 package completionapi
 
-import (
-	"encoding/json"
-	"strings"
-)
-
 type Response struct {
 	ID                string   `json:"id"`
 	Object            string   `json:"object"`
@@ -55,6 +50,10 @@ type Usage struct {
 	TotalTokens      uint64 `json:"total_tokens"`
 }
 
+func (u *Usage) IsEmpty() bool {
+	return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0
+}
+
 const DataPrefix = "data: "
 
 type SerializedStreamedResponse struct {
@@ -63,22 +62,4 @@ type SerializedStreamedResponse struct {
 
 type StreamedResponse struct {
 	Data []Response `json:"data"`
-}
-
-func UnmarshalEvent(event string) (*Response, error) {
-	if !strings.HasPrefix(event, DataPrefix) {
-		return nil, nil
-	}
-
-	trimmed := strings.TrimSpace(strings.TrimPrefix(event, DataPrefix))
-	if strings.HasPrefix(trimmed, "[DONE]") {
-		return nil, nil
-	}
-
-	var response Response
-	if err := json.Unmarshal([]byte(trimmed), &response); err != nil {
-		return nil, err
-	}
-
-	return &response, nil
 }

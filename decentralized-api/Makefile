@@ -41,6 +41,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--target binary-exporter \
 		-f $(DOCKER_FILE) \
 		--output type=local,dest=./output \
 		..
@@ -71,25 +72,20 @@ build-docker:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
-	$(eval DOCKER_TAG=gcr.io/decentralized-ai/api:$(VERSION))
+	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		echo "Setting latest tag..."; \
-		docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
+		docker tag $(DOCKER_TAG) ghcr.io/product-science/api:latest; \
 	fi
 
 docker-push:
 	@echo "--> pushing decentralized-api docker image"
-	@echo "pushing to Google Cloud Artifact Registry"
-	@docker push gcr.io/decentralized-ai/api:$(VERSION)
-	@docker tag gcr.io/decentralized-ai/api:$(VERSION) ghcr.io/product-science/api:$(VERSION)
 	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/api:$(VERSION)
 
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		@echo "Setting latest tag..."; \
-		@docker tag gcr.io/decentralized-ai/api:$(VERSION) gcr.io/decentralized-ai/api:latest; \
-		@docker push gcr.io/decentralized-ai/api:latest; \
 		@docker tag ghcr.io/product-science/api:$(VERSION) ghcr.io/product-science/api:latest; \
 		@docker push ghcr.io/product-science/api:latest; \
 	fi
@@ -104,29 +100,31 @@ build-for-upgrade:
 	@rm -rf ../public-html/v2/dapi/*
 	@mkdir -p ../public-html/v2/dapi
 	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
-	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api-amd64
+	@cp ./output/decentralized-api ../public-html/v2/dapi/decentralized-api-amd64
 	@echo "--> zipping decentralized-api binary"
 	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-amd64
 	@zip -X -j ../public-html/v2/dapi/decentralized-api-amd64.zip ../public-html/v2/dapi/decentralized-api-amd64
-	@echo "--> generating shasum for decentralized-api.zip"
+	@echo "--> generating shasum for decentralized-api-amd64.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "decentralized-api-amd64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip)" >> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
-	$(eval PLATFORM=linux/arm64)
-	$(eval GOOS=linux)
-	$(eval GOARCH=arm64)
-	$(eval DOCKER_FILE=Dockerfile)
-	$(DOCKER_BUILD_UPGRADE)
+	@mkdir -p build
+	@echo "--> building decentralized-api for ARM64 using direct Go cross-compilation"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o ./build/dapi-arm64
 	@mkdir -p ../public-html/v2/dapi
-	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
-	@cp ./output/usr/bin/decentralized-api ../public-html/v2/dapi/decentralized-api-arm64
+	@echo "--> copying built decentralized-api binary to ../public-html/v2/dapi"
+	@cp ./build/dapi-arm64 ../public-html/v2/dapi/decentralized-api-arm64
 	@echo "--> zipping decentralized-api binary"
 	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-arm64
 	@zip -X -j ../public-html/v2/dapi/decentralized-api-arm64.zip ../public-html/v2/dapi/decentralized-api-arm64
-	@echo "--> generating shasum for decentralized-api.zip"
+	@echo "--> generating shasum for decentralized-api-arm64.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip
+	@echo "--> appending to ../public-html/v2/checksums.txt"
+	@echo "decentralized-api-arm64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip)" >> ../public-html/v2/checksums.txt
 
 #################################################
 # CROSS-COMPILATION SECTION

@@ -68,6 +68,10 @@ sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
 sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml
 #sed -Ei 's/^log_level = "info"$/log_level = "debug"/g' $STATE_DIR/config/config.toml
+#if [ -n "${DEBUG-}" ]; then
+#  sed -i 's/^log_level = "info"/log_level = "debug"/' "$STATE_DIR/config/config.toml"
+#fi
+
 
 echo "Creating the key"
 # Create a key

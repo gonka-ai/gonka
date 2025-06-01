@@ -23,6 +23,7 @@ import (
 
 const (
 	finishInferenceAction      = "/inference.inference.MsgFinishInference"
+	startInferenceAction       = "/inference.inference.MsgStartInference"
 	validationAction           = "/inference.inference.MsgValidation"
 	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
 	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
@@ -40,6 +41,7 @@ type EventListener struct {
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
+	cancelFunc          context.CancelFunc
 
 	ws *websocket.Conn
 }
@@ -51,6 +53,7 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	cancelFunc context.CancelFunc,
 ) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
@@ -59,6 +62,7 @@ func NewEventListener(
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
+		cancelFunc:          cancelFunc,
 	}
 }
 
@@ -74,6 +78,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	el.ws = ws
 
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
 	subscribeToEvents(el.ws, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
@@ -151,8 +156,9 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 					logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
 
 					if upgrade.CheckForUpgrade(el.configManager) {
-						logging.Error("Upgrade required! Exiting...", types.Upgrades)
-						panic("Upgrade required")
+						logging.Error("Upgrade required! Shutting down the entire system...", types.Upgrades)
+						el.cancelFunc()
+						return
 					}
 
 				}
@@ -254,7 +260,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	//	}
 	//}
 	switch action {
-	case finishInferenceAction:
+	case startInferenceAction, finishInferenceAction:
 		if el.isNodeSynced() {
 			el.validator.SampleInferenceToValidate(
 				event.Result.Events["inference_finished.inference_id"],
