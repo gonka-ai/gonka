@@ -54,7 +54,10 @@ import (
 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 
+	blsmodulev1 "github.com/productscience/inference/api/inference/bls/module"
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
+	_ "github.com/productscience/inference/x/bls/module" // import for side-effects
+	blstypes "github.com/productscience/inference/x/bls/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
 
@@ -90,6 +93,7 @@ var (
 		consensustypes.ModuleName,
 		circuittypes.ModuleName,
 		// chain modules
+		blstypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		// now ensure wasm is included in init genesis:
 		wasmtypes.ModuleName,
@@ -110,6 +114,7 @@ var (
 		ibctransfertypes.ModuleName,
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
+		blstypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// starport scaffolding # stargate/app/beginBlockers
@@ -127,6 +132,7 @@ var (
 		capabilitytypes.ModuleName,
 		icatypes.ModuleName,
 		ibcfeetypes.ModuleName,
+		blstypes.ModuleName,
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
 		// starport scaffolding # stargate/app/endBlockers
@@ -276,6 +282,10 @@ var (
 			{
 				Name:   circuittypes.ModuleName,
 				Config: appconfig.WrapAny(&circuitmodulev1.Module{}),
+			},
+			{
+				Name:   blstypes.ModuleName,
+				Config: appconfig.WrapAny(&blsmodulev1.Module{}),
 			},
 			{
 				Name:   inferencemoduletypes.ModuleName,
