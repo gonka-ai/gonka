@@ -1,0 +1,25 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "inference/x/bls/Params";
+  option (gogoproto.equal) = true;
+
+  // Total number of slots for DKG (e.g., 100 for PoC)
+  uint32 i_total_slots = 1;
+
+  // Polynomial degree offset (e.g., floor(i_total_slots / 2))
+  uint32 t_slots_degree_offset = 2;
+
+  // Duration in blocks for the dealing phase (e.g., 5 blocks for PoC)
+  int64 dealing_phase_duration_blocks = 3;
+
+  // Duration in blocks for the verification phase (e.g., 3 blocks for PoC)
+  int64 verification_phase_duration_blocks = 4;
+}
