@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
 	"cosmossdk.io/math"
@@ -9,6 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
 // AccountKeeper defines the expected interface for the Account module.
@@ -118,4 +120,10 @@ type BookkeepingBankKeeper interface {
 type ModelKeeper interface {
 	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
 	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
+}
+
+// BlsKeeper defines the expected interface for the BLS module.
+type BlsKeeper interface {
+	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
+	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, bool)
 }

@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -9,6 +10,7 @@ import (
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -26,6 +28,7 @@ import (
 	// this line is used by starport scaffolding # 1
 
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -422,6 +425,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+
+	// Call BLS module to initiate key generation for the new epoch
+	am.initiateBLSKeyGeneration(ctx, upcomingEg.GroupData.EpochGroupId, activeParticipants)
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -616,6 +622,7 @@ type ModuleInputs struct {
 	ValidatorSet        types.ValidatorSet
 	StakingKeeper       types.StakingKeeper
 	GroupServer         types.GroupMessageKeeper
+	BlsKeeper           types.BlsKeeper
 	CollateralKeeper    types.CollateralKeeper
 	StreamVestingKeeper types.StreamVestingKeeper
 	GetWasmKeeper       func() wasmkeeper.Keeper `optional:"true"`
@@ -647,6 +654,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.ValidatorSet,
 		in.StakingKeeper,
 		in.AccountKeeper,
+		in.BlsKeeper,
 		in.CollateralKeeper,
 		in.StreamVestingKeeper,
 		in.GetWasmKeeper,
@@ -686,4 +694,82 @@ func (am AppModule) LogWarn(msg string, subSystem types.SubSystem, keyvals ...in
 func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	kvWithSubsystem := append([]interface{}{"subsystem", subSystem.String()}, keyvals...)
 	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
+}
+
+// initiateBLSKeyGeneration calls the BLS module to start DKG for the new epoch
+func (am AppModule) initiateBLSKeyGeneration(ctx context.Context, epochID uint64, activeParticipants []*types.ActiveParticipant) {
+	if len(activeParticipants) == 0 {
+		am.LogWarn("No active participants for BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	// Convert ActiveParticipants to ParticipantWithWeightAndKey format expected by BLS module
+	finalizedParticipants := make([]blstypes.ParticipantWithWeightAndKey, 0, len(activeParticipants))
+
+	// Calculate total weight to convert to percentages
+	totalWeight := int64(0)
+	for _, p := range activeParticipants {
+		totalWeight += p.Weight
+	}
+
+	if totalWeight == 0 {
+		am.LogError("Total weight is zero, cannot initiate BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, ap := range activeParticipants {
+		// Query full participant data to get access to WorkerPublicKey
+		participant, found := am.keeper.GetParticipant(sdkCtx, ap.Index)
+		if !found {
+			am.LogError("Participant not found when querying for BLS key generation", types.EpochGroup, "participant", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		// Use WorkerPublicKey instead of ValidatorKey (WorkerPublicKey is secp256k1, ValidatorKey might be Ed25519 consensus key)
+		if participant.WorkerPublicKey == "" {
+			am.LogError("Participant has empty WorkerPublicKey", types.EpochGroup, "participant", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		// Convert base64 encoded secp256k1 public key to bytes
+		secp256k1Bytes, err := base64.StdEncoding.DecodeString(participant.WorkerPublicKey)
+		if err != nil {
+			am.LogError("Failed to decode WorkerPublicKey (secp256k1)", types.EpochGroup, "participant", ap.Index, "epochID", epochID, "error", err.Error())
+			continue
+		}
+
+		// Convert weight to percentage using math.LegacyDec
+		weightPercentage := math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+
+		blsParticipant := blstypes.ParticipantWithWeightAndKey{
+			Address:            ap.Index,
+			PercentageWeight:   weightPercentage,
+			Secp256k1PublicKey: secp256k1Bytes,
+		}
+		finalizedParticipants = append(finalizedParticipants, blsParticipant)
+
+		am.LogInfo("Prepared participant for BLS key generation", types.EpochGroup,
+			"participant", ap.Index,
+			"weight", ap.Weight,
+			"percentage", weightPercentage.String(),
+			"epochID", epochID,
+			"keyLength", len(secp256k1Bytes))
+	}
+
+	if len(finalizedParticipants) == 0 {
+		am.LogError("No valid participants after conversion for BLS key generation", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	// Call the BLS module to initiate key generation
+	err := am.keeper.BlsKeeper.InitiateKeyGenerationForEpoch(sdkCtx, epochID, finalizedParticipants)
+	if err != nil {
+		am.LogError("Failed to initiate BLS key generation", types.EpochGroup, "epochID", epochID, "error", err.Error())
+		return
+	}
+
+	am.LogInfo("Successfully initiated BLS key generation", types.EpochGroup,
+		"epochID", epochID,
+		"participantCount", len(finalizedParticipants))
 }
