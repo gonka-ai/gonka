@@ -2,12 +2,18 @@ package cosmosclient
 
 import (
 	"context"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"time"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -18,13 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosaccount"
 	"github.com/productscience/inference/api/inference/inference"
-	"log"
-	"os/user"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -129,6 +131,7 @@ type CosmosMessageClient interface {
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
 	GetCosmosClient() *cosmosclient.Client
+	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -465,6 +468,11 @@ func SendTransactionBlocking[In proto.Message, Out proto.Message](ctx context.Co
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
 		return err
 	}
+	return nil
+}
 
+func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
 	return err
 }
