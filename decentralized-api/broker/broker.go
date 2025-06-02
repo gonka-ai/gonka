@@ -307,7 +307,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	var leastBusyNode *NodeWithState = nil
 
 	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version) {
+		if b.nodeAvailable(node, command.Model, command.Version, command.CurrentEpoch, command.CurrentPhase) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -325,6 +325,8 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 					Model:                command.Model,
 					Response:             command.Response,
 					AcceptEarlierVersion: false,
+					CurrentEpoch:         command.CurrentEpoch,
+					CurrentPhase:         command.CurrentPhase,
 				},
 			)
 		} else {
@@ -335,16 +337,13 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 }
 
-func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string) bool {
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase chainphase.Phase) bool {
 	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
 	}
 
-	// Check admin state - but we need phase tracker context which we don't have here
-	// For now, just check if admin disabled
-	currentEpoch := b.phaseTracker.GetCurrentEpoch()
-	currentPhase, _ := b.phaseTracker.GetCurrentPhase()
+	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
 		return false
 	}
@@ -386,12 +385,23 @@ func LockNode[T any](
 	action func(node *Node) (T, error),
 ) (T, error) {
 	var zero T
+
+	// Get current phase data
+	var currentEpoch uint64
+	var currentPhase chainphase.Phase
+	if b.phaseTracker != nil {
+		currentEpoch = b.phaseTracker.GetCurrentEpoch()
+		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
+	}
+
 	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
 		Model:                model,
 		Response:             nodeChan,
 		Version:              version,
 		AcceptEarlierVersion: true,
+		CurrentEpoch:         currentEpoch,
+		CurrentPhase:         currentPhase,
 	})
 	if err != nil {
 		return zero, err

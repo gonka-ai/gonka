@@ -2,6 +2,7 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -15,6 +16,8 @@ type LockAvailableNode struct {
 	Model                string
 	Version              string
 	AcceptEarlierVersion bool
+	CurrentEpoch         uint64
+	CurrentPhase         chainphase.Phase
 	Response             chan *Node
 }
 

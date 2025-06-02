@@ -65,7 +65,15 @@ func ProcessNewBlockEvent(
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
 
-		nodePoCOrchestrator.StartPoC(blockHeight, blockHash)
+		// Get current epoch and phase from the tracker
+		var currentEpoch uint64
+		var currentPhase chainphase.Phase
+		if phaseTracker != nil {
+			currentEpoch = phaseTracker.GetCurrentEpoch()
+			currentPhase, _ = phaseTracker.GetCurrentPhase()
+		}
+
+		nodePoCOrchestrator.StartPoC(blockHeight, blockHash, currentEpoch, currentPhase)
 		generateSeed(blockHeight, &transactionRecorder, configManager)
 		return
 	}

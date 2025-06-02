@@ -3,6 +3,7 @@ package poc
 import (
 	"context"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
@@ -116,18 +117,20 @@ var TestNetParams = Params{
 	SeqLen:           16,
 }
 
-func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
+func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
 	if o.noOp {
 		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
 		return
 	}
 
 	command := broker.StartPocCommand{
-		BlockHeight: blockHeight,
-		BlockHash:   blockHash,
-		PubKey:      o.pubKey,
-		CallbackUrl: o.getPocBatchesCallbackUrl(),
-		Response:    make(chan bool, 2),
+		BlockHeight:  blockHeight,
+		BlockHash:    blockHash,
+		PubKey:       o.pubKey,
+		CallbackUrl:  o.getPocBatchesCallbackUrl(),
+		CurrentEpoch: currentEpoch,
+		CurrentPhase: currentPhase,
+		Response:     make(chan bool, 2),
 	}
 	err := o.nodeBroker.QueueMessage(command)
 	if err != nil {

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"testing"
@@ -42,11 +43,13 @@ func TestStartPocCommand_Success(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight: 12345,
-		BlockHash:   "0xABCDEF",
-		PubKey:      "test-pubkey",
-		CallbackUrl: "http://callback.url",
-		Response:    make(chan bool, 1),
+		BlockHeight:  12345,
+		BlockHash:    "0xABCDEF",
+		PubKey:       "test-pubkey",
+		CallbackUrl:  "http://callback.url",
+		CurrentEpoch: 5,
+		CurrentPhase: chainphase.PhasePoC,
+		Response:     make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -54,6 +57,10 @@ func TestStartPocCommand_Success(t *testing.T) {
 	// Verify response
 	success := <-cmd.Response
 	assert.True(t, success, "Command should succeed")
+
+	// Wait for workers to complete
+	worker1.wg.Wait()
+	worker2.wg.Wait()
 
 	// Verify intended status was updated
 	assert.Equal(t, types.HardwareNodeStatus_POC, node1.State.IntendedStatus)
@@ -99,11 +106,13 @@ func TestStartPocCommand_AlreadyInPoC(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight: 12345,
-		BlockHash:   "0xABCDEF",
-		PubKey:      "test-pubkey",
-		CallbackUrl: "http://callback.url",
-		Response:    make(chan bool, 1),
+		BlockHeight:  12345,
+		BlockHash:    "0xABCDEF",
+		PubKey:       "test-pubkey",
+		CallbackUrl:  "http://callback.url",
+		CurrentEpoch: 5,
+		CurrentPhase: chainphase.PhasePoC,
+		Response:     make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -111,6 +120,9 @@ func TestStartPocCommand_AlreadyInPoC(t *testing.T) {
 	// Verify response
 	success := <-cmd.Response
 	assert.True(t, success, "Command should succeed")
+
+	// Wait for worker to complete
+	worker.wg.Wait()
 
 	// Verify Stop and InitGenerate were NOT called (idempotency)
 	assert.Equal(t, 0, mockClient.StopCalled, "Stop should not be called when already in PoC")
@@ -143,11 +155,13 @@ func TestStartPocCommand_StopFails(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight: 12345,
-		BlockHash:   "0xABCDEF",
-		PubKey:      "test-pubkey",
-		CallbackUrl: "http://callback.url",
-		Response:    make(chan bool, 1),
+		BlockHeight:  12345,
+		BlockHash:    "0xABCDEF",
+		PubKey:       "test-pubkey",
+		CallbackUrl:  "http://callback.url",
+		CurrentEpoch: 5,
+		CurrentPhase: chainphase.PhasePoC,
+		Response:     make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -156,10 +170,66 @@ func TestStartPocCommand_StopFails(t *testing.T) {
 	success := <-cmd.Response
 	assert.True(t, success, "Command should still report success (individual node failures don't block)")
 
+	// Wait for worker to complete
+	worker.wg.Wait()
+
 	// Verify Stop was called but InitGenerate was not
 	assert.Equal(t, 1, mockClient.StopCalled, "Stop should be called")
 	assert.Equal(t, 0, mockClient.InitGenerateCalled, "InitGenerate should not be called after Stop failure")
 
 	// Verify node state shows failure
 	assert.Equal(t, "Failed to stop for PoC", node.State.FailureReason)
+}
+
+func TestStartPocCommand_AdminDisabled(t *testing.T) {
+	// Create test node that was disabled in epoch 3
+	node := createTestNode("node-1")
+	node.State.AdminState.Enabled = false
+	node.State.AdminState.Epoch = 3
+
+	// Create mock client
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+
+	// Create node worker with mock client
+	worker := NewNodeWorkerWithClient("node-1", node, mockClient)
+
+	// Create work group
+	workGroup := NewNodeWorkGroup()
+	workGroup.AddWorker("node-1", worker)
+
+	// Create mock broker
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+		nodeWorkGroup: workGroup,
+	}
+
+	// Execute StartPocCommand with current epoch = 4 (after disable epoch)
+	cmd := StartPocCommand{
+		BlockHeight:  12345,
+		BlockHash:    "0xABCDEF",
+		PubKey:       "test-pubkey",
+		CallbackUrl:  "http://callback.url",
+		CurrentEpoch: 4,
+		CurrentPhase: chainphase.PhasePoC,
+		Response:     make(chan bool, 1),
+	}
+
+	cmd.Execute(broker)
+
+	// Verify response
+	success := <-cmd.Response
+	assert.True(t, success, "Command should succeed")
+
+	// Wait for worker to complete (should be immediate as no work is done)
+	worker.wg.Wait()
+
+	// Verify Stop and InitGenerate were NOT called because node is disabled
+	assert.Equal(t, 0, mockClient.StopCalled, "Stop should not be called for disabled node")
+	assert.Equal(t, 0, mockClient.InitGenerateCalled, "InitGenerate should not be called for disabled node")
+
+	// Verify intended status was NOT updated
+	assert.Equal(t, types.HardwareNodeStatus_UNKNOWN, node.State.IntendedStatus)
 }

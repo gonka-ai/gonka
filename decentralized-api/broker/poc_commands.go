@@ -8,11 +8,13 @@ import (
 )
 
 type StartPocCommand struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	CallbackUrl string
-	Response    chan bool
+	BlockHeight  int64
+	BlockHash    string
+	PubKey       string
+	CallbackUrl  string
+	CurrentEpoch uint64
+	CurrentPhase chainphase.Phase
+	Response     chan bool
 }
 
 func (c StartPocCommand) GetResponseChannelCapacity() int {
@@ -20,17 +22,9 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartPocCommand) Execute(b *Broker) {
-	// Get current epoch and phase
-	var currentEpoch uint64
-	var currentPhase chainphase.Phase
-	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
-		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
-	}
-
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
+		if !node.State.ShouldBeOperational(c.CurrentEpoch, c.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
