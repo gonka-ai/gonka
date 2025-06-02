@@ -1,0 +1,24 @@
+syntax = "proto3";
+package inference.bls;
+
+import "amino/amino.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "inference/bls/types.proto";
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// EventKeyGenerationInitiated is emitted when DKG is initiated for an epoch
+message EventKeyGenerationInitiated {
+  // epoch_id uniquely identifies this DKG round
+  uint64 epoch_id = 1;
+  
+  // i_total_slots is the total number of slots in the DKG
+  uint32 i_total_slots = 2;
+  
+  // t_slots_degree is the polynomial degree t for the threshold scheme
+  uint32 t_slots_degree = 3;
+  
+  // participants contains information about all participants in this DKG round
+  repeated BLSParticipantInfo participants = 4 [(gogoproto.nullable) = false];
+} 

@@ -1,9 +1,10 @@
 package keeper
 
 import (
+	"testing"
+
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/slog"
-	"testing"
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
@@ -19,6 +20,8 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -71,15 +74,25 @@ func InferenceKeeperWithMock(
 	stakingKeeper types.StakingKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
+	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 
 	db := dbm.NewMemDB()
 	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
 	stateStore.MountStoreWithDB(storeKey, storetypes.StoreTypeIAVL, db)
+	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, stateStore.LoadLatestVersion())
 
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName)
+
+	// Create BLS keeper for testing
+	blsKeeper := blskeeper.NewKeeper(
+		cdc,
+		runtime.NewKVStoreService(blsStoreKey),
+		PrintlnLogger{},
+		authority.String(),
+	)
 
 	k := keeper.NewKeeper(
 		cdc,
@@ -93,12 +106,18 @@ func InferenceKeeperWithMock(
 		stakingKeeper,
 		accountKeeper,
 		nil,
+		blsKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())
 
 	// Initialize params
 	if err := k.SetParams(ctx, types.DefaultParams()); err != nil {
+		panic(err)
+	}
+
+	// Initialize BLS params
+	if err := blsKeeper.SetParams(ctx, blstypes.DefaultParams()); err != nil {
 		panic(err)
 	}
 

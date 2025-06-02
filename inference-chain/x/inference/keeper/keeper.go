@@ -8,6 +8,7 @@ import (
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -21,6 +22,7 @@ type (
 		validatorSet types.ValidatorSet
 		group        types.GroupMessageKeeper
 		Staking      types.StakingKeeper
+		BlsKeeper    blskeeper.Keeper
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
 		authority     string
@@ -41,6 +43,7 @@ func NewKeeper(
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
+	blsKeeper blskeeper.Keeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
@@ -58,6 +61,7 @@ func NewKeeper(
 		Staking:       staking,
 		AccountKeeper: accountKeeper,
 		getWasmKeeper: getWasmKeeper,
+		BlsKeeper:     blsKeeper,
 	}
 }
 
