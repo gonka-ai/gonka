@@ -155,6 +155,29 @@ jobs:
           kubectl cluster-info
           kubectl get nodes --request-timeout=30s
 
+      - name: Create HF Token Secret
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          echo "Creating HF token secret in all namespaces..."
+          # Create the secret in each namespace
+          kubectl create secret generic hf-token \
+            --from-literal=HF_TOKEN="$HF_TOKEN" \
+            --namespace=genesis \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl create secret generic hf-token \
+            --from-literal=HF_TOKEN="$HF_TOKEN" \
+            --namespace=join-k8s-worker-2 \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl create secret generic hf-token \
+            --from-literal=HF_TOKEN="$HF_TOKEN" \
+            --namespace=join-k8s-worker-3 \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "HF token secret created/updated in all namespaces."
+
       - name: Stop existing Kubernetes resources
         run: |
           echo "Deleting resources in genesis namespace..."
