@@ -307,7 +307,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	var leastBusyNode *NodeWithState = nil
 
 	for _, node := range b.nodes {
-		if nodeAvailable(node, command.Model, command.Version) {
+		if b.nodeAvailable(node, command.Model, command.Version) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -335,7 +335,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 }
 
-func nodeAvailable(node *NodeWithState, neededModel string, version string) bool {
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string) bool {
 	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
@@ -343,7 +343,9 @@ func nodeAvailable(node *NodeWithState, neededModel string, version string) bool
 
 	// Check admin state - but we need phase tracker context which we don't have here
 	// For now, just check if admin disabled
-	if !node.State.AdminState.Enabled {
+	currentEpoch := b.phaseTracker.GetCurrentEpoch()
+	currentPhase, _ := b.phaseTracker.GetCurrentPhase()
+	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
 		return false
 	}
 
