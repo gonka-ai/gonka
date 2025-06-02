@@ -31,6 +31,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -172,6 +173,7 @@ type CosmosMessageClient interface {
 	GetSignerAddress() string
 	GetCosmosClient() *cosmosclient.Client
 	GetKeyring() *keyring.Keyring
+	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -545,6 +547,11 @@ func SendTransactionBlocking[In proto.Message, Out proto.Message](ctx context.Co
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
 		return err
 	}
+	return nil
+}
 
+func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
 	return err
 }

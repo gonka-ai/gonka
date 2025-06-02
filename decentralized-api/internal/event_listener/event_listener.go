@@ -6,6 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/bls_dkg"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
@@ -24,11 +25,12 @@ import (
 )
 
 const (
-	finishInferenceAction      = "/inference.inference.MsgFinishInference"
-	startInferenceAction       = "/inference.inference.MsgStartInference"
-	validationAction           = "/inference.inference.MsgValidation"
-	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
-	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
+	finishInferenceAction       = "/inference.inference.MsgFinishInference"
+	startInferenceAction        = "/inference.inference.MsgStartInference"
+	validationAction            = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction  = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction     = "/cosmos.gov.v1.MsgSubmitProposal"
+	keyGenerationInitiatedEvent = "key_generation_initiated"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -41,6 +43,7 @@ type EventListener struct {
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
+	blsDealer           *bls_dkg.Dealer
 	nodeCaughtUp        atomic.Bool
 	phaseTracker        *chainphase.ChainPhaseTracker
 	dispatcher          *OnNewBlockDispatcher
@@ -58,6 +61,7 @@ func NewEventListener(
 	trainingExecutor *training.Executor,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
+	blsDealer *bls_dkg.Dealer,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
@@ -78,6 +82,7 @@ func NewEventListener(
 		phaseTracker:        phaseTracker,
 		dispatcher:          dispatcher,
 		cancelFunc:          cancelFunc,
+		blsDealer:           blsDealer,
 	}
 }
 
@@ -99,6 +104,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, 7, "tm.event='Tx' AND "+keyGenerationInitiatedEvent+".epoch_id EXISTS")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
@@ -287,6 +293,18 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
 		logging.Warn("Event height not reached yet, skipping", types.EventProcessing, "event", event)
+		return
+	}
+
+	// Check for BLS events first (these might not have message.action)
+	if _, hasKeyGenEvent := event.Result.Events[keyGenerationInitiatedEvent+".epoch_id"]; hasKeyGenEvent {
+		if el.isNodeSynced() {
+			logging.Info("Key generation initiated event received", types.EventProcessing, "worker", name)
+			err := el.blsDealer.ProcessKeyGenerationInitiated(event)
+			if err != nil {
+				logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", name)
+			}
+		}
 		return
 	}
 

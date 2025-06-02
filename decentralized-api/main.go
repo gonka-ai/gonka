@@ -6,6 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/bls_dkg"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
@@ -123,7 +124,8 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
+	blsDealer := bls_dkg.NewDealer(recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsDealer)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 

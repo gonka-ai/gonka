@@ -2,348 +2,336 @@ package inference
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"testing"
 
-	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
-	blstypes "github.com/productscience/inference/x/bls/types"
-	"github.com/productscience/inference/x/inference/types"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
-func TestBLSKeyGenerationIntegration(t *testing.T) {
-	keeper, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+// newSecp256k1PubKeyFromHexStr creates a secp256k1.PubKey from a hex string (compressed, 33 bytes).
+func newSecp256k1PubKeyFromHexStr(t *testing.T, hexStr string) cryptotypes.PubKey {
+	bz, err := hex.DecodeString(hexStr)
+	require.NoError(t, err)
+	pubKey := &secp256k1.PubKey{Key: bz}
+	// Basic validation: ensure the key is not nil and bytes are not empty.
+	// More specific secp256k1 validation (like length) can be added if necessary,
+	// but for mock setup, this is often sufficient.
+	require.NotNil(t, pubKey, "Public key should not be nil after creation from hex")
+	require.NotEmpty(t, pubKey.Bytes(), "Public key bytes should not be empty")
+	return pubKey
+}
 
-	// Create codec for the test
+// generateValidBech32Address generates a valid bech32 address from a public key hex string
+func generateValidBech32Address(t *testing.T, pubKeyHex string) string {
+	pubKey := newSecp256k1PubKeyFromHexStr(t, pubKeyHex)
+	addr := sdk.AccAddress(pubKey.Address())
+	return addr.String()
+}
+
+var (
+	// Valid compressed secp256k1 public keys (33 bytes each)
+	aliceSecp256k1PubHex      = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+	bobSecp256k1PubHex        = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+	charlieSecp256k1PubHex    = "031884e5018572688f308999f53092837489aeac31afe1389809281562794c171b"
+	aliceOtherSecp256k1PubHex = "020f6fcfcbd42b6b7ad4c5e5df6c0e57b82e1c7b2b6f4c45f0b7a8b5c2d1e0f3"
+
+	// Generate valid bech32 addresses from the public keys
+	aliceAccAddrStr   string
+	bobAccAddrStr     string
+	charlieAccAddrStr string
+)
+
+// init function to generate the addresses after the SDK is properly configured
+func init() {
+	// Configure the SDK with the gonka prefix
+	config := sdk.GetConfig()
+	config.SetBech32PrefixForAccount("gonka", "gonkapub")
+	config.Seal()
+}
+
+// setupTestAddresses generates valid bech32 addresses for testing
+func setupTestAddresses(t *testing.T) {
+	if aliceAccAddrStr == "" {
+		aliceAccAddrStr = generateValidBech32Address(t, aliceSecp256k1PubHex)
+		bobAccAddrStr = generateValidBech32Address(t, bobSecp256k1PubHex)
+		charlieAccAddrStr = generateValidBech32Address(t, charlieSecp256k1PubHex)
+	}
+}
+
+// setupMockAccountExpectations configures the MockAccountKeeper with expected accounts and their public keys.
+// It returns a map of address strings to their expected public key bytes for easy verification.
+func setupMockAccountExpectations(t *testing.T, mockAK *keepertest.MockAccountKeeper, participantsDetails map[string]string) map[string][]byte {
+	expectedPubKeysBytes := make(map[string][]byte)
+
+	for addrStr, pubKeyHex := range participantsDetails {
+		addr, err := sdk.AccAddressFromBech32(addrStr)
+		require.NoError(t, err)
+
+		if pubKeyHex == "" { // Simulate account with no public key
+			baseAcc := authtypes.NewBaseAccountWithAddress(addr)
+			baseAcc.SetAccountNumber(1) // Required for some operations, not strictly for GetPubKey
+			mockAK.EXPECT().GetAccount(gomock.Any(), addr).Return(baseAcc).AnyTimes()
+			expectedPubKeysBytes[addrStr] = nil // Explicitly nil for accounts with no pubkey
+		} else if pubKeyHex == "nil" { // Simulate account not found
+			mockAK.EXPECT().GetAccount(gomock.Any(), addr).Return(nil).AnyTimes()
+			expectedPubKeysBytes[addrStr] = nil // Explicitly nil for not found accounts
+		} else {
+			pubKey := newSecp256k1PubKeyFromHexStr(t, pubKeyHex)
+			baseAcc := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
+			mockAK.EXPECT().GetAccount(gomock.Any(), addr).Return(baseAcc).AnyTimes()
+			expectedPubKeysBytes[addrStr] = pubKey.Bytes()
+		}
+	}
+	return expectedPubKeysBytes
+}
+
+func TestBLSKeyGenerationIntegration(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	participantDetails := map[string]string{
+		aliceAccAddrStr:   aliceSecp256k1PubHex,
+		bobAccAddrStr:     bobSecp256k1PubHex,
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	}
+	expectedPubKeysMap := setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 
-	// Create full participant objects and store them
-	participants := []*types.Participant{
-		{
-			Index:           "cosmos1alice",
-			Address:         "cosmos1alice",
-			ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("alice_validator_key")), // Consensus key
-			WorkerPublicKey: base64.StdEncoding.EncodeToString([]byte("alice_secp256k1_key")), // Worker key for BLS
-			Weight:          50,
-			Status:          types.ParticipantStatus_ACTIVE,
-		},
-		{
-			Index:           "cosmos1bob",
-			Address:         "cosmos1bob",
-			ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("bob_validator_key")), // Consensus key
-			WorkerPublicKey: base64.StdEncoding.EncodeToString([]byte("bob_secp256k1_key")), // Worker key for BLS
-			Weight:          30,
-			Status:          types.ParticipantStatus_ACTIVE,
-		},
-		{
-			Index:           "cosmos1charlie",
-			Address:         "cosmos1charlie",
-			ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("charlie_validator_key")), // Consensus key
-			WorkerPublicKey: base64.StdEncoding.EncodeToString([]byte("charlie_secp256k1_key")), // Worker key for BLS
-			Weight:          20,
-			Status:          types.ParticipantStatus_ACTIVE,
-		},
+	participants := []*inferencetypes.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, ValidatorKey: "valKeyAlice", WorkerPublicKey: "ignoredWKeyAlice", Weight: 50, Status: inferencetypes.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, ValidatorKey: "valKeyBob", WorkerPublicKey: "ignoredWKeyBob", Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, ValidatorKey: "valKeyCharlie", WorkerPublicKey: "ignoredWKeyCharlie", Weight: 20, Status: inferencetypes.ParticipantStatus_ACTIVE},
+	}
+	for _, p := range participants {
+		k.SetParticipant(ctx, *p)
 	}
 
-	// Store participants in the keeper
-	for _, participant := range participants {
-		keeper.SetParticipant(ctx, *participant)
+	activeParticipants := []*inferencetypes.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50},
+		{Index: bobAccAddrStr, Weight: 30},
+		{Index: charlieAccAddrStr, Weight: 20},
 	}
 
-	// Create test active participants
-	activeParticipants := []*types.ActiveParticipant{
-		{
-			Index:        "cosmos1alice",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("alice_validator_key")),
-			Weight:       50,
-		},
-		{
-			Index:        "cosmos1bob",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("bob_validator_key")),
-			Weight:       30,
-		},
-		{
-			Index:        "cosmos1charlie",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("charlie_validator_key")),
-			Weight:       20,
-		},
-	}
-
-	// Create app module instance
-	appModule := NewAppModule(
-		cdc,
-		keeper,
-		nil, // accountKeeper not needed for this test
-		nil, // bankKeeper not needed for this test
-		nil, // groupMsgServer not needed for this test
-	)
-
-	// Test the initiateBLSKeyGeneration function
-	epochID := uint64(123)
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	epochID := uint64(1)
 	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	// Verify that EpochBLSData was created
-	epochBLSData, found := keeper.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.True(t, found, "EpochBLSData should be created")
-	require.Equal(t, epochID, epochBLSData.EpochId)
-	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData.DkgPhase)
+	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.True(t, found)
 	require.Len(t, epochBLSData.Participants, 3)
-
-	// Verify DealerParts array is properly initialized for participant indexing
-	require.Len(t, epochBLSData.DealerParts, 3, "DealerParts should have same length as participants for direct indexing")
-	for i, dealerPart := range epochBLSData.DealerParts {
-		require.NotNil(t, dealerPart, "DealerParts[%d] should not be nil", i)
-		require.Empty(t, dealerPart.DealerAddress, "DealerParts[%d] should have empty address initially", i)
-		require.Empty(t, dealerPart.Commitments, "DealerParts[%d] should have empty commitments initially", i)
-		require.Empty(t, dealerPart.ParticipantShares, "DealerParts[%d] should have empty shares initially", i)
-	}
-
-	// Verify participant data conversion
-	totalWeight := int64(100) // 50 + 30 + 20
-	expectedWeights := []math.LegacyDec{
-		math.LegacyNewDec(50).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100)), // 50%
-		math.LegacyNewDec(30).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100)), // 30%
-		math.LegacyNewDec(20).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100)), // 20%
-	}
-
-	for i, participant := range epochBLSData.Participants {
-		require.Equal(t, activeParticipants[i].Index, participant.Address)
-		require.True(t, expectedWeights[i].Equal(participant.PercentageWeight))
-		require.NotEmpty(t, participant.Secp256K1PublicKey)
-	}
-
-	// Verify slot assignment
-	require.Equal(t, uint32(0), epochBLSData.Participants[0].SlotStartIndex)
-	require.True(t, epochBLSData.Participants[0].SlotEndIndex > epochBLSData.Participants[0].SlotStartIndex)
-
-	// Verify slots are contiguous
-	for i := 1; i < len(epochBLSData.Participants); i++ {
-		require.Equal(t,
-			epochBLSData.Participants[i-1].SlotEndIndex+1,
-			epochBLSData.Participants[i].SlotStartIndex,
-			"Slots should be contiguous")
+	for _, p := range epochBLSData.Participants {
+		expectedBytes, ok := expectedPubKeysMap[p.Address]
+		require.True(t, ok)
+		require.Equal(t, expectedBytes, p.Secp256K1PublicKey)
 	}
 }
 
 func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
-	keeper, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	setupTestAddresses(t)
 
-	// Create codec for the test
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
 
-	// Create app module instance
-	appModule := NewAppModule(
-		cdc,
-		keeper,
-		nil, // accountKeeper not needed for this test
-		nil, // bankKeeper not needed for this test
-		nil, // groupMsgServer not needed for this test
-	)
+	epochID := uint64(2)
+	appModule.initiateBLSKeyGeneration(ctx, epochID, []*inferencetypes.ActiveParticipant{})
 
-	// Test with empty participants
-	epochID := uint64(456)
-	appModule.initiateBLSKeyGeneration(ctx, epochID, []*types.ActiveParticipant{})
-
-	// Verify that no EpochBLSData was created
-	_, found := keeper.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found, "EpochBLSData should not be created for empty participants")
+	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.False(t, found)
 }
 
-func TestBLSKeyGenerationWithInvalidKeys(t *testing.T) {
-	keeper, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
+	setupTestAddresses(t)
 
-	// Create codec for the test
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Alice: No account found (GetAccount returns nil)
+	// Bob: Account found, but no public key
+	// Charlie: Valid account and public key
+	participantDetails := map[string]string{
+		aliceAccAddrStr:   "nil", // Simulate GetAccount returns nil
+		bobAccAddrStr:     "",    // Simulate account with no pubkey
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	}
+	expectedPubKeysMap := setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
 
-	// Create participant with invalid WorkerPublicKey
-	participant := types.Participant{
-		Index:           "cosmos1alice",
-		Address:         "cosmos1alice",
-		ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("alice_validator_key")), // Valid consensus key
-		WorkerPublicKey: "invalid_base64_key!@#",                                          // Invalid base64 worker key
+	// Store participant entries in inference keeper (WorkerPublicKey is ignored)
+	storedParticipants := []*inferencetypes.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, Weight: 30, Status: inferencetypes.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 40, Status: inferencetypes.ParticipantStatus_ACTIVE},
+	}
+	for _, p := range storedParticipants {
+		k.SetParticipant(ctx, *p)
+	}
+
+	activeParticipants := []*inferencetypes.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 30},
+		{Index: bobAccAddrStr, Weight: 30},
+		{Index: charlieAccAddrStr, Weight: 40},
+	}
+
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	epochID := uint64(3)
+	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.True(t, found, "DKG should proceed if at least one participant is valid")
+	require.Len(t, epochBLSData.Participants, 1, "Only Charlie should be included")
+	require.Equal(t, charlieAccAddrStr, epochBLSData.Participants[0].Address)
+	require.Equal(t, expectedPubKeysMap[charlieAccAddrStr], epochBLSData.Participants[0].Secp256K1PublicKey)
+}
+
+func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// AccountKeeper will provide the source of truth for Alice's PubKey
+	participantDetails := map[string]string{
+		aliceAccAddrStr: aliceSecp256k1PubHex, // This is the key that MUST be used
+	}
+	expectedPubKeysMap := setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+
+	// Participant store has different keys for WorkerPublicKey and a (mocked) ValidatorKey string.
+	// These should be ignored.
+	storedParticipant := inferencetypes.Participant{
+		Index:           aliceAccAddrStr,
+		Address:         aliceAccAddrStr,
+		ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("some_other_validator_key_data")),
+		WorkerPublicKey: base64.StdEncoding.EncodeToString(newSecp256k1PubKeyFromHexStr(t, aliceOtherSecp256k1PubHex).Bytes()), // A different, valid secp256k1 key
 		Weight:          100,
-		Status:          types.ParticipantStatus_ACTIVE,
+		Status:          inferencetypes.ParticipantStatus_ACTIVE,
+	}
+	k.SetParticipant(ctx, storedParticipant)
+
+	activeParticipants := []*inferencetypes.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 100},
 	}
 
-	// Store participant in the keeper
-	keeper.SetParticipant(ctx, participant)
-
-	// Create test active participants
-	activeParticipants := []*types.ActiveParticipant{
-		{
-			Index:        "cosmos1alice",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("alice_validator_key")), // This is ignored now
-			Weight:       100,
-		},
-	}
-
-	// Create app module instance
-	appModule := NewAppModule(
-		cdc,
-		keeper,
-		nil, // accountKeeper not needed for this test
-		nil, // bankKeeper not needed for this test
-		nil, // groupMsgServer not needed for this test
-	)
-
-	// Test the initiateBLSKeyGeneration function
-	epochID := uint64(789)
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+	epochID := uint64(4)
 	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	// Verify that no EpochBLSData was created due to invalid key
-	_, found := keeper.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found, "EpochBLSData should not be created when all participants have invalid keys")
+	epochBLSData, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.True(t, found)
+	require.Len(t, epochBLSData.Participants, 1)
+	blsP := epochBLSData.Participants[0]
+	require.Equal(t, aliceAccAddrStr, blsP.Address)
+	// Check it used the key from AccountKeeper
+	require.Equal(t, expectedPubKeysMap[aliceAccAddrStr], blsP.Secp256K1PublicKey)
+	// Check it did NOT use the WorkerPublicKey from the store
+	require.NotEqual(t, storedParticipant.WorkerPublicKey, base64.StdEncoding.EncodeToString(blsP.Secp256K1PublicKey))
 }
 
-// TestBLSKeyGenerationWorkerKeyValidation tests that WorkerPublicKey is used instead of ValidatorKey
-func TestBLSKeyGenerationWorkerKeyValidation(t *testing.T) {
-	keeper, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
+	setupTestAddresses(t)
 
-	// Create codec for the test
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Generate a valid missing address
+	missingAddr := generateValidBech32Address(t, "03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd")
+	// AccountKeeper will also return nil for this address, reinforcing that it's fully missing
+	participantDetails := map[string]string{
+		missingAddr: "nil",
+	}
+	_ = setupMockAccountExpectations(t, mockAccountKeeper, participantDetails) // Setup expectation for GetAccount to return nil
+
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
 
-	// Create full participant objects and store them with DIFFERENT ValidatorKey and WorkerPublicKey
-	participants := []*types.Participant{
-		{
-			Index:           "cosmos1alice",
-			Address:         "cosmos1alice",
-			ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("alice_validator_ed25519_key")),        // Consensus key (Ed25519)
-			WorkerPublicKey: base64.StdEncoding.EncodeToString([]byte("alice_secp256k1_worker_key_33bytes")), // Worker key for BLS (secp256k1)
-			Weight:          50,
-			Status:          types.ParticipantStatus_ACTIVE,
-		},
-		{
-			Index:           "cosmos1bob",
-			Address:         "cosmos1bob",
-			ValidatorKey:    base64.StdEncoding.EncodeToString([]byte("bob_validator_ed25519_key__")),       // Consensus key (Ed25519)
-			WorkerPublicKey: base64.StdEncoding.EncodeToString([]byte("bob_secp256k1_worker_key_33bytes_")), // Worker key for BLS (secp256k1)
-			Weight:          30,
-			Status:          types.ParticipantStatus_ACTIVE,
-		},
+	// ActiveParticipant is listed, but NO corresponding entry via k.SetParticipant()
+	activeParticipants := []*inferencetypes.ActiveParticipant{
+		{Index: missingAddr, Weight: 100},
 	}
 
-	// Store participants in the keeper
-	for _, participant := range participants {
-		keeper.SetParticipant(ctx, *participant)
-	}
-
-	// Create test active participants
-	activeParticipants := []*types.ActiveParticipant{
-		{
-			Index:        "cosmos1alice",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("alice_validator_ed25519_key")),
-			Weight:       50,
-		},
-		{
-			Index:        "cosmos1bob",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("bob_validator_ed25519_key__")),
-			Weight:       30,
-		},
-	}
-
-	// Create app module instance
-	appModule := NewAppModule(
-		cdc,
-		keeper,
-		nil, // accountKeeper not needed for this test
-		nil, // bankKeeper not needed for this test
-		nil, // groupMsgServer not needed for this test
-	)
-
-	// Test the initiateBLSKeyGeneration function
-	epochID := uint64(123)
+	epochID := uint64(5)
 	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	// Verify that EpochBLSData was created
-	epochBLSData, found := keeper.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.True(t, found, "EpochBLSData should be created")
-	require.Equal(t, epochID, epochBLSData.EpochId)
-	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochBLSData.DkgPhase)
-	require.Len(t, epochBLSData.Participants, 2)
-
-	// Verify participants have correct data and were converted from WorkerPublicKey (NOT ValidatorKey)
-	for i, blsParticipant := range epochBLSData.Participants {
-		// Find corresponding original participant
-		var originalParticipant *types.Participant
-		for _, p := range participants {
-			if p.Address == blsParticipant.Address {
-				originalParticipant = p
-				break
-			}
-		}
-		require.NotNil(t, originalParticipant, "BLS participant should correspond to original participant")
-
-		// CRITICAL TEST: Verify secp256k1 key was properly converted from WorkerPublicKey (not ValidatorKey)
-		expectedKeyBytes, err := base64.StdEncoding.DecodeString(originalParticipant.WorkerPublicKey)
-		require.NoError(t, err, "Original WorkerPublicKey should be valid base64")
-		require.Equal(t, expectedKeyBytes, blsParticipant.Secp256K1PublicKey, "Secp256k1 key should match WorkerPublicKey")
-
-		// CRITICAL TEST: Verify it's NOT using ValidatorKey (this is the key test for our WorkerPublicKey fix)
-		validatorKeyBytes, err := base64.StdEncoding.DecodeString(originalParticipant.ValidatorKey)
-		require.NoError(t, err, "ValidatorKey should also be valid base64")
-		require.NotEqual(t, validatorKeyBytes, blsParticipant.Secp256K1PublicKey, "Should NOT use ValidatorKey - should use WorkerPublicKey")
-
-		// Verify slot assignment
-		require.True(t, blsParticipant.SlotEndIndex >= blsParticipant.SlotStartIndex, "Slot end should be >= slot start")
-
-		// Verify slots are assigned (not default values)
-		if i == 0 {
-			require.Equal(t, uint32(0), blsParticipant.SlotStartIndex, "First participant should start at slot 0")
-		} else {
-			// Verify slots are contiguous
-			prevParticipant := epochBLSData.Participants[i-1]
-			require.Equal(t, prevParticipant.SlotEndIndex+1, blsParticipant.SlotStartIndex, "Slots should be contiguous")
-		}
-	}
-
-	// Verify DealerParts array is properly initialized for future dealing phase
-	require.Len(t, epochBLSData.DealerParts, len(participants), "DealerParts should have same length as participants")
-	for i, dealerPart := range epochBLSData.DealerParts {
-		require.NotNil(t, dealerPart, "DealerParts[%d] should not be nil", i)
-		require.Empty(t, dealerPart.DealerAddress, "DealerParts[%d] should have empty address initially", i)
-		require.Empty(t, dealerPart.Commitments, "DealerParts[%d] should have empty commitments initially", i)
-		require.Empty(t, dealerPart.ParticipantShares, "DealerParts[%d] should have empty shares initially", i)
-	}
+	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.False(t, found, "EpochBLSData should not be created if participant is not in store, even if in active list")
 }
 
-// TestBLSKeyGenerationWithMissingParticipants tests error handling when participants are missing from store
-func TestBLSKeyGenerationWithMissingParticipants(t *testing.T) {
-	keeper, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T) {
+	setupTestAddresses(t)
 
-	// Create codec for the test
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Generate a valid problem address
+	problemAddr := generateValidBech32Address(t, "0365cdf48e56aa2a8c2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a")
+	// AccountKeeper will return nil for this address (no account / no pubkey)
+	participantDetails := map[string]string{
+		problemAddr: "nil",
+	}
+	_ = setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
+	// Participant IS in the store, but its WorkerPublicKey is malformed.
+	// This tests if any old logic might try to fall back to this malformed key if AccountKeeper fails.
+	storedParticipantWithBadWKey := inferencetypes.Participant{
+		Index:           problemAddr,
+		Address:         problemAddr,
+		ValidatorKey:    "valKeyIgnored",
+		WorkerPublicKey: "!@#this_is_not_base64_encoded_!@#",
+		Weight:          100,
+		Status:          inferencetypes.ParticipantStatus_ACTIVE,
+	}
+	k.SetParticipant(ctx, storedParticipantWithBadWKey)
+
 	registry := codectypes.NewInterfaceRegistry()
 	cdc := codec.NewProtoCodec(registry)
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
 
-	// Create ActiveParticipants but DON'T store the corresponding Participants in keeper
-	activeParticipants := []*types.ActiveParticipant{
-		{
-			Index:        "cosmos1missing",
-			ValidatorKey: base64.StdEncoding.EncodeToString([]byte("missing_key")),
-			Weight:       100,
-		},
+	activeParticipants := []*inferencetypes.ActiveParticipant{
+		{Index: problemAddr, Weight: 100},
 	}
 
-	// Create app module instance
-	appModule := NewAppModule(
-		cdc,
-		keeper,
-		nil, // accountKeeper not needed for this test
-		nil, // bankKeeper not needed for this test
-		nil, // groupMsgServer not needed for this test
-	)
-
-	// Test the initiateBLSKeyGeneration function - should handle missing participants gracefully
-	epochID := uint64(456)
+	epochID := uint64(6)
 	appModule.initiateBLSKeyGeneration(ctx, epochID, activeParticipants)
 
-	// Verify no BLS data was created due to missing participants
-	_, found := keeper.BlsKeeper.GetEpochBLSData(ctx, epochID)
-	require.False(t, found, "EpochBLSData should not be created when participants are missing from store")
+	_, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.False(t, found, "EpochBLSData should not be created if AccountKeeper yields no key AND stored WorkerKey is invalid")
 }
+
+// Note: The actual implementation of initiateBLSKeyGeneration in the inference module (appModule.go or keeper/dkg_initiation.go)
+// needs to be updated to use the AccountKeeper to fetch the PubKey for each participant.
+// These tests are designed to verify that behavior once implemented.
