@@ -60,6 +60,17 @@ services:
     networks:
       - chain-public
 
+  wiremock-2:
+    container_name: ${KEY_NAME}-wiremock-2
+    image: "wiremock/wiremock:latest"
+    ports:
+      - "${WIREMOCK_PORT_2}:8080"
+    volumes:
+      - ./prod-local/wiremock-2/${KEY_NAME}:/home/wiremock
+    entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
+    networks:
+      - chain-public
+
 networks:
   chain-public:
     name: chain-public
