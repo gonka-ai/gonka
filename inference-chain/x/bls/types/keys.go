@@ -1,5 +1,9 @@
 package types
 
+import (
+	"encoding/binary"
+)
+
 const (
 	// ModuleName defines the module name
 	ModuleName = "bls"
@@ -12,9 +16,18 @@ const (
 )
 
 var (
-	ParamsKey = []byte("p_bls")
+	ParamsKey          = []byte("p_bls")
+	EpochBLSDataPrefix = []byte("epoch_bls_data")
 )
 
 func KeyPrefix(p string) []byte {
 	return []byte(p)
+}
+
+// EpochBLSDataKey generates a key for storing EpochBLSData by epoch ID
+func EpochBLSDataKey(epochID uint64) []byte {
+	key := make([]byte, len(EpochBLSDataPrefix)+8)
+	copy(key, EpochBLSDataPrefix)
+	binary.BigEndian.PutUint64(key[len(EpochBLSDataPrefix):], epochID)
+	return key
 }

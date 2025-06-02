@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
 // AccountKeeper defines the expected interface for the Account module.
@@ -123,4 +124,10 @@ type ModelKeeper interface {
 
 type AuthzKeeper interface {
 	GranterGrants(ctx context.Context, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error)
+}
+
+// BlsKeeper defines the expected interface for the BLS module.
+type BlsKeeper interface {
+	InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []blstypes.ParticipantWithWeightAndKey) error
+	GetEpochBLSData(ctx sdk.Context, epochID uint64) (blstypes.EpochBLSData, bool)
 }
