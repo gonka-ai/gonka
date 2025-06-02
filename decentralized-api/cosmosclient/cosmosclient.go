@@ -26,6 +26,7 @@ import (
 	"github.com/productscience/inference/api/inference/inference"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -127,6 +128,7 @@ type CosmosMessageClient interface {
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
+	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -426,4 +428,10 @@ func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.
 	}
 
 	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
+}
+
+func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error {
+	transaction.Creator = icc.Address
+	_, err := icc.SendTransaction(transaction)
+	return err
 }

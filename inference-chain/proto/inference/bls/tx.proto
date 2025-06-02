@@ -6,6 +6,7 @@ import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "inference/bls/params.proto";
+import "inference/bls/types.proto";
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
@@ -16,6 +17,9 @@ service Msg {
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+  
+  // SubmitDealerPart allows a participant to submit their dealer part during the dealing phase
+  rpc SubmitDealerPart(MsgSubmitDealerPart) returns (MsgSubmitDealerPartResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -38,3 +42,26 @@ message MsgUpdateParams {
 // MsgUpdateParamsResponse defines the response structure for executing a
 // MsgUpdateParams message.
 message MsgUpdateParamsResponse {}
+
+// MsgSubmitDealerPart is the message for submitting dealer parts during the dealing phase
+message MsgSubmitDealerPart {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "inference/x/bls/MsgSubmitDealerPart";
+
+  // creator is the address of the dealer submitting their part
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // epoch_id identifies the DKG round this dealer part belongs to
+  uint64 epoch_id = 2;
+  
+  // commitments are the G2 points C_kj = g * a_kj representing polynomial commitments
+  repeated bytes commitments = 3;
+  
+  // encrypted_shares_for_participants contains encrypted shares for all participants in order
+  // Index i = shares for EpochBLSData.participants[i]
+  repeated EncryptedSharesForParticipant encrypted_shares_for_participants = 4 [(gogoproto.nullable) = false];
+}
+
+// MsgSubmitDealerPartResponse defines the response structure for executing a
+// MsgSubmitDealerPart message.
+message MsgSubmitDealerPartResponse {}

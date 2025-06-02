@@ -21,4 +21,13 @@ message EventKeyGenerationInitiated {
   
   // participants contains information about all participants in this DKG round
   repeated BLSParticipantInfo participants = 4 [(gogoproto.nullable) = false];
+}
+
+// EventDealerPartSubmitted is emitted when a participant submits their dealer part
+message EventDealerPartSubmitted {
+  // epoch_id identifies the DKG round this dealer part belongs to
+  uint64 epoch_id = 1;
+  
+  // dealer_address is the address of the dealer who submitted their part
+  string dealer_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 } 

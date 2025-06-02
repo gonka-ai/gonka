@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/bls_dkg"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
 	"decentralized-api/internal/validation"
@@ -13,19 +14,21 @@ import (
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/productscience/inference/x/inference/types"
 	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
-	finishInferenceAction      = "/inference.inference.MsgFinishInference"
-	validationAction           = "/inference.inference.MsgValidation"
-	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
-	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
+	finishInferenceAction       = "/inference.inference.MsgFinishInference"
+	validationAction            = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction  = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction     = "/cosmos.gov.v1.MsgSubmitProposal"
+	keyGenerationInitiatedEvent = "key_generation_initiated"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -39,6 +42,7 @@ type EventListener struct {
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
+	blsDealer           *bls_dkg.Dealer
 	nodeCaughtUp        atomic.Bool
 
 	ws *websocket.Conn
@@ -51,6 +55,7 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	blsDealer *bls_dkg.Dealer,
 ) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
@@ -59,6 +64,7 @@ func NewEventListener(
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
+		blsDealer:           blsDealer,
 	}
 }
 
@@ -78,6 +84,7 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
 	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	subscribeToEvents(el.ws, "tm.event='Tx' AND "+keyGenerationInitiatedEvent+".epoch_id EXISTS")
 }
 
 func (el *EventListener) Start(ctx context.Context) {
@@ -234,6 +241,18 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
+		return
+	}
+
+	// Check for BLS events first (these might not have message.action)
+	if _, hasKeyGenEvent := event.Result.Events[keyGenerationInitiatedEvent+".epoch_id"]; hasKeyGenEvent {
+		if el.isNodeSynced() {
+			logging.Info("Key generation initiated event received", types.EventProcessing, "worker", name)
+			err := el.blsDealer.ProcessKeyGenerationInitiated(event)
+			if err != nil {
+				logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", name)
+			}
+		}
 		return
 	}
 

@@ -2,7 +2,6 @@ package inference
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -29,6 +28,7 @@ import (
 
 	// this line is used by starport scaffolding # 1
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -565,42 +565,51 @@ func (am AppModule) initiateBLSKeyGeneration(ctx context.Context, epochID uint64
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	for _, ap := range activeParticipants {
-		// Query full participant data to get access to WorkerPublicKey
-		participant, found := am.keeper.GetParticipant(sdkCtx, ap.Index)
-		if !found {
-			am.LogError("Participant not found when querying for BLS key generation", types.EpochGroup, "participant", ap.Index, "epochID", epochID)
-			continue
-		}
-
-		// Use WorkerPublicKey instead of ValidatorKey (WorkerPublicKey is secp256k1, ValidatorKey might be Ed25519 consensus key)
-		if participant.WorkerPublicKey == "" {
-			am.LogError("Participant has empty WorkerPublicKey", types.EpochGroup, "participant", ap.Index, "epochID", epochID)
-			continue
-		}
-
-		// Convert base64 encoded secp256k1 public key to bytes
-		secp256k1Bytes, err := base64.StdEncoding.DecodeString(participant.WorkerPublicKey)
+		accAddr, err := sdk.AccAddressFromBech32(ap.Index)
 		if err != nil {
-			am.LogError("Failed to decode WorkerPublicKey (secp256k1)", types.EpochGroup, "participant", ap.Index, "epochID", epochID, "error", err.Error())
+			am.LogError("Failed to parse participant address for BLS key generation", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID, "error", err)
 			continue
 		}
 
-		// Convert weight to percentage using math.LegacyDec
+		account := am.accountKeeper.GetAccount(sdkCtx, accAddr)
+		if account == nil {
+			am.LogError("Account not found for BLS participant", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		pubKey := account.GetPubKey()
+		if pubKey == nil {
+			am.LogError("Public key not found for BLS participant account", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		secpPubKey, ok := pubKey.(*secp256k1.PubKey)
+		if !ok || secpPubKey == nil {
+			am.LogError("Participant account public key is not secp256k1 for BLS", types.EpochGroup, "participantAddress", ap.Index, "keyType", pubKey.Type(), "epochID", epochID)
+			continue
+		}
+		pubKeyBytes := secpPubKey.Bytes()
+		if len(pubKeyBytes) == 0 {
+			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
+			continue
+		}
+
+		// Use ap.Weight (from ActiveParticipant) as it's the computed weight for this epoch's DKG.
 		weightPercentage := math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
 
 		blsParticipant := blskeeper.ParticipantWithWeightAndKey{
 			Address:            ap.Index,
 			PercentageWeight:   weightPercentage,
-			Secp256k1PublicKey: secp256k1Bytes,
+			Secp256k1PublicKey: pubKeyBytes,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
 
-		am.LogInfo("Prepared participant for BLS key generation", types.EpochGroup,
+		am.LogInfo("Prepared participant for BLS key generation using AccountKeeper PubKey", types.EpochGroup,
 			"participant", ap.Index,
 			"weight", ap.Weight,
 			"percentage", weightPercentage.String(),
 			"epochID", epochID,
-			"keyLength", len(secp256k1Bytes))
+			"keyLength", len(pubKeyBytes))
 	}
 
 	if len(finalizedParticipants) == 0 {
