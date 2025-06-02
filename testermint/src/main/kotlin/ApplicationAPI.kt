@@ -140,6 +140,22 @@ data class ApplicationAPI(
         logResponse(response)
     }
 
+    fun enableNode(nodeId: String): NodeAdminStateResponse = wrapLog("EnableNode", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.post("$url/admin/v1/nodes/$nodeId/enable")
+            .responseObject<NodeAdminStateResponse>(gsonDeserializer(cosmosJson))
+        logResponse(response)
+        response.third.get()
+    }
+
+    fun disableNode(nodeId: String): NodeAdminStateResponse = wrapLog("DisableNode", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        val response = Fuel.post("$url/admin/v1/nodes/$nodeId/disable")
+            .responseObject<NodeAdminStateResponse>(gsonDeserializer(cosmosJson))
+        logResponse(response)
+        response.third.get()
+    }
+
     fun submitPriceProposal(proposal: UnitOfComputePriceProposalDto): String = wrapLog("SubmitPriceProposal", true) {
         val url = urlFor(SERVER_TYPE_ADMIN)
         val response = Fuel.post("$url/admin/v1/unit-of-compute-price-proposal")

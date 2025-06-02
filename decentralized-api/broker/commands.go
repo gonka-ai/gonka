@@ -2,8 +2,9 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
-	"github.com/productscience/inference/x/inference/types"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type Command interface {
@@ -153,5 +154,16 @@ func NewInferenceUpAllCommand() InferenceUpAllCommand {
 }
 
 func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+// SetNodeAdminStateCommand enables or disables a node administratively
+type SetNodeAdminStateCommand struct {
+	NodeId   string
+	Enabled  bool
+	Response chan error
+}
+
+func (c SetNodeAdminStateCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }

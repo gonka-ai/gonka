@@ -68,6 +68,12 @@ type NodeWithState struct {
 	State NodeState
 }
 
+// AdminState tracks administrative enable/disable status
+type AdminState struct {
+	Enabled bool   `json:"enabled"`
+	Epoch   uint64 `json:"epoch"`
+}
+
 type NodeState struct {
 	LockCount       int                      `json:"lock_count"`
 	Operational     bool                     `json:"operational"`
@@ -77,6 +83,7 @@ type NodeState struct {
 	StatusTimestamp time.Time                `json:"status_timestamp"`
 	IntendedStatus  types.HardwareNodeStatus `json:"intended_status,omitempty"`
 	LastStateChange time.Time                `json:"last_state_change"`
+	AdminState      AdminState               `json:"admin_state"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
@@ -96,6 +103,21 @@ func (s *NodeState) Failure(reason string) {
 
 func (s *NodeState) IsOperational() bool {
 	return s.Status != types.HardwareNodeStatus_FAILED
+}
+
+// ShouldBeOperational checks if node should be operational based on admin state and current epoch
+func (s *NodeState) ShouldBeOperational(currentEpoch uint64, currentPhase chainphase.Phase) bool {
+	if !s.AdminState.Enabled {
+		// Disabled nodes stop after their epoch ends
+		return s.AdminState.Epoch >= currentEpoch
+	}
+
+	// Enabled nodes wait for inference phase if enabled during PoC
+	if s.AdminState.Epoch == currentEpoch && currentPhase == chainphase.PhasePoC {
+		return false
+	}
+
+	return true
 }
 
 type NodeResponse struct {
@@ -171,6 +193,8 @@ func (b *Broker) processCommands() {
 			b.reconcileNodes(command)
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
+		case SetNodeAdminStateCommand:
+			b.setNodeAdminState(command)
 		case InferenceUpAllCommand:
 			b.inferenceUpAll(command)
 		case StartPocCommand:
@@ -231,6 +255,12 @@ func (b *Broker) registerNode(command RegisterNode) {
 		Version:          command.Node.Version,
 	}
 
+	// Get current epoch from phase tracker
+	var currentEpoch uint64
+	if b.phaseTracker != nil {
+		currentEpoch = b.phaseTracker.GetCurrentEpoch()
+	}
+
 	nodeWithState := &NodeWithState{
 		Node: node,
 		State: NodeState{
@@ -239,6 +269,10 @@ func (b *Broker) registerNode(command RegisterNode) {
 			Status:          types.HardwareNodeStatus_UNKNOWN,
 			StatusTimestamp: time.Now(),
 			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
+			AdminState: AdminState{
+				Enabled: true,
+				Epoch:   currentEpoch,
+			},
 		},
 	}
 
@@ -306,6 +340,13 @@ func nodeAvailable(node *NodeWithState, neededModel string, version string) bool
 	if !available {
 		return false
 	}
+
+	// Check admin state - but we need phase tracker context which we don't have here
+	// For now, just check if admin disabled
+	if !node.State.AdminState.Enabled {
+		return false
+	}
+
 	if version != "" && node.Node.Version != version {
 		return false
 	}
@@ -568,27 +609,51 @@ func nodeReconciliationWorker(broker *Broker) {
 }
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
-	// Get current phase from the tracker
+	// Get current phase and epoch from the tracker
 	var intendedStatus types.HardwareNodeStatus
+	var currentPhase chainphase.Phase
+	var currentEpoch uint64
+
 	if b.phaseTracker != nil {
 		intendedStatus = b.phaseTracker.GetIntendedNodeStatus()
-		for _, node := range b.nodes {
-			if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-				continue
-			}
+		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
+		currentEpoch = b.phaseTracker.GetCurrentEpoch()
 
-			node.State.IntendedStatus = intendedStatus
-		}
-
-		phase, _ := b.phaseTracker.GetCurrentPhase()
 		logging.Info("Reconciling nodes based on current phase", types.Nodes,
-			"phase", phase.String(),
+			"phase", currentPhase.String(),
+			"epoch", currentEpoch,
 			"intended_status", intendedStatus.String())
 	}
 
 	// Collect nodes that need reconciliation
 	needsReconciliation := make(map[string]NodeWorkerCommand)
+
 	for nodeId, node := range b.nodes {
+		// Skip nodes in training state
+		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
+			continue
+		}
+
+		// Check if node should be operational based on admin state
+		shouldBeOperational := node.State.ShouldBeOperational(currentEpoch, currentPhase)
+
+		if !shouldBeOperational {
+			// Node should be stopped
+			if node.State.Status != types.HardwareNodeStatus_STOPPED {
+				logging.Info("Node should be stopped due to admin state", types.Nodes,
+					"node_id", nodeId,
+					"admin_enabled", node.State.AdminState.Enabled,
+					"admin_epoch", node.State.AdminState.Epoch,
+					"current_epoch", currentEpoch)
+				needsReconciliation[nodeId] = StopNodeCommand{}
+			}
+			continue
+		}
+
+		// Update intended status based on phase
+		node.State.IntendedStatus = intendedStatus
+
+		// Check if reconciliation is needed
 		if node.State.Status != node.State.IntendedStatus {
 			logging.Info("Node state mismatch detected", types.Nodes,
 				"node_id", nodeId,
@@ -743,6 +808,31 @@ func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
 	}
 
 	command.Response <- true
+}
+
+func (b *Broker) setNodeAdminState(command SetNodeAdminStateCommand) {
+	node, exists := b.nodes[command.NodeId]
+	if !exists {
+		command.Response <- fmt.Errorf("node not found: %s", command.NodeId)
+		return
+	}
+
+	// Get current epoch
+	var currentEpoch uint64
+	if b.phaseTracker != nil {
+		currentEpoch = b.phaseTracker.GetCurrentEpoch()
+	}
+
+	// Update admin state
+	node.State.AdminState.Enabled = command.Enabled
+	node.State.AdminState.Epoch = currentEpoch
+
+	logging.Info("Updated node admin state", types.Nodes,
+		"node_id", command.NodeId,
+		"enabled", command.Enabled,
+		"epoch", currentEpoch)
+
+	command.Response <- nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {

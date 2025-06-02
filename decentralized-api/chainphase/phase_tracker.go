@@ -229,6 +229,22 @@ func (t *ChainPhaseTracker) GetCurrentPhase() (phase Phase, blockHeight int64) {
 	return t.currentPhase, t.currentBlockHeight
 }
 
+// GetCurrentEpoch returns the current epoch number based on block height
+func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.currentEpochParams == nil || t.currentBlockHeight == 0 {
+		return 0
+	}
+
+	// Calculate epoch number from block height
+	shiftedHeight := t.currentBlockHeight + t.currentEpochParams.EpochShift
+	epochNumber := uint64(shiftedHeight / t.currentEpochParams.EpochLength)
+
+	return epochNumber
+}
+
 // GetPoCParameters returns PoC start parameters if currently in PoC phase
 func (t *ChainPhaseTracker) GetPoCParameters() (startBlockHeight int64, startBlockHash string, isInPoC bool) {
 	t.mu.RLock()
