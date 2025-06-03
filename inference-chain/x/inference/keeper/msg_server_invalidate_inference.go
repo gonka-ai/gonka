@@ -39,6 +39,10 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
 
 	k.SetInference(ctx, inference)
+	err = k.DevelopersStatsSet(goCtx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
+	if err != nil {
+		k.LogError("DevelopersStatsSet", types.Inferences, err)
+	}
 	k.SetParticipant(ctx, executor)
 	return &types.MsgInvalidateInferenceResponse{}, nil
 }

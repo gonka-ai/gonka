@@ -1,7 +1,8 @@
 services:
   chain-node:
     container_name: ${KEY_NAME}-node
-    image: ghcr.io/product-science/inferenced
+    image: gcr.io/decentralized-ai/inferenced:96330605
+    #image: ghcr.io/product-science/inferenced:0f508a2a
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -17,12 +18,14 @@ services:
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"
+     # - "1317:1317"
     networks:
       - chain-public
 
   api:
     container_name: ${KEY_NAME}-api
-    image: ghcr.io/product-science/api
+    image: gcr.io/decentralized-ai/api:96330605
+    #image: ghcr.io/product-science/api:0f508a2a
     volumes:
         - ./prod-local/${KEY_NAME}:/root/.inference
         - ./${NODE_CONFIG}:/root/node_config.json

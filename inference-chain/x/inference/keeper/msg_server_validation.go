@@ -119,6 +119,10 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
 	k.SetInference(ctx, inference)
+	err = k.DevelopersStatsSet(goCtx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
+	if err != nil {
+		k.LogError("DevelopersStatsSet", types.Inferences, err)
+	}
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

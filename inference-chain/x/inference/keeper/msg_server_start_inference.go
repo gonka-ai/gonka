@@ -93,6 +93,12 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 
 	k.SetInference(ctx, inference)
+	// TODO epochId пустой, потому что заполняется только на Finish inference: fix!!!
+	err := k.DevelopersStatsSet(goCtx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
+	if err != nil {
+		k.LogError("DevelopersStatsSet", types.Inferences, err)
+	}
+
 	expirationBlocks := k.GetParams(ctx).ValidationParams.ExpirationBlocks
 	k.SetInferenceTimeout(ctx, types.InferenceTimeout{
 		ExpirationHeight: uint64(inference.StartBlockHeight + expirationBlocks),

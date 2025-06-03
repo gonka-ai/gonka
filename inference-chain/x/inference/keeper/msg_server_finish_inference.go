@@ -66,6 +66,10 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	// Always save the inference, even if it's a placeholder
 	k.SetInference(ctx, existingInference)
+	err = k.DevelopersStatsSet(ctx, existingInference.RequestedBy, existingInference.InferenceId, existingInference.Status, existingInference.EpochGroupId, existingInference.PromptTokenCount+existingInference.CompletionTokenCount)
+	if err != nil {
+		k.LogError("DevelopersStatsSet", types.Inferences, err)
+	}
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp
 	executor.CoinBalance += existingInference.ActualCost

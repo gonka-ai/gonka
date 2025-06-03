@@ -15,7 +15,7 @@ func TestDeveloperStats(t *testing.T) {
 		developer2 = "developer2"
 
 		epochId1                   = uint64(1)
-		epochId2                   = 2
+		epochId2                   = uint64(2)
 		developer1Inference1Tokens = uint64(10)
 	)
 
@@ -99,8 +99,33 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Equal(t, 1, len(statsByTime))
 		assert.Equal(t, types.InferenceStatus_FINISHED, statsByTime[0].Inference.Status)
 		assert.Equal(t, developer1Inference1Tokens+3, statsByTime[0].Inference.AiTokensUsed)
+	})
 
-		assert.Error(t, keeper.DevelopersStatsSet(ctx, developer1, developer1Inference1.String(), types.InferenceStatus_VALIDATED, epochId2, developer1Inference1Tokens+3))
+	t.Run("update inference epoch", func(t *testing.T) {
+		keeper, ctx := keepertest.InferenceKeeper(t)
+
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer1, developer1Inference1.String(), types.InferenceStatus_STARTED, epochId1, developer1Inference1Tokens))
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer1, developer1Inference1.String(), types.InferenceStatus_FINISHED, epochId2, developer1Inference1Tokens+3))
+
+		statsByEpoch, ok := keeper.DevelopersStatsGetByEpoch(ctx, developer1, epochId1)
+		assert.True(t, ok)
+		assert.Equal(t, epochId1, statsByEpoch.EpochId)
+		assert.Equal(t, 0, len(statsByEpoch.Inferences))
+
+		now := time.Now().UTC()
+		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Second).Unix(), now.Unix())
+		assert.Equal(t, 1, len(statsByTime))
+		assert.Equal(t, types.InferenceStatus_FINISHED, statsByTime[0].Inference.Status)
+		assert.Equal(t, developer1Inference1Tokens+3, statsByTime[0].Inference.AiTokensUsed)
+
+		updatedStatsByEpoch, ok := keeper.DevelopersStatsGetByEpoch(ctx, developer1, epochId2)
+		assert.True(t, ok)
+		assert.Equal(t, epochId2, updatedStatsByEpoch.EpochId)
+		assert.Equal(t, 1, len(updatedStatsByEpoch.Inferences))
+
+		inferenceStat := updatedStatsByEpoch.Inferences[developer1Inference1.String()]
+		assert.Equal(t, types.InferenceStatus_FINISHED, inferenceStat.Status)
+		assert.Equal(t, developer1Inference1Tokens+3, inferenceStat.AiTokensUsed)
 	})
 
 	t.Run("inferences by time not found", func(t *testing.T) {
