@@ -45,7 +45,10 @@ mkdir -p /root/.dapi/data
 cosmovisor init /usr/bin/decentralized-api || fail "Failed to initialize cosmovisor"
 
 if [ -n "${DEBUG-}" ]; then
+  echo "running cosmovisor in debug mode"
   cosmovisor run || fail "Failed to start decentralized-api"
 else
+  echo "Running decentralized-api with cosmovisor"
   exec cosmovisor run
+  echo "Decentralized API started successfully?"
 fi
