@@ -62,8 +62,8 @@ type PoCParams struct {
 	StartBlockHash   string
 }
 
-// ReconciliationConfig defines when reconciliation should be triggered
-type ReconciliationConfig struct {
+// MlNodeReconciliationConfig defines when reconciliation should be triggered
+type MlNodeReconciliationConfig struct {
 	BlockInterval   int           // Trigger every N blocks
 	TimeInterval    time.Duration // OR every N time duration
 	LastBlockHeight int64         // Track last reconciliation block
@@ -78,7 +78,7 @@ type OnNewBlockDispatcher struct {
 	queryClient          QueryClient
 	transactionClient    TransactionClient
 	phaseTracker         *chainphase.ChainPhaseTracker
-	reconciliationConfig ReconciliationConfig
+	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
 }
 
@@ -108,7 +108,7 @@ func NewOnNewBlockDispatcher(
 		queryClient:         queryClient,
 		transactionClient:   transactionClient,
 		phaseTracker:        phaseTracker,
-		reconciliationConfig: ReconciliationConfig{
+		reconciliationConfig: MlNodeReconciliationConfig{
 			BlockInterval: 5,                // Every 5 blocks
 			TimeInterval:  30 * time.Second, // OR every 30 seconds
 			LastTime:      time.Now(),
