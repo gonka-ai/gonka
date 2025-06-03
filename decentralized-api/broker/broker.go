@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 )
 
 /*
@@ -34,7 +33,22 @@ type Broker struct {
 	client         cosmosclient.CosmosMessageClient
 	nodeWorkGroup  *NodeWorkGroup
 	phaseTracker   *chainphase.ChainPhaseTracker
-	configManager  *apiconfig.ConfigManager
+	pubKey         string
+	callbackUrl    string
+}
+
+const (
+	PoCBatchesPath = "/v1/poc-batches"
+)
+
+func GetPocBatchesCallbackUrl(callbackUrl string) string {
+	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+}
+
+func GetPocValidateCallbackUrl(callbackUrl string) string {
+	// For now the URl is the same, the node inference server appends "/validated" to the URL
+	//  or "/generated" (in case of init-generate)
+	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
 }
 
 type ModelArgs struct {
@@ -125,14 +139,16 @@ type NodeResponse struct {
 	State *NodeState `json:"state"`
 }
 
-func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, configManager *apiconfig.ConfigManager) *Broker {
+func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string) *Broker {
 	broker := &Broker{
-		commands:      make(chan Command, 10000),
-		nodes:         make(map[string]*NodeWithState),
-		client:        client,
-		phaseTracker:  phaseTracker,
-		configManager: configManager,
+		commands:     make(chan Command, 10000),
+		nodes:        make(map[string]*NodeWithState),
+		client:       client,
+		phaseTracker: phaseTracker,
+		pubKey:       pubKey,
+		callbackUrl:  callbackUrl,
 	}
+
 	// Initialize NodeWorkGroup
 	broker.nodeWorkGroup = NewNodeWorkGroup()
 
@@ -681,24 +697,12 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 				if b.phaseTracker != nil {
 					pocHeight, pocHash, isInPoC := b.phaseTracker.GetPoCParameters()
 					if isInPoC && pocHeight > 0 {
-						// Get pubKey from the cosmos client
-						account := b.client.GetAccount()
-						pubKey, err := account.Record.GetPubKey()
-						if err != nil {
-							logging.Error("Failed to get public key for PoC reconciliation", types.Nodes,
-								"node_id", nodeId, "error", err)
-							needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: failed to get pubkey"}
-							continue
-						}
-						pubKeyString := utils.PubKeyToHexString(pubKey)
-						callbackUrl := b.configManager.GetApiConfig().PoCCallbackUrl
 						totalNodes := len(b.nodes)
-
 						needsReconciliation[nodeId] = StartPoCNodeCommand{
 							BlockHeight: pocHeight,
 							BlockHash:   pocHash,
-							PubKey:      pubKeyString,
-							CallbackUrl: callbackUrl,
+							PubKey:      b.pubKey,
+							CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
 							TotalNodes:  totalNodes,
 						}
 					} else {

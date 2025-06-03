@@ -66,8 +66,15 @@ func main() {
 		panic(err)
 	}
 
-	chainPhaseTracker := chainphase.NewChainPhaseTracker(context.Background(), *recorder)
-	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, config)
+	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+
+	pubKey, err := recorder.Account.Record.GetPubKey()
+	if err != nil {
+		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
+		return
+	}
+	pubKeyString := utils.PubKeyToHexString(pubKey)
+	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl)
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
@@ -83,13 +90,6 @@ func main() {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
-
-	pubKey, err := recorder.Account.Record.GetPubKey()
-	if err != nil {
-		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
-		return
-	}
-	pubKeyString := utils.PubKeyToHexString(pubKey)
 
 	logging.Debug("Initializing PoC orchestrator",
 		types.PoC, "name", recorder.Account.Name,

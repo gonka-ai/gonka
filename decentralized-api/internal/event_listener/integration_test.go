@@ -243,12 +243,10 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	mockPoCOrchestrator := &MockPoCOrchestrator{}
 	mockPoCOrchestratorAdapter := &MockPoCOrchestratorAdapter{mockPoCOrchestrator}
 
-	// Create real phase tracker with fake cosmos client
-	fakeCosmosClient := &FakeCosmosClient{}
-	phaseTracker := chainphase.NewChainPhaseTracker(context.Background(), fakeCosmosClient)
+	phaseTracker := chainphase.NewChainPhaseTracker()
 
 	// Create real broker
-	nodeBroker := broker.NewBroker(nil, phaseTracker, (*apiconfig.ConfigManager)(configManagerAdapter))
+	nodeBroker := broker.NewBroker(nil, phaseTracker, "some-pub-key", "http://localhost:8080/poc")
 
 	// Mock status function
 	mockStatusFunc := func(url string) (*coretypes.ResultStatus, error) {

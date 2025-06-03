@@ -1,10 +1,8 @@
 package chainphase
 
 import (
-	"context"
 	"sync"
 
-	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -52,14 +50,10 @@ type ChainPhaseTracker struct {
 	pocStartBlockHash   string
 	pocStartBlockHeight int64
 	isSynced            bool
-
-	// For self-sufficient epoch params querying
-	cosmosClient cosmosclient.InferenceCosmosClient
-	ctx          context.Context
 }
 
 // NewChainPhaseTracker creates a new ChainPhaseTracker instance
-func NewChainPhaseTracker(ctx context.Context, cosmosClient cosmosclient.InferenceCosmosClient) *ChainPhaseTracker {
+func NewChainPhaseTracker() *ChainPhaseTracker {
 	return &ChainPhaseTracker{
 		currentPhase:        PhaseUnknown,
 		currentBlockHeight:  0,
@@ -67,9 +61,14 @@ func NewChainPhaseTracker(ctx context.Context, cosmosClient cosmosclient.Inferen
 		pocStartBlockHash:   "",
 		pocStartBlockHeight: 0,
 		isSynced:            false,
-		cosmosClient:        cosmosClient,
-		ctx:                 ctx,
 	}
+}
+
+func (t *ChainPhaseTracker) UpdateEpochParams(params types.EpochParams) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.currentEpochParams = &params
 }
 
 // UpdateBlockHeight updates the tracker with a new block height
@@ -78,11 +77,6 @@ func (t *ChainPhaseTracker) UpdateBlockHeight(height int64, currentBlockHash str
 	defer t.mu.Unlock()
 
 	t.currentBlockHeight = height
-
-	// Query epoch params if we don't have them or periodically refresh
-	if t.currentEpochParams == nil || height%100 == 0 { // Refresh every 100 blocks
-		t.refreshEpochParams()
-	}
 
 	if t.currentEpochParams == nil {
 		t.currentPhase = PhaseUnknown
@@ -123,18 +117,6 @@ func (t *ChainPhaseTracker) UpdateBlockHeight(height int64, currentBlockHash str
 		t.pocStartBlockHash = ""
 		t.pocStartBlockHeight = 0
 	}
-}
-
-// refreshEpochParams queries the chain for the latest epoch parameters
-func (t *ChainPhaseTracker) refreshEpochParams() {
-	queryClient := t.cosmosClient.NewInferenceQueryClient()
-	params, err := queryClient.Params(t.ctx, &types.QueryParamsRequest{})
-	if err != nil {
-		logging.Error("Failed to query epoch params in ChainPhaseTracker", types.System, "error", err)
-		return
-	}
-	t.currentEpochParams = params.Params.EpochParams
-	logging.Debug("Refreshed epoch params in ChainPhaseTracker", types.System)
 }
 
 // calculatePoCStartHeight calculates the PoC start height for the current epoch
