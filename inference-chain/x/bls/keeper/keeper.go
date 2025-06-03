@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"cosmossdk.io/core/store"
@@ -21,6 +22,10 @@ type (
 		// should be the x/gov module account.
 		authority string
 	}
+)
+
+const (
+	ActiveEpochIDKey = "active_epoch_id"
 )
 
 func NewKeeper(
@@ -50,4 +55,27 @@ func (k Keeper) GetAuthority() string {
 // Logger returns a module-specific logger.
 func (k Keeper) Logger() log.Logger {
 	return k.logger.With("module", fmt.Sprintf("x/%s", types.ModuleName))
+}
+
+// SetActiveEpochID sets the current active epoch undergoing DKG
+func (k Keeper) SetActiveEpochID(ctx sdk.Context, epochID uint64) {
+	store := k.storeService.OpenKVStore(ctx)
+	key := []byte(ActiveEpochIDKey)
+	value := make([]byte, 8)
+	binary.BigEndian.PutUint64(value, epochID)
+	store.Set(key, value)
+}
+
+// GetActiveEpochID returns the current active epoch undergoing DKG
+// Returns 0 if no epoch is currently active
+func (k Keeper) GetActiveEpochID(ctx sdk.Context) uint64 {
+	store := k.storeService.OpenKVStore(ctx)
+	key := []byte(ActiveEpochIDKey)
+
+	value, err := store.Get(key)
+	if err != nil || value == nil {
+		return 0 // No active epoch
+	}
+
+	return binary.BigEndian.Uint64(value)
 }
