@@ -62,6 +62,9 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 	// Store the EpochBLSData
 	k.SetEpochBLSData(ctx, epochBLSData)
 
+	// Set this as the active epoch since only one DKG can be active at a time
+	k.SetActiveEpochID(ctx, epochID)
+
 	// Emit EventKeyGenerationInitiated
 	event := types.EventKeyGenerationInitiated{
 		EpochId:      epochID,
