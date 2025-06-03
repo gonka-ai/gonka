@@ -52,16 +52,12 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 		return err
 	}
 
-	// FIXME: We empty all arrays to avoid too large chain transactions
-	//  We can allow that, because we only use FraudDetected boolean
-	//  when making a decision about participant's PoC submissions
-	//  Will be fixed in future versions
 	msg := &inference.MsgSubmitPocValidation{
 		ParticipantAddress:       address,
 		PocStageStartBlockHeight: body.BlockHeight,
-		Nonces:                   make([]int64, 0),
-		Dist:                     make([]float64, 0),
-		ReceivedDist:             make([]float64, 0),
+		Nonces:                   body.Nonces,
+		Dist:                     body.Dist,
+		ReceivedDist:             body.ReceivedDist,
 		RTarget:                  body.RTarget,
 		FraudThreshold:           body.FraudThreshold,
 		NInvalid:                 body.NInvalid,
@@ -69,10 +65,22 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 		FraudDetected:            body.FraudDetected,
 	}
 
+	// FIXME: We empty all arrays to avoid too large chain transactions
+	//  We can allow that, because we only use FraudDetected boolean
+	//  when making a decision about participant's PoC submissions
+	//  Will be fixed in future versions
+	emptyArrays(msg)
+
 	if err := s.recorder.SubmitPoCValidation(msg); err != nil {
 		logging.Error("Failed to submit MsgSubmitValidatedPocBatch", types.PoC, "error", err)
 		return err
 	}
 
 	return ctx.NoContent(http.StatusOK)
+}
+
+func emptyArrays(msg *inference.MsgSubmitPocValidation) {
+	msg.Dist = make([]float64, 0)
+	msg.ReceivedDist = make([]float64, 0)
+	msg.Nonces = make([]int64, 0)
 }
