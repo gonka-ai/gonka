@@ -52,6 +52,10 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 		return err
 	}
 
+	// FIXME: We empty all arrays to avoid too large chain transactions
+	//  We can allow that, because we only use FraudDetected boolean
+	//  when making a decision about participant's PoC submissions
+	//  Will be fixed in future versions
 	msg := &inference.MsgSubmitPocValidation{
 		ParticipantAddress:       address,
 		PocStageStartBlockHeight: body.BlockHeight,
