@@ -44,6 +44,7 @@ type EventListener struct {
 	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
 	phaseTracker        *chainphase.ChainPhaseTracker
+	dispatcher          *OnNewBlockDispatcher
 
 	ws *websocket.Conn
 }
@@ -57,6 +58,15 @@ func NewEventListener(
 	trainingExecutor *training.Executor,
 	phaseTracker *chainphase.ChainPhaseTracker,
 ) *EventListener {
+	// Create the new block dispatcher
+	dispatcher := NewOnNewBlockDispatcher(
+		nodeBroker,
+		configManager,
+		nodePocOrchestrator,
+		transactionRecorder,
+		phaseTracker,
+	)
+
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
@@ -65,6 +75,7 @@ func NewEventListener(
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
 		phaseTracker:        phaseTracker,
+		dispatcher:          dispatcher,
 	}
 }
 
@@ -226,10 +237,7 @@ func (el *EventListener) startSyncStatusChecker() {
 		// The node is "synced" if it's NOT catching up.
 		isSynced := !status.SyncInfo.CatchingUp
 		el.updateNodeSyncStatus(isSynced)
-		// Update sync status in phase tracker
-		if el.phaseTracker != nil {
-			el.phaseTracker.SetSyncStatus(isSynced)
-		}
+		// Note: Sync status is now handled by the dispatcher during block processing
 		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", isSynced, "height", status.SyncInfo.LatestBlockHeight)
 	}
 }
@@ -247,16 +255,24 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	switch event.Result.Data.Type {
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
-		if el.isNodeSynced() {
-			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager, el.phaseTracker)
-		} else {
-			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager, el.phaseTracker)
+
+		// Parse the event into NewBlockInfo
+		blockInfo, err := parseNewBlockInfo(event)
+		if err != nil {
+			logging.Error("Failed to parse new block info", types.EventProcessing, "error", err, "worker", workerName)
+			return
 		}
+
+		// Process using the new dispatcher
+		ctx := context.Background() // We could pass this from caller if needed
+		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
+		if err != nil {
+			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
+		}
+
+		// Still handle upgrade processing separately
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
-		// Update sync status in phase tracker
-		if el.phaseTracker != nil {
-			el.phaseTracker.SetSyncStatus(el.isNodeSynced())
-		}
+
 	case txEventType:
 		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)

@@ -138,7 +138,8 @@ func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase
 
 	go broker.processCommands()
 	go nodeSyncWorker(broker)
-	go nodeReconciliationWorker(broker)
+	// Reconciliation is now triggered by OnNewBlockDispatcher
+	// go nodeReconciliationWorker(broker)
 	go nodeStatusQueryWorker(broker)
 	return broker
 }
