@@ -41,6 +41,7 @@ type EventListener struct {
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
+	cancelFunc          context.CancelFunc
 
 	ws *websocket.Conn
 }
@@ -52,6 +53,7 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	cancelFunc context.CancelFunc,
 ) *EventListener {
 	return &EventListener{
 		nodeBroker:          nodeBroker,
@@ -60,6 +62,7 @@ func NewEventListener(
 		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
+		cancelFunc:          cancelFunc,
 	}
 }
 
@@ -153,8 +156,9 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 					logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
 
 					if upgrade.CheckForUpgrade(el.configManager) {
-						logging.Error("Upgrade required! Exiting...", types.Upgrades)
-						panic("Upgrade required")
+						logging.Error("Upgrade required! Shutting down the entire system...", types.Upgrades)
+						el.cancelFunc()
+						return
 					}
 
 				}

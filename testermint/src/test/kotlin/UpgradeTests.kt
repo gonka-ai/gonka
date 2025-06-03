@@ -59,6 +59,12 @@ class UpgradeTests : TestermintTest() {
         logSection("Verifying upgrade")
         genesis.node.waitForNextBlock(1)
         // Some other action?
+        cluster.allPairs.forEach {
+            it.api.getParticipants()
+            it.api.getNodes()
+            it.node.getAddress()
+        }
+
     }
 
     @Test
