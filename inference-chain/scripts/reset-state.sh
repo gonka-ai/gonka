@@ -17,14 +17,3 @@ if [ "$RESET_COSMOVISOR" = "true" ]; then
   rm -f  "$STATE_DIR/upgrade-info.json"
   rm -rf "$CV_DIR/genesis" "$CV_DIR/upgrades"
 fi
-
-SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-1000}"
-SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
-TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2000}"
-
-echo "Configuring state-sync: interval=$SNAPSHOT_INTERVAL keep=$SNAPSHOT_KEEP_RECENT period=$TRUSTED_BLOCK_PERIOD"
-"$APP_NAME" config set app state-sync.snapshot-interval      "$SNAPSHOT_INTERVAL"
-"$APP_NAME" config set app state-sync.snapshot-keep-recent   "$SNAPSHOT_KEEP_RECENT"
-"$APP_NAME" set-statesync               "$STATE_DIR/config/config.toml" true
-"$APP_NAME" set-statesync-rpc-servers   "$STATE_DIR/config/config.toml" "$RPC_SERVER_URL_1" "$RPC_SERVER_URL_2"
-"$APP_NAME" set-statesync-trusted-block "$STATE_DIR/config/config.toml" "$SEED_NODE_RPC_URL" "$TRUSTED_BLOCK_PERIOD"
