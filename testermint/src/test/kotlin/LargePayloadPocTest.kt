@@ -18,11 +18,11 @@ class LargePayloadPocTest : TestermintTest() {
         val genesisMock = genesis.mock
         assertNotNull(genesisMock, "Genesis InferenceMock (genesis.mock) must not be null to configure PoC responses.")
 
-        val largeArraySize = 10000 // Test with 10k length arrays
+        val largeArraySize = 100_000L
 
         Logger.info("Configuring PoC generate and validate mocks for genesis with array size: $largeArraySize")
-        genesisMock.setPocResponse(largeArraySize.toLong())
-        genesisMock.setPocValidationResponse()
+        // genesisMock.setPocResponse(largeArraySize)
+        genesisMock.setPocValidationResponse(largeArraySize)
 
         logSection("Initial sync: Waiting for SET_NEW_VALIDATORS stage before triggering PoC")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)

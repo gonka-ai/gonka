@@ -75,15 +75,17 @@ class InferenceMock(port: Int, val name: String) {
 
     }
 
-    fun setPocValidationResponse(scenarioName: String = "ModelState") {
+    fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState") {
+        val nonces = (1..weight).toList()
+        val dist = nonces.map { it.toDouble() / weight }
         val callbackBody = """
             {
               "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
               "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
               "block_height": {{jsonPath originalRequest.body '$.block_height'}},
-              "nonces": {{jsonPath originalRequest.body '$.nonces'}},
-              "dist": {{jsonPath originalRequest.body '$.dist'}},
-              "received_dist": {{jsonPath originalRequest.body '$.dist'}},
+              "nonces": $nonces,
+              "dist": $dist,
+              "received_dist": $dist,
               "r_target": {{jsonPath originalRequest.body '$.r_target'}},
               "fraud_threshold": {{jsonPath originalRequest.body '$.fraud_threshold'}},
               "n_invalid": 0,
