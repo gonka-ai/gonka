@@ -17,9 +17,26 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
 
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 )
+
+// Minimal interface for query operations needed by the dispatcher
+type QueryClient interface {
+	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+}
+
+// Minimal interface for transaction operations needed by the dispatcher
+type TransactionClient interface {
+	SignBytes(data []byte) ([]byte, error)
+	SubmitSeed(msg *inference.MsgSubmitSeed) error
+	ClaimRewards(msg *inference.MsgClaimRewards) error
+}
+
+// StatusFunc defines the function signature for getting node sync status
+type StatusFunc func(chainNodeUrl string) (*coretypes.ResultStatus, error)
 
 // NewBlockInfo contains parsed information from a new block event
 type NewBlockInfo struct {
@@ -58,9 +75,20 @@ type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
 	configManager        *apiconfig.ConfigManager
 	nodePocOrchestrator  *poc.NodePoCOrchestrator
-	cosmosClient         cosmosclient.InferenceCosmosClient
+	queryClient          QueryClient
+	transactionClient    TransactionClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig ReconciliationConfig
+	getStatusFunc        StatusFunc
+}
+
+// StatusResponse matches the structure expected by getStatus function
+type StatusResponse struct {
+	SyncInfo SyncInfo `json:"sync_info"`
+}
+
+type SyncInfo struct {
+	CatchingUp bool `json:"catching_up"`
 }
 
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
@@ -68,21 +96,66 @@ func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
-	cosmosClient cosmosclient.InferenceCosmosClient,
+	queryClient QueryClient,
+	transactionClient TransactionClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
+	getStatusFunc StatusFunc,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:          nodeBroker,
 		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
-		cosmosClient:        cosmosClient,
+		queryClient:         queryClient,
+		transactionClient:   transactionClient,
 		phaseTracker:        phaseTracker,
 		reconciliationConfig: ReconciliationConfig{
 			BlockInterval: 5,                // Every 5 blocks
 			TimeInterval:  30 * time.Second, // OR every 30 seconds
 			LastTime:      time.Now(),
 		},
+		getStatusFunc: getStatusFunc,
 	}
+}
+
+// NewOnNewBlockDispatcherFromCosmosClient creates a dispatcher using a full cosmos client
+// This is a convenience constructor for existing code
+func NewOnNewBlockDispatcherFromCosmosClient(
+	nodeBroker *broker.Broker,
+	configManager *apiconfig.ConfigManager,
+	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	cosmosClient cosmosclient.InferenceCosmosClient,
+	phaseTracker *chainphase.ChainPhaseTracker,
+) *OnNewBlockDispatcher {
+	// Adapt the cosmos client to our minimal interfaces
+	queryClient := cosmosClient.NewInferenceQueryClient()
+	transactionClient := &cosmosClientAdapter{cosmosClient: cosmosClient}
+
+	return NewOnNewBlockDispatcher(
+		nodeBroker,
+		configManager,
+		nodePocOrchestrator,
+		queryClient,
+		transactionClient,
+		phaseTracker,
+		getStatus,
+	)
+}
+
+// cosmosClientAdapter adapts the full cosmos client to our TransactionClient interface
+type cosmosClientAdapter struct {
+	cosmosClient cosmosclient.InferenceCosmosClient
+}
+
+func (c *cosmosClientAdapter) SignBytes(data []byte) ([]byte, error) {
+	return c.cosmosClient.SignBytes(data)
+}
+
+func (c *cosmosClientAdapter) SubmitSeed(msg *inference.MsgSubmitSeed) error {
+	return c.cosmosClient.SubmitSeed(msg)
+}
+
+func (c *cosmosClientAdapter) ClaimRewards(msg *inference.MsgClaimRewards) error {
+	return c.cosmosClient.ClaimRewards(msg)
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
@@ -129,15 +202,14 @@ type NetworkInfo struct {
 func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkInfo, error) {
 	// Query sync status
 	chainNodeUrl := d.configManager.GetChainNodeConfig().Url
-	status, err := getStatus(chainNodeUrl)
+	status, err := d.getStatusFunc(chainNodeUrl)
 	if err != nil {
 		return nil, err
 	}
 	isSynced := !status.SyncInfo.CatchingUp
 
-	// Query epoch parameters
-	queryClient := d.cosmosClient.NewInferenceQueryClient()
-	params, err := queryClient.Params(ctx, &types.QueryParamsRequest{})
+	// Query epoch parameters using our minimal interface
+	params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +365,7 @@ func (d *OnNewBlockDispatcher) generateSeed(blockHeight int64) {
 	}
 	logging.Debug("New Seed Signature", types.Claims, "seed", d.configManager.GetUpcomingSeed())
 
-	err = d.cosmosClient.SubmitSeed(&inference.MsgSubmitSeed{
+	err = d.transactionClient.SubmitSeed(&inference.MsgSubmitSeed{
 		BlockHeight: d.configManager.GetUpcomingSeed().Height,
 		Signature:   d.configManager.GetUpcomingSeed().Signature,
 	})
@@ -327,7 +399,7 @@ func (d *OnNewBlockDispatcher) requestMoney() {
 	seed := d.configManager.GetPreviousSeed()
 
 	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
-	err := d.cosmosClient.ClaimRewards(&inference.MsgClaimRewards{
+	err := d.transactionClient.ClaimRewards(&inference.MsgClaimRewards{
 		Seed:           seed.Seed,
 		PocStartHeight: uint64(seed.Height),
 	})
@@ -341,7 +413,7 @@ func (d *OnNewBlockDispatcher) createNewSeed(blockHeight int64) (*apiconfig.Seed
 	newHeight := blockHeight
 	seedBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
-	signature, err := d.cosmosClient.SignBytes(seedBytes)
+	signature, err := d.transactionClient.SignBytes(seedBytes)
 	if err != nil {
 		logging.Error("Failed to sign bytes", types.Claims, "error", err)
 		return nil, err

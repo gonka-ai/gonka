@@ -59,7 +59,7 @@ func NewEventListener(
 	phaseTracker *chainphase.ChainPhaseTracker,
 ) *EventListener {
 	// Create the new block dispatcher
-	dispatcher := NewOnNewBlockDispatcher(
+	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
 		nodeBroker,
 		configManager,
 		nodePocOrchestrator,
