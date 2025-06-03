@@ -225,12 +225,14 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 
 	if wc.CurrentValidatorWeights != nil && len(wc.CurrentValidatorWeights) > 0 {
 		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
+		votedWeight := valOutcome.ValidWeight + valOutcome.InvalidWeight // For logging only
 		if valOutcome.ValidWeight > halfWeight {
 			shouldContinue = true
 			wc.Logger.LogInfo("Calculate: Participant received more than half of the total weight for valid validations. Accepting",
 				types.PoC, "participant", participantAddress,
 				"validWeight", valOutcome.ValidWeight,
 				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
 				"totalWeight", totalWeight,
 				"halfWeight", halfWeight,
 			)
@@ -240,6 +242,7 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 				types.PoC, "participant", participantAddress,
 				"validWeight", valOutcome.ValidWeight,
 				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
 				"totalWeight", totalWeight,
 				"halfWeight", halfWeight,
 			)
@@ -249,6 +252,7 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 				types.PoC, "participant", participantAddress,
 				"validWeight", valOutcome.ValidWeight,
 				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
 				"totalWeight", totalWeight,
 				"halfWeight", halfWeight,
 			)
