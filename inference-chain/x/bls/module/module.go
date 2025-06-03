@@ -151,7 +151,15 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
-func (am AppModule) EndBlock(_ context.Context) error {
+func (am AppModule) EndBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	// Process DKG phase transitions for all active epochs
+	if err := am.keeper.ProcessDKGPhaseTransitions(sdkCtx); err != nil {
+		am.keeper.Logger().Error("Failed to process DKG phase transitions", "error", err)
+		// Don't return error to avoid halting the chain - log and continue
+	}
+
 	return nil
 }
 
