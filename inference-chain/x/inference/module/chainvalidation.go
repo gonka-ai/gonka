@@ -220,27 +220,41 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 
 func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participantAddress string) bool {
 	totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
-	requiredValidWeight := (totalWeight * 2) / 3
-	shouldContinue := true
+	halfWeight := int64(totalWeight / 2)
+	shouldContinue := false
 
 	if wc.CurrentValidatorWeights != nil && len(wc.CurrentValidatorWeights) > 0 {
 		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
-		votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
-		if votedWeight < requiredValidWeight {
-			wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations. Defaulting to accepting",
+		if valOutcome.ValidWeight > halfWeight {
+			shouldContinue = true
+			wc.Logger.LogInfo("Calculate: Participant received more than half of the total weight for valid validations. Accepting",
 				types.PoC, "participant", participantAddress,
-				"votedWeight", votedWeight,
-				"requiredValidWeight", requiredValidWeight)
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
+		} else if valOutcome.InvalidWeight > halfWeight {
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant received more invalid validations than valid ones. Rejecting",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
 		} else {
-			if uint64(valOutcome.ValidWeight) < requiredValidWeight {
-				wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations",
-					types.PoC, "participant", participantAddress,
-					"validWeight", valOutcome.ValidWeight,
-					"requiredValidWeight", requiredValidWeight)
-				shouldContinue = false
-			}
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant received less than half of the total weight for both accept and reject. Rejecting",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
 		}
 	}
+
 	return shouldContinue
 }
 
