@@ -55,9 +55,9 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 	msg := &inference.MsgSubmitPocValidation{
 		ParticipantAddress:       address,
 		PocStageStartBlockHeight: body.BlockHeight,
-		Nonces:                   body.Nonces,
-		Dist:                     body.Dist,
-		ReceivedDist:             body.ReceivedDist,
+		Nonces:                   make([]int64, 0),
+		Dist:                     make([]float64, 0),
+		ReceivedDist:             make([]float64, 0),
 		RTarget:                  body.RTarget,
 		FraudThreshold:           body.FraudThreshold,
 		NInvalid:                 body.NInvalid,
