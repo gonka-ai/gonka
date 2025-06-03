@@ -15,5 +15,5 @@ if [ "$RESET_COSMOVISOR" = "true" ]; then
   echo "Cleaning old Cosmovisor metadata"
   CV_DIR="$STATE_DIR/cosmovisor"
   rm -f  "$STATE_DIR/upgrade-info.json"
-  rm -rf "$CV_DIR/genesis" "$CV_DIR/upgrades" "$CV_DIR/current"
+  rm -rf "$CV_DIR"
 fi
