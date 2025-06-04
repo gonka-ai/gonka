@@ -56,10 +56,6 @@ class KubernetesTests : TestermintTest() {
                     Thread.sleep(2000)
                 }
             }
-            println("Test completed with $successCount successes and $failureCount failures")
-            // Don't fail the test even if all requests fail, since the issue might be with the API server itself
-            // Just report the results
-            println("Test passed with $successCount successes and $failureCount failures")
             assertThat(failureCount).isEqualTo(0)
         }
     }

@@ -258,17 +258,13 @@ class K8sInferencePairsWithLease(
                 releaseLease()
                 Logger.info("Lease released successfully")
             }
-
-            // Close the port forwarder
-            try {
-                portForwarder.close()
-                Logger.info("Port forwarder closed successfully")
-            } catch (e: Exception) {
-                Logger.error("Failed to close port forwarder: ${e.message}")
-            }
         } catch (e: Exception) {
             Logger.error("Failed to release lease: ${e.message}")
+        } finally {
+            portForwarder.close()
+            Logger.info("Port forwarder closed successfully")
         }
+
     }
 
     /**

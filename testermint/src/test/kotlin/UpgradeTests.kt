@@ -9,6 +9,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.concurrent.TimeUnit
+import kotlin.test.assertNotNull
 
 class UpgradeTests : TestermintTest() {
     @Test
@@ -42,10 +43,7 @@ class UpgradeTests : TestermintTest() {
             nodeVersion = "",
         )
         val proposalId = response.getProposalId()
-        if (proposalId == null) {
-            assert(false)
-            return
-        }
+        assertNotNull(proposalId, "couldn't find proposal")
         val govParams = genesis.node.getGovParams().params
         logSection("Making deposit")
         val depositResponse = genesis.makeGovernanceDeposit(proposalId, govParams.minDeposit.first().amount)
