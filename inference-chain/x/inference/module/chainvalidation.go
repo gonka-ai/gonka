@@ -106,7 +106,13 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+	validators := make([]string, len(validations))
+	var i = 0
+	for address, _ := range validations {
+		validators[i] = address
+		i += 1
+	}
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations), "validators", validators)
 
 	// Collect all participants and seeds
 	participants := make(map[string]types.Participant)
