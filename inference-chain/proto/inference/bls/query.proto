@@ -6,6 +6,7 @@ import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 import "cosmos/base/query/v1beta1/pagination.proto";
 import "inference/bls/params.proto";
+import "inference/bls/types.proto";
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
@@ -14,6 +15,11 @@ service Query {
   // Parameters queries the parameters of the module.
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/productscience/inference/bls/params";
+  }
+  
+  // EpochBLSData queries complete BLS data for a specific epoch
+  rpc EpochBLSData(QueryEpochBLSDataRequest) returns (QueryEpochBLSDataResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/epoch_data/{epoch_id}";
   }
 }
 
@@ -27,4 +33,16 @@ message QueryParamsResponse {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// QueryEpochBLSDataRequest is request type for the Query/EpochBLSData RPC method.
+message QueryEpochBLSDataRequest {
+  // epoch_id identifies the DKG round to query complete data for
+  uint64 epoch_id = 1;
+}
+
+// QueryEpochBLSDataResponse is response type for the Query/EpochBLSData RPC method.
+message QueryEpochBLSDataResponse {
+  // epoch_data contains complete BLS data for the specified epoch
+  EpochBLSData epoch_data = 1 [(gogoproto.nullable) = false];
 }

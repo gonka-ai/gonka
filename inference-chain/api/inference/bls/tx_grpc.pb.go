@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Msg_UpdateParams_FullMethodName     = "/inference.bls.Msg/UpdateParams"
-	Msg_SubmitDealerPart_FullMethodName = "/inference.bls.Msg/SubmitDealerPart"
+	Msg_UpdateParams_FullMethodName             = "/inference.bls.Msg/UpdateParams"
+	Msg_SubmitDealerPart_FullMethodName         = "/inference.bls.Msg/SubmitDealerPart"
+	Msg_SubmitVerificationVector_FullMethodName = "/inference.bls.Msg/SubmitVerificationVector"
 )
 
 // MsgClient is the client API for Msg service.
@@ -32,6 +33,8 @@ type MsgClient interface {
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
 	// SubmitDealerPart allows a participant to submit their dealer part during the dealing phase
 	SubmitDealerPart(ctx context.Context, in *MsgSubmitDealerPart, opts ...grpc.CallOption) (*MsgSubmitDealerPartResponse, error)
+	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
+	SubmitVerificationVector(ctx context.Context, in *MsgSubmitVerificationVector, opts ...grpc.CallOption) (*MsgSubmitVerificationVectorResponse, error)
 }
 
 type msgClient struct {
@@ -60,6 +63,15 @@ func (c *msgClient) SubmitDealerPart(ctx context.Context, in *MsgSubmitDealerPar
 	return out, nil
 }
 
+func (c *msgClient) SubmitVerificationVector(ctx context.Context, in *MsgSubmitVerificationVector, opts ...grpc.CallOption) (*MsgSubmitVerificationVectorResponse, error) {
+	out := new(MsgSubmitVerificationVectorResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitVerificationVector_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -69,6 +81,8 @@ type MsgServer interface {
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
 	// SubmitDealerPart allows a participant to submit their dealer part during the dealing phase
 	SubmitDealerPart(context.Context, *MsgSubmitDealerPart) (*MsgSubmitDealerPartResponse, error)
+	// SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
+	SubmitVerificationVector(context.Context, *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -81,6 +95,9 @@ func (UnimplementedMsgServer) UpdateParams(context.Context, *MsgUpdateParams) (*
 }
 func (UnimplementedMsgServer) SubmitDealerPart(context.Context, *MsgSubmitDealerPart) (*MsgSubmitDealerPartResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitDealerPart not implemented")
+}
+func (UnimplementedMsgServer) SubmitVerificationVector(context.Context, *MsgSubmitVerificationVector) (*MsgSubmitVerificationVectorResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitVerificationVector not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -131,6 +148,24 @@ func _Msg_SubmitDealerPart_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitVerificationVector_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitVerificationVector)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitVerificationVector(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitVerificationVector_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitVerificationVector(ctx, req.(*MsgSubmitVerificationVector))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -145,6 +180,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitDealerPart",
 			Handler:    _Msg_SubmitDealerPart_Handler,
+		},
+		{
+			MethodName: "SubmitVerificationVector",
+			Handler:    _Msg_SubmitVerificationVector_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

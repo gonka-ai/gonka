@@ -45,18 +45,26 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 		}
 	}
 
+	// Initialize VerificationSubmissions array with empty objects to use index-based access
+	verificationSubmissions := make([]*types.VerificationVectorSubmission, len(blsParticipants))
+	for i := range verificationSubmissions {
+		verificationSubmissions[i] = &types.VerificationVectorSubmission{
+			DealerValidity: []bool{}, // Empty array indicates no submission yet
+		}
+	}
+
 	// Create EpochBLSData
 	epochBLSData := types.EpochBLSData{
-		EpochId:                       epochID,
-		ITotalSlots:                   iTotalSlots,
-		TSlotsDegree:                  tSlotsDegree,
-		Participants:                  blsParticipants,
-		DkgPhase:                      types.DKGPhase_DKG_PHASE_DEALING,
-		DealingPhaseDeadlineBlock:     dealingPhaseDeadline,
-		VerifyingPhaseDeadlineBlock:   verifyingPhaseDeadline,
-		GroupPublicKey:                nil, // Will be set when DKG completes
-		DealerParts:                   dealerParts,
-		VerificationVectorsSubmitters: []string{},
+		EpochId:                     epochID,
+		ITotalSlots:                 iTotalSlots,
+		TSlotsDegree:                tSlotsDegree,
+		Participants:                blsParticipants,
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock:   dealingPhaseDeadline,
+		VerifyingPhaseDeadlineBlock: verifyingPhaseDeadline,
+		GroupPublicKey:              []byte{},
+		DealerParts:                 dealerParts,
+		VerificationSubmissions:     verificationSubmissions,
 	}
 
 	// Store the EpochBLSData

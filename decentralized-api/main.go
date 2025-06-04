@@ -110,7 +110,8 @@ func main() {
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
 	blsDealer := bls_dkg.NewDealer(recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, blsDealer)
+	blsVerifier := bls_dkg.NewVerifier(recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, blsDealer, blsVerifier)
 	// TODO: propagate trainingExecutor
 	go listener.Start(context.Background())
 

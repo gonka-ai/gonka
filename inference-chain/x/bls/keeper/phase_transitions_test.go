@@ -237,16 +237,24 @@ func createTestEpochBLSData(epochID uint64, numParticipants int) types.EpochBLSD
 		}
 	}
 
+	// Initialize verification submissions array with correct size
+	verificationSubmissions := make([]*types.VerificationVectorSubmission, numParticipants)
+	for i := range verificationSubmissions {
+		verificationSubmissions[i] = &types.VerificationVectorSubmission{
+			DealerValidity: []bool{},
+		}
+	}
+
 	return types.EpochBLSData{
-		EpochId:                       epochID,
-		ITotalSlots:                   totalSlots,
-		TSlotsDegree:                  50, // floor(100/2)
-		Participants:                  participants,
-		DkgPhase:                      types.DKGPhase_DKG_PHASE_DEALING,
-		DealingPhaseDeadlineBlock:     100,
-		VerifyingPhaseDeadlineBlock:   150,
-		GroupPublicKey:                nil,
-		DealerParts:                   dealerParts,
-		VerificationVectorsSubmitters: []string{},
+		EpochId:                     epochID,
+		ITotalSlots:                 totalSlots,
+		TSlotsDegree:                50, // floor(100/2)
+		Participants:                participants,
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock:   100,
+		VerifyingPhaseDeadlineBlock: 150,
+		GroupPublicKey:              nil,
+		DealerParts:                 dealerParts,
+		VerificationSubmissions:     verificationSubmissions,
 	}
 }
