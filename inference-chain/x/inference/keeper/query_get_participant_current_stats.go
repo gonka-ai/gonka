@@ -32,7 +32,7 @@ func (k Keeper) GetParticipantCurrentStats(goCtx context.Context, req *types.Que
 	return response, nil
 }
 
-func (k Keeper) GetParticipantsFullStats(ctx context.Context, req *types.QueryParticipantsFullStatsRequest) (*types.QueryParticipantsFullStatsResponse, error) {
+func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryParticipantsFullStatsRequest) (*types.QueryParticipantsFullStatsResponse, error) {
 	currentEpoch, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		k.LogError("GetParticipantsFullStats failure", types.Participants, "error", err)
@@ -57,6 +57,7 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, req *types.QueryPa
 			Reputation:                member.Reputation,
 			RewardedCoinsCurrentEpoch: participant.CurrentEpochStats.RewardedCoins,
 			EarnedCoinsCurrentEpoch:   participant.CurrentEpochStats.EarnedCoins,
+			EpochsCompleted:           participant.EpochsCompleted,
 		}
 	}
 

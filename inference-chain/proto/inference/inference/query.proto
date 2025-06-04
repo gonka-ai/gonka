@@ -24,6 +24,7 @@ import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
+import  "inference/inference/developer.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -230,6 +231,25 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/participants_stats";
   }
 
+  rpc StatsByTimePeriodByDeveloper(QueryStatsByTimePeriodByDeveloperRequest)
+      returns (QueryStatsByTimePeriodByDeveloperResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_time";
+  }
+
+  rpc StatsByDeveloperAndEpochsBackwards(QueryStatsByDeveloperAndEpochBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
+  }
+
+  rpc InferencesAndTokensStatsByEpochsBackwards(QueryInferencesAndTokensStatsByEpochsBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/stats_by_epochs_backwards";
+  }
+
+  rpc InferencesAndTokensStatsByTimePeriod(QueryInferencesAndTokensStatsByTimePeriodRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_stats_by_time";
+  }
 
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
@@ -567,12 +587,42 @@ message ParticipantFullStats {
   uint64 rewarded_coins_current_epoch = 3;
   uint64 earned_coins_current_epoch = 4;
   uint64 rewarded_coins_latest_epoch = 5;
+  uint32 epochs_completed = 6;
 }
 
 message QueryParticipantsFullStatsRequest {}
 
 message QueryParticipantsFullStatsResponse {
   repeated ParticipantFullStats participants_stats = 1;
+}
+
+message QueryStatsByTimePeriodByDeveloperRequest {
+  string developer = 1;
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryStatsByTimePeriodByDeveloperResponse {
+  repeated DeveloperStatsByTime stats = 1;
+}
+
+message QueryStatsByDeveloperAndEpochBackwardsRequest {
+  string developer = 1;
+  int32 epochs_n = 2;
+}
+
+message QueryInferencesAndTokensStatsByEpochsBackwardsRequest {
+  int32 epoch_n = 1;
+}
+
+message QueryInferencesAndTokensStatsByTimePeriodRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryInferencesAndTokensStatsResponse {
+  int64 ai_tokens = 1;
+  int32 inferences = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}

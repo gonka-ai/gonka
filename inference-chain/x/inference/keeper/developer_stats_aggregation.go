@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 	"cosmossdk.io/store/prefix"
-	"encoding/binary"
 	"errors"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -159,11 +158,11 @@ func (k Keeper) DevelopersStatsGetByTime(
 	ctx context.Context,
 	developerAddr string,
 	timeFrom, timeTo int64,
-) []types.DeveloperStatsByTime {
+) []*types.DeveloperStatsByTime {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
 
-	var results []types.DeveloperStatsByTime
+	var results []*types.DeveloperStatsByTime
 
 	startKey := developerByTimeKey(developerAddr, uint64(timeFrom))
 	endKey := developerByTimeKey(developerAddr, uint64(timeTo+1))
@@ -174,7 +173,7 @@ func (k Keeper) DevelopersStatsGetByTime(
 	for ; iterator.Valid(); iterator.Next() {
 		var stats types.DeveloperStatsByTime
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
-		results = append(results, stats)
+		results = append(results, &stats)
 	}
 	return results
 }
@@ -198,49 +197,47 @@ func (k Keeper) CountTotalInferenceInPeriod(ctx context.Context, from, to int64)
 	return aiTokesTotal, inferencesRequestsNum
 }
 
-func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, currentEpoch uint64, n int) (int64, int) {
-	if n <= 0 || currentEpoch <= 1 {
+func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) (tokensTotal int64, inferenceCount int) {
+	if n <= 0 {
 		return 0, 0
 	}
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
 
-	startEpoch := currentEpoch - uint64(n)
-	start := sdk.Uint64ToBigEndian(startEpoch)
-	end := sdk.Uint64ToBigEndian(currentEpoch)
+	iter := epochStore.ReverseIterator(nil, nil)
+	defer iter.Close()
 
-	iterator := epochStore.Iterator(start, end)
-	defer iterator.Close()
+	var seenEpochs = make(map[uint64]bool)
 
-	var (
-		tokensTotal    int64
-		inferenceCount int
-	)
+	for ; iter.Valid(); iter.Next() {
+		epochID := sdk.BigEndianToUint64(iter.Key()[:8])
+		seenEpochs[epochID] = true
 
-	for ; iterator.Valid(); iterator.Next() {
 		var stats types.DeveloperStatsByEpoch
-		k.cdc.MustUnmarshal(iterator.Value(), &stats)
+		k.cdc.MustUnmarshal(iter.Value(), &stats)
 
 		for _, inf := range stats.Inferences {
 			tokensTotal += int64(inf.AiTokensUsed)
 			inferenceCount++
 		}
+
+		if len(seenEpochs) == n {
+			break
+		}
 	}
 	return tokensTotal, inferenceCount
 }
 
-func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context, developerAddr string, currentEpoch uint64, n int) (int64, int) {
-	if n <= 0 || currentEpoch <= 1 {
+func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context, developerAddr string, n int) (int64, int) {
+	if n <= 0 {
 		return 0, 0
 	}
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
 
-	fromEpoch := currentEpoch - uint64(n)
-
-	iterator := epochStore.Iterator(nil, nil)
+	iterator := epochStore.ReverseIterator(nil, nil)
 	defer iterator.Close()
 
 	var (
@@ -254,14 +251,8 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 			continue
 		}
 
-		epochID := binary.BigEndian.Uint64(key[:8])
 		keyDeveloper := string(key[8:])
-
 		if keyDeveloper != developerAddr {
-			continue
-		}
-
-		if epochID < fromEpoch || epochID >= currentEpoch {
 			continue
 		}
 
