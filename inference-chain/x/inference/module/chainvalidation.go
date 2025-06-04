@@ -44,6 +44,9 @@ func NewWeightCalculator(
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
 func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochGroupId uint64) (map[string]int64, error) {
 	if epochGroupId <= 1 {
+		return nil, nil
+	}
+	if epochGroupId <= 1 {
 		currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
 		if err != nil {
 			am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
@@ -265,8 +268,8 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 			)
 		}
 	} else {
-		shouldContinue = false
-		wc.Logger.LogError("Calculate: No current validator weights found. Rejecting the participant.", types.PoC, "participant", participantAddress)
+		shouldContinue = true
+		wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
 	}
 
 	return shouldContinue
