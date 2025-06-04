@@ -66,6 +66,7 @@ ENV DAEMON_DOWNLOAD_RETRIES=-1
 COPY --from=builder /app/inference-chain/build/inferenced /usr/bin/inferenced
 COPY inference-chain/scripts/init-docker-genesis.sh /root/init-docker-genesis.sh
 COPY inference-chain/scripts/init-docker.sh /root/init-docker.sh
+COPY inference-chain/scripts/reset-state.sh /root/reset-state.sh
 COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
