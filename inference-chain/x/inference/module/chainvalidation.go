@@ -257,6 +257,9 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 				"halfWeight", halfWeight,
 			)
 		}
+	} else {
+		shouldContinue = true
+		wc.Logger.LogInfo("Calculate: No current validator weights found. Assuming participant is valid.", types.PoC, "participant", participantAddress)
 	}
 
 	return shouldContinue
