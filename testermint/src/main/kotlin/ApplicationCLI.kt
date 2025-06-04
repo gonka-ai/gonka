@@ -2,6 +2,7 @@ package com.productscience
 
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
+import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
@@ -17,7 +18,8 @@ interface CliExecutor {
 data class ApplicationCLI(
     override val config: ApplicationConfig,
     val logOutput: LogOutput,
-    val executor: CliExecutor
+    val executor: CliExecutor,
+    val retryRules: List<CliRetryRule>
 ) : HasConfig, Closeable {
 
     fun getGenesisState(): AppExport =
@@ -241,13 +243,24 @@ data class ApplicationCLI(
 
 
     fun exec(args: List<String>): List<String> {
-        val output = executor.exec(args)
+        var retries = 0
+        while (true) {
+            val output = executor.exec(args)
 
-        if (output.isNotEmpty() && output.first().startsWith("Usage:")) {
-            val error = output.joinToString(separator = "").lines().last { it.isNotBlank() }
-            throw getExecException(error)
+            if (output.isNotEmpty() && output.first().startsWith("Usage:")) {
+                val error = output.joinToString(separator = "").lines().last { it.isNotBlank() }
+                throw getExecException(error)
+            }
+            val operation = ThreadContext.get("operation") ?: "unknown"
+            val fullOutput = output.joinToString("")
+            val retryWait = retryRules.firstNotNullOfOrNull { it.retryDuration(operation, fullOutput, retries) }
+            if (retryWait != null) {
+                retries++
+                Thread.sleep(retryWait)
+                continue
+            }
+            return output
         }
-        return output
     }
 
     private fun extractSignature(response: List<String>): String {
@@ -390,3 +403,32 @@ class AccountSequenceMismatchException(val expected: Int, val actual: Int) :
     Exception("Account sequence mismatch, expected $expected, got $actual")
 
 class TxNotFoundException(val txHash: String) : Exception("Transaction not found: $txHash")
+
+val k8sRetryRule = CliRetryRule(
+    retries = 3,
+    delay = Duration.ofSeconds(3),
+    operationRegexes = listOf("^get.+"),
+    responseRegexes = listOf("Unknown stream id.+discarding message")
+)
+
+data class CliRetryRule(
+    val retries: Int,
+    val delay: Duration,
+    val operationRegexes: List<String>,
+    val responseRegexes: List<String>,
+) {
+    private fun matchesOperation(operation: String): Boolean =
+        operationRegexes.isEmpty() || operationRegexes.any { operation.matches(it.toRegex()) }
+
+    private fun matchesResponse(response: String): Boolean =
+        responseRegexes.isEmpty() || responseRegexes.any { response.matches(it.toRegex()) }
+
+    fun retryDuration(operation: String, response: String, retryCount: Int): Duration? {
+        Logger.debug("Checking retry rule for operation={}, response={}, retryCount={}", operation, response, retryCount)
+        return if (retryCount < retries && matchesOperation(operation) && matchesResponse(response)) {
+            delay
+        } else {
+            null
+        }
+    }
+}

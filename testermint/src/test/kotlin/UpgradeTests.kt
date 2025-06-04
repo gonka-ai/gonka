@@ -12,6 +12,64 @@ import java.util.concurrent.TimeUnit
 
 class UpgradeTests : TestermintTest() {
     @Test
+    @Tag("unstable")
+    fun `upgrade from github`() {
+        val releaseTag = "v0.1.4-25"
+
+        val (cluster, genesis) = initCluster(
+            config = inferenceConfig.copy(
+                genesisSpec = createSpec(
+                    epochLength = 100,
+                    epochShift = 80
+                )
+            ),
+            reboot = true
+        )
+        genesis.markNeedsReboot()
+        val pairs = cluster.joinPairs
+        val height = genesis.getCurrentBlockHeight()
+        val amdApiPath = getGithubPath(releaseTag, "decentralized-api-amd64.zip")
+        val amdBinaryPath = getGithubPath(releaseTag, "inferenced-amd64.zip")
+        val upgradeBlock = height + 30
+        Logger.info("Upgrade block: $upgradeBlock", "")
+        logSection("Submitting upgrade proposal")
+        val response = genesis.submitUpgradeProposal(
+            title = releaseTag,
+            description = "For testing",
+            binaryPath = amdBinaryPath,
+            apiBinaryPath = amdApiPath,
+            height = upgradeBlock,
+            nodeVersion = "",
+        )
+        val proposalId = response.getProposalId()
+        if (proposalId == null) {
+            assert(false)
+            return
+        }
+        val govParams = genesis.node.getGovParams().params
+        logSection("Making deposit")
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, govParams.minDeposit.first().amount)
+        logSection("Voting on proposal")
+        pairs.forEach {
+            val response2 = it.voteOnProposal(proposalId, "yes")
+            assertThat(response2).isNotNull()
+            println("VOTE:\n" + response2)
+        }
+        logSection("Waiting for upgrade to be effective at block $upgradeBlock")
+        genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
+        logSection("Waiting for upgrade to finish")
+        Thread.sleep(Duration.ofMinutes(5))
+        logSection("Verifying upgrade")
+        genesis.node.waitForNextBlock(1)
+        // Some other action?
+        cluster.allPairs.forEach {
+            it.api.getParticipants()
+            it.api.getNodes()
+            it.node.getAddress()
+        }
+
+    }
+    @Test
     fun `submit upgrade`() {
         val (cluster, genesis) = initCluster(
             config = inferenceConfig.copy(
