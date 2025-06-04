@@ -1,0 +1,28 @@
+{
+  "queries": [
+    {
+      "id": "first_errors",
+      "name": "first errors",
+      "description": "Shows all Errors and TestSections to help identify where the test went wrong",
+      "query": "SELECT * FROM LogEntries WHERE level = 'ERROR' OR message LIKE 'TestSection:%' ORDER BY timestamp"
+    },
+    {
+      "id": "warnings_and_errors",
+      "name": "warnings and errors",
+      "description": "Shows all Errors, Warnings, and TestSections to provide more context about what went wrong",
+      "query": "SELECT * FROM LogEntries WHERE level IN ('ERROR', 'WARN') OR message LIKE 'TestSection:%' ORDER BY timestamp"
+    },
+    {
+      "id": "genesis_only",
+      "name": "genesis only",
+      "description": "Limits the results to logs from the genesis pair only",
+      "query": "SELECT * FROM LogEntries WHERE pair = 'genesis' ORDER BY timestamp"
+    },
+    {
+      "id": "subsystem_filter",
+      "name": "subsystem filter",
+      "description": "Filter logs by a specific subsystem to narrow down issues",
+      "query": "SELECT * FROM LogEntries WHERE subsystem = :subsystem ORDER BY timestamp"
+    }
+  ]
+}
