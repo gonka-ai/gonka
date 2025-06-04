@@ -132,6 +132,10 @@ data class ApplicationCLI(
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
+    fun getVersion(): String = wrapLog("getVersion", false) {
+        exec(listOf(config.execName, "version")).first()
+    }
+
     var accountKey: Validator? = null
     fun getAddress(): String = wrapLog("getAddress", false) {
         getAccountIfNeeded()
