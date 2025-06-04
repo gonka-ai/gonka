@@ -31,6 +31,7 @@ const (
 	trainingTaskAssignedAction  = "/inference.inference.MsgAssignTrainingTask"
 	submitGovProposalAction     = "/cosmos.gov.v1.MsgSubmitProposal"
 	keyGenerationInitiatedEvent = "key_generation_initiated"
+	verifyingPhaseStartedEvent  = "verifying_phase_started"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -44,6 +45,7 @@ type EventListener struct {
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
 	blsDealer           *bls_dkg.Dealer
+	blsVerifier         *bls_dkg.Verifier
 	nodeCaughtUp        atomic.Bool
 	phaseTracker        *chainphase.ChainPhaseTracker
 	dispatcher          *OnNewBlockDispatcher
@@ -62,6 +64,7 @@ func NewEventListener(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
 	blsDealer *bls_dkg.Dealer,
+	blsVerifier *bls_dkg.Verifier,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
@@ -83,6 +86,7 @@ func NewEventListener(
 		dispatcher:          dispatcher,
 		cancelFunc:          cancelFunc,
 		blsDealer:           blsDealer,
+		blsVerifier:         blsVerifier,
 	}
 }
 
@@ -306,6 +310,17 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 			}
 		}
 		return
+	}
+
+	if epochIdValues := event.Result.Events[verifyingPhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		if el.isNodeSynced() {
+			logging.Info("Verifying phase started event received", types.EventProcessing, "worker", name)
+			err := el.blsVerifier.ProcessVerifyingPhaseStarted(event)
+			if err != nil {
+				logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", name)
+			}
+		}
+		return // BLS events are processed independently
 	}
 
 	actions, ok := event.Result.Events["message.action"]

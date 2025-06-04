@@ -62,7 +62,7 @@ Before the DKG process for an epoch can commence, controllers must ensure their 
 4.  **Verification Phase:**
     *   **Controller (each participating validator `P_m`, responsible for slot range `[start_m, end_m]` who successfully acted as a dealer or is otherwise still active):**
         *   Upon detecting the transition to the `VERIFYING` phase for epoch `E_next` (e.g., by listening for `EventVerifyingPhaseStarted` or querying phase state):
-            *   **Queries the chain** (e.g., via `QueryAllDealerParts(epoch_id = E_next)` call to the `bls` module) to fetch all `MsgSubmitDealerPart` data (commitments and collections of encrypted slot shares) from all dealers (`P_k`) who successfully submitted in the Dealing Phase.
+            *   **Queries the chain** (e.g., via `QueryEpochBLSData(epoch_id = E_next)` call to the `bls` module) to fetch complete DKG data including all `MsgSubmitDealerPart` data (commitments and collections of encrypted slot shares) from all dealers (`P_k`) who successfully submitted their dealing data.
             *   For each slot index `i` in its *own* assigned range `[start_m, end_m]`:
                 *   Initializes its slot secret share `s_i = 0` (scalar).
                 *   For each dealer `P_k` whose parts were successfully submitted:

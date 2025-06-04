@@ -2,6 +2,7 @@ package cosmosclient
 
 import (
 	"context"
+	"crypto/rand"
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"encoding/base64"
@@ -109,6 +110,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 
 type CosmosMessageClient interface {
 	SignBytes(seed []byte) ([]byte, error)
+	DecryptBytes(ciphertext []byte) ([]byte, error)
+	EncryptBytes(plaintext []byte) ([]byte, error)
 	StartInference(transaction *inference.MsgStartInference) error
 	FinishInference(transaction *inference.MsgFinishInference) error
 	ReportValidation(transaction *inference.MsgValidation) error
@@ -132,6 +135,8 @@ type CosmosMessageClient interface {
 	GetAccount() *cosmosaccount.Account
 	GetCosmosClient() *cosmosclient.Client
 	SubmitDealerPart(transaction *blstypes.MsgSubmitDealerPart) error
+	SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error)
+	NewBLSQueryClient() blstypes.QueryClient
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -154,6 +159,26 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 	name := icc.Account.Name
 	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
 	bytes, _, err := icc.Client.Context().Keyring.Sign(name, seed, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
+func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
+	name := icc.Account.Name
+	// Use the new keyring Decrypt method
+	bytes, err := icc.Client.Context().Keyring.Decrypt(name, ciphertext, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
+func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error) {
+	name := icc.Account.Name
+	// Use the new keyring Encrypt method with rand.Reader
+	bytes, err := icc.Client.Context().Keyring.Encrypt(rand.Reader, name, plaintext, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -475,4 +500,21 @@ func (icc *InferenceCosmosClient) SubmitDealerPart(transaction *blstypes.MsgSubm
 	transaction.Creator = icc.Address
 	_, err := icc.SendTransaction(transaction)
 	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitVerificationVector(transaction *blstypes.MsgSubmitVerificationVector) (*blstypes.MsgSubmitVerificationVectorResponse, error) {
+	transaction.Creator = icc.Address
+	result, err := icc.SendTransaction(transaction)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
+		return nil, err
+	}
+
+	response := blstypes.MsgSubmitVerificationVectorResponse{}
+	err = WaitForResponse(icc.Context, icc.Client, result.TxHash, &response)
+	return &response, err
+}
+
+func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
+	return blstypes.NewQueryClient(icc.Client.Context())
 }

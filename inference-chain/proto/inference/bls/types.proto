@@ -67,6 +67,15 @@ message DealerPartStorage {
   repeated EncryptedSharesForParticipant participant_shares = 3;
 }
 
+// VerificationVectorSubmission contains verification results from a specific participant
+message VerificationVectorSubmission {
+  // dealer_validity bitmap indicating which dealers this participant verified as valid
+  // Index i corresponds to EpochBLSData.participants[i] as dealer
+  // true = dealer's shares verified correctly; false = failed verification or no submission
+  // Empty array indicates participant has not submitted verification yet
+  repeated bool dealer_validity = 1;
+}
+
 // EpochBLSData contains all information about a DKG round for a specific epoch
 message EpochBLSData {
   // epoch_id uniquely identifies this DKG round
@@ -98,6 +107,7 @@ message EpochBLSData {
   // nil/empty entries indicate that participant has not submitted their dealer part yet
   repeated DealerPartStorage dealer_parts = 9;
   
-  // verification_vectors_submitters is the list of addresses who submitted verification vectors
-  repeated string verification_vectors_submitters = 10;
+  // verification_submissions contains verification results from each participant
+  // Each entry tracks which dealers that participant verified as valid
+  repeated VerificationVectorSubmission verification_submissions = 10;
 } 

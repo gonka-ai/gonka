@@ -125,7 +125,8 @@ func main() {
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder, chainPhaseTracker)
 	blsDealer := bls_dkg.NewDealer(recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsDealer)
+	blsVerifier := bls_dkg.NewVerifier(recorder)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel, blsDealer, blsVerifier)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 
