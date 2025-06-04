@@ -27,15 +27,9 @@ The Testermint Log Examiner is a subproject of the Inference Ignite project, loc
    ```
    ./gradlew build
    ```
-
-3. Create a distribution package:
-   ```
-   ./gradlew shadowJar
-   ```
-
    This will create a standalone JAR file in the `build/libs` directory named `log-examiner-<version>.jar`.
 
-4. The application is designed to be run as an MCP server through Cline or Claude Desktop:
+3. The application is designed to be run as an MCP server through Cline or Claude Desktop:
    ```
    java -jar build/libs/log-examiner-<version>.jar
    ```
@@ -51,23 +45,51 @@ The Testermint Log Examiner is a subproject of the Inference Ignite project, loc
 1. Install the Cline plugin for Visual Studio if you haven't already.
 
 2. Configure Cline to use the Log Examiner as an MCP server:
-   ```
-   java -jar /path/to/build/libs/log-examiner-<version>.jar
-   ```
-
-   You'll need to configure this in the Cline plugin settings within Visual Studio.
+The config file for MCP servers should look like:
+```json
+{
+  "mcpServers": {
+     ... other servers
+    "testermintlogs": {
+      "command": "java",
+      "args": [
+        "-jar",
+        "{path_to_repo}/inference-ignite/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
+      ],
+      "autoApprove": [
+        "load-log",
+        "log-schema",
+        "log-query"
+      ]
+    }
+  }
+}
+```
+You'll need to configure this in the Cline plugin settings within Visual Studio.
 
 ### For Claude Desktop
 
 > **Note:** Only Claude Desktop supports MCP servers, not the web version of Claude.
 
 1. In Claude Desktop, add the Log Examiner as an MCP server using the command line:
-   ```
-   java -jar /path/to/build/libs/log-examiner-<version>.jar
-   ```
-
-2. Follow the Claude Desktop documentation to add a custom tool that uses this command.
-
+Claude Desktop MCP servers are found in the Settings->Developer->Edit Config button.
+The format for the config should be similar to Cline. Note, though, that Claude does not seem to use $JAVA_HOME, so you will need to specify the full path to the correct java version, as below
+```json
+{
+  "mcpServers": {
+     ... other servers
+    "testermintlogs": {
+      "command": "{path-to-java}/java/current/bin/java",
+      "args": [
+        "-jar",
+        "{path_to_repo}/inference-ignite/testermint/mcp_log_examiner/build/libs/log-examiner-1.0-SNAPSHOT.jar"
+      ]
+    }
+  },
+  "globalShortcut": ""
+}
+```
+        
 ## How to Prompt Cline and Claude for Best Usage
 
 To get the most out of the Log Examiner with AI assistants, use the following prompting strategies. Note that the resources included with the Log Examiner contain instructions that help the AI understand how to examine log files and interpret results. The AI will use these resources to determine how to analyze the log files effectively.
