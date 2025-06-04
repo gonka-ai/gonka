@@ -23,10 +23,10 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/ecies"
+	"github.com/cosmos/cosmos-sdk/crypto/ecies"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 )
@@ -238,7 +238,7 @@ func (d *Dealer) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, 
 
 			// Encrypt share_ki using participant.Secp256k1PublicKey with ECIES
 			shareBytes := share.Marshal()
-			encryptedShare, err := eciesEncrypt(shareBytes, participant.Secp256k1PublicKey)
+			encryptedShare, err := encryptForParticipant(shareBytes, participant.Secp256k1PublicKey)
 			if err != nil {
 				return nil, fmt.Errorf("failed to encrypt share for participant %s slot %d: %w",
 					participant.Address, slotIndex, err)
@@ -329,8 +329,9 @@ func evaluatePolynomial(polynomial []*fr.Element, x uint32) *fr.Element {
 	return result
 }
 
-// eciesEncrypt encrypts data using ECIES with secp256k1 public key
-func eciesEncrypt(data []byte, secp256k1PubKeyBytes []byte) ([]byte, error) {
+// encryptForParticipant encrypts data for a specific participant using Cosmos-compatible ECIES
+// This uses the same go-ethereum ECIES implementation that the modified Cosmos keyring uses
+func encryptForParticipant(data []byte, secp256k1PubKeyBytes []byte) ([]byte, error) {
 	// Validate the compressed secp256k1 public key format
 	// (33 bytes: 0x02 or 0x03 + 32 bytes X)
 	if len(secp256k1PubKeyBytes) != 33 {
@@ -341,17 +342,20 @@ func eciesEncrypt(data []byte, secp256k1PubKeyBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid compressed secp256k1 public key prefix, expected 0x02 or 0x03, got 0x%x", secp256k1PubKeyBytes[0])
 	}
 
-	// Use crypto.DecompressPubkey to parse the compressed key bytes into an ecdsa.PublicKey
-	pubKey, err := crypto.DecompressPubkey(secp256k1PubKeyBytes) // pubKey is *ecdsa.PublicKey
+	// Use Decred secp256k1 to parse the compressed key bytes into a secp256k1.PublicKey
+	pubKey, err := secp256k1.ParsePubKey(secp256k1PubKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decompress secp256k1 public key: %w", err)
+		return nil, fmt.Errorf("failed to parse secp256k1 public key: %w", err)
 	}
 
-	// Convert *ecdsa.PublicKey to *ecies.PublicKey
-	eciesPubKey := ecies.ImportECDSAPublic(pubKey)
+	// Convert secp256k1.PublicKey to *ecdsa.PublicKey
+	ecdsaPubKey := pubKey.ToECDSA()
 
-	// Encrypt the data.
-	// ecies.ImportECDSAPublic sets default ECIES parameters (e.g., ECIES_AES128_SHA256).
+	// Convert *ecdsa.PublicKey to *ecies.PublicKey using the same method as Cosmos keyring
+	eciesPubKey := ecies.ImportECDSAPublic(ecdsaPubKey)
+
+	// Encrypt the data using the same method as the modified Cosmos keyring
+	// This ensures compatibility: dealer encryption → keyring decryption
 	ciphertext, err := ecies.Encrypt(rand.Reader, eciesPubKey, data, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ECIES encryption failed: %w", err)

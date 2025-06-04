@@ -20,6 +20,9 @@ service Msg {
   
   // SubmitDealerPart allows a participant to submit their dealer part during the dealing phase
   rpc SubmitDealerPart(MsgSubmitDealerPart) returns (MsgSubmitDealerPartResponse);
+  
+  // SubmitVerificationVector allows a participant to confirm they completed verification during the verifying phase
+  rpc SubmitVerificationVector(MsgSubmitVerificationVector) returns (MsgSubmitVerificationVectorResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -65,3 +68,25 @@ message MsgSubmitDealerPart {
 // MsgSubmitDealerPartResponse defines the response structure for executing a
 // MsgSubmitDealerPart message.
 message MsgSubmitDealerPartResponse {}
+
+// MsgSubmitVerificationVector is the message for confirming verification completion during the verifying phase
+message MsgSubmitVerificationVector {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name) = "inference/x/bls/MsgSubmitVerificationVector";
+
+  // creator is the address of the participant confirming verification completion
+  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  
+  // epoch_id identifies the DKG round this verification confirmation belongs to
+  uint64 epoch_id = 2;
+  
+  // dealer_validity is a bitmap indicating which dealers provided valid shares
+  // Index i corresponds to EpochBLSData.participants[i] as dealer
+  // true = dealer's shares verified correctly against their commitments
+  // false = dealer's shares failed verification or dealer didn't submit
+  repeated bool dealer_validity = 3;
+}
+
+// MsgSubmitVerificationVectorResponse defines the response structure for executing a
+// MsgSubmitVerificationVector message.
+message MsgSubmitVerificationVectorResponse {}

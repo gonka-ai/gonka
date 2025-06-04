@@ -44,7 +44,7 @@ func TestBLSCryptographicFunctions(t *testing.T) {
 	copy(testPubKey, validCompressedKey)
 
 	testData := []byte("test data for encryption")
-	encrypted, err := eciesEncrypt(testData, testPubKey)
+	encrypted, err := encryptForParticipant(testData, testPubKey)
 	if err != nil {
 		t.Fatalf("ECIES encryption failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestShareEncryption(t *testing.T) {
 
 	for i, share := range testShares {
 		t.Run(hex.EncodeToString(share)[:16], func(t *testing.T) {
-			encrypted, err := eciesEncrypt(share, validPubKey)
+			encrypted, err := encryptForParticipant(share, validPubKey)
 			if err != nil {
 				t.Fatalf("Failed to encrypt share %d: %v", i, err)
 			}
@@ -172,7 +172,7 @@ func TestInvalidPublicKeyEncryption(t *testing.T) {
 
 	for _, tc := range invalidKeys {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := eciesEncrypt(testData, tc.key)
+			_, err := encryptForParticipant(testData, tc.key)
 			if err == nil {
 				t.Fatalf("Expected encryption to fail with invalid key: %s", tc.name)
 			}
