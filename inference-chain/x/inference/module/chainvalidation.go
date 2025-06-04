@@ -86,6 +86,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	// Get current active participants weights
 	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingGroupData.EpochGroupId)
+	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "weights", currentValidatorWeights)
 
 	if err != nil {
 		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
