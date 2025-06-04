@@ -234,7 +234,7 @@ private fun createInferencePairForNamespace(
         val configWithName = config.copy(pairName = nodeName)
 
         // Set up port forwarding for API pod using the port forwarder
-        val apiUrls = portForwarder.setupPortForwarding(coreV1Api, namespace, apiPodName)
+        val apiUrls = portForwarder.setupPortForwarding(namespace, apiPodName)
 
         // Create executor and attach logs
         val executor = createExecutor(cliPodName, namespace, configWithName)
