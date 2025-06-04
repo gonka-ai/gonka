@@ -85,6 +85,9 @@ fun getK8sInferencePairs(
         Thread.sleep(Duration.ofSeconds(10))
 
         k8sPairsWithLease.pairs = inferencePairs
+        k8sPairsWithLease.pairs.forEach {
+            Logger.info("ChainVersion: " + it.node.getVersion())
+        }
         return k8sPairsWithLease
 
     } catch (e: ApiException) {
