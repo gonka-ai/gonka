@@ -35,7 +35,7 @@ kotlin {
 
 // Set the main class for the application
 application {
-    mainClass.set("com.ame.MainKt")
+    mainClass.set("com.productscience.MainKt")
 }
 
 // Configure the shadow JAR
@@ -47,7 +47,7 @@ tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
 
     manifest {
         attributes(mapOf(
-            "Main-Class" to "com.ame.MainKt"
+            "Main-Class" to "com.productscience.MainKt"
         ))
     }
 }
@@ -73,7 +73,7 @@ tasks.build {
 tasks.register<JavaExec>("runApp") {
     group = "application"
     description = "Run the application from the command line"
-    mainClass.set("com.ame.MainKt")
+    mainClass.set("com.productscience.MainKt")
     classpath = sourceSets["main"].runtimeClasspath
     standardInput = System.`in`
 }

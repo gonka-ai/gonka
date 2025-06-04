@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.productscience.prompts.analyzeLogPrompt
 import com.productscience.resources.getGuides
 import com.productscience.resources.getSqlQueryResources
 import com.productscience.tools.getLoadLog
@@ -24,6 +25,9 @@ fun getServer(): Pair<Server, LogAnalyzerSession> {
                 ),
                 tools = ServerCapabilities.Tools(
                     true
+                ),
+                prompts = ServerCapabilities.Prompts(
+                    listChanged = true
                 )
             )
         )
@@ -32,6 +36,7 @@ fun getServer(): Pair<Server, LogAnalyzerSession> {
     val session = LogAnalyzerSession()
     server.addResources(getSqlQueryResources())
     server.addResources(getGuides())
+    server.addPrompts(listOf(analyzeLogPrompt))
     server.addTools(listOf(getLoadLog(session), getLogSchema(session), getLogQuery(session)))
     return server to session
 }
