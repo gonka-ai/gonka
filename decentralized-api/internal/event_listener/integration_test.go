@@ -302,6 +302,8 @@ func TestRegularPocScenario(t *testing.T) {
 	node2Client := setup.getNodeClient("node-2", 8082)
 
 	for i := 1; i <= 100; i++ {
+		require.Equal(t, node1Client.InitGenerateCalled, 0)
+		require.Equal(t, node2Client.InitGenerateCalled, 0)
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
 	}
