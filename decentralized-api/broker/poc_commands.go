@@ -54,3 +54,39 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 	c.Response <- true
 }
+
+type InitValidateCommand struct {
+	BlockHeight  int64
+	BlockHash    string
+	PubKey       string
+	CallbackUrl  string
+	CurrentEpoch uint64
+	CurrentPhase chainphase.Phase
+	Response     chan bool
+}
+
+func (c InitValidateCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+func (c InitValidateCommand) Execute(b *Broker) {
+	for _, node := range b.nodes {
+		// Check if node should be operational based on admin state
+		if !node.State.ShouldBeOperational(c.CurrentEpoch, c.CurrentPhase) {
+			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
+				"node_id", node.Node.Id,
+				"admin_enabled", node.State.AdminState.Enabled,
+				"admin_epoch", node.State.AdminState.Epoch)
+			continue
+		}
+
+		if node.State.IntendedStatus != types.HardwareNodeStatus_POC || node.State.Status != types.HardwareNodeStatus_POC {
+			logging.Info("Skipping InitValidate for node not in PoC state", types.PoC,
+				"node_id", node.Node.Id,
+				"intended_status", node.State.IntendedStatus,
+				"current_status", node.State.Status)
+			continue
+		}
+
+	}
+}

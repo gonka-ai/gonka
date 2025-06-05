@@ -12,6 +12,7 @@ type MockClient struct {
 	NodeStateError       error
 	GetPowStatusError    error
 	InitGenerateError    error
+	InitValidateError    error
 	InferenceHealthError error
 	InferenceUpError     error
 	StartTrainingError   error
@@ -21,15 +22,17 @@ type MockClient struct {
 	NodeStateCalled       int
 	GetPowStatusCalled    int
 	InitGenerateCalled    int
+	InitValidateCalled    int
 	InferenceHealthCalled int
 	InferenceUpCalled     int
 	StartTrainingCalled   int
 
 	// Capture parameters
-	LastInitDto        *InitDto
-	LastInferenceModel string
-	LastInferenceArgs  []string
-	LastTrainingParams struct {
+	LastInitDto         *InitDto
+	LastInitValidateDto *InitDto
+	LastInferenceModel  string
+	LastInferenceArgs   []string
+	LastTrainingParams  struct {
 		TaskId         uint64
 		Participant    string
 		NodeId         string
@@ -84,6 +87,17 @@ func (m *MockClient) InitGenerate(dto InitDto) error {
 	}
 	m.CurrentState = MlNodeState_POW
 	m.PowStatus = POW_GENERATING
+	return nil
+}
+
+func (m *MockClient) InitValidate(dto InitDto) error {
+	m.InitValidateCalled++
+	m.LastInitValidateDto = &dto
+	if m.InitValidateError != nil {
+		return m.InitValidateError
+	}
+	m.CurrentState = MlNodeState_POW
+	m.PowStatus = POW_VALIDATING
 	return nil
 }
 

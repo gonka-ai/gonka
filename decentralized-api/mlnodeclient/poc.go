@@ -7,6 +7,7 @@ import (
 
 const (
 	InitGeneratePath = "/api/v1/pow/init/generate"
+	InitValidatePath = "/api/v1/pow/init/validate"
 
 	DefaultRTarget        = 1.3971164020989417
 	DefaultBatchSize      = 100
@@ -99,6 +100,20 @@ var TestNetParams = Params{
 
 func (api *Client) InitGenerate(dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, dto)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *Client) InitValidate(dto InitDto) error {
+	requestUrl, err := url.JoinPath(api.pocUrl, InitValidatePath)
 	if err != nil {
 		return err
 	}

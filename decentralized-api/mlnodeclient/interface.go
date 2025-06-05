@@ -13,6 +13,7 @@ type MLNodeClient interface {
 	// PoC operations
 	GetPowStatus() (*PowStatusResponse, error)
 	InitGenerate(dto InitDto) error
+	InitValidate(dto InitDto) error
 
 	// Inference operations
 	InferenceHealth() (bool, error)
