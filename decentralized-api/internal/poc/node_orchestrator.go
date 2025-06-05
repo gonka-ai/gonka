@@ -26,18 +26,62 @@ type NodePoCOrchestratorImpl struct {
 	pubKey       string
 	nodeBroker   *broker.Broker
 	callbackUrl  string
-	chainNodeUrl string
-	cosmosClient *cosmos_client.InferenceCosmosClient
+	chainBridge  OrchestratorChainBridge
 	phaseTracker *chainphase.ChainPhaseTracker
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
+type OrchestratorChainBridge interface {
+	PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error)
+	GetBlockHash(height int64) (string, error)
+}
+
+type OrchestratorChainBridgeImpl struct {
+	cosmosClient cosmos_client.CosmosMessageClient
+	chainNodeUrl string
+}
+
+func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error) {
+	response, err := b.cosmosClient.NewInferenceQueryClient().PocBatchesForStage(*b.cosmosClient.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: startPoCBlockHeight})
+	if err != nil {
+		logging.Error("Failed to query PoC batches for stage", types.PoC, "error", err)
+		return nil, err
+	}
+	return response, nil
+}
+
+func (b *OrchestratorChainBridgeImpl) GetBlockHash(height int64) (string, error) {
+	client, err := cosmos_client.NewRpcClient(b.chainNodeUrl)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := client.Block(context.Background(), &height)
+	if err != nil {
+		return "", err
+	}
+
+	return block.Block.Hash().String(), err
+}
+
+func NewNodePoCOrchestratorForCosmosChain(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient cosmos_client.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
+	return &NodePoCOrchestratorImpl{
+		pubKey:      pubKey,
+		nodeBroker:  nodeBroker,
+		callbackUrl: callbackUrl,
+		chainBridge: &OrchestratorChainBridgeImpl{
+			cosmosClient: cosmosClient,
+			chainNodeUrl: chainNodeUrl,
+		},
+		phaseTracker: phaseTracker,
+	}
+}
+
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainBridge OrchestratorChainBridge, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
 	return &NodePoCOrchestratorImpl{
 		pubKey:       pubKey,
 		nodeBroker:   nodeBroker,
 		callbackUrl:  callbackUrl,
-		chainNodeUrl: chainNodeUrl,
-		cosmosClient: cosmosClient,
+		chainBridge:  chainBridge,
 		phaseTracker: phaseTracker,
 	}
 }
@@ -88,7 +132,7 @@ func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int6
 	epochParams := o.phaseTracker.GetEpochParams()
 
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
-	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
+	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		logging.Error("MoveToValidationStage. Failed to get block hash", types.PoC, "error", err)
 		return
@@ -119,7 +163,7 @@ func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int6
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	epochParams := o.phaseTracker.GetEpochParams()
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
-	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
+	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "error", err)
 		return
@@ -128,8 +172,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 	// 1. GET ALL SUBMITTED BATCHES!
 	// batches, err := o.cosmosClient.GetPoCBatchesByStage(startOfPoCBlockHeight)
 	// FIXME: might be too long of a transaction, paging might be needed
-	queryClient := o.cosmosClient.NewInferenceQueryClient()
-	batches, err := queryClient.PocBatchesForStage(o.cosmosClient.Context, &types.QueryPocBatchesForStageRequest{BlockHeight: startOfPoCBlockHeight})
+	batches, err := o.chainBridge.PoCBatchesForStage(startOfPoCBlockHeight)
 	if err != nil {
 		logging.Error("Failed to get PoC batches", types.PoC, "error", err)
 		return
@@ -170,18 +213,4 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			continue
 		}
 	}
-}
-
-func (o *NodePoCOrchestratorImpl) getBlockHash(height int64) (string, error) {
-	client, err := cosmos_client.NewRpcClient(o.chainNodeUrl)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := client.Block(context.Background(), &height)
-	if err != nil {
-		return "", err
-	}
-
-	return block.Block.Hash().String(), err
 }

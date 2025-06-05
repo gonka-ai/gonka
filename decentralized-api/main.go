@@ -98,7 +98,7 @@ func main() {
 		"address", recorder.Address,
 		"pubkey", pubKeyString)
 
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
+	nodePocOrchestrator := poc.NewNodePoCOrchestratorForCosmosChain(
 		pubKeyString,
 		nodeBroker,
 		config.GetApiConfig().PoCCallbackUrl,

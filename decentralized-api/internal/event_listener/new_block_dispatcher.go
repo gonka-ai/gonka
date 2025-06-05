@@ -20,7 +20,7 @@ import (
 )
 
 // Minimal interface for query operations needed by the dispatcher
-type QueryClient interface {
+type QueryParamsClient interface {
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 }
 
@@ -65,7 +65,7 @@ type MlNodeReconciliationConfig struct {
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
 	nodePocOrchestrator  poc.NodePoCOrchestrator
-	queryClient          QueryClient
+	queryClient          QueryParamsClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
@@ -86,7 +86,7 @@ type SyncInfo struct {
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
 	nodePocOrchestrator poc.NodePoCOrchestrator,
-	queryClient QueryClient,
+	queryClient QueryParamsClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
 	setHeightFunc SetHeightFunc,

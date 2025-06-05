@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,6 +20,35 @@ import (
 )
 
 // Mock implementations using minimal interfaces
+type MockOrchestratorChainBridge struct {
+}
+
+func (m MockOrchestratorChainBridge) PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error) {
+	return &types.QueryPocBatchesForStageResponse{
+		PocBatch: []types.PoCBatchesWithParticipants{
+			{
+				Participant: "participant-1",
+				PubKey:      "pubkey-1",
+				HexPubKey:   "hex-pubkey-1",
+				PocBatch: []types.PoCBatch{
+					{
+						ParticipantAddress:       "participant-1",
+						PocStageStartBlockHeight: startPoCBlockHeight,
+						ReceivedAtBlockHeight:    startPoCBlockHeight + 1,
+						Nonces:                   []int64{1, 2, 3},
+						Dist:                     []float64{0, 0, 0},
+						BatchId:                  "batch-1",
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+func (m MockOrchestratorChainBridge) GetBlockHash(height int64) (string, error) {
+	return fmt.Sprintf("block-hash-%d", height), nil
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 }
@@ -66,8 +96,7 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, poc.No
 		"some-pub-key",
 		nodeBroker,
 		"http://localhost:8080/poc",
-		"http://localhost:8080",
-		nil,
+		&MockOrchestratorChainBridge{},
 		phaseTracker,
 	)
 
@@ -426,7 +455,7 @@ func TestIntegrationTestsSummary(t *testing.T) {
 	t.Log("  5. ✅ New node addition: Node added during inference becomes available after reconciliation")
 	t.Log("")
 	t.Log("✨ Key Architecture Achievements:")
-	t.Log("  - Minimal interface mocking (QueryClient, TransactionClient)")
+	t.Log("  - Minimal interface mocking (QueryParamsClient, TransactionClient)")
 	t.Log("  - Clean separation of concerns with testable components")
 	t.Log("  - Block-driven reconciliation with configurable intervals")
 	t.Log("  - Command pattern with self-contained phase data")
