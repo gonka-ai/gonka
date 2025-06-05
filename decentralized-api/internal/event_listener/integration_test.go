@@ -2,7 +2,6 @@ package event_listener
 
 import (
 	"context"
-	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
 	"fmt"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
@@ -49,6 +49,28 @@ func (m MockOrchestratorChainBridge) GetBlockHash(height int64) (string, error) 
 	return fmt.Sprintf("block-hash-%d", height), nil
 }
 
+type MockBrokerChainBridge struct {
+	mock.Mock
+}
+
+func (m *MockBrokerChainBridge) GetParticipantAddress() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
+	args := m.Called(diff)
+	return args.Error(0)
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 }
@@ -65,6 +87,53 @@ func (m *MockRandomSeedManager) RequestMoney() {
 	m.Called()
 }
 
+type MockNodePoCOrchestrator struct {
+	mock.Mock
+	pocStartCalls []struct {
+		blockHeight int64
+		blockHash   string
+		epoch       uint64
+		phase       chainphase.Phase
+	}
+}
+
+func (m *MockNodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
+	m.Called(blockHeight, blockHash, currentEpoch, currentPhase)
+	m.pocStartCalls = append(m.pocStartCalls, struct {
+		blockHeight int64
+		blockHash   string
+		epoch       uint64
+		phase       chainphase.Phase
+	}{blockHeight, blockHash, currentEpoch, currentPhase})
+}
+
+func (m *MockNodePoCOrchestrator) StopPoC() {
+	m.Called()
+}
+
+func (m *MockNodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
+	m.Called(encOfPoCBlockHeight)
+}
+
+func (m *MockNodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
+	m.Called(startOfValStageHeight)
+}
+
+func (m *MockNodePoCOrchestrator) GetPoCStartCalls() []struct {
+	blockHeight int64
+	blockHash   string
+	epoch       uint64
+	phase       chainphase.Phase
+} {
+	return m.pocStartCalls
+}
+
+func (m *MockNodePoCOrchestrator) ClearCalls() {
+	m.pocStartCalls = nil
+	m.Mock.Calls = nil
+	m.Mock.ExpectedCalls = nil
+}
+
 type MockQueryClient struct {
 	mock.Mock
 }
@@ -76,7 +145,7 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 
 // Test setup helpers
 
-func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, poc.NodePoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
+func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockNodePoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
 	mockQueryClient := &MockQueryClient{}
 
 	epochParams := types.EpochParams{
@@ -91,14 +160,9 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, poc.No
 	phaseTracker.UpdateEpochParams(epochParams)
 
 	// Create real broker
-	nodeBroker := broker.NewBroker(nil, phaseTracker, "some-pub-key", "http://localhost:8080/poc", &mlnodeclient.MockClientFactory{})
-	pocOrchestrator := poc.NewNodePoCOrchestrator(
-		"some-pub-key",
-		nodeBroker,
-		"http://localhost:8080/poc",
-		&MockOrchestratorChainBridge{},
-		phaseTracker,
-	)
+	mockChainBridge := &MockBrokerChainBridge{}
+	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, "some-pub-key", "http://localhost:8080/poc", &mlnodeclient.MockClientFactory{})
+	pocOrchestrator := &MockNodePoCOrchestrator{}
 
 	// Mock status function
 	mockStatusFunc := func() (*coretypes.ResultStatus, error) {
@@ -112,6 +176,9 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, poc.No
 	}
 
 	// Setup default mock behaviors
+	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
+	mockChainBridge.On("GetParticipantAddress").Return("some-address")
+	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
 	mockQueryClient.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
 		Params: types.Params{
 			EpochParams: &types.EpochParams{

@@ -75,7 +75,8 @@ func main() {
 		return
 	}
 	pubKeyString := utils.PubKeyToHexString(pubKey)
-	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
+	chainBridge := broker.NewBrokerChainBridgeImpl(recorder)
+	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)

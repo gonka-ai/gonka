@@ -26,11 +26,45 @@ TRAINING = 3;
 }
 */
 
+// BrokerChainBridge defines the interface for the broker to interact with the blockchain.
+// This abstraction allows for easier testing and isolates the broker from the specifics
+// of the cosmos client implementation.
+type BrokerChainBridge interface {
+	GetParticipantAddress() string
+	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
+	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
+}
+
+type BrokerChainBridgeImpl struct {
+	client cosmosclient.CosmosMessageClient
+}
+
+func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient) BrokerChainBridge {
+	return &BrokerChainBridgeImpl{client: client}
+}
+
+func (b *BrokerChainBridgeImpl) GetParticipantAddress() string {
+	return b.client.GetAddress()
+}
+
+func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryHardwareNodesRequest{
+		Participant: b.client.GetAddress(),
+	}
+	return queryClient.HardwareNodes(*b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
+	_, err := b.client.SendTransaction(diff)
+	return err
+}
+
 type Broker struct {
 	commands            chan Command
 	nodes               map[string]*NodeWithState
 	curMaxNodesNum      atomic.Uint64
-	client              cosmosclient.CosmosMessageClient
+	chainBridge         BrokerChainBridge
 	nodeWorkGroup       *NodeWorkGroup
 	phaseTracker        *chainphase.ChainPhaseTracker
 	pubKey              string
@@ -140,11 +174,11 @@ type NodeResponse struct {
 	State *NodeState `json:"state"`
 }
 
-func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
+func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
 	broker := &Broker{
 		commands:            make(chan Command, 10000),
 		nodes:               make(map[string]*NodeWithState),
-		client:              client,
+		chainBridge:         chainBridge,
 		phaseTracker:        phaseTracker,
 		pubKey:              pubKey,
 		callbackUrl:         callbackUrl,
@@ -466,12 +500,7 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 }
 
 func (b *Broker) syncNodes() {
-	queryClient := b.client.NewInferenceQueryClient()
-
-	req := &types.QueryHardwareNodesRequest{
-		Participant: b.client.GetAddress(),
-	}
-	resp, err := queryClient.HardwareNodes(*b.client.GetContext(), req)
+	resp, err := b.chainBridge.GetHardwareNodes()
 	if err != nil {
 		logging.Error("[sync nodes]. Error getting nodes", types.Nodes, "error", err)
 		return
@@ -492,7 +521,7 @@ func (b *Broker) syncNodes() {
 		logging.Info("[sync nodes] No diff to submit", types.Nodes)
 	} else {
 		logging.Info("[sync nodes] Submitting diff", types.Nodes)
-		if _, err = b.client.SendTransaction(&diff); err != nil {
+		if err = b.chainBridge.SubmitHardwareDiff(&diff); err != nil {
 			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
 		}
 	}
@@ -500,7 +529,7 @@ func (b *Broker) syncNodes() {
 
 func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode) types.MsgSubmitHardwareDiff {
 	var diff types.MsgSubmitHardwareDiff
-	diff.Creator = b.client.GetAddress()
+	diff.Creator = b.chainBridge.GetParticipantAddress()
 
 	for id, localNode := range b.nodes {
 		localHWNode := convertInferenceNodeToHardwareNode(localNode)
