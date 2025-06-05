@@ -1,6 +1,4 @@
 {
-  "scenarioName": "ModelState",
-  "requiredScenarioState": "POW",
   "request": {
     "method": "POST",
     "urlPath": "/api/v1/pow/init/validate"
@@ -15,15 +13,11 @@
   "postServeActions": {
     "webhook": {
       "method": "POST",
-      "url": "{{jsonPath originalRequest.body '$.url'}}/validated",
+      "url": "/__admin/mappings",
       "headers": {
         "Content-Type": "application/json"
       },
-      "delay": {
-        "type": "fixed",
-        "milliseconds": 5000
-      },
-      "body": "{\n        \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\",\n        \"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\",\n        \"block_height\": {{jsonPath originalRequest.body '$.block_height'}},\n        \"nonces\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],\n        \"dist\": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],\n        \"received_dist\": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],\n        \"r_target\": {{jsonPath originalRequest.body '$.r_target'}},\n        \"fraud_threshold\": {{jsonPath originalRequest.body '$.fraud_threshold'}},\n        \"n_invalid\": 0,\n        \"probability_honest\": 0.99,\n        \"fraud_detected\": false\n      }"
+      "body": "{\n  \"request\": {\n    \"method\": \"POST\",\n    \"urlPath\": \"/api/v1/pow/validate\"\n  },\n  \"response\": {\n    \"status\": 200\n  },\n  \"postServeActions\": {\n    \"webhook\": {\n      \"method\": \"POST\",\n      \"url\": \"{{jsonPath originalRequest.body '$.url'}}/validated\",\n      \"headers\": {\n        \"Content-Type\": \"application/json\"\n      },\n      \"delay\": {\n        \"type\": \"fixed\",\n        \"milliseconds\": 1000\n      },\n      \"body\": \"{\\\"public_key\\\": \\\"{{jsonPath originalRequest.body '$.public_key'}}\\\", \\\"block_hash\\\": \\\"{{jsonPath originalRequest.body '$.block_hash'}}\\\", \\\"block_height\\\": {{jsonPath originalRequest.body '$.block_height'}}, \\\"nonces\\\": {{jsonPath originalRequest.body '$.nonces'}}, \\\"dist\\\": {{jsonPath originalRequest.body '$.dist'}}, \\\"received_dist\\\": {{jsonPath originalRequest.body '$.dist'}}, \\\"r_target\\\": 0.9, \\\"fraud_threshold\\\": 0.1, \\\"n_invalid\\\": 0, \\\"probability_honest\\\": 0.99, \\\"fraud_detected\\\": false }\"\n    }\n  }\n}"
     }
   }
 }
