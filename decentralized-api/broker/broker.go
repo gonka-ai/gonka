@@ -140,14 +140,15 @@ type NodeResponse struct {
 	State *NodeState `json:"state"`
 }
 
-func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string) *Broker {
+func NewBroker(client cosmosclient.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
 	broker := &Broker{
-		commands:     make(chan Command, 10000),
-		nodes:        make(map[string]*NodeWithState),
-		client:       client,
-		phaseTracker: phaseTracker,
-		pubKey:       pubKey,
-		callbackUrl:  callbackUrl,
+		commands:            make(chan Command, 10000),
+		nodes:               make(map[string]*NodeWithState),
+		client:              client,
+		phaseTracker:        phaseTracker,
+		pubKey:              pubKey,
+		callbackUrl:         callbackUrl,
+		mlNodeClientFactory: clientFactory,
 	}
 
 	// Initialize NodeWorkGroup

@@ -9,7 +9,6 @@ import (
 	"decentralized-api/mlnodeclient"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
-	"sync"
 )
 
 const (
@@ -17,8 +16,6 @@ const (
 )
 
 type NodePoCOrchestrator interface {
-	GetParams() *types.Params
-	SetParams(params *types.Params)
 	StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase)
 	StopPoC()
 	MoveToValidationStage(encOfPoCBlockHeight int64)
@@ -31,31 +28,18 @@ type NodePoCOrchestratorImpl struct {
 	callbackUrl  string
 	chainNodeUrl string
 	cosmosClient *cosmos_client.InferenceCosmosClient
-	parameters   *types.Params
-	sync         sync.Mutex
+	phaseTracker *chainphase.ChainPhaseTracker
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, parameters *types.Params) NodePoCOrchestrator {
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
 	return &NodePoCOrchestratorImpl{
 		pubKey:       pubKey,
 		nodeBroker:   nodeBroker,
 		callbackUrl:  callbackUrl,
 		chainNodeUrl: chainNodeUrl,
 		cosmosClient: cosmosClient,
-		parameters:   parameters,
+		phaseTracker: phaseTracker,
 	}
-}
-
-func (o *NodePoCOrchestratorImpl) GetParams() *types.Params {
-	o.sync.Lock()
-	defer o.sync.Unlock()
-	return o.parameters
-}
-
-func (o *NodePoCOrchestratorImpl) SetParams(params *types.Params) {
-	o.sync.Lock()
-	defer o.sync.Unlock()
-	o.parameters = params
 }
 
 func (o *NodePoCOrchestratorImpl) getPocBatchesCallbackUrl() string {
@@ -101,7 +85,7 @@ func (o *NodePoCOrchestratorImpl) StopPoC() {
 }
 
 func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int64) {
-	epochParams := o.GetParams().EpochParams
+	epochParams := o.phaseTracker.GetEpochParams()
 
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
@@ -133,7 +117,7 @@ func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int6
 }
 
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
-	epochParams := o.GetParams().EpochParams
+	epochParams := o.phaseTracker.GetEpochParams()
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
 	if err != nil {

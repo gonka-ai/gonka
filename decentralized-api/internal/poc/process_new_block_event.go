@@ -14,11 +14,12 @@ import (
 )
 
 func ProcessNewBlockEvent(
-	nodePoCOrchestrator *NodePoCOrchestrator,
+	nodePoCOrchestrator NodePoCOrchestrator,
 	event *chainevents.JSONRPCResponse,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	configManager *apiconfig.ConfigManager,
 	phaseTracker *chainphase.ChainPhaseTracker,
+	randomSeedManager RandomSeedManager,
 ) {
 	if event.Result.Data.Type != "tendermint/event/NewBlock" {
 		log.Fatalf("Expected tendermint/event/NewBlock event, got %s", event.Result.Data.Type)
@@ -74,7 +75,7 @@ func ProcessNewBlockEvent(
 		}
 
 		nodePoCOrchestrator.StartPoC(blockHeight, blockHash, currentEpoch, currentPhase)
-		generateSeed(blockHeight, &transactionRecorder, configManager)
+		randomSeedManager.GenerateSeed(blockHeight)
 		return
 	}
 
@@ -103,14 +104,14 @@ func ProcessNewBlockEvent(
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		logging.Info("IsSetNewValidatorsStage", types.Stages)
 		go func() {
-			changeCurrentSeed(configManager)
+			randomSeedManager.ChangeCurrentSeed()
 		}()
 	}
 
 	if epochParams.IsClaimMoneyStage(blockHeight) {
 		logging.Info("IsClaimMoneyStage", types.Stages)
 		go func() {
-			requestMoney(&transactionRecorder, configManager)
+			randomSeedManager.ChangeCurrentSeed()
 		}()
 	}
 }

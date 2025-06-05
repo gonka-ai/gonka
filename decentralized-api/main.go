@@ -11,6 +11,7 @@ import (
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/mlnodeclient"
 	"net"
 
 	"github.com/productscience/inference/api/inference/inference"
@@ -74,7 +75,7 @@ func main() {
 		return
 	}
 	pubKeyString := utils.PubKeyToHexString(pubKey)
-	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl)
+	nodeBroker := broker.NewBroker(recorder, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
@@ -85,6 +86,7 @@ func main() {
 		logging.Error("Failed to get params", types.System, "error", err)
 		return
 	}
+	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
 	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
@@ -102,7 +104,7 @@ func main() {
 		config.GetApiConfig().PoCCallbackUrl,
 		config.GetChainNodeConfig().Url,
 		recorder,
-		&params.Params,
+		chainPhaseTracker,
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 

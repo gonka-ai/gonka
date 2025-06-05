@@ -2,14 +2,14 @@ package event_listener
 
 import (
 	"context"
+	"decentralized-api/internal/poc"
+	"decentralized-api/mlnodeclient"
 	"testing"
 	"time"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"decentralized-api/internal/poc"
-
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
@@ -44,81 +44,32 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
-// MockPoCOrchestratorAdapter wraps our mock to match the expected interface
-type MockPoCOrchestratorAdapter struct {
-	*MockPoCOrchestrator
-}
-
-func (m *MockPoCOrchestratorAdapter) StartPoC(height int64, hash string, epoch uint64, phase chainphase.Phase) {
-	m.MockPoCOrchestrator.StartPoC(height, hash, epoch, phase)
-}
-
-func (m *MockPoCOrchestratorAdapter) MoveToValidationStage(height int64) {
-	m.MockPoCOrchestrator.MoveToValidationStage(height)
-}
-
-func (m *MockPoCOrchestratorAdapter) ValidateReceivedBatches(height int64) {
-	m.MockPoCOrchestrator.ValidateReceivedBatches(height)
-}
-
-func (m *MockPoCOrchestratorAdapter) StopPoC() {
-	m.MockPoCOrchestrator.StopPoC()
-}
-
-type MockPoCOrchestrator struct {
-	mock.Mock
-	pocStartCalls []PoCStartCall
-}
-
-type PoCStartCall struct {
-	Height int64
-	Hash   string
-	Epoch  uint64
-	Phase  chainphase.Phase
-}
-
-func (m *MockPoCOrchestrator) StartPoC(height int64, hash string, epoch uint64, phase chainphase.Phase) {
-	m.pocStartCalls = append(m.pocStartCalls, PoCStartCall{
-		Height: height,
-		Hash:   hash,
-		Epoch:  epoch,
-		Phase:  phase,
-	})
-	m.Called(height, hash, epoch, phase)
-}
-
-func (m *MockPoCOrchestrator) MoveToValidationStage(height int64) {
-	m.Called(height)
-}
-
-func (m *MockPoCOrchestrator) ValidateReceivedBatches(height int64) {
-	m.Called(height)
-}
-
-func (m *MockPoCOrchestrator) StopPoC() {
-	m.Called()
-}
-
-func (m *MockPoCOrchestrator) GetPoCStartCalls() []PoCStartCall {
-	return m.pocStartCalls
-}
-
-func (m *MockPoCOrchestrator) ClearCalls() {
-	m.pocStartCalls = make([]PoCStartCall, 0)
-	m.Calls = nil
-}
-
 // Test setup helpers
 
-func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockPoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
+func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, poc.NodePoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
 	mockQueryClient := &MockQueryClient{}
-	mockPoCOrchestrator := &MockPoCOrchestrator{}
-	mockPoCOrchestratorAdapter := &MockPoCOrchestratorAdapter{mockPoCOrchestrator}
 
+	epochParams := types.EpochParams{
+		EpochLength:           100,
+		EpochShift:            0,
+		PocStageDuration:      20,
+		PocExchangeDuration:   2,
+		PocValidationDelay:    2,
+		PocValidationDuration: 10,
+	}
 	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.UpdateEpochParams(epochParams)
 
 	// Create real broker
-	nodeBroker := broker.NewBroker(nil, phaseTracker, "some-pub-key", "http://localhost:8080/poc")
+	nodeBroker := broker.NewBroker(nil, phaseTracker, "some-pub-key", "http://localhost:8080/poc", &mlnodeclient.MockClientFactory{})
+	pocOrchestrator := poc.NewNodePoCOrchestrator(
+		"some-pub-key",
+		nodeBroker,
+		"http://localhost:8080/poc",
+		"http://localhost:8080",
+		nil,
+		phaseTracker,
+	)
 
 	// Mock status function
 	mockStatusFunc := func() (*coretypes.ResultStatus, error) {
@@ -144,7 +95,7 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
-		(*poc.NodePoCOrchestrator)(mockPoCOrchestratorAdapter),
+		pocOrchestrator,
 		mockQueryClient,
 		phaseTracker,
 		mockStatusFunc,
@@ -156,7 +107,7 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	dispatcher.reconciliationConfig.BlockInterval = 2
 	dispatcher.reconciliationConfig.TimeInterval = 5 * time.Second
 
-	return dispatcher, nodeBroker, mockPoCOrchestrator, phaseTracker, mockQueryClient
+	return dispatcher, nodeBroker, pocOrchestrator, phaseTracker, mockQueryClient
 }
 
 func addTestNodeToBroker(broker *broker.Broker, nodeId string) {

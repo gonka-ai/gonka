@@ -62,6 +62,13 @@ func NewChainPhaseTracker() *ChainPhaseTracker {
 	}
 }
 
+func (t *ChainPhaseTracker) GetEpochParams() *types.EpochParams {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.currentEpochParams
+}
+
 func (t *ChainPhaseTracker) UpdateEpochParams(params types.EpochParams) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
