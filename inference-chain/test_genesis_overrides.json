@@ -20,9 +20,9 @@
     "inference": {
       "params": {
         "epoch_params": {
-          "epoch_length": "1000",
+          "epoch_length": "50",
           "epoch_multiplier": "1",
-          "epoch_shift": "985",
+          "epoch_shift": "0",
           "default_unit_of_compute_price": "100",
           "poc_stage_duration": "4",
           "poc_exchange_duration": "1",
