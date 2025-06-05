@@ -41,9 +41,11 @@ func (k msgServer) RevalidateInference(goCtx context.Context, msg *types.MsgReva
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "authority", inference.ProposalDetails.PolicyAddress)
 	k.SetInference(ctx, inference)
-	err := k.DevelopersStatsSet(goCtx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
+	err := k.DevelopersStatsSet(ctx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
 	if err != nil {
-		k.LogError("DevelopersStatsSet", types.Validation, err)
+		k.LogError("error setting developer stat", types.Stat, err)
+	} else {
+		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
 	}
 	return &types.MsgRevalidateInferenceResponse{}, nil
 }

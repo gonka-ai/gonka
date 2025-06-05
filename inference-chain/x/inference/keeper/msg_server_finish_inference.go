@@ -68,7 +68,9 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	k.SetInference(ctx, existingInference)
 	err = k.DevelopersStatsSet(ctx, existingInference.RequestedBy, existingInference.InferenceId, existingInference.Status, existingInference.EpochGroupId, existingInference.PromptTokenCount+existingInference.CompletionTokenCount)
 	if err != nil {
-		k.LogError("DevelopersStatsSet", types.Inferences, err)
+		k.LogError("error setting developer stat", types.Stat, err)
+	} else {
+		k.LogInfo("updated developer stat", types.Stat, "inference_id", existingInference.InferenceId, "inference_status", existingInference.Status.String(), "developer", existingInference.RequestedBy)
 	}
 
 	executor.LastInferenceTime = existingInference.EndBlockTimestamp

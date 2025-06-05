@@ -14,7 +14,13 @@ import (
 )
 
 func TestMsgServer_FinishInference(t *testing.T) {
+	const (
+		epochId  = 1
+		epochId2 = 2
+	)
 	k, ms, ctx := setupMsgServer(t)
+	k.SetEffectiveEpochGroupId(ctx, epochId)
+
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
@@ -42,7 +48,21 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		MaxTokens:           keeper.DefaultMaxTokens,
 		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
 	}, savedInference)
-	// require that
+
+	devStat, found := k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId)
+	require.True(t, found)
+	require.Equal(t, types.DeveloperStatsByEpoch{
+		EpochId: epochId,
+		Inferences: map[string]*types.InferenceStats{
+			savedInference.InferenceId: {
+				Status:       savedInference.Status,
+				AiTokensUsed: 0,
+			},
+		},
+	}, devStat)
+
+	k.SetEffectiveEpochGroupId(ctx, epochId2)
+
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",
@@ -65,6 +85,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
+		EpochGroupId:         epochId2,
 		ExecutedBy:           testutil.Executor,
 		Model:                "model1",
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
@@ -90,6 +111,22 @@ func TestMsgServer_FinishInference(t *testing.T) {
 			InferenceCount: 1,
 		},
 	}, participantState)
+
+	devStat, found = k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId2)
+	require.True(t, found)
+	require.Equal(t, 1, len(devStat.Inferences))
+
+	devStatUpdated, found := k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId2)
+	require.True(t, found)
+	require.Equal(t, types.DeveloperStatsByEpoch{
+		EpochId: epochId2,
+		Inferences: map[string]*types.InferenceStats{
+			savedInference.InferenceId: {
+				Status:       savedInference.Status,
+				AiTokensUsed: savedInference.PromptTokenCount + savedInference.CompletionTokenCount,
+			},
+		},
+	}, devStatUpdated)
 }
 
 func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, address string) {

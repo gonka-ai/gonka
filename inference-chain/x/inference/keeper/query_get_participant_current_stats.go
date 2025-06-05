@@ -52,8 +52,11 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 			k.LogInfo("GetParticipantsFullStats epoch member not found in participants set", types.Participants, "member", member.MemberAddress)
 			continue
 		}
+
+		accAddr, _ := sdk.AccAddressFromBech32(member.MemberAddress)
 		participants[member.MemberAddress] = &types.ParticipantFullStats{
-			Address:                   member.MemberAddress,
+			AccountAddress:            member.MemberAddress,
+			ValidatorOperatorAddres:   sdk.ValAddress(accAddr).String(),
 			Reputation:                member.Reputation,
 			RewardedCoinsCurrentEpoch: participant.CurrentEpochStats.RewardedCoins,
 			EarnedCoinsCurrentEpoch:   participant.CurrentEpochStats.EarnedCoins,

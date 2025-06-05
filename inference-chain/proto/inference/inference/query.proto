@@ -582,12 +582,13 @@ message ParticipantCurrentStats {
 }
 
 message ParticipantFullStats {
-  string address = 1;
-  int32  reputation = 2;
-  uint64 rewarded_coins_current_epoch = 3;
-  uint64 earned_coins_current_epoch = 4;
-  uint64 rewarded_coins_latest_epoch = 5;
-  uint32 epochs_completed = 6;
+  string account_address = 1;
+  string validator_operator_addres = 2;
+  int32  reputation = 3;
+  uint64 rewarded_coins_current_epoch = 4;
+  uint64 earned_coins_current_epoch = 5;
+  uint64 rewarded_coins_latest_epoch = 6;
+  uint32 epochs_completed = 7;
 }
 
 message QueryParticipantsFullStatsRequest {}

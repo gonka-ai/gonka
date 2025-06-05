@@ -25,7 +25,10 @@ func TestMsgServer_StartInferenceWithUnregesteredParticipant(t *testing.T) {
 }
 
 func TestMsgServer_StartInference(t *testing.T) {
+	const epochId = 1
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	k.SetEffectiveEpochGroupId(ctx, epochId)
+
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Creator,
@@ -61,6 +64,19 @@ func TestMsgServer_StartInference(t *testing.T) {
 		MaxTokens:           keeper.DefaultMaxTokens,
 		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
 	}, savedInference)
+
+	devStat, found := k.DevelopersStatsGetByEpoch(ctx2, savedInference.RequestedBy, epochId)
+	require.True(t, found)
+
+	require.Equal(t, types.DeveloperStatsByEpoch{
+		EpochId: epochId,
+		Inferences: map[string]*types.InferenceStats{
+			savedInference.InferenceId: {
+				Status:       savedInference.Status,
+				AiTokensUsed: 0,
+			},
+		},
+	}, devStat)
 }
 
 // TODO: Need a way to test that blockheight is set to newer values, but can't figure out how to change the

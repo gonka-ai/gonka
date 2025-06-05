@@ -160,18 +160,27 @@ func TestDeveloperStats(t *testing.T) {
 		const currentEpochId = uint64(3)
 
 		keeper, ctx := keepertest.InferenceKeeper(t)
+		keeper.SetEffectiveEpochGroupId(ctx, currentEpochId)
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer1, developer1Inference1.String(), types.InferenceStatus_STARTED, epochId1, developer1Inference1Tokens*2))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer1, developer1Inference2.String(), types.InferenceStatus_VALIDATED, epochId2, developer1Inference1Tokens*2))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer2, uuid.New().String(), types.InferenceStatus_VALIDATED, epochId2, developer1Inference1Tokens))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, developer2, uuid.New().String(), types.InferenceStatus_VALIDATED, currentEpochId, developer1Inference1Tokens))
 
-		tokens, requests := keeper.CountTotalInferenceInLastNEpochs(ctx, currentEpochId, 2)
+		tokens, requests := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
 		assert.Equal(t, int64(developer1Inference1Tokens*5), tokens)
 		assert.Equal(t, 3, requests)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, currentEpochId, 2)
+		tokens, requests = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
+		assert.Equal(t, int64(developer1Inference1Tokens*3), tokens)
+		assert.Equal(t, 2, requests)
+
+		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 2)
 		assert.Equal(t, int64(developer1Inference1Tokens), tokens)
+		assert.Equal(t, 1, requests)
+
+		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 1)
+		assert.Equal(t, int64(developer1Inference1Tokens*2), tokens)
 		assert.Equal(t, 1, requests)
 	})
 }

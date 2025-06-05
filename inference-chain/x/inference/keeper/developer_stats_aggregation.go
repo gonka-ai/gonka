@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"golang.org/x/exp/maps"
 	"time"
 )
 
@@ -23,11 +24,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, developerAddr string, in
 		// we normally attach inference to group only when inference is finished.
 		// But in that case it is not possible gather statistic by epoch properly, that's why we temporarily attach inference
 		// to current epoch and then update it later.
-		epoch, err := k.GetCurrentEpochGroup(ctx)
-		if err != nil {
-			return err
-		}
-		epochID = epoch.GroupData.EpochGroupId
+		epochID = k.GetEffectiveEpochGroupId(ctx)
 	}
 
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
@@ -205,25 +202,23 @@ func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) (to
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
 
-	iter := epochStore.ReverseIterator(nil, nil)
+	currentEpochId := k.GetEffectiveEpochGroupId(ctx)
+	iter := epochStore.ReverseIterator(nil, sdk.Uint64ToBigEndian(currentEpochId))
 	defer iter.Close()
 
 	var seenEpochs = make(map[uint64]bool)
-
 	for ; iter.Valid(); iter.Next() {
-		epochID := sdk.BigEndianToUint64(iter.Key()[:8])
-		seenEpochs[epochID] = true
-
 		var stats types.DeveloperStatsByEpoch
 		k.cdc.MustUnmarshal(iter.Value(), &stats)
 
+		if len(maps.Keys(seenEpochs)) == n && !seenEpochs[stats.EpochId] {
+			break
+		}
+
+		seenEpochs[stats.EpochId] = true
 		for _, inf := range stats.Inferences {
 			tokensTotal += int64(inf.AiTokensUsed)
 			inferenceCount++
-		}
-
-		if len(seenEpochs) == n {
-			break
 		}
 	}
 	return tokensTotal, inferenceCount
@@ -237,13 +232,16 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
 
-	iterator := epochStore.ReverseIterator(nil, nil)
+	currentEpochId := k.GetEffectiveEpochGroupId(ctx)
+	iterator := epochStore.ReverseIterator(nil, sdk.Uint64ToBigEndian(currentEpochId))
 	defer iterator.Close()
 
 	var (
 		tokensTotal    int64
 		inferenceCount int
 	)
+
+	var seenEpochs = make(map[uint64]bool)
 
 	for ; iterator.Valid(); iterator.Next() {
 		key := iterator.Key()
@@ -259,6 +257,11 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 		var stats types.DeveloperStatsByEpoch
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
 
+		if len(maps.Keys(seenEpochs)) == n && !seenEpochs[stats.EpochId] {
+			break
+		}
+
+		seenEpochs[stats.EpochId] = true
 		for _, inf := range stats.Inferences {
 			tokensTotal += int64(inf.AiTokensUsed)
 			inferenceCount++
