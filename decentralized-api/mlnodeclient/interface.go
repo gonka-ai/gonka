@@ -14,6 +14,7 @@ type MLNodeClient interface {
 	GetPowStatus() (*PowStatusResponse, error)
 	InitGenerate(dto InitDto) error
 	InitValidate(dto InitDto) error
+	ValidateBatch(batch ProofBatch) error
 
 	// Inference operations
 	InferenceHealth() (bool, error)

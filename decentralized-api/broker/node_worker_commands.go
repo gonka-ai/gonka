@@ -81,6 +81,45 @@ func (c StartPoCNodeCommand) Execute(worker *NodeWorker) error {
 	return nil
 }
 
+type InitValidateNodeCommand struct {
+	BlockHeight int64
+	BlockHash   string
+	PubKey      string
+	CallbackUrl string
+	TotalNodes  int
+}
+
+func (c InitValidateNodeCommand) Execute(worker *NodeWorker) error {
+	// Check if already in PoC state (idempotent)
+	status, err := worker.mlClient.GetPowStatus()
+	if err == nil && status.Status == mlnodeclient.POW_VALIDATING {
+		logging.Info("Node already in POW_VALIDATING state", types.PoC, "node_id", worker.nodeId)
+		worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
+		return nil
+	}
+
+	dto := mlnodeclient.BuildInitDto(
+		c.BlockHeight,
+		c.PubKey,
+		int64(c.TotalNodes),
+		int64(worker.node.Node.NodeNum),
+		c.BlockHash,
+		c.CallbackUrl,
+	)
+
+	err = worker.mlClient.InitValidate(dto)
+	if err != nil {
+		logging.Error("Failed to transition node to PoC init validate stage", types.PoC,
+			"node_id", worker.nodeId, "error", err)
+		worker.node.State.Failure("Failed to transitions PoC to init validate stage")
+		return err
+	}
+
+	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
+	logging.Info("Successfully transitioned node to PoC init validate stage", types.PoC, "node_id", worker.nodeId)
+	return nil
+}
+
 // InferenceUpNodeCommand brings up inference on a single node
 type InferenceUpNodeCommand struct{}
 

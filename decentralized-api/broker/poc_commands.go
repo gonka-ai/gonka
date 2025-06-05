@@ -88,5 +88,21 @@ func (c InitValidateCommand) Execute(b *Broker) {
 			continue
 		}
 
+		cmd := InitValidateNodeCommand{
+			BlockHeight: c.BlockHeight,
+			BlockHash:   c.BlockHash,
+			PubKey:      c.PubKey,
+			CallbackUrl: c.CallbackUrl,
+			TotalNodes:  len(b.nodes),
+		}
+
+		// Submit to worker
+		if worker, exists := b.nodeWorkGroup.GetWorker(node.Node.Id); exists {
+			worker.Submit(cmd)
+		} else {
+			logging.Error("Worker not found for node", types.PoC, "node_id", node.Node.Id)
+		}
 	}
+
+	c.Response <- true
 }

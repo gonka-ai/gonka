@@ -27,14 +27,15 @@ TRAINING = 3;
 */
 
 type Broker struct {
-	commands       chan Command
-	nodes          map[string]*NodeWithState
-	curMaxNodesNum atomic.Uint64
-	client         cosmosclient.CosmosMessageClient
-	nodeWorkGroup  *NodeWorkGroup
-	phaseTracker   *chainphase.ChainPhaseTracker
-	pubKey         string
-	callbackUrl    string
+	commands            chan Command
+	nodes               map[string]*NodeWithState
+	curMaxNodesNum      atomic.Uint64
+	client              cosmosclient.CosmosMessageClient
+	nodeWorkGroup       *NodeWorkGroup
+	phaseTracker        *chainphase.ChainPhaseTracker
+	pubKey              string
+	callbackUrl         string
+	mlNodeClientFactory mlnodeclient.ClientFactory
 }
 
 const (
@@ -296,15 +297,16 @@ func (b *Broker) registerNode(command RegisterNode) {
 	b.nodes[command.Node.Id] = nodeWithState
 
 	// Create and register a worker for this node
-	worker := NewNodeWorker(command.Node.Id, nodeWithState)
+	client := b.NewNodeClient(&node)
+	worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client)
 	b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
 
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
 	command.Response <- &command.Node
 }
 
-func newNodeClient(node *Node) *mlnodeclient.Client {
-	return mlnodeclient.NewNodeClient(node.PoCUrl(), node.InferenceUrl())
+func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(), node.InferenceUrl())
 }
 
 func (b *Broker) removeNode(command RemoveNode) {
@@ -782,7 +784,7 @@ func (b *Broker) reconcileNodeToInference(node *NodeWithState) error {
 }
 
 func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
-	client := newNodeClient(&node.Node)
+	client := b.NewNodeClient(&node.Node)
 
 	nodeId := node.Node.Id
 	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
@@ -907,7 +909,7 @@ type statusQueryResult struct {
 
 // Pass by value, because this is supposed to be a readonly function
 func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult, error) {
-	client := newNodeClient(&node)
+	client := b.NewNodeClient(&node)
 
 	status, err := client.NodeState()
 
@@ -969,7 +971,7 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 	command.Response <- true
 }
 
-func inferenceUp(node *Node, nodeClient *mlnodeclient.Client) error {
+func inferenceUp(node *Node, nodeClient mlnodeclient.MLNodeClient) error {
 	if len(node.Models) == 0 {
 		logging.Error("No models found for node, can't inference up", types.Nodes,
 			"node_id", node.Id, "error")

@@ -18,19 +18,6 @@ type NodeWorker struct {
 	wg       sync.WaitGroup
 }
 
-// NewNodeWorker creates a new worker for a specific node
-func NewNodeWorker(nodeId string, node *NodeWithState) *NodeWorker {
-	worker := &NodeWorker{
-		nodeId:   nodeId,
-		node:     node,
-		mlClient: newNodeClient(&node.Node),
-		commands: make(chan NodeWorkerCommand, 10), // Buffer for 10 commands
-		shutdown: make(chan struct{}),
-	}
-	go worker.run()
-	return worker
-}
-
 // NewNodeWorkerWithClient creates a new worker with a custom client (for testing)
 func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodeclient.MLNodeClient) *NodeWorker {
 	worker := &NodeWorker{

@@ -101,6 +101,11 @@ func (m *MockClient) InitValidate(dto InitDto) error {
 	return nil
 }
 
+func (m *MockClient) ValidateBatch(batch ProofBatch) error {
+	// TODO: impl me!
+	panic("implement me")
+}
+
 func (m *MockClient) InferenceHealth() (bool, error) {
 	m.InferenceHealthCalled++
 	if m.InferenceHealthError != nil {
