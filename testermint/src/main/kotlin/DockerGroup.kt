@@ -357,7 +357,8 @@ class Consumer(val name: String, val pair: LocalInferencePair, val address: Stri
             val cli = ApplicationCLI(
                 newConfig,
                 LogOutput(name, "consumer"),
-                dockerExec
+                dockerExec,
+                listOf()
             )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)

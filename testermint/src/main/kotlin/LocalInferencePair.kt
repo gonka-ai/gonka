@@ -57,7 +57,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
 
         LocalInferencePair(
-            node = ApplicationCLI(configWithName, nodeLogs, executor),
+            node = ApplicationCLI(configWithName, nodeLogs, executor, listOf()),
             api = ApplicationAPI(apiUrls, configWithName, dapiLogs),
             mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name = name,
