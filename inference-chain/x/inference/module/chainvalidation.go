@@ -44,6 +44,9 @@ func NewWeightCalculator(
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
 func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochGroupId uint64) (map[string]int64, error) {
 	if epochGroupId <= 1 {
+		return nil, nil
+	}
+	if epochGroupId <= 1 {
 		currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
 		if err != nil {
 			am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
@@ -86,6 +89,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 
 	// Get current active participants weights
 	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingGroupData.EpochGroupId)
+	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "weights", currentValidatorWeights)
 
 	if err != nil {
 		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
@@ -105,7 +109,13 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingGroupData *ty
 		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations))
+	validators := make([]string, len(validations))
+	var i = 0
+	for address, _ := range validations {
+		validators[i] = address
+		i += 1
+	}
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations), "validators", validators)
 
 	// Collect all participants and seeds
 	participants := make(map[string]types.Participant)
@@ -220,27 +230,48 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 
 func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participantAddress string) bool {
 	totalWeight := calculateTotalWeight(wc.CurrentValidatorWeights)
-	requiredValidWeight := (totalWeight * 2) / 3
-	shouldContinue := true
+	halfWeight := int64(totalWeight / 2)
+	shouldContinue := false
 
 	if wc.CurrentValidatorWeights != nil && len(wc.CurrentValidatorWeights) > 0 {
 		valOutcome := calculateValidationOutcome(wc.CurrentValidatorWeights, vals)
-		votedWeight := uint64(valOutcome.InvalidWeight + valOutcome.ValidWeight)
-		if votedWeight < requiredValidWeight {
-			wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations. Defaulting to accepting",
+		votedWeight := valOutcome.ValidWeight + valOutcome.InvalidWeight // For logging only
+		if valOutcome.ValidWeight > halfWeight {
+			shouldContinue = true
+			wc.Logger.LogInfo("Calculate: Participant received valid validations from more than half of participants by weight. Accepting",
 				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
 				"votedWeight", votedWeight,
-				"requiredValidWeight", requiredValidWeight)
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
+		} else if valOutcome.InvalidWeight > halfWeight {
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant received invalid validations from more than half of participants by weight. Rejecting",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
 		} else {
-			if uint64(valOutcome.ValidWeight) < requiredValidWeight {
-				wc.Logger.LogWarn("Calculate: Participant didn't receive enough validations",
-					types.PoC, "participant", participantAddress,
-					"validWeight", valOutcome.ValidWeight,
-					"requiredValidWeight", requiredValidWeight)
-				shouldContinue = false
-			}
+			shouldContinue = false
+			wc.Logger.LogWarn("Calculate: Participant did not receive a majority of either valid or invalid validations. Rejecting.",
+				types.PoC, "participant", participantAddress,
+				"validWeight", valOutcome.ValidWeight,
+				"invalidWeight", valOutcome.InvalidWeight,
+				"votedWeight", votedWeight,
+				"totalWeight", totalWeight,
+				"halfWeight", halfWeight,
+			)
 		}
+	} else {
+		shouldContinue = true
+		wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
 	}
+
 	return shouldContinue
 }
 
