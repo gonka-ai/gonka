@@ -11,7 +11,6 @@ import (
 	"decentralized-api/internal/poc"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -28,51 +27,6 @@ type MockQueryClient struct {
 func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
 	args := m.Called(ctx, req)
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
-}
-
-// FakeCosmosClient implements the minimal interface needed by ChainPhaseTracker
-type FakeCosmosClient struct{}
-
-func (f *FakeCosmosClient) NewInferenceQueryClient() types.QueryClient {
-	return nil // Not needed for our tests
-}
-
-func (f *FakeCosmosClient) SignBytes(data []byte) ([]byte, error) {
-	return []byte("fake-signature"), nil
-}
-
-func (f *FakeCosmosClient) SubmitSeed(msg interface{}) error {
-	return nil
-}
-
-func (f *FakeCosmosClient) ClaimRewards(msg interface{}) error {
-	return nil
-}
-
-func (f *FakeCosmosClient) GetContext() *context.Context {
-	ctx := context.Background()
-	return &ctx
-}
-
-func (f *FakeCosmosClient) GetAddress() string {
-	return "cosmos1fake"
-}
-
-func (f *FakeCosmosClient) GetAccount() interface{} {
-	return nil
-}
-
-func (f *FakeCosmosClient) GetCosmosClient() interface{} {
-	return nil
-}
-
-// ConfigManagerAdapter wraps our test config manager to match the expected interface
-type ConfigManagerAdapter struct {
-	*TestConfigManager
-}
-
-func (c *ConfigManagerAdapter) GetNodes() []apiconfig.InferenceNodeConfig {
-	return c.TestConfigManager.GetNodes()
 }
 
 // MockPoCOrchestratorAdapter wraps our mock to match the expected interface
@@ -139,86 +93,9 @@ func (m *MockPoCOrchestrator) ClearCalls() {
 	m.Calls = nil
 }
 
-type TestConfigManager struct {
-	height int64
-	seeds  map[string]apiconfig.SeedInfo
-}
-
-func NewTestConfigManager() *TestConfigManager {
-	return &TestConfigManager{
-		height: 0,
-		seeds: map[string]apiconfig.SeedInfo{
-			"current":  {Seed: 12345, Height: 100, Signature: "current123"},
-			"upcoming": {Seed: 67890, Height: 200, Signature: "upcoming456"},
-			"previous": {Seed: 11111, Height: 50, Signature: "previous789"},
-		},
-	}
-}
-
-func (t *TestConfigManager) GetChainNodeConfig() *apiconfig.ChainNodeConfig {
-	return &apiconfig.ChainNodeConfig{
-		Url:            "http://localhost:26657",
-		KeyringBackend: "test",
-		KeyringDir:     "/tmp/test",
-		AccountName:    "test",
-	}
-}
-
-func (t *TestConfigManager) SetHeight(height int64) error {
-	t.height = height
-	return nil
-}
-
-func (t *TestConfigManager) GetHeight() int64 {
-	return t.height
-}
-
-func (t *TestConfigManager) GetApiConfig() *apiconfig.ApiConfig {
-	return &apiconfig.ApiConfig{
-		PoCCallbackUrl:   "http://localhost:8080/poc",
-		PublicServerPort: 8080,
-		MLServerPort:     8081,
-		AdminServerPort:  8082,
-		MlGrpcServerPort: 8083,
-	}
-}
-
-func (t *TestConfigManager) GetNodes() []apiconfig.InferenceNodeConfig {
-	return []apiconfig.InferenceNodeConfig{}
-}
-
-func (t *TestConfigManager) GetCurrentSeed() apiconfig.SeedInfo {
-	return t.seeds["current"]
-}
-
-func (t *TestConfigManager) SetUpcomingSeed(seed apiconfig.SeedInfo) error {
-	t.seeds["upcoming"] = seed
-	return nil
-}
-
-func (t *TestConfigManager) GetUpcomingSeed() apiconfig.SeedInfo {
-	return t.seeds["upcoming"]
-}
-
-func (t *TestConfigManager) SetPreviousSeed(seed apiconfig.SeedInfo) error {
-	t.seeds["previous"] = seed
-	return nil
-}
-
-func (t *TestConfigManager) SetCurrentSeed(seed apiconfig.SeedInfo) error {
-	t.seeds["current"] = seed
-	return nil
-}
-
-func (t *TestConfigManager) GetPreviousSeed() apiconfig.SeedInfo {
-	return t.seeds["previous"]
-}
-
 // Test setup helpers
 
 func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockPoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
-	configManager := NewTestConfigManager()
-	configManagerAdapter := &ConfigManagerAdapter{configManager}
 	mockQueryClient := &MockQueryClient{}
 	mockPoCOrchestrator := &MockPoCOrchestrator{}
 	mockPoCOrchestratorAdapter := &MockPoCOrchestratorAdapter{mockPoCOrchestrator}
@@ -229,10 +106,14 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	nodeBroker := broker.NewBroker(nil, phaseTracker, "some-pub-key", "http://localhost:8080/poc")
 
 	// Mock status function
-	mockStatusFunc := func(url string) (*coretypes.ResultStatus, error) {
+	mockStatusFunc := func() (*coretypes.ResultStatus, error) {
 		return &coretypes.ResultStatus{
 			SyncInfo: coretypes.SyncInfo{CatchingUp: false},
 		}, nil
+	}
+
+	mockSetHeightFunc := func(height int64) error {
+		return nil
 	}
 
 	// Setup default mock behaviors
@@ -248,11 +129,11 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
-		(*apiconfig.ConfigManager)(configManagerAdapter),
 		(*poc.NodePoCOrchestrator)(mockPoCOrchestratorAdapter),
 		mockQueryClient,
 		phaseTracker,
 		mockStatusFunc,
+		mockSetHeightFunc,
 	)
 
 	// Set fast reconciliation for testing
@@ -328,7 +209,6 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch 1, PoC phase (block 0) - both nodes should participate
 	phaseTracker.UpdateBlockHeight(0, "hash-0")
-	phaseTracker.SetSyncStatus(true)
 
 	err := simulateBlockProcessing(dispatcher, 0, "hash-0")
 	require.NoError(t, err)
@@ -398,7 +278,6 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch 1, PoC phase (block 0) - disabled node should not participate
 	phaseTracker.UpdateBlockHeight(0, "hash-0")
-	phaseTracker.SetSyncStatus(true)
 
 	err = simulateBlockProcessing(dispatcher, 0, "hash-0")
 	require.NoError(t, err)
@@ -449,7 +328,6 @@ func TestReconciliationCatchesUpFailedPoC_Integration(t *testing.T) {
 
 	// Simulate PoC start block (block 0) - initially no PoC triggered
 	phaseTracker.UpdateBlockHeight(0, "hash-0")
-	phaseTracker.SetSyncStatus(true)
 
 	err := simulateBlockProcessing(dispatcher, 0, "hash-0")
 	require.NoError(t, err)
@@ -506,7 +384,6 @@ func TestNodeRecoveryToInferenceMidEpoch_Integration(t *testing.T) {
 
 	// Simulate mid-epoch during inference phase (block 50)
 	phaseTracker.UpdateBlockHeight(50, "hash-50")
-	phaseTracker.SetSyncStatus(true)
 
 	err = simulateBlockProcessing(dispatcher, 50, "hash-50")
 	require.NoError(t, err)
@@ -528,14 +405,13 @@ func TestNodeRecoveryToInferenceMidEpoch_Integration(t *testing.T) {
 
 // Test Scenario 5: New node added during inference phase
 func TestNewNodeAddedDuringInference_Integration(t *testing.T) {
-	dispatcher, nodeBroker, _, phaseTracker, _, _ := createIntegrationTestSetup()
+	dispatcher, nodeBroker, _, phaseTracker, _ := createIntegrationTestSetup()
 
 	// Start with one node
 	addTestNodeToBroker(nodeBroker, "node-1")
 
 	// Simulate inference phase (block 30)
 	phaseTracker.UpdateBlockHeight(30, "hash-30")
-	phaseTracker.SetSyncStatus(true)
 
 	// Verify we have 1 node
 	nodes, err := nodeBroker.GetNodes()

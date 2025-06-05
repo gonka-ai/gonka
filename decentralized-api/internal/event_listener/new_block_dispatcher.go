@@ -15,7 +15,6 @@ import (
 	"decentralized-api/logging"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
-	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 )
@@ -25,15 +24,10 @@ type QueryClient interface {
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 }
 
-// Minimal interface for transaction operations needed by the dispatcher
-type TransactionClient interface {
-	SignBytes(data []byte) ([]byte, error)
-	SubmitSeed(msg *inference.MsgSubmitSeed) error
-	ClaimRewards(msg *inference.MsgClaimRewards) error
-}
-
 // StatusFunc defines the function signature for getting node sync status
-type StatusFunc func(chainNodeUrl string) (*coretypes.ResultStatus, error)
+type StatusFunc func() (*coretypes.ResultStatus, error)
+
+type SetHeightFunc func(blockHeight int64) error
 
 // NewBlockInfo contains parsed information from a new block event
 type NewBlockInfo struct {
@@ -70,12 +64,12 @@ type MlNodeReconciliationConfig struct {
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
-	configManager        *apiconfig.ConfigManager
 	nodePocOrchestrator  *poc.NodePoCOrchestrator
 	queryClient          QueryClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
+	setHeightFunc        SetHeightFunc
 	randomSeedManager    poc.RandomSeedManager
 }
 
@@ -91,15 +85,14 @@ type SyncInfo struct {
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
-	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
 	queryClient QueryClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
+	setHeightFunc SetHeightFunc,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:          nodeBroker,
-		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
 		queryClient:         queryClient,
 		phaseTracker:        phaseTracker,
@@ -109,6 +102,7 @@ func NewOnNewBlockDispatcher(
 			LastTime:      time.Now(),
 		},
 		getStatusFunc: getStatusFunc,
+		setHeightFunc: setHeightFunc,
 	}
 }
 
@@ -123,32 +117,22 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 ) *OnNewBlockDispatcher {
 	// Adapt the cosmos client to our minimal interfaces
 	queryClient := cosmosClient.NewInferenceQueryClient()
+	setHeightFunc := func(blockHeight int64) error {
+		return configManager.SetHeight(blockHeight)
+	}
+	getStatusFunc := func() (*coretypes.ResultStatus, error) {
+		url := configManager.GetChainNodeConfig().Url
+		return getStatus(url)
+	}
 
 	return NewOnNewBlockDispatcher(
 		nodeBroker,
-		configManager,
 		nodePocOrchestrator,
 		queryClient,
 		phaseTracker,
-		getStatus,
+		getStatusFunc,
+		setHeightFunc,
 	)
-}
-
-// cosmosClientAdapter adapts the full cosmos client to our TransactionClient interface
-type cosmosClientAdapter struct {
-	cosmosClient cosmosclient.InferenceCosmosClient
-}
-
-func (c *cosmosClientAdapter) SignBytes(data []byte) ([]byte, error) {
-	return c.cosmosClient.SignBytes(data)
-}
-
-func (c *cosmosClientAdapter) SubmitSeed(msg *inference.MsgSubmitSeed) error {
-	return c.cosmosClient.SubmitSeed(msg)
-}
-
-func (c *cosmosClientAdapter) ClaimRewards(msg *inference.MsgClaimRewards) error {
-	return c.cosmosClient.ClaimRewards(msg)
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
@@ -177,7 +161,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo Ne
 	}
 
 	// 5. Update config manager height
-	err = d.configManager.SetHeight(blockInfo.Height)
+	err = d.setHeightFunc(blockInfo.Height)
 	if err != nil {
 		logging.Warn("Failed to write config", types.Config, "error", err)
 	}
@@ -194,8 +178,7 @@ type NetworkInfo struct {
 // queryNetworkInfo queries the network for sync status and epoch parameters
 func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkInfo, error) {
 	// Query sync status
-	chainNodeUrl := d.configManager.GetChainNodeConfig().Url
-	status, err := d.getStatusFunc(chainNodeUrl)
+	status, err := d.getStatusFunc()
 	if err != nil {
 		return nil, err
 	}
