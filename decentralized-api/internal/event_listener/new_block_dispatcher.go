@@ -2,10 +2,7 @@ package event_listener
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
-	"math/rand"
 	"strconv"
 	"time"
 
@@ -80,6 +77,7 @@ type OnNewBlockDispatcher struct {
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
+	randomSeedManager    poc.RandomSeedManager
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -263,8 +261,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	// Check for PoC start
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
-		d.startPoC(blockHeight, blockHash, phaseInfo.CurrentEpoch, phaseInfo.CurrentPhase)
-		d.generateSeed(blockHeight)
+		d.nodePocOrchestrator.StartPoC(blockHeight, blockHash, phaseInfo.CurrentEpoch, phaseInfo.CurrentPhase)
+		d.randomSeedManager.GenerateSeed(blockHeight)
+
 		return
 	}
 
@@ -291,14 +290,14 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		logging.Info("IsSetNewValidatorsStage", types.Stages)
 		go func() {
-			d.changeCurrentSeed()
+			d.randomSeedManager.ChangeCurrentSeed()
 		}()
 	}
 
 	if epochParams.IsClaimMoneyStage(blockHeight) {
 		logging.Info("IsClaimMoneyStage", types.Stages)
 		go func() {
-			d.requestMoney()
+			d.randomSeedManager.RequestMoney()
 		}()
 	}
 }
@@ -343,86 +342,6 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 	d.reconciliationConfig.LastTime = time.Now()
 
 	// Note: We don't wait for the response to avoid blocking block processing
-}
-
-// Helper functions for stage transitions
-
-func (d *OnNewBlockDispatcher) startPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
-	d.nodePocOrchestrator.StartPoC(blockHeight, blockHash, currentEpoch, currentPhase)
-}
-
-func (d *OnNewBlockDispatcher) generateSeed(blockHeight int64) {
-	logging.Debug("Old Seed Signature", types.Claims, d.configManager.GetCurrentSeed())
-	newSeed, err := d.createNewSeed(blockHeight)
-	if err != nil {
-		logging.Error("Failed to get next seed signature", types.Claims, "error", err)
-		return
-	}
-	err = d.configManager.SetUpcomingSeed(*newSeed)
-	if err != nil {
-		logging.Error("Failed to set upcoming seed", types.Claims, "error", err)
-		return
-	}
-	logging.Debug("New Seed Signature", types.Claims, "seed", d.configManager.GetUpcomingSeed())
-
-	err = d.transactionClient.SubmitSeed(&inference.MsgSubmitSeed{
-		BlockHeight: d.configManager.GetUpcomingSeed().Height,
-		Signature:   d.configManager.GetUpcomingSeed().Signature,
-	})
-	if err != nil {
-		logging.Error("Failed to send SubmitSeed transaction", types.Claims, "error", err)
-	}
-}
-
-func (d *OnNewBlockDispatcher) changeCurrentSeed() {
-	err := d.configManager.SetPreviousSeed(d.configManager.GetCurrentSeed())
-	if err != nil {
-		logging.Error("Failed to set previous seed", types.Claims, "error", err)
-		return
-	}
-	err = d.configManager.SetCurrentSeed(d.configManager.GetUpcomingSeed())
-	if err != nil {
-		logging.Error("Failed to set current seed", types.Claims, "error", err)
-		return
-	}
-	err = d.configManager.SetUpcomingSeed(apiconfig.SeedInfo{})
-	if err != nil {
-		logging.Error("Failed to set upcoming seed", types.Claims, "error", err)
-		return
-	}
-}
-
-func (d *OnNewBlockDispatcher) requestMoney() {
-	// FIXME: we can also imagine a scenario where we weren't updating the seed for a few epochs
-	//  e.g. generation fails a few times in a row for some reason
-	//  Solution: query seed here?
-	seed := d.configManager.GetPreviousSeed()
-
-	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
-	err := d.transactionClient.ClaimRewards(&inference.MsgClaimRewards{
-		Seed:           seed.Seed,
-		PocStartHeight: uint64(seed.Height),
-	})
-	if err != nil {
-		logging.Error("Failed to send ClaimRewards transaction", types.Claims, "error", err)
-	}
-}
-
-func (d *OnNewBlockDispatcher) createNewSeed(blockHeight int64) (*apiconfig.SeedInfo, error) {
-	newSeed := rand.Int63()
-	newHeight := blockHeight
-	seedBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(seedBytes, uint64(newSeed))
-	signature, err := d.transactionClient.SignBytes(seedBytes)
-	if err != nil {
-		logging.Error("Failed to sign bytes", types.Claims, "error", err)
-		return nil, err
-	}
-	return &apiconfig.SeedInfo{
-		Seed:      newSeed,
-		Height:    newHeight,
-		Signature: hex.EncodeToString(signature),
-	}, nil
 }
 
 // parseNewBlockInfo extracts NewBlockInfo from a JSONRPCResponse event
