@@ -18,12 +18,8 @@ import (
 )
 
 const (
-	StopAllPath       = "/api/v1/stop"
 	InitValidatePath  = "/api/v1/pow/init/validate"
 	ValidateBatchPath = "/api/v1/pow/validate"
-	PoCStopPath       = "/api/v1/pow/stop"
-	InferenceUpPath   = "/api/v1/inference/up"
-	InferenceDownPath = "/api/v1/inference/down"
 	PoCBatchesPath    = "/v1/poc-batches"
 )
 
@@ -34,7 +30,6 @@ type NodePoCOrchestrator struct {
 	callbackUrl  string
 	chainNodeUrl string
 	cosmosClient *cosmos_client.InferenceCosmosClient
-	noOp         bool
 	parameters   *types.Params
 	sync         sync.Mutex
 }
@@ -118,11 +113,6 @@ var TestNetParams = Params{
 }
 
 func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
-		return
-	}
-
 	command := broker.StartPocCommand{
 		BlockHeight:  blockHeight,
 		BlockHash:    blockHash,
@@ -143,11 +133,6 @@ func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, curr
 }
 
 func (o *NodePoCOrchestrator) StopPoC() {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.", types.PoC)
-		return
-	}
-
 	command := broker.NewInferenceUpAllCommand()
 	err := o.nodeBroker.QueueMessage(command)
 	if err != nil {
@@ -157,64 +142,6 @@ func (o *NodePoCOrchestrator) StopPoC() {
 
 	success := <-command.Response
 	logging.Info("NodePoCOrchestrator.Stop. Inference up command response", types.PoC, "success", success)
-}
-
-func (o *NodePoCOrchestrator) sendStopRequest(node *broker.Node) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), PoCStopPath)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Info("Sending stop request to node", types.PoC, "stopUrl", stopUrl)
-
-	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
-}
-
-func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), StopAllPath)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Info("Sending stop all request to node", types.Nodes, stopUrl)
-	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
-}
-
-// TODO choose model, instead of pick any model
-func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.Response, error) {
-	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var anyModel string
-	var anyModelArgs []string
-
-	for model, args := range node.Models {
-		anyModel = model
-		anyModelArgs = args.Args
-		break
-	}
-
-	inferenceUpDto := InferenceUpDto{
-		Model: anyModel,
-		Dtype: "float16",
-		Args:  anyModelArgs,
-	}
-
-	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
-
-	return utils.SendPostJsonRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
-}
-
-func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http.Response, error) {
-	inferenceDownUrl, err := url.JoinPath(node.PoCUrl(), InferenceDownPath)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Info("Sending inference/down request to node", types.Nodes, inferenceDownUrl)
-	return utils.SendPostJsonRequest(o.HTTPClient, inferenceDownUrl, nil)
 }
 
 func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
@@ -228,10 +155,6 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNo
 }
 
 func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.", types.PoC)
-		return
-	}
 	epochParams := o.GetParams().EpochParams
 
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
@@ -262,11 +185,6 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 }
 
 func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.ValidateReceivedBatches. NoOp is set. Skipping validation.", types.PoC)
-		return
-	}
-
 	epochParams := o.GetParams().EpochParams
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
