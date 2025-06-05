@@ -13,6 +13,7 @@ type MockClient struct {
 	GetPowStatusError    error
 	InitGenerateError    error
 	InitValidateError    error
+	ValiateBatchError    error
 	InferenceHealthError error
 	InferenceUpError     error
 	StartTrainingError   error
@@ -23,6 +24,7 @@ type MockClient struct {
 	GetPowStatusCalled    int
 	InitGenerateCalled    int
 	InitValidateCalled    int
+	ValidateBatchCalled   int
 	InferenceHealthCalled int
 	InferenceUpCalled     int
 	StartTrainingCalled   int
@@ -30,6 +32,7 @@ type MockClient struct {
 	// Capture parameters
 	LastInitDto         *InitDto
 	LastInitValidateDto *InitDto
+	LastValidateBatch   ProofBatch
 	LastInferenceModel  string
 	LastInferenceArgs   []string
 	LastTrainingParams  struct {
@@ -102,8 +105,14 @@ func (m *MockClient) InitValidate(dto InitDto) error {
 }
 
 func (m *MockClient) ValidateBatch(batch ProofBatch) error {
-	// TODO: impl me!
-	panic("implement me")
+	m.ValidateBatchCalled++
+	m.LastValidateBatch = batch
+	if m.ValiateBatchError != nil {
+		return m.ValiateBatchError
+	}
+	m.CurrentState = MlNodeState_POW
+	m.PowStatus = POW_VALIDATING
+	return nil
 }
 
 func (m *MockClient) InferenceHealth() (bool, error) {

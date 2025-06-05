@@ -2,8 +2,8 @@ package mlnode
 
 import (
 	cosmos_client "decentralized-api/cosmosclient"
-	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
+	"decentralized-api/mlnodeclient"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Server) postGeneratedBatches(ctx echo.Context) error {
-	var body poc.ProofBatch
+	var body mlnodeclient.ProofBatch
 
 	if err := ctx.Bind(&body); err != nil {
 		logging.Error("Failed to decode request body of type ProofBatch", types.PoC, "error", err)
@@ -37,7 +37,7 @@ func (s *Server) postGeneratedBatches(ctx echo.Context) error {
 }
 
 func (s *Server) postValidatedBatches(ctx echo.Context) error {
-	var body poc.ValidatedBatch
+	var body mlnodeclient.ValidatedBatch
 
 	if err := ctx.Bind(&body); err != nil {
 		logging.Error("Failed to decode request body of type ValidatedBatch", types.PoC, "error", err)
