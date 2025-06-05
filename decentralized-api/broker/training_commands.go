@@ -48,7 +48,7 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 	// Rank will be set within the command's Execute method based on worker.nodeId
 	cmd := StartTrainingNodeCommand{
 		TaskId:         c.taskId,
-		Participant:    broker.client.GetAddress(),
+		Participant:    broker.chainBridge.GetParticipantAddress(),
 		MasterNodeAddr: c.masterNodeAddress,
 		WorldSize:      c.worldSize,
 		NodeRanks:      c.nodeRanks,

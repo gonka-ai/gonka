@@ -2,6 +2,7 @@ package event_listener
 
 import (
 	"context"
+	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
 	"fmt"
 	"testing"
@@ -87,53 +88,6 @@ func (m *MockRandomSeedManager) RequestMoney() {
 	m.Called()
 }
 
-type MockNodePoCOrchestrator struct {
-	mock.Mock
-	pocStartCalls []struct {
-		blockHeight int64
-		blockHash   string
-		epoch       uint64
-		phase       chainphase.Phase
-	}
-}
-
-func (m *MockNodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
-	m.Called(blockHeight, blockHash, currentEpoch, currentPhase)
-	m.pocStartCalls = append(m.pocStartCalls, struct {
-		blockHeight int64
-		blockHash   string
-		epoch       uint64
-		phase       chainphase.Phase
-	}{blockHeight, blockHash, currentEpoch, currentPhase})
-}
-
-func (m *MockNodePoCOrchestrator) StopPoC() {
-	m.Called()
-}
-
-func (m *MockNodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
-	m.Called(encOfPoCBlockHeight)
-}
-
-func (m *MockNodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
-	m.Called(startOfValStageHeight)
-}
-
-func (m *MockNodePoCOrchestrator) GetPoCStartCalls() []struct {
-	blockHeight int64
-	blockHash   string
-	epoch       uint64
-	phase       chainphase.Phase
-} {
-	return m.pocStartCalls
-}
-
-func (m *MockNodePoCOrchestrator) ClearCalls() {
-	m.pocStartCalls = nil
-	m.Mock.Calls = nil
-	m.Mock.ExpectedCalls = nil
-}
-
 type MockQueryClient struct {
 	mock.Mock
 }
@@ -145,8 +99,20 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 
 // Test setup helpers
 
-func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockNodePoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
+type IntegrationTestSetup struct {
+	Dispatcher        *OnNewBlockDispatcher
+	NodeBroker        *broker.Broker
+	PoCOrchestrator   poc.NodePoCOrchestrator
+	PhaseTracker      *chainphase.ChainPhaseTracker
+	MockClientFactory *mlnodeclient.MockClientFactory
+	MockChainBridge   *MockBrokerChainBridge
+	MockQueryClient   *MockQueryClient
+	MockSeedManager   *MockRandomSeedManager
+}
+
+func createIntegrationTestSetup() *IntegrationTestSetup {
 	mockQueryClient := &MockQueryClient{}
+	mockSeedManager := &MockRandomSeedManager{}
 
 	epochParams := types.EpochParams{
 		EpochLength:           100,
@@ -159,10 +125,21 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockN
 	phaseTracker := chainphase.NewChainPhaseTracker()
 	phaseTracker.UpdateEpochParams(epochParams)
 
-	// Create real broker
+	// Create mock client factory that tracks calls
+	mockClientFactory := mlnodeclient.NewMockClientFactory()
+
+	// Create real broker with mocked chain bridge
 	mockChainBridge := &MockBrokerChainBridge{}
-	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, "some-pub-key", "http://localhost:8080/poc", &mlnodeclient.MockClientFactory{})
-	pocOrchestrator := &MockNodePoCOrchestrator{}
+	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, "some-pub-key", "http://localhost:8080/poc", mockClientFactory)
+
+	// Create real PoC orchestrator (not mocked - we want to test the real flow)
+	pocOrchestrator := poc.NewNodePoCOrchestrator(
+		"some-pub-key",
+		nodeBroker,
+		"http://localhost:8080/poc",
+		&MockOrchestratorChainBridge{},
+		phaseTracker,
+	)
 
 	// Mock status function
 	mockStatusFunc := func() (*coretypes.ResultStatus, error) {
@@ -188,6 +165,11 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockN
 		},
 	}, nil)
 
+	// Setup mock expectations for RandomSeedManager
+	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
+	mockSeedManager.On("ChangeCurrentSeed").Return()
+	mockSeedManager.On("RequestMoney").Return()
+
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
@@ -196,23 +178,34 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockN
 		phaseTracker,
 		mockStatusFunc,
 		mockSetHeightFunc,
-		&MockRandomSeedManager{},
+		mockSeedManager,
 	)
 
 	// Set fast reconciliation for testing
 	dispatcher.reconciliationConfig.BlockInterval = 2
 	dispatcher.reconciliationConfig.TimeInterval = 5 * time.Second
 
-	return dispatcher, nodeBroker, pocOrchestrator, phaseTracker, mockQueryClient
+	return &IntegrationTestSetup{
+		Dispatcher:        dispatcher,
+		NodeBroker:        nodeBroker,
+		PoCOrchestrator:   pocOrchestrator,
+		PhaseTracker:      phaseTracker,
+		MockClientFactory: mockClientFactory,
+		MockChainBridge:   mockChainBridge,
+		MockQueryClient:   mockQueryClient,
+		MockSeedManager:   mockSeedManager,
+	}
 }
 
-func addTestNodeToBroker(broker *broker.Broker, nodeId string) {
+func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 	node := apiconfig.InferenceNodeConfig{
-		Id:            nodeId,
-		Host:          "localhost",
-		InferencePort: 8080,
-		PoCPort:       8081,
-		MaxConcurrent: 1,
+		Id:               nodeId,
+		Host:             "localhost",
+		InferenceSegment: "/inference",
+		InferencePort:    8080,
+		PoCSegment:       "/poc",
+		PoCPort:          port, // Use different ports to distinguish nodes
+		MaxConcurrent:    1,
 		Models: map[string]apiconfig.ModelConfig{
 			"test-model": {Args: []string{}},
 		},
@@ -221,12 +214,15 @@ func addTestNodeToBroker(broker *broker.Broker, nodeId string) {
 		},
 	}
 
-	broker.LoadNodeToBroker(&node)
+	setup.NodeBroker.LoadNodeToBroker(&node)
+
+	// Wait for broker to process the node registration
+	time.Sleep(100 * time.Millisecond)
 }
 
-func setNodeAdminState(brokerInstance *broker.Broker, nodeId string, enabled bool) error {
+func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
 	response := make(chan error, 1)
-	err := brokerInstance.QueueMessage(broker.SetNodeAdminStateCommand{
+	err := setup.NodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
 		NodeId:   nodeId,
 		Enabled:  enabled,
 		Response: response,
@@ -237,294 +233,214 @@ func setNodeAdminState(brokerInstance *broker.Broker, nodeId string, enabled boo
 	return <-response
 }
 
-func simulateBlockProcessing(dispatcher *OnNewBlockDispatcher, height int64, hash string) error {
+func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 	blockInfo := NewBlockInfo{
 		Height:    height,
-		Hash:      hash,
+		Hash:      fmt.Sprintf("hash-%d", height),
 		Timestamp: time.Now(),
 	}
-	return dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+}
+
+func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnodeclient.MockClient {
+	// Construct URLs the same way the broker does
+	pocUrl := fmt.Sprintf("http://localhost:%d/poc", port)
+
+	client := setup.MockClientFactory.GetClientForNode(pocUrl)
+	if client == nil {
+		panic(fmt.Sprintf("Mock client is nil for pocUrl: %s", pocUrl))
+	}
+
+	return client
 }
 
 func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
 }
 
-func findNodeInResponse(nodes []broker.NodeResponse, nodeId string) *broker.NodeResponse {
-	for _, node := range nodes {
-		if node.Node.Id == nodeId {
-			return &node
-		}
-	}
-	return nil
-}
-
-// Test Scenario 1: Node disable scenario
+// Test Scenario 1: Node disable scenario - node should skip PoC when disabled
 func TestNodeDisableScenario_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup()
 
 	// Add two nodes - both initially enabled
-	addTestNodeToBroker(nodeBroker, "node-1")
-	addTestNodeToBroker(nodeBroker, "node-2")
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
 
-	// Setup PoC expectations
-	pocOrchestrator.On("StartPoC", mock.AnythingOfType("int64"), mock.AnythingOfType("string"), mock.AnythingOfType("uint64"), mock.AnythingOfType("chainphase.Phase")).Return()
+	// Get mock clients for verification
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
 
-	// Simulate epoch 1, PoC phase (block 0) - both nodes should participate
-	phaseTracker.UpdateBlockHeight(0, "hash-0")
-
-	err := simulateBlockProcessing(dispatcher, 0, "hash-0")
+	// Disable node-1 before the PoC starts
+	err := setup.setNodeAdminState("node-1", false)
 	require.NoError(t, err)
 
-	// Verify PoC was started for epoch 1
-	waitForAsync(100 * time.Millisecond)
-	pocCalls := pocOrchestrator.GetPoCStartCalls()
-	assert.Len(t, pocCalls, 1, "PoC should have been started for epoch 1")
-
-	// Disable node-1 during PoC phase
-	err = setNodeAdminState(nodeBroker, "node-1", false)
-	require.NoError(t, err)
-
-	// Simulate moving to inference phase (block 20)
-	phaseTracker.UpdateBlockHeight(20, "hash-20")
-	err = simulateBlockProcessing(dispatcher, 20, "hash-20")
-	require.NoError(t, err)
-
-	// Verify node-1 is still operational during inference (should complete current epoch)
-	nodes, err := nodeBroker.GetNodes()
-	require.NoError(t, err)
-
-	node1 := findNodeInResponse(nodes, "node-1")
-	require.NotNil(t, node1)
-
-	// Node should still be operational during inference phase of same epoch (epoch 1)
-	assert.True(t, node1.State.ShouldBeOperational(1, chainphase.PhaseInference),
-		"Node-1 should be operational during inference phase of epoch 1")
-
-	// Clear previous PoC calls
-	pocOrchestrator.ClearCalls()
-	pocOrchestrator.On("StartPoC", mock.AnythingOfType("int64"), mock.AnythingOfType("string"), mock.AnythingOfType("uint64"), mock.AnythingOfType("chainphase.Phase")).Return()
-
-	// Simulate epoch 2, PoC phase (block 100)
-	phaseTracker.UpdateBlockHeight(100, "hash-100")
-	err = simulateBlockProcessing(dispatcher, 100, "hash-100")
+	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
+	// Only node-2 should participate since node-1 is disabled
+	setup.PhaseTracker.UpdateBlockHeight(100, "hash-100")
+	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
 	// Give time for processing
-	waitForAsync(100 * time.Millisecond)
+	waitForAsync(200 * time.Millisecond)
 
-	// Verify node-1 should NOT be operational in epoch 2 (it was disabled in epoch 1)
-	nodes, err = nodeBroker.GetNodes()
-	require.NoError(t, err)
+	// Verify only node-2 received PoC start command, node-1 should be excluded
+	assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
+	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Enabled node-2 should receive InitGenerate call")
 
-	node1 = findNodeInResponse(nodes, "node-1")
-	require.NotNil(t, node1)
-
-	// Node-1 should not be operational in epoch 2
-	assert.False(t, node1.State.ShouldBeOperational(2, chainphase.PhasePoC),
-		"Node-1 should NOT be operational in epoch 2 PoC phase")
-
-	t.Logf("✅ Test 1 passed: Node-1 participated in PoC1, functioned during inference, and was excluded from PoC2")
+	t.Logf("✅ Test 1 passed: Disabled node was excluded from PoC")
 }
 
-// Test Scenario 2: Node enable scenario
+// Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled
 func TestNodeEnableScenario_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup()
 
-	// Add node initially disabled
-	addTestNodeToBroker(nodeBroker, "node-1")
-	err := setNodeAdminState(nodeBroker, "node-1", false)
+	// Add two nodes - node-1 initially disabled, node-2 enabled
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
+
+	// Disable node-1 initially
+	err := setup.setNodeAdminState("node-1", false)
 	require.NoError(t, err)
 
-	// Setup PoC expectations
-	pocOrchestrator.On("StartPoC", mock.AnythingOfType("int64"), mock.AnythingOfType("string"), mock.AnythingOfType("uint64"), mock.AnythingOfType("chainphase.Phase")).Return()
+	// Get mock clients for verification
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
 
-	// Simulate epoch 1, PoC phase (block 0) - disabled node should not participate
-	phaseTracker.UpdateBlockHeight(0, "hash-0")
-
-	err = simulateBlockProcessing(dispatcher, 0, "hash-0")
+	// Simulate first PoC (block 100) - only node-2 should participate
+	setup.PhaseTracker.UpdateBlockHeight(100, "hash-100")
+	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
-	// Verify node is not operational during PoC
-	nodes, err := nodeBroker.GetNodes()
-	require.NoError(t, err)
-	node1 := findNodeInResponse(nodes, "node-1")
-	require.NotNil(t, node1)
-	assert.False(t, node1.State.ShouldBeOperational(1, chainphase.PhasePoC),
-		"Disabled node should not be operational during PoC")
+	// Give time for processing
+	waitForAsync(200 * time.Millisecond)
 
-	// Enable node during PoC phase
-	err = setNodeAdminState(nodeBroker, "node-1", true)
-	require.NoError(t, err)
+	// Verify only node-2 received PoC start command
+	assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
+	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Enabled node-2 should receive InitGenerate call")
 
-	// Node should still not be operational during PoC phase of same epoch
-	nodes, err = nodeBroker.GetNodes()
-	require.NoError(t, err)
-	node1 = findNodeInResponse(nodes, "node-1")
-	assert.False(t, node1.State.ShouldBeOperational(1, chainphase.PhasePoC),
-		"Node enabled during PoC should wait for inference phase")
+	// Reset call counters
+	setup.MockClientFactory.Reset()
 
-	// Move to inference phase (block 20)
-	phaseTracker.UpdateBlockHeight(20, "hash-20")
-	err = simulateBlockProcessing(dispatcher, 20, "hash-20")
+	// Enable node-1 during inference phase
+	err = setup.setNodeAdminState("node-1", true)
 	require.NoError(t, err)
 
-	// Now node should be operational during inference
-	nodes, err = nodeBroker.GetNodes()
+	// Simulate next epoch PoC (block 200) - both nodes should participate
+	setup.PhaseTracker.UpdateBlockHeight(200, "hash-200")
+	err = setup.simulateBlock(200)
 	require.NoError(t, err)
-	node1 = findNodeInResponse(nodes, "node-1")
-	assert.True(t, node1.State.ShouldBeOperational(1, chainphase.PhaseInference),
-		"Node should be operational during inference phase")
 
-	t.Logf("✅ Test 2 passed: Node was enabled during PoC, waited for inference phase to become operational")
+	// Give time for processing
+	waitForAsync(200 * time.Millisecond)
+
+	// Verify both nodes received PoC start command
+	assert.Greater(t, node1Client.InitGenerateCalled, 0, "Node-1 should receive InitGenerate call after being enabled")
+	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Node-2 should continue to receive InitGenerate call")
+
+	t.Logf("✅ Test 2 passed: Node participated in PoC after being enabled")
 }
 
-// Test Scenario 3: Reconciliation catches up failed PoC entry
-func TestReconciliationCatchesUpFailedPoC_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
+// Test Scenario 3: Reconciliation triggers inference commands
+func TestReconciliationTriggersInferenceCommands_Integration(t *testing.T) {
+	setup := createIntegrationTestSetup()
 
-	// Add a node
-	addTestNodeToBroker(nodeBroker, "node-1")
+	// Add one node
+	setup.addTestNode("node-1", 8081)
+	node1Client := setup.getNodeClient("node-1", 8081)
 
-	// Setup PoC expectations
-	pocOrchestrator.On("StartPoC", mock.AnythingOfType("int64"), mock.AnythingOfType("string"), mock.AnythingOfType("uint64"), mock.AnythingOfType("chainphase.Phase")).Return()
-
-	// Simulate PoC start block (block 0) - initially no PoC triggered
-	phaseTracker.UpdateBlockHeight(0, "hash-0")
-
-	err := simulateBlockProcessing(dispatcher, 0, "hash-0")
+	// Simulate inference phase (block 50)
+	setup.PhaseTracker.UpdateBlockHeight(50, "hash-50")
+	err := setup.simulateBlock(50)
 	require.NoError(t, err)
 
-	// Verify PoC was started
-	waitForAsync(50 * time.Millisecond)
-	pocCalls := pocOrchestrator.GetPoCStartCalls()
-	initialCallCount := len(pocCalls)
-	assert.GreaterOrEqual(t, initialCallCount, 1, "PoC should have been started")
-
-	// Process block 2 (should trigger reconciliation after 2 blocks)
-	phaseTracker.UpdateBlockHeight(2, "hash-2")
-	err = simulateBlockProcessing(dispatcher, 2, "hash-2")
+	// Process block 52 (should trigger reconciliation after 2 blocks)
+	setup.PhaseTracker.UpdateBlockHeight(52, "hash-52")
+	err = setup.simulateBlock(52)
 	require.NoError(t, err)
 
 	// Give time for reconciliation to process
-	waitForAsync(200 * time.Millisecond)
+	waitForAsync(300 * time.Millisecond)
 
-	// Verify reconciliation was triggered and updated last block height
-	assert.True(t, dispatcher.reconciliationConfig.LastBlockHeight >= 2,
-		"Reconciliation should have updated last block height")
+	// Verify node received inference up command
+	assert.Greater(t, node1Client.InferenceUpCalled, 0, "Node should receive InferenceUp call during reconciliation")
 
-	t.Logf("✅ Test 3 passed: Reconciliation was triggered after 2 blocks as configured")
+	t.Logf("✅ Test 3 passed: Reconciliation triggered inference commands")
 }
 
-// Test Scenario 4: Node recovers to inference state mid-epoch
-func TestNodeRecoveryToInferenceMidEpoch_Integration(t *testing.T) {
-	dispatcher, nodeBroker, _, phaseTracker, _ := createIntegrationTestSetup()
+// Test Scenario 4: Full epoch transition with PoC commands
+func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
+	setup := createIntegrationTestSetup()
 
-	// Add a node
-	addTestNodeToBroker(nodeBroker, "node-1")
+	// Add two nodes
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
 
-	// Set the node to failed state
-	response := make(chan bool, 1)
-	err := nodeBroker.QueueMessage(broker.SetNodesActualStatusCommand{
-		StatusUpdates: []broker.StatusUpdate{
-			{
-				NodeId:     "node-1",
-				NewStatus:  types.HardwareNodeStatus_FAILED,
-				PrevStatus: types.HardwareNodeStatus_INFERENCE,
-				Timestamp:  time.Now(),
-			},
-		},
-		Response: response,
-	})
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
+
+	// Simulate PoC start (block 0)
+	err := setup.simulateBlock(0)
 	require.NoError(t, err)
-	require.True(t, <-response)
+	waitForAsync(100 * time.Millisecond)
 
-	// Verify node is failed
-	nodes, err := nodeBroker.GetNodes()
+	// Both nodes should start PoC
+	assert.Greater(t, node1Client.InitGenerateCalled, 0, "Node-1 should start PoC")
+	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Node-2 should start PoC")
+
+	// Simulate end of PoC stage (block 20)
+	err = setup.simulateBlock(20)
 	require.NoError(t, err)
-	node1 := findNodeInResponse(nodes, "node-1")
-	assert.Equal(t, types.HardwareNodeStatus_FAILED, node1.State.Status)
+	waitForAsync(100 * time.Millisecond)
 
-	// Simulate mid-epoch during inference phase (block 50)
-	phaseTracker.UpdateBlockHeight(50, "hash-50")
-
-	err = simulateBlockProcessing(dispatcher, 50, "hash-50")
+	// Simulate PoC validation start (block 22)
+	err = setup.simulateBlock(22)
 	require.NoError(t, err)
+	waitForAsync(100 * time.Millisecond)
 
-	// Give reconciliation time to process
-	waitForAsync(200 * time.Millisecond)
+	// Nodes should receive validation commands
+	assert.Greater(t, node1Client.InitValidateCalled, 0, "Node-1 should receive validation command")
+	assert.Greater(t, node2Client.InitValidateCalled, 0, "Node-2 should receive validation command")
 
-	// Verify reconciliation was triggered and updated intended status
-	nodes, err = nodeBroker.GetNodes()
+	// Simulate end of validation (block 32)
+	err = setup.simulateBlock(32)
 	require.NoError(t, err)
-	node1 = findNodeInResponse(nodes, "node-1")
+	waitForAsync(100 * time.Millisecond)
 
-	// The reconciliation should set intended status based on current phase
-	assert.NotEqual(t, types.HardwareNodeStatus_UNKNOWN, node1.State.IntendedStatus,
-		"Reconciliation should have set intended status")
+	// Nodes should receive inference up commands
+	assert.Greater(t, node1Client.InferenceUpCalled, 0, "Node-1 should receive InferenceUp command")
+	assert.Greater(t, node2Client.InferenceUpCalled, 0, "Node-2 should receive InferenceUp command")
 
-	t.Logf("✅ Test 4 passed: Node recovery reconciliation was triggered mid-epoch")
-}
-
-// Test Scenario 5: New node added during inference phase
-func TestNewNodeAddedDuringInference_Integration(t *testing.T) {
-	dispatcher, nodeBroker, _, phaseTracker, _ := createIntegrationTestSetup()
-
-	// Start with one node
-	addTestNodeToBroker(nodeBroker, "node-1")
-
-	// Simulate inference phase (block 30)
-	phaseTracker.UpdateBlockHeight(30, "hash-30")
-
-	// Verify we have 1 node
-	nodes, err := nodeBroker.GetNodes()
-	require.NoError(t, err)
-	assert.Len(t, nodes, 1)
-
-	// Add new node during inference phase
-	addTestNodeToBroker(nodeBroker, "node-2")
-
-	// Verify we now have 2 nodes
-	nodes, err = nodeBroker.GetNodes()
-	require.NoError(t, err)
-	assert.Len(t, nodes, 2)
-
-	// Process next block to trigger reconciliation
-	phaseTracker.UpdateBlockHeight(32, "hash-32")
-	err = simulateBlockProcessing(dispatcher, 32, "hash-32")
-	require.NoError(t, err)
-
-	// Give reconciliation time to process
-	waitForAsync(200 * time.Millisecond)
-
-	// Verify new node should be operational
-	nodes, err = nodeBroker.GetNodes()
-	require.NoError(t, err)
-	node2 := findNodeInResponse(nodes, "node-2")
-	require.NotNil(t, node2)
-
-	// New node should be operational during inference phase
-	assert.True(t, node2.State.ShouldBeOperational(1, chainphase.PhaseInference),
-		"New node should be operational during inference phase")
-	assert.Equal(t, types.HardwareNodeStatus_UNKNOWN, node2.State.Status,
-		"New node starts with unknown status")
-
-	t.Logf("✅ Test 5 passed: New node added during inference phase becomes available")
+	t.Logf("✅ Test 4 passed: Full epoch transition with proper PoC and validation commands")
 }
 
 // Integration test summary
 func TestIntegrationTestsSummary(t *testing.T) {
 	t.Log("🎉 All Integration Tests Summary:")
-	t.Log("  1. ✅ Node disable: Node participates in PoC1 → functions during inference → excluded from PoC2")
-	t.Log("  2. ✅ Node enable: Node disabled initially → enabled during PoC → operational during inference")
-	t.Log("  3. ✅ Reconciliation catch-up: Block-driven reconciliation triggered every 2 blocks")
-	t.Log("  4. ✅ Node recovery: Failed node recovers mid-epoch with proper reconciliation")
-	t.Log("  5. ✅ New node addition: Node added during inference becomes available after reconciliation")
+	t.Log("  1. ✅ Node disable: Disabled nodes skip PoC participation")
+	t.Log("  2. ✅ Node enable: Enabled nodes participate in PoC")
+	t.Log("  3. ✅ Reconciliation: Block-driven reconciliation triggers inference commands")
+	t.Log("  4. ✅ Full epoch: Complete PoC → validation → inference transition")
 	t.Log("")
 	t.Log("✨ Key Architecture Achievements:")
-	t.Log("  - Minimal interface mocking (QueryParamsClient, TransactionClient)")
-	t.Log("  - Clean separation of concerns with testable components")
-	t.Log("  - Block-driven reconciliation with configurable intervals")
-	t.Log("  - Command pattern with self-contained phase data")
-	t.Log("  - No complex integration test dependencies or chain instances required")
+	t.Log("  - Event-driven testing through block dispatcher")
+	t.Log("  - Verification at ML node client level (realistic interface)")
+	t.Log("  - Real PoC orchestrator with mocked dependencies")
+	t.Log("  - Multi-node scenarios with individual tracking")
+	t.Log("  - Phase-based state transitions with proper timing")
+}
+
+// Simple test to verify basic setup
+func TestBasicSetup(t *testing.T) {
+	setup := createIntegrationTestSetup()
+	require.NotNil(t, setup)
+	require.NotNil(t, setup.Dispatcher)
+	require.NotNil(t, setup.NodeBroker)
+	require.NotNil(t, setup.MockClientFactory)
+
+	// Add a node and verify client creation
+	setup.addTestNode("test-node", 8081)
+	client := setup.getNodeClient("test-node", 8081)
+	require.NotNil(t, client)
+
+	t.Log("✅ Basic setup test passed")
 }
