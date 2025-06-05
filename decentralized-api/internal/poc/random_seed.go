@@ -18,8 +18,18 @@ type RandomSeedManager interface {
 }
 
 type RandomSeedManagerImpl struct {
-	transactionRecorder *cosmosclient.InferenceCosmosClient
+	transactionRecorder cosmosclient.CosmosMessageClient
 	configManager       *apiconfig.ConfigManager
+}
+
+func NewRandomSeedManager(
+	transactionRecorder cosmosclient.CosmosMessageClient,
+	configManager *apiconfig.ConfigManager,
+) *RandomSeedManagerImpl {
+	return &RandomSeedManagerImpl{
+		transactionRecorder: transactionRecorder,
+		configManager:       configManager,
+	}
 }
 
 func (rsm *RandomSeedManagerImpl) GenerateSeed(blockHeight int64) {
@@ -82,7 +92,7 @@ func (rsm *RandomSeedManagerImpl) RequestMoney() {
 
 func createNewSeed(
 	blockHeight int64,
-	transactionRecorder *cosmosclient.InferenceCosmosClient,
+	transactionRecorder cosmosclient.CosmosMessageClient,
 ) (*apiconfig.SeedInfo, error) {
 	newSeed := rand.Int63()
 	newHeight := blockHeight

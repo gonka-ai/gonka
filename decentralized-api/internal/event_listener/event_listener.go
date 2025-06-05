@@ -63,7 +63,7 @@ func NewEventListener(
 		nodeBroker,
 		configManager,
 		nodePocOrchestrator,
-		transactionRecorder,
+		&transactionRecorder,
 		phaseTracker,
 	)
 

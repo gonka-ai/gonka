@@ -90,6 +90,7 @@ func NewOnNewBlockDispatcher(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
 	setHeightFunc SetHeightFunc,
+	randomSeedManager poc.RandomSeedManager,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:          nodeBroker,
@@ -101,8 +102,9 @@ func NewOnNewBlockDispatcher(
 			TimeInterval:  30 * time.Second, // OR every 30 seconds
 			LastTime:      time.Now(),
 		},
-		getStatusFunc: getStatusFunc,
-		setHeightFunc: setHeightFunc,
+		getStatusFunc:     getStatusFunc,
+		setHeightFunc:     setHeightFunc,
+		randomSeedManager: randomSeedManager,
 	}
 }
 
@@ -112,7 +114,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
-	cosmosClient cosmosclient.InferenceCosmosClient,
+	cosmosClient cosmosclient.CosmosMessageClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 ) *OnNewBlockDispatcher {
 	// Adapt the cosmos client to our minimal interfaces
@@ -125,6 +127,8 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		return getStatus(url)
 	}
 
+	randomSeedManager := poc.NewRandomSeedManager(cosmosClient, configManager)
+
 	return NewOnNewBlockDispatcher(
 		nodeBroker,
 		nodePocOrchestrator,
@@ -132,6 +136,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		phaseTracker,
 		getStatusFunc,
 		setHeightFunc,
+		randomSeedManager,
 	)
 }
 

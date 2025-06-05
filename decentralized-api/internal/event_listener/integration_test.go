@@ -19,6 +19,21 @@ import (
 )
 
 // Mock implementations using minimal interfaces
+type MockRandomSeedManager struct {
+	mock.Mock
+}
+
+func (m *MockRandomSeedManager) GenerateSeed(blockHeight int64) {
+	m.Called(blockHeight)
+}
+
+func (m *MockRandomSeedManager) ChangeCurrentSeed() {
+	m.Called()
+}
+
+func (m *MockRandomSeedManager) RequestMoney() {
+	m.Called()
+}
 
 type MockQueryClient struct {
 	mock.Mock
@@ -134,6 +149,7 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 		phaseTracker,
 		mockStatusFunc,
 		mockSetHeightFunc,
+		&MockRandomSeedManager{},
 	)
 
 	// Set fast reconciliation for testing
