@@ -23,7 +23,16 @@ const (
 	PoCBatchesPath    = "/v1/poc-batches"
 )
 
-type NodePoCOrchestrator struct {
+type NodePoCOrchestrator interface {
+	GetParams() *types.Params
+	SetParams(params *types.Params)
+	StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase)
+	StopPoC()
+	MoveToValidationStage(encOfPoCBlockHeight int64)
+	ValidateReceivedBatches(startOfValStageHeight int64)
+}
+
+type NodePoCOrchestratorImpl struct {
 	pubKey       string
 	HTTPClient   *http.Client
 	nodeBroker   *broker.Broker
@@ -34,8 +43,8 @@ type NodePoCOrchestrator struct {
 	sync         sync.Mutex
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, parameters *types.Params) *NodePoCOrchestrator {
-	return &NodePoCOrchestrator{
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, parameters *types.Params) NodePoCOrchestrator {
+	return &NodePoCOrchestratorImpl{
 		pubKey: pubKey,
 		HTTPClient: &http.Client{
 			Timeout: 180 * time.Second,
@@ -48,23 +57,23 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 	}
 }
 
-func (o *NodePoCOrchestrator) GetParams() *types.Params {
+func (o *NodePoCOrchestratorImpl) GetParams() *types.Params {
 	o.sync.Lock()
 	defer o.sync.Unlock()
 	return o.parameters
 }
 
-func (o *NodePoCOrchestrator) SetParams(params *types.Params) {
+func (o *NodePoCOrchestratorImpl) SetParams(params *types.Params) {
 	o.sync.Lock()
 	defer o.sync.Unlock()
 	o.parameters = params
 }
 
-func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
+func (o *NodePoCOrchestratorImpl) getPocBatchesCallbackUrl() string {
 	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
 }
 
-func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
+func (o *NodePoCOrchestratorImpl) getPocValidateCallbackUrl() string {
 	// For now the URl is the same, the node inference server appends "/validated" to the URL
 	//  or "/generated" (in case of init-generate)
 	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
@@ -112,7 +121,7 @@ var TestNetParams = Params{
 	SeqLen:           16,
 }
 
-func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
+func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase chainphase.Phase) {
 	command := broker.StartPocCommand{
 		BlockHeight:  blockHeight,
 		BlockHash:    blockHash,
@@ -132,7 +141,7 @@ func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string, curr
 	logging.Info("NodePoCOrchestrator.Start. Start PoC command response", types.PoC, "success", success)
 }
 
-func (o *NodePoCOrchestrator) StopPoC() {
+func (o *NodePoCOrchestratorImpl) StopPoC() {
 	command := broker.NewInferenceUpAllCommand()
 	err := o.nodeBroker.QueueMessage(command)
 	if err != nil {
@@ -144,7 +153,7 @@ func (o *NodePoCOrchestrator) StopPoC() {
 	logging.Info("NodePoCOrchestrator.Stop. Inference up command response", types.PoC, "success", success)
 }
 
-func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
+func (o *NodePoCOrchestratorImpl) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
 	initDto := mlnodeclient.BuildInitDto(blockHeight, o.pubKey, totalNodes, int64(node.NodeNum), blockHash, o.getPocValidateCallbackUrl())
 	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
 	if err != nil {
@@ -154,7 +163,7 @@ func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNo
 	return utils.SendPostJsonRequest(o.HTTPClient, initUrl, initDto)
 }
 
-func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
+func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	epochParams := o.GetParams().EpochParams
 
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
@@ -184,7 +193,7 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 	}
 }
 
-func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
+func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	epochParams := o.GetParams().EpochParams
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
 	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
@@ -238,7 +247,7 @@ func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int6
 }
 
 // FIXME: copying ;( doesn't look good for large PoCBatch structures
-func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.Node, batch ProofBatch) (*http.Response, error) {
+func (o *NodePoCOrchestratorImpl) sendValidateBatchRequest(node *broker.Node, batch ProofBatch) (*http.Response, error) {
 	validateBatchUrl, err := url.JoinPath(node.PoCUrl(), ValidateBatchPath)
 	if err != nil {
 		return nil, err
@@ -247,7 +256,7 @@ func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.Node, batch 
 	return utils.SendPostJsonRequest(o.HTTPClient, validateBatchUrl, batch)
 }
 
-func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
+func (o *NodePoCOrchestratorImpl) getBlockHash(height int64) (string, error) {
 	client, err := cosmos_client.NewRpcClient(o.chainNodeUrl)
 	if err != nil {
 		return "", err

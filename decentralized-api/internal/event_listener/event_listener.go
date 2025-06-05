@@ -38,7 +38,6 @@ const (
 type EventListener struct {
 	nodeBroker          *broker.Broker
 	configManager       *apiconfig.ConfigManager
-	nodePocOrchestrator *poc.NodePoCOrchestrator
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
@@ -51,7 +50,7 @@ type EventListener struct {
 
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	nodePocOrchestrator poc.NodePoCOrchestrator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
@@ -71,7 +70,6 @@ func NewEventListener(
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
 		configManager:       configManager,
-		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
 		phaseTracker:        phaseTracker,

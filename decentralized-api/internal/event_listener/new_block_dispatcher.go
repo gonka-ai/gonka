@@ -64,7 +64,7 @@ type MlNodeReconciliationConfig struct {
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
-	nodePocOrchestrator  *poc.NodePoCOrchestrator
+	nodePocOrchestrator  poc.NodePoCOrchestrator
 	queryClient          QueryClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
@@ -85,7 +85,7 @@ type SyncInfo struct {
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
-	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	nodePocOrchestrator poc.NodePoCOrchestrator,
 	queryClient QueryClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
@@ -113,7 +113,7 @@ func NewOnNewBlockDispatcher(
 func NewOnNewBlockDispatcherFromCosmosClient(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	nodePocOrchestrator poc.NodePoCOrchestrator,
 	cosmosClient cosmosclient.CosmosMessageClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 ) *OnNewBlockDispatcher {
