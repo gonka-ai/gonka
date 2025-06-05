@@ -6,6 +6,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
 	"errors"
 	"fmt"
 	"reflect"
@@ -30,7 +31,6 @@ TRAINING = 3;
 // This abstraction allows for easier testing and isolates the broker from the specifics
 // of the cosmos client implementation.
 type BrokerChainBridge interface {
-	GetParticipantAddress() string
 	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
 	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
 }
@@ -41,10 +41,6 @@ type BrokerChainBridgeImpl struct {
 
 func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient) BrokerChainBridge {
 	return &BrokerChainBridgeImpl{client: client}
-}
-
-func (b *BrokerChainBridgeImpl) GetParticipantAddress() string {
-	return b.client.GetAddress()
 }
 
 func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
@@ -67,7 +63,7 @@ type Broker struct {
 	chainBridge         BrokerChainBridge
 	nodeWorkGroup       *NodeWorkGroup
 	phaseTracker        *chainphase.ChainPhaseTracker
-	pubKey              string
+	participantInfo     participant.CurrenParticipantInfo
 	callbackUrl         string
 	mlNodeClientFactory mlnodeclient.ClientFactory
 }
@@ -174,13 +170,13 @@ type NodeResponse struct {
 	State *NodeState `json:"state"`
 }
 
-func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, pubKey string, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
+func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
 	broker := &Broker{
 		commands:            make(chan Command, 10000),
 		nodes:               make(map[string]*NodeWithState),
 		chainBridge:         chainBridge,
 		phaseTracker:        phaseTracker,
-		pubKey:              pubKey,
+		participantInfo:     participantInfo,
 		callbackUrl:         callbackUrl,
 		mlNodeClientFactory: clientFactory,
 	}
@@ -196,19 +192,22 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	return broker
 }
 
-func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) {
+func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *apiconfig.InferenceNodeConfig {
 	if node == nil {
-		return
+		return nil
 	}
 
+	responseChan := make(chan *apiconfig.InferenceNodeConfig, 2)
 	err := b.QueueMessage(RegisterNode{
 		Node:     *node,
-		Response: make(chan *apiconfig.InferenceNodeConfig, 2),
+		Response: responseChan,
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
 		panic(err)
 	}
+
+	return responseChan
 }
 
 func nodeSyncWorker(broker *Broker) {
@@ -529,7 +528,7 @@ func (b *Broker) syncNodes() {
 
 func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode) types.MsgSubmitHardwareDiff {
 	var diff types.MsgSubmitHardwareDiff
-	diff.Creator = b.chainBridge.GetParticipantAddress()
+	diff.Creator = b.participantInfo.GetAddress()
 
 	for id, localNode := range b.nodes {
 		localHWNode := convertInferenceNodeToHardwareNode(localNode)
@@ -733,7 +732,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 						needsReconciliation[nodeId] = StartPoCNodeCommand{
 							BlockHeight: pocHeight,
 							BlockHash:   pocHash,
-							PubKey:      b.pubKey,
+							PubKey:      b.participantInfo.GetPubKey(),
 							CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
 							TotalNodes:  totalNodes,
 						}

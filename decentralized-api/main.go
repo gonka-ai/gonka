@@ -20,7 +20,7 @@ import (
 
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
-	"decentralized-api/participant_registration"
+	"decentralized-api/participant"
 	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 )
 
 func main() {
@@ -69,14 +68,13 @@ func main() {
 
 	chainPhaseTracker := chainphase.NewChainPhaseTracker()
 
-	pubKey, err := recorder.Account.Record.GetPubKey()
+	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
 	if err != nil {
-		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
+		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
-	pubKeyString := utils.PubKeyToHexString(pubKey)
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder)
-	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, pubKeyString, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
+	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
@@ -89,18 +87,18 @@ func main() {
 	}
 	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
-	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
+	if err := participant.RegisterParticipantIfNeeded(recorder, config); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
 
 	logging.Debug("Initializing PoC orchestrator",
 		types.PoC, "name", recorder.Account.Name,
-		"address", recorder.Address,
-		"pubkey", pubKeyString)
+		"address", participantInfo.GetAddress(),
+		"pubkey", participantInfo.GetPubKey())
 
 	nodePocOrchestrator := poc.NewNodePoCOrchestratorForCosmosChain(
-		pubKeyString,
+		participantInfo.GetPubKey(),
 		nodeBroker,
 		config.GetApiConfig().PoCCallbackUrl,
 		config.GetChainNodeConfig().Url,

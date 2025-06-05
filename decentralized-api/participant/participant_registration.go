@@ -1,12 +1,11 @@
-package participant_registration
+package participant
 
 import (
 	"bytes"
 	"context"
 	"decentralized-api/apiconfig"
-	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/internal/server/public"
+	"decentralized-api/internal/server/public_entities"
 	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
@@ -42,7 +41,7 @@ func participantExists(recorder cosmosclient.CosmosMessageClient) (bool, error) 
 	response, err := queryClient.Participant(*recorder.GetContext(), request)
 	if err != nil {
 		if strings.Contains(err.Error(), "code = NotFound") {
-			logging.Info("Participant does not exist", types.Participants, "address", recorder.GetAddress(), "err", err)
+			logging.Info("Participant does not exist", types.Participants, "Address", recorder.GetAddress(), "err", err)
 			return false, nil
 		} else {
 			return false, err
@@ -82,15 +81,15 @@ func waitForFirstBlock(client *rpcclient.HTTP, timeout time.Duration) error {
 	}
 }
 
-func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func RegisterParticipantIfNeeded(recorder cosmosclient.CosmosMessageClient, config *apiconfig.ConfigManager) error {
 	if config.GetChainNodeConfig().IsGenesis {
-		return registerGenesisParticipant(recorder, config, nodeBroker)
+		return registerGenesisParticipant(recorder, config)
 	} else {
-		return registerJoiningParticipant(recorder, config, nodeBroker)
+		return registerJoiningParticipant(recorder, config)
 	}
 }
 
-func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager) error {
 	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
 		logging.Info("Genesis participant already exists", types.Participants)
 		return nil
@@ -120,7 +119,7 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	return recorder.SubmitNewParticipant(msg)
 }
 
-func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager, nodeBroker *broker.Broker) error {
+func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, configManager *apiconfig.ConfigManager) error {
 	if exists, err := participantExistsWithWait(recorder, configManager.GetChainNodeConfig().Url); exists {
 		logging.Info("Participant already exists, skipping registration", types.Participants)
 		return nil
@@ -139,11 +138,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("Failed to create worker key: %w", err)
 	}
 
-	uniqueModelsList, err := getUniqueModels(nodeBroker)
-	if err != nil {
-		return fmt.Errorf("Failed to get unique models: %w", err)
-	}
-
 	address := recorder.GetAddress()
 	pubKey, err := recorder.GetAccount().Record.GetPubKey()
 	if err != nil {
@@ -155,12 +149,11 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		"Registering joining participant",
 		types.Participants, "validatorKey", validatorKeyString,
 		"Url", configManager.GetApiConfig().PublicUrl,
-		"Models", uniqueModelsList,
 		"Address", address,
 		"PubKey", pubKeyString,
 	)
 
-	requestBody := public.SubmitUnfundedNewParticipantDto{
+	requestBody := public_entities.SubmitUnfundedNewParticipantDto{
 		Address:      address,
 		Url:          configManager.GetApiConfig().PublicUrl,
 		ValidatorKey: validatorKeyString,
@@ -197,25 +190,6 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("received non-OK response: %s", resp.Status)
 	}
 	return nil
-}
-
-func getUniqueModels(nodeBroker *broker.Broker) ([]string, error) {
-	nodes, err := nodeBroker.GetNodes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes from broker: %w", err)
-	}
-
-	uniqueModelsSet := make(map[string]bool)
-	for _, node := range nodes {
-		for model, _ := range node.Node.Models {
-			uniqueModelsSet[model] = true
-		}
-	}
-	var uniqueModelsList []string
-	for model := range uniqueModelsSet {
-		uniqueModelsList = append(uniqueModelsList, model)
-	}
-	return uniqueModelsList, nil
 }
 
 func getValidatorKey(chainNodeUrl string) (crypto.PubKey, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
 	"fmt"
 	"testing"
 	"time"
@@ -130,7 +131,11 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 
 	// Create real broker with mocked chain bridge
 	mockChainBridge := &MockBrokerChainBridge{}
-	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, "some-pub-key", "http://localhost:8080/poc", mockClientFactory)
+	participantInfo := participant.CosmosInfo{
+		Address: "some-address",
+		PubKey:  "some-pub-key",
+	}
+	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory)
 
 	// Create real PoC orchestrator (not mocked - we want to test the real flow)
 	pocOrchestrator := poc.NewNodePoCOrchestrator(
@@ -214,10 +219,10 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 		},
 	}
 
-	setup.NodeBroker.LoadNodeToBroker(&node)
+	responseChan := setup.NodeBroker.LoadNodeToBroker(&node)
 
-	// Wait for broker to process the node registration
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the node to be loaded
+	_ = <-responseChan
 }
 
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
@@ -254,8 +259,55 @@ func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnod
 	return client
 }
 
+func (setup *IntegrationTestSetup) getNode(nodeId string) (*broker.Node, *broker.NodeState) {
+	nodes, err := setup.NodeBroker.GetNodes()
+	if err != nil {
+		panic(err)
+	}
+
+	for _, node := range nodes {
+		if node.Node.Id == nodeId {
+			return node.Node, node.State
+		}
+	}
+
+	panic("node not found")
+}
+
 func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
+}
+
+func TestInferenceReconciliation(t *testing.T) {
+	setup := createIntegrationTestSetup()
+
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
+
+	_, nodeState1 := setup.getNode("node-1")
+	_, nodeState2 := setup.getNode("node-2")
+
+	require.Equal(t, nodeState1.Status, types.HardwareNodeStatus_UNKNOWN)
+	require.Equal(t, nodeState2.Status, types.HardwareNodeStatus_UNKNOWN)
+}
+
+func TestRegularPocScenario(t *testing.T) {
+	setup := createIntegrationTestSetup()
+
+	// Add two nodes - both initially enabled
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
+
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
+
+	for i := 1; i <= 100; i++ {
+		err := setup.simulateBlock(int64(i))
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, node1Client.InitGenerateCalled, 1)
+	require.Equal(t, node2Client.InitGenerateCalled, 1)
 }
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
