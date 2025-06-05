@@ -21,6 +21,15 @@ import (
 	"google.golang.org/grpc"
 )
 
+var epochParams = types.EpochParams{
+	EpochLength:           100,
+	EpochShift:            0,
+	PocStageDuration:      20,
+	PocExchangeDuration:   2,
+	PocValidationDelay:    2,
+	PocValidationDuration: 10,
+}
+
 // Mock implementations using minimal interfaces
 type MockOrchestratorChainBridge struct {
 }
@@ -115,14 +124,6 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
-	epochParams := types.EpochParams{
-		EpochLength:           100,
-		EpochShift:            0,
-		PocStageDuration:      20,
-		PocExchangeDuration:   2,
-		PocValidationDelay:    2,
-		PocValidationDuration: 10,
-	}
 	phaseTracker := chainphase.NewChainPhaseTracker()
 	phaseTracker.UpdateEpochParams(epochParams)
 
@@ -287,8 +288,22 @@ func TestInferenceReconciliation(t *testing.T) {
 	_, nodeState1 := setup.getNode("node-1")
 	_, nodeState2 := setup.getNode("node-2")
 
-	require.Equal(t, nodeState1.Status, types.HardwareNodeStatus_UNKNOWN)
-	require.Equal(t, nodeState2.Status, types.HardwareNodeStatus_UNKNOWN)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.IntendedStatus)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.IntendedStatus)
+
+	for i := 1; i <= 5; i++ {
+		err := setup.simulateBlock(int64(i))
+		require.NoError(t, err)
+	}
+
+	time.Sleep(100 * time.Millisecond) // Wait for async reconcile command processing
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.IntendedStatus)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.IntendedStatus)
 }
 
 func TestRegularPocScenario(t *testing.T) {
@@ -298,16 +313,28 @@ func TestRegularPocScenario(t *testing.T) {
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
+	_, nodeState1 := setup.getNode("node-1")
+	_, nodeState2 := setup.getNode("node-2")
+
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
-	for i := 1; i <= 100; i++ {
-		require.Equal(t, node1Client.InitGenerateCalled, 0)
-		require.Equal(t, node2Client.InitGenerateCalled, 0)
+	for i := int64(1); i <= epochParams.EpochLength; i++ {
+		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node1Client.StopCalled, i)
+		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node2Client.StopCalled, i)
+		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
+		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
 	}
 
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
+
+	require.Equal(t, node1Client.StopCalled, 2)
+	require.Equal(t, node1Client.StopCalled, 2)
 	require.Equal(t, node1Client.InitGenerateCalled, 1)
 	require.Equal(t, node2Client.InitGenerateCalled, 1)
 }

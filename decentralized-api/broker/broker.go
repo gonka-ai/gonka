@@ -648,26 +648,6 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 	return true
 }
 
-func nodeReconciliationWorker(broker *Broker) {
-	ticker := time.NewTicker(5 * time.Second) // Reconcile every 2 minutes
-	defer ticker.Stop()
-
-	for range ticker.C {
-		logging.Debug("Starting node state reconciliation", types.Nodes)
-		response := make(chan bool, 1)
-		err := broker.QueueMessage(ReconcileNodesCommand{
-			Response: response,
-		})
-
-		if err != nil {
-			logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
-			continue
-		}
-
-		// We don't need to wait for the response here
-	}
-}
-
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	// Get current phase and epoch from the tracker
 	var intendedStatus types.HardwareNodeStatus
