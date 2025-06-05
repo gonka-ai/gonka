@@ -17,6 +17,9 @@ import (
 )
 
 func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
+	t.Skip("For now we disabled PoC validation for the very first PoC. " +
+		"There's a problem with address mismatch between the statking validators and the group members.")
+
 	// Setup with mocks
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 

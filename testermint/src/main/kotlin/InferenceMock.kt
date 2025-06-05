@@ -47,7 +47,8 @@ class InferenceMock(port: Int, val name: String) {
               "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
               "block_height": {{jsonPath originalRequest.body '$.block_height'}},
               "nonces": $nonces,
-              "dist": $dist
+              "dist": $dist,
+              "received_dist": $dist
             }
         """.trimIndent()
         this.givenThat(
@@ -72,6 +73,47 @@ class InferenceMock(port: Int, val name: String) {
                 )
         )
 
+    }
 
+    fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState") {
+        val nonces = (1..weight).toList()
+        val dist = nonces.map { it.toDouble() / weight }
+        val callbackBody = """
+            {
+              "public_key": "{{jsonPath originalRequest.body '$.public_key'}}",
+              "block_hash": "{{jsonPath originalRequest.body '$.block_hash'}}",
+              "block_height": {{jsonPath originalRequest.body '$.block_height'}},
+              "nonces": $nonces,
+              "dist": $dist,
+              "received_dist": $dist,
+              "r_target": {{jsonPath originalRequest.body '$.r_target'}},
+              "fraud_threshold": {{jsonPath originalRequest.body '$.fraud_threshold'}},
+              "n_invalid": 0,
+              "probability_honest": 0.99,
+              "fraud_detected": false
+            }
+        """.trimIndent()
+
+        this.givenThat(
+            post(urlEqualTo("/api/v1/pow/init/validate"))
+                .inScenario(scenarioName)
+                .whenScenarioStateIs("POW") // Assuming this is the required state as per validate_poc.json
+                .willReturn(
+                    aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("") // Or any immediate response body if needed
+                )
+                .withPostServeAction(
+                    "webhook",
+                    mapOf(
+                        "method" to "POST",
+                        "url" to "{{jsonPath originalRequest.body '$.url'}}/validated",
+                        "headers" to mapOf("Content-Type" to "application/json"),
+                        "delay" to mapOf("type" to "fixed", "milliseconds" to 5000), // Adjust delay as needed
+                        "body" to callbackBody
+                    )
+                )
+        )
     }
 }
