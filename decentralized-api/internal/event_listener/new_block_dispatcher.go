@@ -73,7 +73,6 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	nodePocOrchestrator  *poc.NodePoCOrchestrator
 	queryClient          QueryClient
-	transactionClient    TransactionClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
@@ -95,7 +94,6 @@ func NewOnNewBlockDispatcher(
 	configManager *apiconfig.ConfigManager,
 	nodePocOrchestrator *poc.NodePoCOrchestrator,
 	queryClient QueryClient,
-	transactionClient TransactionClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
 ) *OnNewBlockDispatcher {
@@ -104,7 +102,6 @@ func NewOnNewBlockDispatcher(
 		configManager:       configManager,
 		nodePocOrchestrator: nodePocOrchestrator,
 		queryClient:         queryClient,
-		transactionClient:   transactionClient,
 		phaseTracker:        phaseTracker,
 		reconciliationConfig: MlNodeReconciliationConfig{
 			BlockInterval: 5,                // Every 5 blocks
@@ -126,14 +123,12 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 ) *OnNewBlockDispatcher {
 	// Adapt the cosmos client to our minimal interfaces
 	queryClient := cosmosClient.NewInferenceQueryClient()
-	transactionClient := &cosmosClientAdapter{cosmosClient: cosmosClient}
 
 	return NewOnNewBlockDispatcher(
 		nodeBroker,
 		configManager,
 		nodePocOrchestrator,
 		queryClient,
-		transactionClient,
 		phaseTracker,
 		getStatus,
 	)

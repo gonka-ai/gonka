@@ -30,25 +30,6 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
-type MockTransactionClient struct {
-	mock.Mock
-}
-
-func (m *MockTransactionClient) SignBytes(data []byte) ([]byte, error) {
-	args := m.Called(data)
-	return args.Get(0).([]byte), args.Error(1)
-}
-
-func (m *MockTransactionClient) SubmitSeed(msg *inference.MsgSubmitSeed) error {
-	args := m.Called(msg)
-	return args.Error(0)
-}
-
-func (m *MockTransactionClient) ClaimRewards(msg *inference.MsgClaimRewards) error {
-	args := m.Called(msg)
-	return args.Error(0)
-}
-
 // FakeCosmosClient implements the minimal interface needed by ChainPhaseTracker
 type FakeCosmosClient struct{}
 
@@ -235,11 +216,10 @@ func (t *TestConfigManager) GetPreviousSeed() apiconfig.SeedInfo {
 
 // Test setup helpers
 
-func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockPoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient, *MockTransactionClient) {
+func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockPoCOrchestrator, *chainphase.ChainPhaseTracker, *MockQueryClient) {
 	configManager := NewTestConfigManager()
 	configManagerAdapter := &ConfigManagerAdapter{configManager}
 	mockQueryClient := &MockQueryClient{}
-	mockTransactionClient := &MockTransactionClient{}
 	mockPoCOrchestrator := &MockPoCOrchestrator{}
 	mockPoCOrchestratorAdapter := &MockPoCOrchestratorAdapter{mockPoCOrchestrator}
 
@@ -265,17 +245,12 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 		},
 	}, nil)
 
-	mockTransactionClient.On("SignBytes", mock.Anything).Return([]byte("test-signature"), nil)
-	mockTransactionClient.On("SubmitSeed", mock.Anything).Return(nil)
-	mockTransactionClient.On("ClaimRewards", mock.Anything).Return(nil)
-
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
 		(*apiconfig.ConfigManager)(configManagerAdapter),
 		(*poc.NodePoCOrchestrator)(mockPoCOrchestratorAdapter),
 		mockQueryClient,
-		mockTransactionClient,
 		phaseTracker,
 		mockStatusFunc,
 	)
@@ -284,7 +259,7 @@ func createIntegrationTestSetup() (*OnNewBlockDispatcher, *broker.Broker, *MockP
 	dispatcher.reconciliationConfig.BlockInterval = 2
 	dispatcher.reconciliationConfig.TimeInterval = 5 * time.Second
 
-	return dispatcher, nodeBroker, mockPoCOrchestrator, phaseTracker, mockQueryClient, mockTransactionClient
+	return dispatcher, nodeBroker, mockPoCOrchestrator, phaseTracker, mockQueryClient
 }
 
 func addTestNodeToBroker(broker *broker.Broker, nodeId string) {
@@ -342,7 +317,7 @@ func findNodeInResponse(nodes []broker.NodeResponse, nodeId string) *broker.Node
 
 // Test Scenario 1: Node disable scenario
 func TestNodeDisableScenario_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _, _ := createIntegrationTestSetup()
+	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
 
 	// Add two nodes - both initially enabled
 	addTestNodeToBroker(nodeBroker, "node-1")
@@ -411,7 +386,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 // Test Scenario 2: Node enable scenario
 func TestNodeEnableScenario_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _, _ := createIntegrationTestSetup()
+	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
 
 	// Add node initially disabled
 	addTestNodeToBroker(nodeBroker, "node-1")
@@ -464,7 +439,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 
 // Test Scenario 3: Reconciliation catches up failed PoC entry
 func TestReconciliationCatchesUpFailedPoC_Integration(t *testing.T) {
-	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _, _ := createIntegrationTestSetup()
+	dispatcher, nodeBroker, pocOrchestrator, phaseTracker, _ := createIntegrationTestSetup()
 
 	// Add a node
 	addTestNodeToBroker(nodeBroker, "node-1")
@@ -502,7 +477,7 @@ func TestReconciliationCatchesUpFailedPoC_Integration(t *testing.T) {
 
 // Test Scenario 4: Node recovers to inference state mid-epoch
 func TestNodeRecoveryToInferenceMidEpoch_Integration(t *testing.T) {
-	dispatcher, nodeBroker, _, phaseTracker, _, _ := createIntegrationTestSetup()
+	dispatcher, nodeBroker, _, phaseTracker, _ := createIntegrationTestSetup()
 
 	// Add a node
 	addTestNodeToBroker(nodeBroker, "node-1")
