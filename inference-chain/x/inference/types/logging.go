@@ -23,6 +23,7 @@ const (
 	Training        = 17
 	Stages          = 18
 	Balances        = 19
+	Stat            = 20
 )
 
 func (s SubSystem) String() string {
