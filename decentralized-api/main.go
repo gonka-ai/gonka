@@ -102,15 +102,17 @@ func main() {
 	tendermintClient := cosmosclient.TendermintClient{
 		ChainNodeUrl: config.GetChainNodeConfig().Url,
 	}
-	// FIXME: What context to pass?
-	ctx := context.Background()
+	// Create a cancellable context for the entire system
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure resources are cleaned up
+
 	training.NewAssigner(recorder, &tendermintClient, ctx)
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, cancel)
 	// TODO: propagate trainingExecutor
-	go listener.Start(context.Background())
+	go listener.Start(ctx)
 
 	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
@@ -129,6 +131,7 @@ func main() {
 	adminServer.Start(addr)
 
 	<-ctx.Done()
+	os.Exit(1) // Exit with an error for cosmovisor to restart the process
 }
 
 func returnStatus(config *apiconfig.ConfigManager) {
