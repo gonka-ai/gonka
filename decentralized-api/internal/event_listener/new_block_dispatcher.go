@@ -225,7 +225,6 @@ func (d *OnNewBlockDispatcher) updatePhaseAndGetInfo(blockInfo NewBlockInfo, net
 	// Update phase tracker with pure functions
 	d.phaseTracker.UpdateEpochParams(*networkInfo.EpochParams)
 	d.phaseTracker.UpdateBlockHeight(blockInfo.Height, blockInfo.Hash)
-	d.phaseTracker.SetSyncStatus(networkInfo.IsSynced)
 
 	// Get current phase and epoch
 	currentPhase, _ := d.phaseTracker.GetCurrentPhase()

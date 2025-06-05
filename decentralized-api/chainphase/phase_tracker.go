@@ -49,7 +49,6 @@ type ChainPhaseTracker struct {
 	currentEpochParams  *types.EpochParams
 	pocStartBlockHash   string
 	pocStartBlockHeight int64
-	isSynced            bool
 }
 
 // NewChainPhaseTracker creates a new ChainPhaseTracker instance
@@ -60,7 +59,6 @@ func NewChainPhaseTracker() *ChainPhaseTracker {
 		currentEpochParams:  nil,
 		pocStartBlockHash:   "",
 		pocStartBlockHeight: 0,
-		isSynced:            false,
 	}
 }
 
@@ -237,22 +235,6 @@ func (t *ChainPhaseTracker) GetPoCParameters() (startBlockHeight int64, startBlo
 	}
 
 	return 0, "", false
-}
-
-// SetSyncStatus updates the sync status of the chain
-func (t *ChainPhaseTracker) SetSyncStatus(synced bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.isSynced = synced
-}
-
-// IsSynced returns whether the chain is currently synced
-func (t *ChainPhaseTracker) IsSynced() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	return t.isSynced
 }
 
 // IsInPoCPhase returns true if currently in PoC phase
