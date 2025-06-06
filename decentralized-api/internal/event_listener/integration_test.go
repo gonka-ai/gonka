@@ -31,7 +31,7 @@ var epochParams = types.EpochParams{
 }
 
 var reconcileConfig = MlNodeReconciliationConfig{
-	BlockInterval: 33,             // TODO: Set to 5 and see how everything fails!
+	BlockInterval: 50,             // TODO: Set to 5 and see how everything fails!
 	TimeInterval:  60 * time.Hour, // Effectively disable for tests
 	LastTime:      time.Now(),
 }
