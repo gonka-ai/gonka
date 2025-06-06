@@ -7,6 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var epochParams = types.EpochParams{
+	EpochLength:           100,
+	EpochShift:            10,
+	EpochMultiplier:       1,
+	PocStageDuration:      20,
+	PocExchangeDuration:   1,
+	PocValidationDelay:    1,
+	PocValidationDuration: 10,
+}
+
 func TestCalculatePoCStartHeight(t *testing.T) {
 	// Create a tracker without cosmos client for testing
 	tracker := &ChainPhaseTracker{}

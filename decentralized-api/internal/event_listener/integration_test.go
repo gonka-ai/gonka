@@ -24,6 +24,7 @@ import (
 var epochParams = types.EpochParams{
 	EpochLength:           100,
 	EpochShift:            0,
+	EpochMultiplier:       1,
 	PocStageDuration:      20,
 	PocExchangeDuration:   2,
 	PocValidationDelay:    2,
@@ -170,10 +171,7 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
 	mockQueryClient.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
 		Params: types.Params{
-			EpochParams: &types.EpochParams{
-				EpochLength: 100,
-				EpochShift:  0,
-			},
+			EpochParams: &epochParams,
 		},
 	}, nil)
 
@@ -389,7 +387,6 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
-	setup.PhaseTracker.UpdateBlockHeight(100, "hash-100")
 	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
@@ -420,7 +417,6 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	node2Client := setup.getNodeClient("node-2", 8082)
 
 	// Simulate first PoC (block 100) - only node-2 should participate
-	setup.PhaseTracker.UpdateBlockHeight(100, "hash-100")
 	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
@@ -439,7 +435,6 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Simulate next epoch PoC (block 200) - both nodes should participate
-	setup.PhaseTracker.UpdateBlockHeight(200, "hash-200")
 	err = setup.simulateBlock(200)
 	require.NoError(t, err)
 
@@ -462,12 +457,10 @@ func TestReconciliationTriggersInferenceCommands_Integration(t *testing.T) {
 	node1Client := setup.getNodeClient("node-1", 8081)
 
 	// Simulate inference phase (block 50)
-	setup.PhaseTracker.UpdateBlockHeight(50, "hash-50")
 	err := setup.simulateBlock(50)
 	require.NoError(t, err)
 
 	// Process block 52 (should trigger reconciliation after 2 blocks)
-	setup.PhaseTracker.UpdateBlockHeight(52, "hash-52")
 	err = setup.simulateBlock(52)
 	require.NoError(t, err)
 
