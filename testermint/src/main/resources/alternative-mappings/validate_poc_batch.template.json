@@ -1,0 +1,29 @@
+{
+  "scenarioName": "ModelState",
+  "requiredScenarioState": "POW",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/pow/validate"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": ""
+  },
+  "postServeActions": {
+    "webhook": {
+      "method": "POST",
+      "url": "http://{{KEY_NAME}}-api:9100/v1/poc-batches/validated",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "delay": {
+        "type": "fixed",
+        "milliseconds": 5000
+      },
+      "body": "{\n        \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\",\n        \"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\",\n        \"block_height\": {{jsonPath originalRequest.body '$.block_height'}},\n        \"nonces\": {{jsonPath originalRequest.body '$.nonces'}},\n        \"dist\": {{jsonPath originalRequest.body '$.dist'}},\n        \"received_dist\": {{jsonPath originalRequest.body '$.dist'}},\n        \"r_target\": 0.5,\n        \"fraud_threshold\": 0.1,\n        \"n_invalid\": 0,\n        \"probability_honest\": 0.99,\n        \"fraud_detected\": false\n      }"
+    }
+  }
+} 
