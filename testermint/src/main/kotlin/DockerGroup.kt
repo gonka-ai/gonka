@@ -157,6 +157,12 @@ data class DockerGroup(
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
 
+        val templatePath = "testermint/src/main/resources/alternative-mappings/validate_poc_batch.template.json"
+        val templateContent = baseDir.resolve(templatePath).toFile().readText()
+        val content = templateContent.replace("{{KEY_NAME}}", keyName)
+        val mappingFile = mappingsDir.resolve("validate_poc_batch.json")
+        Files.writeString(mappingFile, content)
+
         if (Files.exists(publicHtmlDir)) {
             publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
         }
