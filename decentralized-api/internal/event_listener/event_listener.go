@@ -64,6 +64,7 @@ func NewEventListener(
 		nodePocOrchestrator,
 		&transactionRecorder,
 		phaseTracker,
+		DefaultReconciliationConfig,
 	)
 
 	return &EventListener{

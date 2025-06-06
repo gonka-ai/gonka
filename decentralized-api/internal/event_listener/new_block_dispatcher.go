@@ -82,6 +82,12 @@ type SyncInfo struct {
 	CatchingUp bool `json:"catching_up"`
 }
 
+var DefaultReconciliationConfig = MlNodeReconciliationConfig{
+	BlockInterval: 5,                // Every 5 blocks
+	TimeInterval:  30 * time.Second, // OR every 30 seconds
+	LastTime:      time.Now(),
+}
+
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
@@ -91,20 +97,17 @@ func NewOnNewBlockDispatcher(
 	getStatusFunc StatusFunc,
 	setHeightFunc SetHeightFunc,
 	randomSeedManager poc.RandomSeedManager,
+	reconciliationConfig MlNodeReconciliationConfig,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
-		nodeBroker:          nodeBroker,
-		nodePocOrchestrator: nodePocOrchestrator,
-		queryClient:         queryClient,
-		phaseTracker:        phaseTracker,
-		reconciliationConfig: MlNodeReconciliationConfig{
-			BlockInterval: 5,                // Every 5 blocks
-			TimeInterval:  30 * time.Second, // OR every 30 seconds
-			LastTime:      time.Now(),
-		},
-		getStatusFunc:     getStatusFunc,
-		setHeightFunc:     setHeightFunc,
-		randomSeedManager: randomSeedManager,
+		nodeBroker:           nodeBroker,
+		nodePocOrchestrator:  nodePocOrchestrator,
+		queryClient:          queryClient,
+		phaseTracker:         phaseTracker,
+		reconciliationConfig: reconciliationConfig,
+		getStatusFunc:        getStatusFunc,
+		setHeightFunc:        setHeightFunc,
+		randomSeedManager:    randomSeedManager,
 	}
 }
 
@@ -116,6 +119,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	nodePocOrchestrator poc.NodePoCOrchestrator,
 	cosmosClient cosmosclient.CosmosMessageClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
+	reconciliationConfig MlNodeReconciliationConfig,
 ) *OnNewBlockDispatcher {
 	// Adapt the cosmos client to our minimal interfaces
 	queryClient := cosmosClient.NewInferenceQueryClient()
@@ -137,6 +141,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		getStatusFunc,
 		setHeightFunc,
 		randomSeedManager,
+		reconciliationConfig,
 	)
 }
 

@@ -30,6 +30,12 @@ var epochParams = types.EpochParams{
 	PocValidationDuration: 10,
 }
 
+var reconcileConfig = MlNodeReconciliationConfig{
+	BlockInterval: 33,             // TODO: Set to 5 and see how everything fails!
+	TimeInterval:  60 * time.Hour, // Effectively disable for tests
+	LastTime:      time.Now(),
+}
+
 // Mock implementations using minimal interfaces
 type MockOrchestratorChainBridge struct {
 }
@@ -185,11 +191,8 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 		mockStatusFunc,
 		mockSetHeightFunc,
 		mockSeedManager,
+		reconcileConfig,
 	)
-
-	// Set fast reconciliation for testing
-	dispatcher.reconciliationConfig.BlockInterval = 2
-	dispatcher.reconciliationConfig.TimeInterval = 5 * time.Second
 
 	return &IntegrationTestSetup{
 		Dispatcher:        dispatcher,
@@ -318,6 +321,8 @@ func TestRegularPocScenario(t *testing.T) {
 
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	for i := int64(1); i <= epochParams.EpochLength; i++ {
 		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node1Client.StopCalled, i)
@@ -328,15 +333,42 @@ func TestRegularPocScenario(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// Wait for all commans
+	time.Sleep(100 * time.Millisecond)
+
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.Status)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.Status)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
 
-	require.Equal(t, node1Client.StopCalled, 2)
-	require.Equal(t, node1Client.StopCalled, 2)
-	require.Equal(t, node1Client.InitGenerateCalled, 1)
-	require.Equal(t, node2Client.InitGenerateCalled, 1)
+	// +1 stop call for inference reconciliation
+	expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+	assertNodeClient(t, expected, node1Client)
+	assertNodeClient(t, expected, node2Client)
+
+	for i := int64(epochParams.EpochLength + 1); i <= epochParams.EpochLength+epochParams.PocStageDuration; i++ {
+		err := setup.simulateBlock(int64(i))
+		require.NoError(t, err)
+
+		// Expect no new calls to ml node client
+		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
+		assertNodeClient(t, expected, node1Client)
+		assertNodeClient(t, expected, node2Client)
+	}
+}
+
+type NodeClientAssertion struct {
+	StopCalled         int
+	InitGenerateCalled int
+	InitValidateCalled int
+	InferenceUpCalled  int
+}
+
+func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *mlnodeclient.MockClient) {
+	require.Equal(t, expected.InitGenerateCalled, nodeClient.InitGenerateCalled, "InitGenerate was called. n = %d", nodeClient.InitGenerateCalled)
+	require.Equal(t, expected.InitValidateCalled, nodeClient.InitValidateCalled, "InitValidate was called. n = %d", nodeClient.InitValidateCalled)
+	require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
+	require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
 }
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
