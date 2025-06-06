@@ -7,13 +7,14 @@ import com.github.tomakehurst.wiremock.client.WireMock.equalToJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
 import com.productscience.data.OpenAIResponse
+import kotlin.time.Duration
 
 class InferenceMock(port: Int, val name: String) {
     private val mockClient = WireMock(port)
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
 
-    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "", model: String? = null) =
+    fun setInferenceResponse(response: String, delay: java.time.Duration = java.time.Duration.ZERO, segment: String = "", model: String? = null) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
                 .apply {
@@ -23,7 +24,7 @@ class InferenceMock(port: Int, val name: String) {
                 }
                 .willReturn(
                     aResponse()
-                        .withFixedDelay(delay.toInt())
+                        .withFixedDelay(delay.toMillis().toInt())
                         .withStatus(200)
                         .withBody(response)
                 )
@@ -31,7 +32,7 @@ class InferenceMock(port: Int, val name: String) {
 
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
-        delay: Int = 0,
+        delay: java.time.Duration = java.time.Duration.ZERO,
         segment: String = "",
         model: String? = null
     ) =

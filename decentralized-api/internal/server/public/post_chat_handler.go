@@ -295,6 +295,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
 		NodeVersion:   nodeVersion,
+		MaxTokens:     uint64(request.OpenAiRequest.MaxTokens),
 	}
 	return transaction, nil
 }

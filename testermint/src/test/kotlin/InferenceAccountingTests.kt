@@ -6,14 +6,29 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.time.Duration
 import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.test.assertNotNull
 
 val DELAY_SEED = 8675309
+
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
+
+    @Test
+    fun `test with maximum tokens`() {
+        val (cluster, genesis) = initCluster()
+        val startBalance = genesis.node.getSelfBalance()
+        genesis.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(5))
+        genesis.makeInferenceRequest(inferenceRequestObject.copy(maxCompletionTokens = 100).toJson())
+        val difference = (0..100).asSequence().map {
+            Thread.sleep(100)
+            startBalance - genesis.node.getSelfBalance()
+        }.filter { it != 0L }.first()
+        assertThat(difference).isEqualTo(100 * defaultTokenCost)
+    }
 
     @Test
     @Tag("sanity")
@@ -311,6 +326,11 @@ class InferenceAccountingTests : TestermintTest() {
             val changes = startBalance - balanceAfterSettle
             assertThat(changes).isEqualTo(expectedBalance)
         }
+    }
+
+    companion object {
+        val defaultTokens = 5_000
+        val defaultTokenCost = 1_000
     }
 }
 
