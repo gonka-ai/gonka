@@ -24,6 +24,9 @@ fun <T> logContext(context: Map<String, String>, block: () -> T): T {
 
 interface HasConfig {
     val config: ApplicationConfig
+    fun <T> wrapLog(block: () -> T): T =
+        logContext(mapOf("pair" to config.pairName, "source" to "test")) { block() }
+
     fun <T> wrapLog(operation: String, infoLevel: Boolean, block: () -> T): T =
         logContext(
             mapOf(

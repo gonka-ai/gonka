@@ -110,6 +110,8 @@ data class ApplicationAPI(
         wrapLog("GetNodes", false) {
             val url = urlFor(SERVER_TYPE_ADMIN)
             val response = Fuel.get("$url/admin/v1/nodes")
+                .timeout(1000 * 10)  // 10 seconds connection timeout
+                .timeoutRead(1000 * 10)  // 10 seconds read timeout
                 .responseObject<List<NodeResponse>>(gsonDeserializer(cosmosJson))
             logResponse(response)
             response.third.get()
