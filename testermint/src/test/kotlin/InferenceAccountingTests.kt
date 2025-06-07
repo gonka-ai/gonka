@@ -20,14 +20,36 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     fun `test with maximum tokens`() {
         val (cluster, genesis) = initCluster()
+        verifyEscrow(genesis, inferenceRequestObject.copy(maxCompletionTokens = 100), 100L * defaultTokenCost)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(genesis, inferenceRequestObject.copy(maxTokens = 100), 100L * defaultTokenCost)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(genesis, inferenceRequestObject, defaultTokens * defaultTokenCost)
+    }
+
+    private fun verifyEscrow(
+        genesis: LocalInferencePair,
+        inference: InferenceRequestPayload,
+        expectedEscrow: Long
+    ) {
         val startBalance = genesis.node.getSelfBalance()
         genesis.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(5))
-        genesis.makeInferenceRequest(inferenceRequestObject.copy(maxCompletionTokens = 100).toJson())
+        genesis.makeInferenceRequest(inference.toJson())
         val difference = (0..100).asSequence().map {
             Thread.sleep(100)
             startBalance - genesis.node.getSelfBalance()
         }.filter { it != 0L }.first()
-        assertThat(difference).isEqualTo(100 * defaultTokenCost)
+        assertThat(difference).isEqualTo(expectedEscrow)
+    }
+
+    @Test
+    fun `get nodes after inference`() {
+        val (cluster, genesis) = initCluster()
+        genesis.makeInferenceRequest(inferenceRequest)
+        Thread.sleep(100)
+        val nodes = genesis.api.getNodes()
+        println(nodes)
+
     }
 
     @Test
@@ -329,8 +351,8 @@ class InferenceAccountingTests : TestermintTest() {
     }
 
     companion object {
-        val defaultTokens = 5_000
-        val defaultTokenCost = 1_000
+        val defaultTokens = 5_000L
+        val defaultTokenCost = 1_000L
     }
 }
 

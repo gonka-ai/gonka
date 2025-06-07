@@ -3,6 +3,7 @@ package com.productscience
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
