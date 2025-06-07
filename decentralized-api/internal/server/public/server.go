@@ -74,7 +74,6 @@ func NewServer(
 	g.GET("debug/verify/:height", s.debugVerify)
 
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
-	g.GET("epochs/:epoch/participants-summaries", s.getEpochSummaryInfo)
 	return s
 }
 

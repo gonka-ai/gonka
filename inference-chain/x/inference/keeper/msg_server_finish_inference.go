@@ -62,11 +62,11 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	existingInference.ActualCost = CalculateCost(existingInference)
-	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
+	existingInference.EpochGroupId = currentEpochGroup.GroupData.EpochGroupId
 
 	// Always save the inference, even if it's a placeholder
 	k.SetInference(ctx, existingInference)
-	err = k.DevelopersStatsSet(ctx, existingInference.RequestedBy, existingInference.InferenceId, existingInference.Status, existingInference.EpochGroupId, existingInference.PromptTokenCount+existingInference.CompletionTokenCount)
+	err = k.DevelopersStatsSet(ctx, existingInference)
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, err)
 	} else {

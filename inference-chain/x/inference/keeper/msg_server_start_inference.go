@@ -93,7 +93,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 	}
 
 	k.SetInference(ctx, inference)
-	err := k.DevelopersStatsSet(ctx, inference.RequestedBy, inference.InferenceId, inference.Status, inference.EpochGroupId, inference.PromptTokenCount+inference.CompletionTokenCount)
+	err := k.DevelopersStatsSet(ctx, inference)
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, err)
 	} else {

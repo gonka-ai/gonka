@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
+	"golang.org/x/exp/maps"
 )
 
 var (
@@ -19,7 +20,7 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 	if req.TimeTo <= req.TimeFrom {
 		return nil, ErrInvalidTimePeriod
 	}
-	stats := k.DevelopersStatsGetByTime(ctx, req.Developer, req.TimeTo, req.TimeFrom)
+	stats := k.DevelopersStatsGetByTime(ctx, req.Developer, req.TimeFrom, req.TimeTo)
 	return &types.QueryStatsByTimePeriodByDeveloperResponse{Stats: stats}, nil
 }
 
@@ -45,6 +46,14 @@ func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *t
 		return nil, ErrInvalidTimePeriod
 	}
 
-	tokens, inferences := k.CountTotalInferenceInPeriod(ctx, req.TimeTo, req.TimeFrom)
+	tokens, inferences := k.CountTotalInferenceInPeriod(ctx, req.TimeFrom, req.TimeTo)
 	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: tokens, Inferences: int32(inferences)}, nil
+}
+
+func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, req *types.QueryDebugStatsRequest) (*types.QueryDebugStatsResponse, error) {
+	statByEpoch, statByTime := k.DumpAllDeveloperStats(ctx)
+	return &types.QueryDebugStatsResponse{
+		StatsByTime:  statByTime,
+		StatsByEpoch: maps.Values(statByEpoch),
+	}, nil
 }

@@ -66,6 +66,8 @@ func (s SubSystem) String() string {
 		return "Stages"
 	case Balances:
 		return "Balances"
+	case Stat:
+		return "Stat"
 	default:
 		return "Unknown"
 	}

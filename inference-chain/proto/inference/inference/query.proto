@@ -241,6 +241,11 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
   }
 
+  rpc DebugStatsDeveloperStats(QueryDebugStatsRequest)
+      returns (QueryDebugStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/debug/developer/all_stats";
+  }
+
   rpc InferencesAndTokensStatsByEpochsBackwards(QueryInferencesAndTokensStatsByEpochsBackwardsRequest)
       returns (QueryInferencesAndTokensStatsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/developer/stats_by_epochs_backwards";
@@ -624,6 +629,13 @@ message QueryInferencesAndTokensStatsByTimePeriodRequest {
 message QueryInferencesAndTokensStatsResponse {
   int64 ai_tokens = 1;
   int32 inferences = 2;
+}
+
+message QueryDebugStatsRequest {}
+
+message QueryDebugStatsResponse {
+  repeated DeveloperStatsByTime stats_by_time = 1;
+  repeated DeveloperStatsByEpoch stats_by_epoch = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}

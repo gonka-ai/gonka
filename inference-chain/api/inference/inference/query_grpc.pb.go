@@ -58,6 +58,7 @@ const (
 	Query_GetParticipantsFullStats_FullMethodName                  = "/inference.inference.Query/GetParticipantsFullStats"
 	Query_StatsByTimePeriodByDeveloper_FullMethodName              = "/inference.inference.Query/StatsByTimePeriodByDeveloper"
 	Query_StatsByDeveloperAndEpochsBackwards_FullMethodName        = "/inference.inference.Query/StatsByDeveloperAndEpochsBackwards"
+	Query_DebugStatsDeveloperStats_FullMethodName                  = "/inference.inference.Query/DebugStatsDeveloperStats"
 	Query_InferencesAndTokensStatsByEpochsBackwards_FullMethodName = "/inference.inference.Query/InferencesAndTokensStatsByEpochsBackwards"
 	Query_InferencesAndTokensStatsByTimePeriod_FullMethodName      = "/inference.inference.Query/InferencesAndTokensStatsByTimePeriod"
 	Query_GetMinimumValidationAverage_FullMethodName               = "/inference.inference.Query/GetMinimumValidationAverage"
@@ -135,6 +136,7 @@ type QueryClient interface {
 	GetParticipantsFullStats(ctx context.Context, in *QueryParticipantsFullStatsRequest, opts ...grpc.CallOption) (*QueryParticipantsFullStatsResponse, error)
 	StatsByTimePeriodByDeveloper(ctx context.Context, in *QueryStatsByTimePeriodByDeveloperRequest, opts ...grpc.CallOption) (*QueryStatsByTimePeriodByDeveloperResponse, error)
 	StatsByDeveloperAndEpochsBackwards(ctx context.Context, in *QueryStatsByDeveloperAndEpochBackwardsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error)
+	DebugStatsDeveloperStats(ctx context.Context, in *QueryDebugStatsRequest, opts ...grpc.CallOption) (*QueryDebugStatsResponse, error)
 	InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, in *QueryInferencesAndTokensStatsByEpochsBackwardsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error)
 	InferencesAndTokensStatsByTimePeriod(ctx context.Context, in *QueryInferencesAndTokensStatsByTimePeriodRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
@@ -505,6 +507,15 @@ func (c *queryClient) StatsByDeveloperAndEpochsBackwards(ctx context.Context, in
 	return out, nil
 }
 
+func (c *queryClient) DebugStatsDeveloperStats(ctx context.Context, in *QueryDebugStatsRequest, opts ...grpc.CallOption) (*QueryDebugStatsResponse, error) {
+	out := new(QueryDebugStatsResponse)
+	err := c.cc.Invoke(ctx, Query_DebugStatsDeveloperStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, in *QueryInferencesAndTokensStatsByEpochsBackwardsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error) {
 	out := new(QueryInferencesAndTokensStatsResponse)
 	err := c.cc.Invoke(ctx, Query_InferencesAndTokensStatsByEpochsBackwards_FullMethodName, in, out, opts...)
@@ -628,6 +639,7 @@ type QueryServer interface {
 	GetParticipantsFullStats(context.Context, *QueryParticipantsFullStatsRequest) (*QueryParticipantsFullStatsResponse, error)
 	StatsByTimePeriodByDeveloper(context.Context, *QueryStatsByTimePeriodByDeveloperRequest) (*QueryStatsByTimePeriodByDeveloperResponse, error)
 	StatsByDeveloperAndEpochsBackwards(context.Context, *QueryStatsByDeveloperAndEpochBackwardsRequest) (*QueryInferencesAndTokensStatsResponse, error)
+	DebugStatsDeveloperStats(context.Context, *QueryDebugStatsRequest) (*QueryDebugStatsResponse, error)
 	InferencesAndTokensStatsByEpochsBackwards(context.Context, *QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*QueryInferencesAndTokensStatsResponse, error)
 	InferencesAndTokensStatsByTimePeriod(context.Context, *QueryInferencesAndTokensStatsByTimePeriodRequest) (*QueryInferencesAndTokensStatsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
@@ -760,6 +772,9 @@ func (UnimplementedQueryServer) StatsByTimePeriodByDeveloper(context.Context, *Q
 }
 func (UnimplementedQueryServer) StatsByDeveloperAndEpochsBackwards(context.Context, *QueryStatsByDeveloperAndEpochBackwardsRequest) (*QueryInferencesAndTokensStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StatsByDeveloperAndEpochsBackwards not implemented")
+}
+func (UnimplementedQueryServer) DebugStatsDeveloperStats(context.Context, *QueryDebugStatsRequest) (*QueryDebugStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DebugStatsDeveloperStats not implemented")
 }
 func (UnimplementedQueryServer) InferencesAndTokensStatsByEpochsBackwards(context.Context, *QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*QueryInferencesAndTokensStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferencesAndTokensStatsByEpochsBackwards not implemented")
@@ -1494,6 +1509,24 @@ func _Query_StatsByDeveloperAndEpochsBackwards_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_DebugStatsDeveloperStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryDebugStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).DebugStatsDeveloperStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_DebugStatsDeveloperStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).DebugStatsDeveloperStats(ctx, req.(*QueryDebugStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_InferencesAndTokensStatsByEpochsBackwards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryInferencesAndTokensStatsByEpochsBackwardsRequest)
 	if err := dec(in); err != nil {
@@ -1764,6 +1797,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StatsByDeveloperAndEpochsBackwards",
 			Handler:    _Query_StatsByDeveloperAndEpochsBackwards_Handler,
+		},
+		{
+			MethodName: "DebugStatsDeveloperStats",
+			Handler:    _Query_DebugStatsDeveloperStats_Handler,
 		},
 		{
 			MethodName: "InferencesAndTokensStatsByEpochsBackwards",
