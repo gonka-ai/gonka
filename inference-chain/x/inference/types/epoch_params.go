@@ -14,9 +14,9 @@ func (p *EpochParams) IsEndOfPoCStage(blockHeight int64) bool {
 func (p *EpochParams) IsPoCExchangeWindow(startBlockHeight, currentBlockHeight int64) bool {
 	startBlockHeight = p.shift(startBlockHeight)
 	currentBlockHeight = p.shift(currentBlockHeight)
-	elapsedEpochs := currentBlockHeight - startBlockHeight
+	elapsedBlocks := currentBlockHeight - startBlockHeight
 
-	return p.isNotZeroEpoch(startBlockHeight) && elapsedEpochs > 0 && elapsedEpochs <= p.GetPoCExchangeDeadline()
+	return p.isNotZeroEpoch(startBlockHeight) && elapsedBlocks > 0 && elapsedBlocks <= p.GetPoCExchangeDeadline()
 }
 
 func (p *EpochParams) IsStartOfPoCValidationStage(blockHeight int64) bool {
@@ -78,7 +78,7 @@ func (p *EpochParams) GetEndOfPoCValidationStage() int64 {
 }
 
 func (p *EpochParams) GetSetNewValidatorsStage() int64 {
-	return p.GetEndOfPoCValidationStage() + p.EpochMultiplier
+	return p.GetEndOfPoCValidationStage() + (1 * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetClaimMoneyStage() int64 {
