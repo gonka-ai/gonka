@@ -11,12 +11,13 @@ message DeveloperStatsByEpoch {
 
 message InferenceStats {
   string inference_id = 1;
-  InferenceStatus status = 2;
-  uint64 ai_tokens_used = 3;
+  uint64 epoch_poc_block_height = 2;
+  InferenceStatus status = 3;
+  uint64 ai_tokens_used = 4;
 }
 
 message DeveloperStatsByTime {
-  uint64 epoch_id = 2;
-  int64 timestamp = 3;
-  InferenceStats inference = 4;
+  uint64 epoch_id = 1;
+  int64 timestamp = 2;
+  InferenceStats inference = 3;
 }

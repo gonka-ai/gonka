@@ -60,8 +60,7 @@ func TestDeveloperStats(t *testing.T) {
 
 	t.Run("get stats by one developer and one epoch", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId1})
-		keeper.SetEffectiveEpochGroupId(ctx, epochId1)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
@@ -88,8 +87,7 @@ func TestDeveloperStats(t *testing.T) {
 
 	t.Run("get stats by 2 developers and one epoch", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId1})
-		keeper.SetEffectiveEpochGroupId(ctx, epochId1)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer2))
@@ -115,14 +113,15 @@ func TestDeveloperStats(t *testing.T) {
 
 	t.Run("update inference status and epoch", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId1})
-		keeper.SetEffectiveEpochGroupId(ctx, epochId1)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
 		updatedInference := inference1Developer1
 		updatedInference.Status = types.InferenceStatus_FINISHED
 		updatedInference.EpochGroupId = epochId2
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1))
+
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, updatedInference))
 
 		statsByEpoch, ok := keeper.DevelopersStatsGetByEpoch(ctx, developer1, epochId1)
@@ -158,8 +157,7 @@ func TestDeveloperStats(t *testing.T) {
 
 	t.Run("count ai tokens and inference requests by time", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId1})
-		keeper.SetEffectiveEpochGroupId(ctx, epochId1)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1)) // tagged to time now() - 3 sec
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
@@ -174,35 +172,39 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Equal(t, 1, requests)
 	})
 
-	/*	t.Run("count ai tokens and inference by epochs and developer", func(t *testing.T) {
-		const epochId3 = uint64(3)
+	t.Run("count ai tokens and inference by epochs and developer", func(t *testing.T) {
+		const currentEpochId = uint64(4)
 
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId1})
-
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1))
 
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{PocStartBlockHeight: epochId3})
-		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
-
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer2))
 
-		tokensExpectedForLast2Epochs := inference1Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount + inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: currentEpochId})
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
+
+		tokensExpectedForLast2Epochs := inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount
 
 		tokens, requests := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
-		assert.Equal(t, tokensExpectedForLast2Epochs, tokens)
-		assert.Equal(t, 2, requests)
+		assert.Equal(t, int64(tokensExpectedForLast2Epochs), tokens)
+		assert.Equal(t, 1, requests)
 
 		tokens, requests = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
-		assert.Equal(t, int64(tokens*3), tokens)
-		assert.Equal(t, 2, requests)
+		assert.Equal(t, int64(0), tokens)
+		assert.Equal(t, 0, requests)
 
 		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 2)
-		assert.Equal(t, int64(tokens), tokens)
+		assert.Equal(t, int64(inference1Developer2.PromptTokenCount+inference1Developer2.CompletionTokenCount), tokens)
 		assert.Equal(t, 1, requests)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 1)
-		assert.Equal(t, int64(tokens*2), tokens)
+		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 3)
+		assert.Equal(t, int64(inference1Developer1.PromptTokenCount+inference1Developer1.CompletionTokenCount), tokens)
 		assert.Equal(t, 1, requests)
-	})*/
+
+		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 1)
+		assert.Equal(t, int64(0), tokens)
+		assert.Equal(t, 0, requests)
+	})
 }

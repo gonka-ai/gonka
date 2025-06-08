@@ -62,7 +62,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	existingInference.EndBlockHeight = ctx.BlockHeight()
 	existingInference.EndBlockTimestamp = ctx.BlockTime().UnixMilli()
 	existingInference.ActualCost = CalculateCost(existingInference)
-	existingInference.EpochGroupId = currentEpochGroup.GroupData.EpochGroupId
+	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
 
 	// Always save the inference, even if it's a placeholder
 	k.SetInference(ctx, existingInference)
