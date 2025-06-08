@@ -485,5 +485,11 @@ private fun sendLogLineToOutput(
     line: String,
     logOutput: LogOutput
 ) {
-    Logger.info(line)
+    // We can't just log directly, as this skips essential processing in
+    // The LogOutput class
+    val frame = com.github.dockerjava.api.model.Frame(
+        com.github.dockerjava.api.model.StreamType.STDOUT,
+        line.toByteArray()
+    )
+    logOutput.onNext(frame)
 }

@@ -405,10 +405,10 @@ class AccountSequenceMismatchException(val expected: Int, val actual: Int) :
 class TxNotFoundException(val txHash: String) : Exception("Transaction not found: $txHash")
 
 val k8sRetryRule = CliRetryRule(
-    retries = 3,
+    retries = 5,
     delay = Duration.ofSeconds(3),
     operationRegexes = listOf("^get.+"),
-    responseRegexes = listOf("Unknown stream id.+discarding message")
+    responseRegexes = listOf("Unknown stream id.+discarding message", "Unable to connect to the server")
 )
 
 data class CliRetryRule(
@@ -418,13 +418,12 @@ data class CliRetryRule(
     val responseRegexes: List<String>,
 ) {
     private fun matchesOperation(operation: String): Boolean =
-        operationRegexes.isEmpty() || operationRegexes.any { operation.matches(it.toRegex()) }
+        operationRegexes.isEmpty() || operationRegexes.any { it.toRegex().containsMatchIn(operation) }
 
     private fun matchesResponse(response: String): Boolean =
-        responseRegexes.isEmpty() || responseRegexes.any { response.matches(it.toRegex()) }
+        responseRegexes.isEmpty() || responseRegexes.any { it.toRegex().containsMatchIn(response) }
 
     fun retryDuration(operation: String, response: String, retryCount: Int): Duration? {
-        Logger.debug("Checking retry rule for operation={}, response={}, retryCount={}", operation, response, retryCount)
         return if (retryCount < retries && matchesOperation(operation) && matchesResponse(response)) {
             delay
         } else {
