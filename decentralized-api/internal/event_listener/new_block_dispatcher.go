@@ -210,7 +210,7 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 func (d *OnNewBlockDispatcher) updatePhaseAndGetInfo(blockInfo NewBlockInfo, networkInfo *NetworkInfo) *PhaseInfo {
 	// Update phase tracker with pure functions
 	d.phaseTracker.UpdateEpochParams(*networkInfo.EpochParams)
-	d.phaseTracker.UpdateBlockHeight(blockInfo.Height, blockInfo.Hash)
+	d.phaseTracker.UpdateBlockHeight(blockInfo.Height)
 
 	// Get current phase and epoch
 	currentPhase, _ := d.phaseTracker.GetCurrentPhase()
