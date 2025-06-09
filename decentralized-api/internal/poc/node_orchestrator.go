@@ -122,6 +122,8 @@ func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
 		return
 	}
 
+	o.nodeBroker.SetChainState(broker.ChainStatePOC)
+
 	command := broker.StartPocCommand{
 		BlockHeight: blockHeight,
 		BlockHash:   blockHash,
@@ -144,6 +146,8 @@ func (o *NodePoCOrchestrator) StopPoC() {
 		logging.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.", types.PoC)
 		return
 	}
+
+	o.nodeBroker.SetChainState(broker.ChainStateWork)
 
 	command := broker.NewInferenceUpAllCommand()
 	err := o.nodeBroker.QueueMessage(command)
@@ -229,6 +233,9 @@ func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
 		logging.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.", types.PoC)
 		return
 	}
+
+	o.nodeBroker.SetChainState(broker.ChainStateValidation)
+
 	epochParams := o.GetParams().EpochParams
 
 	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
