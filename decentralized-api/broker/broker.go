@@ -151,14 +151,14 @@ func (s *NodeState) IsOperational() bool {
 }
 
 // ShouldBeOperational checks if node should be operational based on admin state and current epoch
-func (s *NodeState) ShouldBeOperational(currentEpoch uint64, currentPhase chainphase.Phase) bool {
+func (s *NodeState) ShouldBeOperational(currentEpoch uint64, currentPhase types.EpochPhase) bool {
 	if !s.AdminState.Enabled {
 		// Disabled nodes stop after their epoch ends
 		return s.AdminState.Epoch >= currentEpoch
 	}
 
 	// Enabled nodes wait for inference phase if enabled during PoC
-	if s.AdminState.Epoch == currentEpoch && currentPhase == chainphase.PhasePoC {
+	if s.AdminState.Epoch == currentEpoch && currentPhase != types.InferencePhase {
 		return false
 	}
 
@@ -390,7 +390,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 }
 
-func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase chainphase.Phase) bool {
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) bool {
 	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
@@ -441,7 +441,7 @@ func LockNode[T any](
 
 	// Get current phase data
 	var currentEpoch uint64
-	var currentPhase chainphase.Phase
+	var currentPhase types.EpochPhase
 	if b.phaseTracker != nil {
 		currentEpoch = b.phaseTracker.GetCurrentEpoch()
 		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
@@ -648,19 +648,35 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 	return true
 }
 
+func GetNodeIntendedStatusForPhase(phase types.EpochPhase) types.HardwareNodeStatus {
+	switch phase {
+	case types.InferencePhase:
+		return types.HardwareNodeStatus_INFERENCE
+	case types.PoCGeneratePhase:
+		return types.HardwareNodeStatus_POC
+	case types.PoCGenerateWindDownPhase:
+		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+	case types.PoCValidatePhase:
+		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+	case types.PoCValidateWindDownPhase:
+		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+	}
+	return types.HardwareNodeStatus_UNKNOWN
+}
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	// Get current phase and epoch from the tracker
 	var intendedStatus types.HardwareNodeStatus
-	var currentPhase chainphase.Phase
+	var currentPhase types.EpochPhase
 	var currentEpoch uint64
 
 	if b.phaseTracker != nil {
-		intendedStatus = b.phaseTracker.GetIntendedNodeStatus()
 		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
+		intendedStatusForPhase := GetNodeIntendedStatusForPhase(currentPhase)
+		_ = intendedStatusForPhase
 		currentEpoch = b.phaseTracker.GetCurrentEpoch()
 
 		logging.Info("Reconciling nodes based on current phase", types.Nodes,
-			"phase", currentPhase.String(),
+			"phase", currentPhase,
 			"epoch", currentEpoch,
 			"intended_status", intendedStatus.String())
 	}
@@ -706,12 +722,12 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			case types.HardwareNodeStatus_POC:
 				// Get PoC parameters from phase tracker
 				if b.phaseTracker != nil {
-					pocHeight, pocHash, isInPoC := b.phaseTracker.GetPoCParameters()
-					if isInPoC && pocHeight > 0 {
+					pocParams := b.phaseTracker.GetPoCParameters()
+					if pocParams.IsInPoC && pocParams.PoCStartHeight > 0 {
 						totalNodes := len(b.nodes)
 						needsReconciliation[nodeId] = StartPoCNodeCommand{
-							BlockHeight: pocHeight,
-							BlockHash:   pocHash,
+							BlockHeight: pocParams.PoCStartHeight,
+							BlockHash:   pocParams.PoCStartHash,
 							PubKey:      b.participantInfo.GetPubKey(),
 							CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
 							TotalNodes:  totalNodes,
