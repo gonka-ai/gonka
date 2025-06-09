@@ -154,6 +154,9 @@ func nodeSyncWorker(broker *Broker) {
 }
 
 func (b *Broker) processCommands() {
+	if b.chainState == ChainStateUnknown {
+		b.SetChainState(ChainStateWork)
+	}
 	for command := range b.commands {
 		logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
 		switch command := command.(type) {
