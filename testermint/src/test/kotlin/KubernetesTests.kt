@@ -85,7 +85,7 @@ class KubernetesTests : TestermintTest() {
     @Test
     fun k8sUpgrade() {
         val releaseTag = System.getenv("RELEASE_TAG") ?: "v0.1.4-25"
-
+//        val releaseTag = "v0.1.4-28"
         getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
             val genesis = k8sPairs.first { it.name == "genesis" }
             val govParams = genesis.node.getGovParams()
@@ -131,6 +131,10 @@ class KubernetesTests : TestermintTest() {
             genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
             logSection("Waiting for upgrade to finish")
             Thread.sleep(Duration.ofMinutes(5))
+        }
+        // After 5 minutes and a reboot, we need to reconnect
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
             logSection("Verifying upgrade")
             genesis.node.waitForNextBlock(1)
             // Some other action?
