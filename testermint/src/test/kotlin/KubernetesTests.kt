@@ -1,6 +1,4 @@
-import com.productscience.getK8sInferencePairs
-import com.productscience.inferenceConfig
-import com.productscience.logSection
+import com.productscience.*
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -35,6 +33,43 @@ class KubernetesTests : TestermintTest() {
     }
 
     @Test
+    fun useApiLots() {
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
+            var successCount = 0
+            var failureCount = 0
+
+            repeat(20) { iteration ->
+                try {
+                    logSection("Iteration $iteration")
+                    println("Iteration $iteration - Getting nodes...")
+                    genesis.api.getNodes()
+//                    val response = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = "Qwen/Qwen2.5-7B-Instruct").toJson())
+//                    println("INFERENCE: " + response.choices.first().message.content)
+                    successCount++
+                } catch (e: Exception) {
+                    failureCount++
+                    println("ERROR in iteration $iteration: ${e.message}")
+                    e.printStackTrace()
+
+                    // Add a longer delay after an error
+                    Thread.sleep(2000)
+                }
+            }
+            assertThat(failureCount).isEqualTo(0)
+        }
+    }
+
+    @Test
+    fun k8sBasicInference() {
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
+            val response = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = "Qwen/Qwen2.5-7B-Instruct").toJson())
+            println("INFERENCE:" + response.choices.first().message.content)
+        }
+    }
+
+    @Test
     fun k8sGetUpgrades() {
         getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
             val genesis = k8sPairs.first { it.name == "genesis" }
@@ -49,8 +84,8 @@ class KubernetesTests : TestermintTest() {
 
     @Test
     fun k8sUpgrade() {
-        val releaseTag = System.getenv("RELEASE_TAG") ?: "v0.1.5"
-
+        val releaseTag = System.getenv("RELEASE_TAG") ?: "v0.1.4-25"
+//        val releaseTag = "v0.1.4-28"
         getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
             val genesis = k8sPairs.first { it.name == "genesis" }
             val govParams = genesis.node.getGovParams()
@@ -96,27 +131,38 @@ class KubernetesTests : TestermintTest() {
             genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
             logSection("Waiting for upgrade to finish")
             Thread.sleep(Duration.ofMinutes(5))
+        }
+        // After 5 minutes and a reboot, we need to reconnect
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
             logSection("Verifying upgrade")
             genesis.node.waitForNextBlock(1)
-        }
-    }
-
-    private fun downloadFile(url: String, fileName: String) {
-        val tempDir = File("downloads").apply { mkdirs() }
-        val outputFile = File(tempDir, fileName)
-        URL(url).openStream().use { input ->
-            outputFile.outputStream().use { output ->
-                input.copyTo(output)
+            // Some other action?
+            k8sPairs.forEach {
+                it.api.getParticipants()
+                it.api.getNodes()
+                it.node.getAddress()
             }
+
         }
     }
+}
 
-    private fun getGithubPath(releaseTag: String, fileName: String): String {
-        val safeReleaseTag = URLEncoder.encode(releaseTag, "UTF-8")
-        val path = "https://github.com/product-science/race-releases/releases/download/$safeReleaseTag/$fileName"
-        val tempDir = File("downloads")
-        downloadFile(path, fileName)
-        val sha = getSha256Checksum(File(tempDir, fileName).absolutePath)
-        return "$path?checksum=sha256:$sha"
+fun getGithubPath(releaseTag: String, fileName: String): String {
+    val safeReleaseTag = URLEncoder.encode(releaseTag, "UTF-8")
+    val path = "https://github.com/product-science/race-releases/releases/download/$safeReleaseTag/$fileName"
+    val tempDir = File("downloads")
+    downloadFile(path, fileName)
+    val sha = getSha256Checksum(File(tempDir, fileName).absolutePath)
+    return "$path?checksum=sha256:$sha"
+}
+
+private fun downloadFile(url: String, fileName: String) {
+    val tempDir = File("downloads").apply { mkdirs() }
+    val outputFile = File(tempDir, fileName)
+    URL(url).openStream().use { input ->
+        outputFile.outputStream().use { output ->
+            input.copyTo(output)
+        }
     }
 }

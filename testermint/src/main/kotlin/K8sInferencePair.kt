@@ -1,19 +1,15 @@
 package com.productscience
 
-import io.kubernetes.client.PortForward
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.Configuration
 import io.kubernetes.client.openapi.apis.CoordinationV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.Config
-import io.kubernetes.client.util.Streams
+import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
-import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
-import java.net.ServerSocket
-import java.net.Socket
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
@@ -33,15 +29,11 @@ private val cliPodPattern = Pattern.compile("node-.*")
 // Pattern for API pods: api-*
 private val apiPodPattern = Pattern.compile("api-.*")
 
-// Map of port types to their port numbers
-private val portTypeToNumber = mapOf(
-    SERVER_TYPE_PUBLIC to 9000,
-    SERVER_TYPE_ML to 9100,
-    SERVER_TYPE_ADMIN to 9200
-)
-
 // Map to store attached logs
 private val attachedLogs = ConcurrentHashMap<String, LogOutput>()
+
+// Shared port forwarder instance
+val portForwarder = K8sPortForwarder()
 
 /**
  * Gets Kubernetes inference pairs by finding worker nodes and their pods.
@@ -56,13 +48,12 @@ fun getK8sInferencePairs(
     config: ApplicationConfig,
     leaseTimeoutSeconds: Int = 30
 ): K8sInferencePairsWithLease {
-    Logger.info("Getting Kubernetes inference pairs")
+    logSection("initializing k8s client")
     val leaseName = "t8t-tests"
     val namespace = "default"
     val coreV1Api = initializeKubernetesClient()
     val coordinationV1Api = CoordinationV1Api()
-
-    // Create the K8sInferencePairsWithLease instance early to use its lease methods
+    logSection("Getting lease for k8s cluster")
     val k8sPairsWithLease = K8sInferencePairsWithLease(
         pairs = emptyList(), // Will be populated later
         coordinationV1Api = coordinationV1Api,
@@ -73,7 +64,7 @@ fun getK8sInferencePairs(
     try {
         val leaseSuccess = k8sPairsWithLease.getOrWaitForLease(10) // Wait for up to 10 minutes
         check(leaseSuccess) { "Failed to acquire lease after waiting 10 minutes" }
-
+        logSection("Lease obtained, discovering Kubernetes inference pairs")
         val namespaces = coreV1Api.listNamespace(null, null, null, null, null, null, null, null, null, null)
         Logger.info("Found ${namespaces.items.size} namespaces")
 
@@ -86,8 +77,11 @@ fun getK8sInferencePairs(
 
         k8sPairsWithLease.pairs = inferencePairs
         k8sPairsWithLease.pairs.forEach {
-            Logger.info("ChainVersion: " + it.node.getVersion())
+            it.wrapLog() {
+                Logger.info("ChainVersion: " + it.node.getVersion())
+            }
         }
+        logSection("Kubernetes inference pairs discovered, test starting")
         return k8sPairsWithLease
 
     } catch (e: ApiException) {
@@ -158,7 +152,8 @@ private fun processGenesisNamespace(
     val genesisNamespace = namespaces.items.find { it.metadata?.name == GENESIS_NAMESPACE }
     if (genesisNamespace != null) {
         Logger.info("Found genesis namespace: ${genesisNamespace.metadata?.name}")
-        val genesisPair = createInferencePairForNamespace(coreV1Api, GENESIS_NAMESPACE, "genesis", config)
+        val genesisPair =
+            createInferencePairForNamespace(coreV1Api, GENESIS_NAMESPACE, "genesis", config.copy(pairName = "genesis"))
         genesisPair?.let { inferencePairs.add(it) }
     }
 }
@@ -238,8 +233,8 @@ private fun createInferencePairForNamespace(
         // Create config with node name
         val configWithName = config.copy(pairName = nodeName)
 
-        // Set up port forwarding for API pod
-        val apiUrls = setupPortForwarding(coreV1Api, namespace, apiPodName)
+        // Set up port forwarding for API pod using the port forwarder
+        val apiUrls = portForwarder.setupPortForwarding(namespace, apiPodName)
 
         // Create executor and attach logs
         val executor = createExecutor(cliPodName, namespace, configWithName)
@@ -367,222 +362,12 @@ private fun createLocalInferencePair(
     Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
 
     return LocalInferencePair(
-        node = ApplicationCLI(config, nodeLogs, executor),
+        node = ApplicationCLI(config, nodeLogs, executor, listOf(k8sRetryRule)),
         api = ApplicationAPI(apiUrls, config, apiLogs),
         mock = null, // No mock for Kubernetes
         name = nodeName,
         config = config
     )
-}
-
-/**
- * Sets up port forwarding for the API pod using the Kubernetes Java client's PortForward class.
- *
- * @param coreV1Api The Kubernetes CoreV1Api client
- * @param namespace The namespace of the API pod
- * @param apiPodName The name of the API pod
- * @return A map of server types to URLs
- */
-private fun setupPortForwarding(
-    coreV1Api: CoreV1Api,
-    namespace: String,
-    apiPodName: String
-): Map<String, String> {
-    val apiUrls = mutableMapOf<String, String>()
-    val portForwardResults = mutableMapOf<Int, PortForward.PortForwardResult>()
-
-    // Set up port forwarding for each port type
-    for ((serverType, remotePort) in portTypeToNumber) {
-        try {
-            // Find a free local port
-            val localPort = findFreePort()
-
-            Logger.info("Setting up port forwarding for $serverType: localhost:$localPort -> $apiPodName:$remotePort")
-
-            // Set up port forwarding and create server socket
-            val result = setupPortForwardForPort(namespace, apiPodName, remotePort)
-            portForwardResults[remotePort] = result
-
-            // Create and start server socket for handling connections
-            val serverSocket = createServerSocket(localPort, serverType, remotePort, result)
-
-            // Create URL for the forwarded port
-            apiUrls[serverType] = "http://localhost:$localPort"
-            Logger.info("Port forwarding set up for $serverType: localhost:$localPort -> $apiPodName:$remotePort")
-
-        } catch (e: Exception) {
-            Logger.error("Failed to set up port forwarding for $serverType: ${e.message}")
-            // Use a fallback URL that points to the pod directly
-            apiUrls[serverType] = "http://$apiPodName.$namespace.svc.cluster.local:$remotePort"
-            Logger.info("Using fallback URL for $serverType: ${apiUrls[serverType]}")
-        }
-    }
-
-    return apiUrls
-}
-
-/**
- * Sets up port forwarding for a specific port.
- *
- * @param namespace The namespace of the API pod
- * @param podName The name of the API pod
- * @param remotePort The remote port to forward
- * @return The PortForwardResult object
- */
-private fun setupPortForwardForPort(
-    namespace: String,
-    podName: String,
-    remotePort: Int
-): PortForward.PortForwardResult {
-    // Create a list of ports to forward
-    val ports = ArrayList<Int>()
-    ports.add(remotePort)
-
-    // Set up port forwarding
-    val portForward = PortForward()
-    val result = portForward.forward(namespace, podName, ports)
-    Logger.info("Forwarding established for port $remotePort")
-
-    return result
-}
-
-/**
- * Creates a server socket for handling connections to the forwarded port.
- *
- * @param localPort The local port to bind the server socket to
- * @param serverType The type of server (public, ml, admin)
- * @param remotePort The remote port being forwarded
- * @param portForwardResult The PortForwardResult object
- * @return The created ServerSocket
- */
-private fun createServerSocket(
-    localPort: Int,
-    serverType: String,
-    remotePort: Int,
-    portForwardResult: PortForward.PortForwardResult
-): ServerSocket {
-    // Create a server socket to accept connections
-    val serverSocket = ServerSocket(localPort)
-
-    // Start a thread to handle connections
-    Thread {
-        try {
-            handleConnections(serverSocket, serverType, localPort, remotePort, portForwardResult)
-        } catch (e: Exception) {
-            Logger.error("Port forwarding thread for $serverType terminated: ${e.message}")
-        } finally {
-            try {
-                serverSocket.close()
-            } catch (e: Exception) {
-                Logger.error("Error closing server socket: ${e.message}")
-            }
-        }
-    }.apply {
-        isDaemon = true
-        start()
-    }
-
-    // Add shutdown hook to close the server socket
-    Runtime.getRuntime().addShutdownHook(Thread {
-        try {
-            serverSocket.close()
-        } catch (e: Exception) {
-            Logger.error("Error closing server socket during shutdown: ${e.message}")
-        }
-    })
-
-    return serverSocket
-}
-
-/**
- * Handles connections to the server socket.
- *
- * @param serverSocket The server socket to accept connections from
- * @param serverType The type of server (public, ml, admin)
- * @param localPort The local port the server socket is bound to
- * @param remotePort The remote port being forwarded
- * @param portForwardResult The PortForwardResult object
- */
-private fun handleConnections(
-    serverSocket: ServerSocket,
-    serverType: String,
-    localPort: Int,
-    remotePort: Int,
-    portForwardResult: PortForward.PortForwardResult
-) {
-    while (!Thread.currentThread().isInterrupted) {
-        try {
-            // Accept a connection
-            val socket = serverSocket.accept()
-            Logger.info("Accepted connection for $serverType on port $localPort")
-
-            // Handle the socket connection
-            handleSocketConnection(socket, serverType, remotePort, portForwardResult)
-
-        } catch (e: Exception) {
-            if (!Thread.currentThread().isInterrupted) {
-                Logger.error("Error accepting connection for $serverType: ${e.message}")
-            }
-        }
-    }
-}
-
-/**
- * Handles a socket connection by setting up bidirectional data streams.
- *
- * @param socket The socket connection to handle
- * @param serverType The type of server (public, ml, admin)
- * @param remotePort The remote port being forwarded
- * @param portForwardResult The PortForwardResult object
- */
-private fun handleSocketConnection(
-    socket: Socket,
-    serverType: String,
-    remotePort: Int,
-    portForwardResult: PortForward.PortForwardResult
-) {
-    // Start a thread to copy data from the socket to the port forward
-    Thread {
-        try {
-            Streams.copy(socket.getInputStream(), portForwardResult.getOutboundStream(remotePort))
-        } catch (e: IOException) {
-            Logger.error("Error in outbound stream for $serverType: ${e.message}")
-        } catch (e: Exception) {
-            Logger.error("Unexpected error in outbound stream for $serverType: ${e.message}")
-        } finally {
-            try {
-                socket.close()
-            } catch (e: Exception) {
-                Logger.error("Error closing socket: ${e.message}")
-            }
-        }
-    }.start()
-
-    // Start a thread to copy data from the port forward to the socket
-    Thread {
-        try {
-            Streams.copy(portForwardResult.getInputStream(remotePort), socket.getOutputStream())
-        } catch (e: IOException) {
-            Logger.error("Error in inbound stream for $serverType: ${e.message}")
-        } catch (e: Exception) {
-            Logger.error("Unexpected error in inbound stream for $serverType: ${e.message}")
-        } finally {
-            try {
-                socket.close()
-            } catch (e: Exception) {
-                Logger.error("Error closing socket: ${e.message}")
-            }
-        }
-    }.start()
-}
-
-/**
- * Finds a free port on the local machine.
- *
- * @return A free port number
- */
-private fun findFreePort(): Int {
-    return ServerSocket(0).use { it.localPort }
 }
 
 /**
@@ -593,7 +378,7 @@ private fun findFreePort(): Int {
  * @param nodeName The name of the node
  * @param type The type of logs (node or api)
  * @param podName The name of the pod
- * @return A LogOutput object for the pod
+ * @return A LogOutput object
  */
 private fun attachK8sLogs(
     coreV1Api: CoreV1Api,
@@ -602,13 +387,11 @@ private fun attachK8sLogs(
     type: String,
     podName: String
 ): LogOutput {
-    val key = "$namespace-$podName"
+    val key = "$namespace-$type"
     return attachedLogs.computeIfAbsent(key) {
+        Logger.info("Attaching logs for $type pod $podName in namespace $namespace")
         val logOutput = LogOutput(nodeName, type)
-
-        // Start a thread to stream logs
-        startLogStreamingThread(namespace, podName, logOutput)
-
+        startLogStreamingThread(namespace, podName, logOutput, type)
         logOutput
     }
 }
@@ -618,26 +401,25 @@ private fun attachK8sLogs(
  *
  * @param namespace The namespace of the pod
  * @param podName The name of the pod
- * @param logOutput The LogOutput object to send log entries to
+ * @param logOutput The LogOutput object to write logs to
  */
 private fun startLogStreamingThread(
     namespace: String,
     podName: String,
-    logOutput: LogOutput
+    logOutput: LogOutput,
+    type: String
 ) {
     Thread {
+        ThreadContext.put("pair", namespace)
+        ThreadContext.put("source", type)
         try {
-            // Create and start the log streaming process
             val process = createLogStreamingProcess(namespace, podName)
-
-            // Process the log stream
             processLogStream(process, podName, namespace, logOutput)
-
-            Logger.info("Log streaming ended for pod $podName in namespace $namespace")
         } catch (e: Exception) {
-            Logger.error("Failed to attach logs for pod $podName in namespace $namespace: ${e.message}")
+            Logger.error("Error streaming logs for pod $podName in namespace $namespace: ${e.message}")
         }
     }.apply {
+        name = "LogStream-$namespace-$podName"
         isDaemon = true
         start()
     }
@@ -673,10 +455,10 @@ private fun createLogStreamingProcess(
 /**
  * Processes the log stream from a Kubernetes pod.
  *
- * @param process The process streaming the logs
+ * @param process The Process object
  * @param podName The name of the pod
  * @param namespace The namespace of the pod
- * @param logOutput The LogOutput object to send log entries to
+ * @param logOutput The LogOutput object to write logs to
  */
 private fun processLogStream(
     process: Process,
@@ -684,33 +466,30 @@ private fun processLogStream(
     namespace: String,
     logOutput: LogOutput
 ) {
-    // Read logs from the process output
     val reader = BufferedReader(InputStreamReader(process.inputStream))
     var line: String?
-
     while (reader.readLine().also { line = it } != null) {
-        // Convert log line to Frame and send to LogOutput
-        sendLogLineToOutput(line, logOutput)
+        sendLogLineToOutput(line!!, logOutput)
     }
+    Logger.info("Log streaming process for pod $podName in namespace $namespace has exited")
+    process.waitFor()
 }
 
 /**
- * Converts a log line to a Frame and sends it to the LogOutput.
+ * Sends a log line to the LogOutput object.
  *
  * @param line The log line
- * @param logOutput The LogOutput object to send the frame to
+ * @param logOutput The LogOutput object to write logs to
  */
 private fun sendLogLineToOutput(
-    line: String?,
+    line: String,
     logOutput: LogOutput
 ) {
-    // Create a Frame object with the log line as payload
-    // This is a workaround since LogOutput expects Frame objects
+    // We can't just log directly, as this skips essential processing in
+    // The LogOutput class
     val frame = com.github.dockerjava.api.model.Frame(
         com.github.dockerjava.api.model.StreamType.STDOUT,
-        line?.toByteArray() ?: ByteArray(0)
+        line.toByteArray()
     )
-
-    // Pass the frame to LogOutput's onNext method
     logOutput.onNext(frame)
 }

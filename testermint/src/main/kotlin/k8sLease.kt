@@ -7,7 +7,6 @@ import io.kubernetes.client.openapi.models.V1LeaseSpec
 import io.kubernetes.client.openapi.models.V1ObjectMeta
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
-import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -241,7 +240,7 @@ class K8sInferencePairsWithLease(
 
     /**
      * Releases the lease when the instance is closed.
-     * Also stops the lease renewal thread.
+     * Also stops the lease renewal thread and closes the port forwarder.
      */
     override fun close() {
         try {
@@ -261,7 +260,11 @@ class K8sInferencePairsWithLease(
             }
         } catch (e: Exception) {
             Logger.error("Failed to release lease: ${e.message}")
+        } finally {
+            portForwarder.close()
+            Logger.info("Port forwarder closed successfully")
         }
+
     }
 
     /**
