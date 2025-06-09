@@ -117,3 +117,11 @@ func TestIsInPoCStage(t *testing.T) {
 		})
 	}
 }
+
+func Test(t *testing.T) {
+	tracker := NewChainPhaseTracker()
+	for i := 0; i < 10; i++ {
+		// This is just a placeholder to ensure the package compiles
+		// and can be used in tests.
+	}
+}

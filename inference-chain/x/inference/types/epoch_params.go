@@ -1,5 +1,60 @@
 package types
 
+const (
+	// PoCGenerateWindDownFactor determines the start of the "wind down" period for PoC generation, as a percentage of the PoC stage duration.
+	PoCGenerateWindDownFactor = 0.8
+	// PoCValidateWindDownFactor determines the start of the "wind down" period for PoC validation, as a percentage of the PoC validation stage duration.
+	PoCValidateWindDownFactor = 0.8
+)
+
+type EpochPhase string
+
+const (
+	PoCGeneratePhase         EpochPhase = "PoCGenerate"
+	PoCGenerateWindDownPhase EpochPhase = "PoCGenerateWindDown"
+	PoCValidatePhase         EpochPhase = "PoCValidate"
+	PoCValidateWindDownPhase EpochPhase = "PoCValidateWindDown"
+	InferencePhase           EpochPhase = "Inference"
+)
+
+func (p *EpochParams) GetCurrentPhase(blockHeight int64) EpochPhase {
+	shiftedBlockHeight := p.shift(blockHeight)
+	if p.isZeroEpoch(shiftedBlockHeight) {
+		return InferencePhase
+	}
+
+	relativeBlockHeight := shiftedBlockHeight % p.EpochLength
+
+	startOfPoC := p.GetStartOfPoCStage()
+	endOfPoC := p.GetEndOfPoCStage()
+	startOfPoCValidation := p.GetStartOfPoCValidationStage()
+	endOfPoCValidation := p.GetEndOfPoCValidationStage()
+
+	pocGenerateDuration := endOfPoC - startOfPoC
+	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*PoCGenerateWindDownFactor)
+
+	pocValidateDuration := endOfPoCValidation - startOfPoCValidation
+	pocValidateWindDownStart := startOfPoCValidation + int64(float64(pocValidateDuration)*PoCValidateWindDownFactor)
+
+	if relativeBlockHeight >= startOfPoC && relativeBlockHeight < pocGenerateWindDownStart {
+		return PoCGeneratePhase
+	}
+
+	if relativeBlockHeight >= pocGenerateWindDownStart && relativeBlockHeight < startOfPoCValidation {
+		return PoCGenerateWindDownPhase
+	}
+
+	if relativeBlockHeight >= startOfPoCValidation && relativeBlockHeight < pocValidateWindDownStart {
+		return PoCValidatePhase
+	}
+
+	if relativeBlockHeight >= pocValidateWindDownStart && relativeBlockHeight < endOfPoCValidation {
+		return PoCValidateWindDownPhase
+	}
+
+	return InferencePhase
+}
+
 // PR TODO: validate epoch params and gather hardcoded params from the chain
 func (p *EpochParams) IsStartOfPoCStage(blockHeight int64) bool {
 	blockHeight = p.shift(blockHeight)
