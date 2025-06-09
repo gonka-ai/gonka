@@ -611,8 +611,21 @@ func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
 	client := newNodeClient(&node.Node)
 
 	nodeId := node.Node.Id
+
 	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-	err := client.Stop()
+	status, err := b.queryNodeStatus(node.Node, node.State)
+	if err != nil {
+		logging.Error("Failed to query node status", types.Nodes, "node_id", nodeId, "error", err)
+		return
+	}
+
+	if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
+		logging.Info("Node is already in INFERENCE state", types.Nodes, "node_id", nodeId)
+		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+		return
+	}
+
+	err = client.Stop()
 	if err != nil {
 		logging.Error("Failed to stop node during reconciliation", types.Nodes,
 			"node_id", nodeId, "error", err)
@@ -758,7 +771,27 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 
 		client := newNodeClient(&node.Node)
 
-		err := client.Stop()
+		status, err := b.queryNodeStatus(node.Node, node.State)
+		if err != nil {
+			logging.Error("Failed to query node status", types.Nodes, "node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
+			health, err := client.InferenceHealth()
+			if err != nil {
+				logging.Error("Failed to check inference health", types.Nodes, "node_id", node.Node.Id, "error", err)
+				continue
+			}
+
+			if health {
+				logging.Info("Node is already in INFERENCE state and healthy", types.Nodes, "node_id", node.Node.Id)
+				node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+				continue
+			}
+		}
+
+		err = client.Stop()
 		if err != nil {
 			logging.Error("Failed to stop node for inference up", types.Nodes,
 				"node_id", node.Node.Id, "error", err)
