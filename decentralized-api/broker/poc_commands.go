@@ -3,6 +3,7 @@ package broker
 import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 

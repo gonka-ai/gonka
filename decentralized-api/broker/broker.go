@@ -30,6 +30,7 @@ type Broker struct {
 	nodes          map[string]*NodeWithState
 	curMaxNodesNum atomic.Uint64
 	client         cosmosclient.CosmosMessageClient
+	chainState     ChainState
 }
 
 type ModelArgs struct {
@@ -74,6 +75,19 @@ type NodeState struct {
 	LastStateChange time.Time                `json:"last_state_change"`
 }
 
+type ChainState int
+
+const (
+	ChainStateUnknown    ChainState = 0
+	ChainStatePOC        ChainState = 1
+	ChainStateValidation ChainState = 2
+	ChainStateWork       ChainState = 3
+)
+
+func (b *Broker) SetChainState(state ChainState) {
+	b.chainState = state
+}
+
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
 	s.Status = status
 	s.StatusTimestamp = time
@@ -100,9 +114,10 @@ type NodeResponse struct {
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
-		commands: make(chan Command, 100),
-		nodes:    make(map[string]*NodeWithState),
-		client:   client,
+		commands:   make(chan Command, 100),
+		nodes:      make(map[string]*NodeWithState),
+		client:     client,
+		chainState: ChainStateUnknown,
 	}
 
 	go broker.processCommands()
@@ -159,12 +174,24 @@ func (b *Broker) processCommands() {
 		case StartTrainingCommand:
 			b.startTraining(command)
 		case ReconcileNodesCommand:
+			if b.chainState != ChainStateWork {
+				logging.Info("Skipping reconcile nodes command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			b.reconcileNodes(command)
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
 		case InferenceUpAllCommand:
+			if b.chainState != ChainStateWork {
+				logging.Info("Skipping inference up all command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			b.inferenceUpAll(command)
 		case StartPocCommand:
+			if b.chainState != ChainStatePOC {
+				logging.Info("Skipping start poc command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
