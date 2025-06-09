@@ -5,11 +5,12 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -32,7 +33,7 @@ func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
 		pocUrl:       pocUrl,
 		inferenceUrl: inferenceUrl,
 		client: http.Client{
-			Timeout: 5 * time.Minute,
+			Timeout: 15 * time.Minute,
 		},
 	}
 }
