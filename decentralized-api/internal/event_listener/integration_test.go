@@ -5,6 +5,7 @@ import (
 	"decentralized-api/internal/poc"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -22,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var epochParams = types.EpochParams{
+var defaultEpochParams = types.EpochParams{
 	EpochLength:           100,
 	EpochShift:            0,
 	EpochMultiplier:       1,
@@ -32,7 +33,7 @@ var epochParams = types.EpochParams{
 	PocValidationDuration: 10,
 }
 
-var defaultReconcileConfig = MlNodeReconciliationConfig{
+var defaultReconciliationConfig = MlNodeReconciliationConfig{
 	BlockInterval: 50,             // TODO: Set to 5 and see how everything fails!
 	TimeInterval:  60 * time.Hour, // Effectively disable for tests
 	LastTime:      time.Now(),
@@ -132,12 +133,12 @@ type IntegrationTestSetup struct {
 	MockSeedManager   *MockRandomSeedManager
 }
 
-func createIntegrationTestSetup(reconcileConfig *MlNodeReconciliationConfig) *IntegrationTestSetup {
+func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfig, params *types.EpochParams) *IntegrationTestSetup {
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
 	phaseTracker := chainphase.NewChainPhaseTracker()
-	phaseTracker.UpdateEpochParams(epochParams)
+	phaseTracker.UpdateEpochParams(defaultEpochParams)
 
 	// Create mock client factory that tracks calls
 	mockClientFactory := mlnodeclient.NewMockClientFactory()
@@ -170,13 +171,18 @@ func createIntegrationTestSetup(reconcileConfig *MlNodeReconciliationConfig) *In
 		return nil
 	}
 
+	var paramsToReturn *types.EpochParams = &defaultEpochParams
+	if params != nil {
+		paramsToReturn = params
+	}
+
 	// Setup default mock behaviors
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
 	mockQueryClient.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
 		Params: types.Params{
-			EpochParams: &epochParams,
+			EpochParams: paramsToReturn,
 		},
 	}, nil)
 
@@ -185,11 +191,11 @@ func createIntegrationTestSetup(reconcileConfig *MlNodeReconciliationConfig) *In
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney").Return()
 
-	var finalReconcileConfig MlNodeReconciliationConfig
-	if reconcileConfig == nil {
-		finalReconcileConfig = defaultReconcileConfig
+	var finalReconcilialtionConfig MlNodeReconciliationConfig
+	if reconcilialtionConfig == nil {
+		finalReconcilialtionConfig = defaultReconciliationConfig
 	} else {
-		finalReconcileConfig = *reconcileConfig
+		finalReconcilialtionConfig = *reconcilialtionConfig
 	}
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
@@ -200,7 +206,7 @@ func createIntegrationTestSetup(reconcileConfig *MlNodeReconciliationConfig) *In
 		mockStatusFunc,
 		mockSetHeightFunc,
 		mockSeedManager,
-		finalReconcileConfig,
+		finalReconcilialtionConfig,
 	)
 
 	return &IntegrationTestSetup{
@@ -291,7 +297,7 @@ func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
 }
 
-func testReconcileConfig(blockInterval int) MlNodeReconciliationConfig {
+func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 	return MlNodeReconciliationConfig{
 		BlockInterval:   blockInterval,
 		TimeInterval:    60 * time.Minute, // Disable for test
@@ -301,8 +307,8 @@ func testReconcileConfig(blockInterval int) MlNodeReconciliationConfig {
 }
 
 func TestInferenceReconciliation(t *testing.T) {
-	reconcileConfig := testReconcileConfig(5)
-	setup := createIntegrationTestSetup(&reconcileConfig)
+	reconcilialtionConfig := testreconcilialtionConfig(5)
+	setup := createIntegrationTestSetup(&reconcilialtionConfig, nil)
 
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
@@ -329,7 +335,7 @@ func TestInferenceReconciliation(t *testing.T) {
 }
 
 func TestRegularPocScenario(t *testing.T) {
-	setup := createIntegrationTestSetup(nil)
+	setup := createIntegrationTestSetup(nil, nil)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -344,7 +350,7 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	var i int64 = 1
-	for i <= epochParams.EpochLength {
+	for i <= defaultEpochParams.EpochLength {
 		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node1Client.StopCalled, i)
 		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node2Client.StopCalled, i)
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
@@ -367,9 +373,9 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
-	pocGenStart := epochParams.EpochLength + 1
+	pocGenStart := defaultEpochParams.EpochLength + 1
 	require.Equal(t, pocGenStart, i)
-	pocGenEnd := epochParams.EpochLength + epochParams.PocStageDuration
+	pocGenEnd := defaultEpochParams.EpochLength + defaultEpochParams.PocStageDuration
 	for i < pocGenEnd {
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
@@ -385,7 +391,7 @@ func TestRegularPocScenario(t *testing.T) {
 	}
 
 	pocValStart := i
-	pocValEnd := pocValStart + epochParams.PocValidationDelay + epochParams.PocValidationDuration
+	pocValEnd := pocValStart + defaultEpochParams.PocValidationDelay + defaultEpochParams.PocValidationDuration
 	for i < pocValEnd {
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
@@ -427,7 +433,7 @@ func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *ml
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
 func TestNodeDisableScenario_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup(nil)
+	setup := createIntegrationTestSetup(nil, nil)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -443,8 +449,8 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
-	var i = epochParams.EpochLength
-	for i < 2*epochParams.EpochLength {
+	var i = defaultEpochParams.EpochLength
+	for i < 2*defaultEpochParams.EpochLength {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 		i++
@@ -467,7 +473,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 // Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled
 func TestNodeEnableScenario_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup(nil)
+	setup := createIntegrationTestSetup(nil, nil)
 
 	// Add two nodes - node-1 initially disabled, node-2 enabled
 	setup.addTestNode("node-1", 8081)
@@ -515,7 +521,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 
 // Test Scenario 4: Full epoch transition with PoC commands
 func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup(nil)
+	setup := createIntegrationTestSetup(nil, nil)
 
 	// Add two nodes
 	setup.addTestNode("node-1", 8081)
@@ -564,8 +570,8 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 }
 
 func TestBasicSetup(t *testing.T) {
-	reconcileConfig := testReconcileConfig(5)
-	setup := createIntegrationTestSetup(&reconcileConfig)
+	reconcilialtionConfig := testreconcilialtionConfig(5)
+	setup := createIntegrationTestSetup(&reconcilialtionConfig, nil)
 	require.NotNil(t, setup)
 	require.NotNil(t, setup.Dispatcher)
 	require.NotNil(t, setup.NodeBroker)
@@ -577,4 +583,64 @@ func TestBasicSetup(t *testing.T) {
 	require.NotNil(t, client)
 
 	t.Log("✅ Basic setup test passed")
+}
+
+func TestPoCRetry(t *testing.T) {
+	var params = types.EpochParams{
+		EpochLength:           100,
+		EpochShift:            0,
+		EpochMultiplier:       1,
+		PocStageDuration:      20,
+		PocExchangeDuration:   2,
+		PocValidationDelay:    2,
+		PocValidationDuration: 10,
+	}
+	reconciliationConfig := testreconcilialtionConfig(2)
+	setup := createIntegrationTestSetup(&reconciliationConfig, &params)
+
+	// Add two nodes
+	setup.addTestNode("node-1", 8081)
+	setup.addTestNode("node-2", 8082)
+
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
+
+	node1Client.InitGenerateError = errors.New("test error")
+
+	var i = params.EpochLength
+	err := setup.simulateBlock(i)
+	require.NoError(t, err)
+
+	waitForAsync(100 * time.Millisecond)
+
+	assertNodeClient(t, NodeClientAssertion{0, 2, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+
+	for i < params.EpochLength+int64(reconciliationConfig.BlockInterval) {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+
+		i++
+	}
+
+	waitForAsync(100 * time.Millisecond)
+
+	// check PoC init generate was retried
+	assertNodeClient(t, NodeClientAssertion{0, 3, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+
+	node1Client.InitGenerateError = nil
+
+	for i < params.EpochLength+params.GetEndOfPoCStage() {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+
+		i++
+	}
+
+	waitForAsync(100 * time.Millisecond)
+
+	// check only 1 retry happened and then it stopped once we removed the error
+	assertNodeClient(t, NodeClientAssertion{0, 4, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
 }
