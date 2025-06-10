@@ -355,7 +355,6 @@ func TestRegularPocScenario(t *testing.T) {
 		i++
 	}
 
-	// Wait for all commans
 	time.Sleep(100 * time.Millisecond)
 
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.Status)
