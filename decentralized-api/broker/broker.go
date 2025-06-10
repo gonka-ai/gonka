@@ -645,31 +645,26 @@ func GetNodeIntendedStatusForPhase(phase types.EpochPhase) types.HardwareNodeSta
 	case types.PoCGeneratePhase:
 		return types.HardwareNodeStatus_POC
 	case types.PoCGenerateWindDownPhase:
-		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
 	case types.PoCValidatePhase:
-		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
 	case types.PoCValidateWindDownPhase:
-		return types.HardwareNodeStatus_UNKNOWN // FIXME: hanlde me
+		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
 	}
-	return types.HardwareNodeStatus_UNKNOWN
+	return types.HardwareNodeStatus_STOPPED
 }
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
-	// Get current phase and epoch from the tracker
-	var intendedStatus types.HardwareNodeStatus
-	var currentPhase types.EpochPhase
-	var currentEpoch uint64
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	currentEpoch := epochPhaseInfo.Epoch
+	currentPhase := epochPhaseInfo.Phase
+	currentBlockHeight := epochPhaseInfo.BlockHeight
 
-	if b.phaseTracker != nil {
-		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
-		intendedStatusForPhase := GetNodeIntendedStatusForPhase(currentPhase)
-		_ = intendedStatusForPhase
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
-
-		logging.Info("Reconciling nodes based on current phase", types.Nodes,
-			"phase", currentPhase,
-			"epoch", currentEpoch,
-			"intended_status", intendedStatus.String())
-	}
+	intendedNodeStatusForPhase := GetNodeIntendedStatusForPhase(epochPhaseInfo.Phase)
+	logging.Info("Reconciling nodes based on current phase", types.Nodes,
+		"phase", currentPhase,
+		"epoch", currentEpoch,
+		"blockHeigh", currentBlockHeight,
+		"intendedNodeStatusForPhase", intendedNodeStatusForPhase.String())
 
 	// Collect nodes that need reconciliation
 	needsReconciliation := make(map[string]NodeWorkerCommand)
@@ -697,7 +692,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		}
 
 		// Update intended status based on phase
-		node.State.IntendedStatus = intendedStatus
+		node.State.IntendedStatus = intendedNodeStatusForPhase
 
 		// Check if reconciliation is needed
 		if node.State.Status != node.State.IntendedStatus {
@@ -710,26 +705,23 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			case types.HardwareNodeStatus_INFERENCE:
 				needsReconciliation[nodeId] = InferenceUpNodeCommand{}
 			case types.HardwareNodeStatus_POC:
-				// Get PoC parameters from phase tracker
-				if b.phaseTracker != nil {
-					pocParams := b.phaseTracker.GetPoCParameters()
-					if pocParams.IsInPoC && pocParams.PoCStartHeight > 0 {
-						totalNodes := len(b.nodes)
-						needsReconciliation[nodeId] = StartPoCNodeCommand{
-							BlockHeight: pocParams.PoCStartHeight,
-							BlockHash:   pocParams.PoCStartHash,
-							PubKey:      b.participantInfo.GetPubKey(),
-							CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
-							TotalNodes:  totalNodes,
-						}
-					} else {
-						logging.Warn("Cannot reconcile to PoC: missing PoC parameters", types.Nodes,
-							"node_id", nodeId)
-						needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: missing parameters"}
+				pocParams := b.phaseTracker.GetPoCParameters()
+				if pocParams.IsInPoC && pocParams.PoCStartHeight > 0 {
+					totalNodes := len(b.nodes)
+					needsReconciliation[nodeId] = StartPoCNodeCommand{
+						BlockHeight: pocParams.PoCStartHeight,
+						BlockHash:   pocParams.PoCStartHash,
+						PubKey:      b.participantInfo.GetPubKey(),
+						CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
+						TotalNodes:  totalNodes,
 					}
 				} else {
-					needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: no phase tracker"}
+					logging.Warn("Cannot reconcile to PoC: missing PoC parameters", types.Nodes,
+						"node_id", nodeId)
+					needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: missing parameters"}
 				}
+			case types.HardwareNodeStatus_STOPPED:
+				needsReconciliation[nodeId] = StopNodeCommand{}
 			default:
 				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
 					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
@@ -745,7 +737,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	}
 
 	// Limit concurrent reconciliations and execute
-	const maxConcurrentReconciliations = 5
+	const maxConcurrentReconciliations = 10
 	submitted := 0
 	failed := 0
 	processed := 0
