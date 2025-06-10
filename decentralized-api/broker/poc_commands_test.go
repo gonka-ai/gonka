@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"testing"
@@ -43,13 +42,11 @@ func TestStartPocCommand_Success(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight:  12345,
-		BlockHash:    "0xABCDEF",
-		PubKey:       "test-pubkey",
-		CallbackUrl:  "http://callback.url",
-		CurrentEpoch: 5,
-		CurrentPhase: chainphase.PhasePoC,
-		Response:     make(chan bool, 1),
+		BlockHeight: 12345,
+		BlockHash:   "0xABCDEF",
+		PubKey:      "test-pubkey",
+		CallbackUrl: "http://callback.url",
+		Response:    make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -106,13 +103,11 @@ func TestStartPocCommand_AlreadyInPoC(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight:  12345,
-		BlockHash:    "0xABCDEF",
-		PubKey:       "test-pubkey",
-		CallbackUrl:  "http://callback.url",
-		CurrentEpoch: 5,
-		CurrentPhase: chainphase.PhasePoC,
-		Response:     make(chan bool, 1),
+		BlockHeight: 12345,
+		BlockHash:   "0xABCDEF",
+		PubKey:      "test-pubkey",
+		CallbackUrl: "http://callback.url",
+		Response:    make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -155,13 +150,11 @@ func TestStartPocCommand_StopFails(t *testing.T) {
 
 	// Execute StartPocCommand
 	cmd := StartPocCommand{
-		BlockHeight:  12345,
-		BlockHash:    "0xABCDEF",
-		PubKey:       "test-pubkey",
-		CallbackUrl:  "http://callback.url",
-		CurrentEpoch: 5,
-		CurrentPhase: chainphase.PhasePoC,
-		Response:     make(chan bool, 1),
+		BlockHeight: 12345,
+		BlockHash:   "0xABCDEF",
+		PubKey:      "test-pubkey",
+		CallbackUrl: "http://callback.url",
+		Response:    make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
@@ -208,13 +201,11 @@ func TestStartPocCommand_AdminDisabled(t *testing.T) {
 
 	// Execute StartPocCommand with current epoch = 4 (after disable epoch)
 	cmd := StartPocCommand{
-		BlockHeight:  12345,
-		BlockHash:    "0xABCDEF",
-		PubKey:       "test-pubkey",
-		CallbackUrl:  "http://callback.url",
-		CurrentEpoch: 4,
-		CurrentPhase: chainphase.PhasePoC,
-		Response:     make(chan bool, 1),
+		BlockHeight: 12345,
+		BlockHash:   "0xABCDEF",
+		PubKey:      "test-pubkey",
+		CallbackUrl: "http://callback.url",
+		Response:    make(chan bool, 1),
 	}
 
 	cmd.Execute(broker)
