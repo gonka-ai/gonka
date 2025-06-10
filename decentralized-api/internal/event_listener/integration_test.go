@@ -524,8 +524,11 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
+
 	// Simulate PoC start (block 0)
-	err := setup.simulateBlock(0)
+	err := setup.simulateBlock(100)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
@@ -534,21 +537,22 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Node-2 should start PoC")
 
 	// Simulate end of PoC stage (block 20)
-	err = setup.simulateBlock(20)
+	err = setup.simulateBlock(120)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
+	assert.Equal(t, node1Client.InitValidateCalled, 1, "Node-1 should receive validation command")
+	assert.Equal(t, node2Client.InitValidateCalled, 1, "Node-2 should receive validation command")
+
 	// Simulate PoC validation start (block 22)
-	err = setup.simulateBlock(22)
+	err = setup.simulateBlock(122)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
 	// Nodes should receive validation commands
-	assert.Greater(t, node1Client.InitValidateCalled, 0, "Node-1 should receive validation command")
-	assert.Greater(t, node2Client.InitValidateCalled, 0, "Node-2 should receive validation command")
 
 	// Simulate end of validation (block 32)
-	err = setup.simulateBlock(32)
+	err = setup.simulateBlock(132)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
@@ -559,23 +563,6 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	t.Logf("✅ Test 4 passed: Full epoch transition with proper PoC and validation commands")
 }
 
-// Integration test summary
-func TestIntegrationTestsSummary(t *testing.T) {
-	t.Log("🎉 All Integration Tests Summary:")
-	t.Log("  1. ✅ Node disable: Disabled nodes skip PoC participation")
-	t.Log("  2. ✅ Node enable: Enabled nodes participate in PoC")
-	t.Log("  3. ✅ Reconciliation: Block-driven reconciliation triggers inference commands")
-	t.Log("  4. ✅ Full epoch: Complete PoC → validation → inference transition")
-	t.Log("")
-	t.Log("✨ Key Architecture Achievements:")
-	t.Log("  - Event-driven testing through block dispatcher")
-	t.Log("  - Verification at ML node client level (realistic interface)")
-	t.Log("  - Real PoC orchestrator with mocked dependencies")
-	t.Log("  - Multi-node scenarios with individual tracking")
-	t.Log("  - Phase-based state transitions with proper timing")
-}
-
-// Simple test to verify basic setup
 func TestBasicSetup(t *testing.T) {
 	reconcileConfig := testReconcileConfig(5)
 	setup := createIntegrationTestSetup(&reconcileConfig)
