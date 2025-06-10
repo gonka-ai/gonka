@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/maps"
+	"time"
 )
 
 var (
@@ -17,9 +18,19 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 		return nil, ErrInvalidDeveloperAddress
 	}
 
-	if req.TimeTo <= req.TimeFrom {
+	if req.TimeTo < req.TimeFrom {
 		return nil, ErrInvalidTimePeriod
 	}
+
+	if req.TimeTo == 0 {
+		req.TimeTo = time.Now().UTC().UnixMilli()
+	}
+
+	if req.TimeFrom == 0 {
+		req.TimeFrom = time.Now().Add(-24 * 60 * time.Minute).UnixMilli()
+	}
+
+	k.LogInfo("StatsByTimePeriodByDeveloper", types.Stat, "developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo)
 	stats := k.DevelopersStatsGetByTime(ctx, req.Developer, req.TimeFrom, req.TimeTo)
 	return &types.QueryStatsByTimePeriodByDeveloperResponse{Stats: stats}, nil
 }
@@ -37,15 +48,24 @@ func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *typ
 }
 
 func (k Keeper) InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, req *types.QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
-	tokens, inferences := k.CountTotalInferenceInLastNEpochs(ctx, int(req.EpochN))
+	tokens, inferences := k.CountTotalInferenceInLastNEpochs(ctx, int(req.EpochsN))
 	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: tokens, Inferences: int32(inferences)}, nil
 }
 
 func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *types.QueryInferencesAndTokensStatsByTimePeriodRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
-	if req.TimeTo <= req.TimeFrom {
+	if req.TimeTo < req.TimeFrom {
 		return nil, ErrInvalidTimePeriod
 	}
 
+	if req.TimeTo == 0 {
+		req.TimeTo = time.Now().UTC().UnixMilli()
+	}
+
+	if req.TimeFrom == 0 {
+		req.TimeFrom = time.Now().Add(-24 * 60 * time.Minute).UnixMilli()
+	}
+
+	k.LogInfo("InferencesAndTokensStatsByTimePeriod", types.Stat, "time_from", req.TimeFrom, "time_to", req.TimeTo)
 	tokens, inferences := k.CountTotalInferenceInPeriod(ctx, req.TimeFrom, req.TimeTo)
 	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: tokens, Inferences: int32(inferences)}, nil
 }

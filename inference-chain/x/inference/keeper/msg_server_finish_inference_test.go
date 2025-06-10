@@ -19,7 +19,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		epochId2 = 2
 	)
 	k, ms, ctx := setupMsgServer(t)
-	k.SetEffectiveEpochGroupId(ctx, epochId)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId})
 
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
@@ -61,7 +61,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		},
 	}, devStat)
 
-	k.SetEffectiveEpochGroupId(ctx, epochId2)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",

@@ -618,7 +618,7 @@ message QueryStatsByDeveloperAndEpochBackwardsRequest {
 }
 
 message QueryInferencesAndTokensStatsByEpochsBackwardsRequest {
-  int32 epoch_n = 1;
+  int32 epochs_n = 1;
 }
 
 message QueryInferencesAndTokensStatsByTimePeriodRequest {

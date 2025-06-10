@@ -65,7 +65,7 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 	}
 
 	addresses := maps.Keys(participants)
-	summaries := k.GetParticipantsEpochSummaries(ctx, addresses, uint64(previous.GroupData.EffectiveBlockHeight))
+	summaries := k.GetParticipantsEpochSummaries(ctx, addresses, previous.GroupData.PocStartBlockHeight)
 	for _, summary := range summaries {
 		stats, ok := participants[summary.ParticipantId]
 		if !ok {

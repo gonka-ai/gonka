@@ -83,7 +83,7 @@ func (k Keeper) setStatByEpoch(
 	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByEpoch))
 
 	// === CASE 1: inference already exists, but was tagged by different epoch ===
-	if previouslyKnownEpochId != 0 {
+	if previouslyKnownEpochId != 0 && previouslyKnownEpochId != currentEpochId {
 		k.LogInfo("stat set BY EPOCH: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
 
 		oldKey := developerByEpochKey(inference.RequestedBy, previouslyKnownEpochId)
@@ -102,6 +102,9 @@ func (k Keeper) setStatByEpoch(
 	var newStats types.DeveloperStatsByEpoch
 	if bz := epochStore.Get(newKey); bz != nil {
 		k.cdc.MustUnmarshal(bz, &newStats)
+		if newStats.Inferences == nil {
+			newStats.Inferences = make(map[string]*types.InferenceStats)
+		}
 	} else {
 		newStats = types.DeveloperStatsByEpoch{
 			EpochId:    currentEpochId,

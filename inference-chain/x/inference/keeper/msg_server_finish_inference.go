@@ -78,6 +78,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	k.LogBalance(executor.Address, existingInference.ActualCost, executor.CoinBalance, "inference_finished:"+existingInference.InferenceId)
 	k.LogInfo("Executor CoinBalance credited for inference", types.Balances, "executor", executor.Address, "coin_balance", executor.CoinBalance, "actual_cost", existingInference.ActualCost)
 	executor.CurrentEpochStats.InferenceCount++
+	executor.CurrentEpochStats.EarnedCoins += uint64(existingInference.ActualCost)
 
 	// Only issue a refund if we have requester information and an escrow amount
 	// (if FinishInference came before StartInference, we won't have this information yet)
