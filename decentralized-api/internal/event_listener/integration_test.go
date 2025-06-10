@@ -443,15 +443,24 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
-	err = setup.simulateBlock(100)
-	require.NoError(t, err)
+	var i = epochParams.EpochLength
+	for i < 2*epochParams.EpochLength {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+		i++
+	}
 
-	// Give time for processing
-	waitForAsync(200 * time.Millisecond)
+	waitForAsync(300 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command, node-1 should be excluded
 	assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
 	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Enabled node-2 should receive InitGenerate call")
+
+	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
+	assertNodeClient(t, node1Expected, node1Client)
+
+	node2Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
+	assertNodeClient(t, node2Expected, node2Client)
 
 	t.Logf("✅ Test 1 passed: Disabled node was excluded from PoC")
 }

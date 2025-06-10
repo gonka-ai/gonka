@@ -109,9 +109,6 @@ func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string) 
 		logging.Error("Failed to send start PoC command", types.PoC, "error", err)
 		return
 	}
-
-	success := <-command.Response
-	logging.Info("NodePoCOrchestrator.Start. Start PoC command response", types.PoC, "success", success)
 }
 
 func (o *NodePoCOrchestratorImpl) StopPoC() {
@@ -121,9 +118,6 @@ func (o *NodePoCOrchestratorImpl) StopPoC() {
 		logging.Error("Failed to send inference up command", types.PoC, "error", err)
 		return
 	}
-
-	success := <-command.Response
-	logging.Info("NodePoCOrchestrator.Stop. Inference up command response", types.PoC, "success", success)
 }
 
 func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int64) {

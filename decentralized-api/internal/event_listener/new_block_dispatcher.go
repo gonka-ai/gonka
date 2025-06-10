@@ -237,7 +237,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 
 	// Check for PoC start
 	if epochParams.IsStartOfPoCStage(blockHeight) {
-		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
+		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		d.nodePocOrchestrator.StartPoC(blockHeight, blockHash)
 		d.randomSeedManager.GenerateSeed(blockHeight)
 
@@ -247,33 +247,33 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	// Check for PoC validation stage transitions
 	if epochParams.IsEndOfPoCStage(blockHeight) {
 		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages,
-			"blockHeigh", blockHeight)
+			"blockHeigh", blockHeight, "blockHash", blockHash)
 		d.nodePocOrchestrator.MoveToValidationStage(blockHeight)
 	}
 
 	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
-		logging.Info("IsStartOfPoCValidationStage", types.Stages)
+		logging.Info("IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.nodePocOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
 	}
 
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
-		logging.Info("IsEndOfPoCValidationStage", types.Stages)
+		logging.Info("IsEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		d.nodePocOrchestrator.StopPoC()
 		return
 	}
 
 	// Check for other stage transitions
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
-		logging.Info("IsSetNewValidatorsStage", types.Stages)
+		logging.Info("IsSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.randomSeedManager.ChangeCurrentSeed()
 		}()
 	}
 
 	if epochParams.IsClaimMoneyStage(blockHeight) {
-		logging.Info("IsClaimMoneyStage", types.Stages)
+		logging.Info("IsClaimMoneyStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.randomSeedManager.RequestMoney()
 		}()
