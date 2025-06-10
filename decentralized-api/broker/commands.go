@@ -156,14 +156,3 @@ func NewInferenceUpAllCommand() InferenceUpAllCommand {
 func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
-
-// SetNodeAdminStateCommand enables or disables a node administratively
-type SetNodeAdminStateCommand struct {
-	NodeId   string
-	Enabled  bool
-	Response chan error
-}
-
-func (c SetNodeAdminStateCommand) GetResponseChannelCapacity() int {
-	return cap(c.Response)
-}

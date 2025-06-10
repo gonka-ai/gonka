@@ -505,31 +505,6 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	t.Logf("✅ Test 2 passed: Node participated in PoC after being enabled")
 }
 
-// Test Scenario 3: Reconciliation triggers inference commands
-func TestReconciliationTriggersInferenceCommands_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup(nil)
-
-	// Add one node
-	setup.addTestNode("node-1", 8081)
-	node1Client := setup.getNodeClient("node-1", 8081)
-
-	// Simulate inference phase (block 50)
-	err := setup.simulateBlock(50)
-	require.NoError(t, err)
-
-	// Process block 52 (should trigger reconciliation after 2 blocks)
-	err = setup.simulateBlock(52)
-	require.NoError(t, err)
-
-	// Give time for reconciliation to process
-	waitForAsync(300 * time.Millisecond)
-
-	// Verify node received inference up command
-	assert.Greater(t, node1Client.InferenceUpCalled, 0, "Node should receive InferenceUp call during reconciliation")
-
-	t.Logf("✅ Test 3 passed: Reconciliation triggered inference commands")
-}
-
 // Test Scenario 4: Full epoch transition with PoC commands
 func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	setup := createIntegrationTestSetup(nil)

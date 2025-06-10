@@ -30,7 +30,16 @@ func (c StartTrainingCommand) GetResponseChannelCapacity() int {
 
 func (c StartTrainingCommand) Execute(broker *Broker) {
 	// First, verify all nodes exist and update their intended status
-	nodesToTrain := make([]string, 0, len(c.nodeRanks))
+	nodeCmds := make(map[string]NodeWorkerCommand)
+	// Create a single command instance with common parameters
+	// Rank will be set within the command's Execute method based on worker.nodeId
+	cmd := StartTrainingNodeCommand{
+		TaskId:         c.taskId,
+		Participant:    broker.participantInfo.GetAddress(),
+		MasterNodeAddr: c.masterNodeAddress,
+		WorldSize:      c.worldSize,
+		NodeRanks:      c.nodeRanks,
+	}
 	for nodeId := range c.nodeRanks {
 		node, nodeFound := broker.nodes[nodeId]
 		if !nodeFound || node == nil {
@@ -41,27 +50,17 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 		}
 		node.State.IntendedStatus = types.HardwareNodeStatus_TRAINING
 		node.State.TrainingTaskId = c.taskId
-		nodesToTrain = append(nodesToTrain, nodeId)
+
+		nodeCmds[nodeId] = cmd
 	}
 
-	// Create a single command instance with common parameters
-	// Rank will be set within the command's Execute method based on worker.nodeId
-	cmd := StartTrainingNodeCommand{
-		TaskId:         c.taskId,
-		Participant:    broker.participantInfo.GetAddress(),
-		MasterNodeAddr: c.masterNodeAddress,
-		WorldSize:      c.worldSize,
-		NodeRanks:      c.nodeRanks,
-	}
-
-	// Execute training start on selected nodes in parallel
-	submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodesToTrain, cmd)
+	submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
 
 	logging.Info("StartTrainingCommand completed", types.Training,
 		"submitted", submitted, "failed", failed,
 		"requested", len(c.nodeRanks), "task_id", c.taskId)
 
 	// Only report success if all nodes successfully started training
-	success := failed == 0 && submitted == len(nodesToTrain)
+	success := failed == 0 && submitted == len(nodeCmds)
 	c.Response <- success
 }

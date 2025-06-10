@@ -134,10 +134,10 @@ func (g *NodeWorkGroup) ExecuteOnAll(cmd NodeWorkerCommand) (submitted, failed i
 }
 
 // ExecuteOnNodes submits a command to specific workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmd NodeWorkerCommand) (submitted, failed int) {
+func (g *NodeWorkGroup) ExecuteOnNodes(nodeCmds map[string]NodeWorkerCommand) (submitted, failed int) {
 	g.mu.RLock()
 	selectedWorkers := make(map[string]*NodeWorker)
-	for _, nodeId := range nodeIds {
+	for nodeId, _ := range nodeCmds {
 		if worker, exists := g.workers[nodeId]; exists {
 			selectedWorkers[nodeId] = worker
 		}
@@ -146,6 +146,11 @@ func (g *NodeWorkGroup) ExecuteOnNodes(nodeIds []string, cmd NodeWorkerCommand) 
 
 	// Submit command to selected workers
 	for nodeId, worker := range selectedWorkers {
+		cmd := nodeCmds[nodeId]
+		if cmd == nil {
+			panic("Illegal state, command cannot be nil for node " + nodeId)
+		}
+
 		if worker.Submit(cmd) {
 			submitted++
 		} else {

@@ -242,15 +242,22 @@ func TestNodeWorkGroup_ExecuteOnNodes(t *testing.T) {
 	}
 
 	// Execute on specific nodes only
-	targetNodes := []string{"node-1", "node-3"}
+	nodeCmds := map[string]NodeWorkerCommand{}
 	var executedNodes sync.Map
-
-	submitted, failed := group.ExecuteOnNodes(targetNodes, &TestCommand{
+	nodeCmds["node-1"] = &TestCommand{
 		ExecuteFn: func(worker *NodeWorker) error {
 			executedNodes.Store(worker.node.Node.Id, true)
 			return nil
 		},
-	})
+	}
+	nodeCmds["node-2"] = &TestCommand{
+		ExecuteFn: func(worker *NodeWorker) error {
+			executedNodes.Store(worker.node.Node.Id, true)
+			return nil
+		},
+	}
+
+	submitted, failed := group.ExecuteOnNodes(nodeCmds)
 
 	assert.Equal(t, 2, submitted, "Should submit to 2 specific nodes")
 	assert.Equal(t, 0, failed, "No submissions should fail")

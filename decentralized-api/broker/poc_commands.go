@@ -20,13 +20,16 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 
 func (c StartPocCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	nodeCmds := make(map[string]NodeWorkerCommand)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
-				"admin_epoch", node.State.AdminState.Epoch)
+				"admin_epoch", node.State.AdminState.Epoch,
+				"current_epoch", epochPhaseInfo,
+				"current_phase", epochPhaseInfo.Phase)
 			continue
 		}
 
@@ -42,13 +45,12 @@ func (c StartPocCommand) Execute(b *Broker) {
 			TotalNodes:  len(b.nodes),
 		}
 
-		// Submit to worker
-		if worker, exists := b.nodeWorkGroup.GetWorker(node.Node.Id); exists {
-			worker.Submit(cmd)
-		} else {
-			logging.Error("Worker not found for node", types.PoC, "node_id", node.Node.Id)
-		}
+		nodeCmds[node.Node.Id] = cmd
 	}
+
+	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
+	logging.Info("StartPocCommand completed", types.PoC,
+		"submitted", submitted, "failed", failed, "total", len(b.nodes))
 
 	c.Response <- true
 }
@@ -67,13 +69,16 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 
 func (c InitValidateCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	nodeCmds := make(map[string]NodeWorkerCommand)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
-				"admin_epoch", node.State.AdminState.Epoch)
+				"admin_epoch", node.State.AdminState.Epoch,
+				"current_epoch", epochPhaseInfo,
+				"current_phase", epochPhaseInfo.Phase)
 			continue
 		}
 
@@ -87,13 +92,39 @@ func (c InitValidateCommand) Execute(b *Broker) {
 			TotalNodes:  len(b.nodes),
 		}
 
-		// Submit to worker
-		if worker, exists := b.nodeWorkGroup.GetWorker(node.Node.Id); exists {
-			worker.Submit(cmd)
-		} else {
-			logging.Error("Worker not found for node", types.PoC, "node_id", node.Node.Id)
-		}
+		nodeCmds[node.Node.Id] = cmd
 	}
+
+	// Execute init validate on all nodes in parallel
+	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
+	logging.Info("InitValidateCommand completed", types.PoC,
+		"submitted", submitted, "failed", failed, "total", len(b.nodes))
+
+	c.Response <- true
+}
+
+func (c InferenceUpAllCommand) Execute(b *Broker) {
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	nodeCmds := make(map[string]NodeWorkerCommand)
+	for _, node := range b.nodes {
+		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+			logging.Info("Skipping inference up for administratively disabled node", types.PoC,
+				"node_id", node.Node.Id,
+				"admin_enabled", node.State.AdminState.Enabled,
+				"admin_epoch", node.State.AdminState.Epoch,
+				"current_epoch", epochPhaseInfo,
+				"current_phase", epochPhaseInfo.Phase)
+			continue
+		}
+
+		nodeCmds[node.Node.Id] = InferenceUpNodeCommand{}
+	}
+
+	// Execute inference up on all nodes in parallel
+	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
+
+	logging.Info("InferenceUpAllCommand completed", types.Nodes,
+		"submitted", submitted, "failed", failed, "total", len(b.nodes))
 
 	c.Response <- true
 }

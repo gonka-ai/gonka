@@ -263,9 +263,9 @@ func (b *Broker) processCommands() {
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
 		case SetNodeAdminStateCommand:
-			b.setNodeAdminState(command)
+			command.Execute(b)
 		case InferenceUpAllCommand:
-			b.inferenceUpAll(command)
+			command.Execute(b)
 		case StartPocCommand:
 			command.Execute(b)
 		case InitValidateCommand:
@@ -824,40 +824,6 @@ func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocPara
 	}, nil
 }
 
-func (b *Broker) reconcileNodeToInference(node *NodeWithState) error {
-	if node.State.Status == types.HardwareNodeStatus_UNKNOWN ||
-		node.State.Status == types.HardwareNodeStatus_STOPPED ||
-		node.State.Status == types.HardwareNodeStatus_FAILED {
-
-		b.restoreNodeToInferenceState(node)
-	}
-	return nil
-}
-
-func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
-	client := b.NewNodeClient(&node.Node)
-
-	nodeId := node.Node.Id
-	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-	err := client.Stop()
-	if err != nil {
-		logging.Error("Failed to stop node during reconciliation", types.Nodes,
-			"node_id", nodeId, "error", err)
-		return
-	} else {
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-	}
-
-	err = inferenceUp(&node.Node, client)
-	if err != nil {
-		logging.Error("Failed to bring up inference during reconciliation", types.Nodes, "noeId", nodeId, "error", err)
-		return
-	} else {
-		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "nodeId", nodeId)
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-	}
-}
-
 func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
 	for _, update := range command.StatusUpdates {
 		nodeId := update.NodeId
@@ -878,31 +844,6 @@ func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
 	}
 
 	command.Response <- true
-}
-
-func (b *Broker) setNodeAdminState(command SetNodeAdminStateCommand) {
-	node, exists := b.nodes[command.NodeId]
-	if !exists {
-		command.Response <- fmt.Errorf("node not found: %s", command.NodeId)
-		return
-	}
-
-	// Get current epoch
-	var currentEpoch uint64
-	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
-	}
-
-	// Update admin state
-	node.State.AdminState.Enabled = command.Enabled
-	node.State.AdminState.Epoch = currentEpoch
-
-	logging.Info("Updated node admin state", types.Nodes,
-		"node_id", command.NodeId,
-		"enabled", command.Enabled,
-		"epoch", currentEpoch)
-
-	command.Response <- nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
@@ -1002,24 +943,6 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
-}
-
-func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
-	// Update intended status for all nodes
-	for _, node := range b.nodes {
-		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-	}
-
-	// Create a single command instance
-	cmd := InferenceUpNodeCommand{}
-
-	// Execute inference up on all nodes in parallel
-	submitted, failed := b.nodeWorkGroup.ExecuteOnAll(cmd)
-
-	logging.Info("InferenceUpAllCommand completed", types.Nodes,
-		"submitted", submitted, "failed", failed, "total", len(b.nodes))
-
-	command.Response <- true
 }
 
 func inferenceUp(node *Node, nodeClient mlnodeclient.MLNodeClient) error {

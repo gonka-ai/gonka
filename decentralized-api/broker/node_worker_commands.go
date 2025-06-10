@@ -124,6 +124,8 @@ func (c InitValidateNodeCommand) Execute(worker *NodeWorker) error {
 type InferenceUpNodeCommand struct{}
 
 func (c InferenceUpNodeCommand) Execute(worker *NodeWorker) error {
+	worker.node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
 	// Check if already in inference state (idempotent)
 	state, err := worker.mlClient.NodeState()
 	if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
