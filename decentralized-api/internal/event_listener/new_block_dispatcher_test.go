@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"decentralized-api/chainphase"
 	"decentralized-api/internal/event_listener/chainevents"
 
 	"github.com/stretchr/testify/assert"
@@ -111,43 +110,4 @@ func TestParseNewBlockInfo(t *testing.T) {
 	assert.Equal(t, int64(12345), blockInfo.Height)
 	assert.Equal(t, "ABCDEF123456", blockInfo.Hash)
 	assert.WithinDuration(t, time.Now(), blockInfo.Timestamp, time.Second)
-}
-
-// Example of how easy it is to test different phase combinations
-func TestPhaseInfoScenarios(t *testing.T) {
-	testCases := []struct {
-		name      string
-		phaseInfo PhaseInfo
-		expected  string
-	}{
-		{
-			name: "PoC phase with parameters",
-			phaseInfo: PhaseInfo{
-				CurrentPhase: chainphase.PhasePoC,
-				PoCParameters: &PoCParams{
-					StartBlockHeight: 1000,
-					StartBlockHash:   "poc-hash",
-				},
-			},
-			expected: "should have PoC parameters",
-		},
-		{
-			name: "Inference phase without PoC parameters",
-			phaseInfo: PhaseInfo{
-				CurrentPhase:  chainphase.PhaseInference,
-				PoCParameters: nil,
-			},
-			expected: "should not have PoC parameters",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.phaseInfo.CurrentPhase == chainphase.PhasePoC {
-				assert.NotNil(t, tc.phaseInfo.PoCParameters, tc.expected)
-			} else {
-				assert.Nil(t, tc.phaseInfo.PoCParameters, tc.expected)
-			}
-		})
-	}
 }

@@ -38,13 +38,12 @@ type NewBlockInfo struct {
 
 // PhaseInfo contains complete phase and epoch information for a given block
 type PhaseInfo struct {
-	CurrentEpoch  uint64
-	CurrentPhase  chainphase.Phase
-	BlockHeight   int64
-	BlockHash     string
-	PoCParameters *PoCParams
-	EpochParams   *types.EpochParams
-	IsSynced      bool
+	CurrentEpoch uint64
+	CurrentPhase types.EpochPhase
+	BlockHeight  int64
+	BlockHash    string
+	EpochParams  *types.EpochParams
+	IsSynced     bool
 }
 
 // PoCParams contains Proof of Compute parameters
@@ -216,23 +215,13 @@ func (d *OnNewBlockDispatcher) updatePhaseAndGetInfo(blockInfo NewBlockInfo, net
 	currentPhase, _ := d.phaseTracker.GetCurrentPhase()
 	currentEpoch := d.phaseTracker.GetCurrentEpoch()
 
-	// Get PoC parameters if available
-	var pocParams *PoCParams
-	if pocHeight, pocHash, isInPoC := d.phaseTracker.GetPoCParameters(); isInPoC {
-		pocParams = &PoCParams{
-			StartBlockHeight: pocHeight,
-			StartBlockHash:   pocHash,
-		}
-	}
-
 	return &PhaseInfo{
-		CurrentEpoch:  currentEpoch,
-		CurrentPhase:  currentPhase,
-		BlockHeight:   blockInfo.Height,
-		BlockHash:     blockInfo.Hash,
-		PoCParameters: pocParams,
-		EpochParams:   networkInfo.EpochParams,
-		IsSynced:      networkInfo.IsSynced,
+		CurrentEpoch: currentEpoch,
+		CurrentPhase: currentPhase,
+		BlockHeight:  blockInfo.Height,
+		BlockHash:    blockInfo.Hash,
+		EpochParams:  networkInfo.EpochParams,
+		IsSynced:     networkInfo.IsSynced,
 	}
 }
 
@@ -312,7 +301,7 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 	logging.Info("Triggering reconciliation", types.Nodes,
 		"height", phaseInfo.BlockHeight,
 		"epoch", phaseInfo.CurrentEpoch,
-		"phase", phaseInfo.CurrentPhase.String())
+		"phase", phaseInfo.CurrentPhase)
 
 	// Create reconciliation command with current phase info
 	response := make(chan bool, 1)
