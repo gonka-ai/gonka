@@ -77,13 +77,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 			continue
 		}
 
-		if node.State.IntendedStatus != types.HardwareNodeStatus_POC || node.State.Status != types.HardwareNodeStatus_POC {
-			logging.Info("Skipping InitValidate for node not in PoC state", types.PoC,
-				"node_id", node.Node.Id,
-				"intended_status", node.State.IntendedStatus,
-				"current_status", node.State.Status)
-			continue
-		}
+		node.State.IntendedStatus = types.HardwareNodeStatus_POC
 
 		cmd := InitValidateNodeCommand{
 			BlockHeight: c.BlockHeight,

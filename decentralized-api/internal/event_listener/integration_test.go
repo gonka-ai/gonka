@@ -343,13 +343,16 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
-	for i := int64(1); i <= epochParams.EpochLength; i++ {
+	var i int64 = 1
+	for i <= epochParams.EpochLength {
 		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node1Client.StopCalled, i)
 		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node2Client.StopCalled, i)
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
 		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
+
+		i++
 	}
 
 	// Wait for all commans
@@ -365,15 +368,48 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
-	for i := epochParams.EpochLength + 1; i < epochParams.EpochLength+epochParams.PocStageDuration; i++ {
-		err := setup.simulateBlock(int64(i))
+	pocGenStart := epochParams.EpochLength + 1
+	require.Equal(t, pocGenStart, i)
+	pocGenEnd := epochParams.EpochLength + epochParams.PocStageDuration
+	for i < pocGenEnd {
+		err := setup.simulateBlock(i)
 		require.NoError(t, err)
+		if i == pocGenStart {
+			waitForAsync(100 * time.Millisecond)
+		}
 
 		// Expect no new calls to ml node client
 		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
 		assertNodeClient(t, expected, node1Client)
 		assertNodeClient(t, expected, node2Client)
+		i++
 	}
+
+	pocValStart := i
+	pocValEnd := pocValStart + epochParams.PocValidationDelay + epochParams.PocValidationDuration
+	for i < pocValEnd {
+		err := setup.simulateBlock(i)
+		require.NoError(t, err)
+
+		if i == pocValStart {
+			waitForAsync(100 * time.Millisecond)
+		}
+
+		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
+		assertNodeClient(t, expected, node1Client)
+		assertNodeClient(t, expected, node2Client)
+
+		i++
+	}
+	require.Equal(t, pocValEnd, i)
+
+	err := setup.simulateBlock(i)
+	require.NoError(t, err)
+	waitForAsync(100 * time.Millisecond)
+
+	expected = NodeClientAssertion{StopCalled: 3, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 2}
+	assertNodeClient(t, expected, node1Client)
+	assertNodeClient(t, expected, node2Client)
 }
 
 type NodeClientAssertion struct {

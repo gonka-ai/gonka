@@ -126,35 +126,28 @@ func (o *NodePoCOrchestratorImpl) StopPoC() {
 	logging.Info("NodePoCOrchestrator.Stop. Inference up command response", types.PoC, "success", success)
 }
 
-func (o *NodePoCOrchestratorImpl) MoveToValidationStage(encOfPoCBlockHeight int64) {
+func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int64) {
 	epochParams := o.phaseTracker.GetEpochParams()
-
-	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
-	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
+	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(endOfPoCBlockHeight)
+	startOfPoCBlockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		logging.Error("MoveToValidationStage. Failed to get block hash", types.PoC, "error", err)
 		return
 	}
 
-	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
+	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "startOfPoCBlockHash", startOfPoCBlockHash)
 
-	logging.Info("Starting PoC Validation on nodes", types.PoC)
-	nodes, err := o.nodeBroker.GetNodes()
-	if err != nil {
-		logging.Error("Failed to get nodes", types.PoC, "error", err)
-		return
+	cmd := broker.InitValidateCommand{
+		BlockHeight: startOfPoCBlockHeight,
+		BlockHash:   startOfPoCBlockHash,
+		PubKey:      o.pubKey,
+		CallbackUrl: o.getPocValidateCallbackUrl(),
+		Response:    make(chan bool, 2),
 	}
-
-	totalNodes := int64(len(nodes))
-	for _, n := range nodes {
-		initDto := mlnodeclient.BuildInitDto(startOfPoCBlockHeight, o.pubKey, totalNodes, totalNodes, blockHash, o.getPocValidateCallbackUrl())
-		nodeClient := o.nodeBroker.NewNodeClient(n.Node)
-		err = nodeClient.InitValidate(initDto)
-
-		if err != nil {
-			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
-			continue
-		}
+	err = o.nodeBroker.QueueMessage(cmd)
+	if err != nil {
+		logging.Error("Failed to send init-validate command", types.PoC, "error", err)
+		return
 	}
 }
 

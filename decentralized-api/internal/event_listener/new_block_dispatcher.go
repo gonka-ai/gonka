@@ -246,7 +246,8 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 
 	// Check for PoC validation stage transitions
 	if epochParams.IsEndOfPoCStage(blockHeight) {
-		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages)
+		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages,
+			"blockHeigh", blockHeight)
 		d.nodePocOrchestrator.MoveToValidationStage(blockHeight)
 	}
 
