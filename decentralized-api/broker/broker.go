@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
@@ -33,10 +34,12 @@ TRAINING = 3;
 type BrokerChainBridge interface {
 	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
 	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
+	GetBlockHash(height int64) (string, error)
 }
 
 type BrokerChainBridgeImpl struct {
-	client cosmosclient.CosmosMessageClient
+	client       cosmosclient.CosmosMessageClient
+	chainNodeUrl string
 }
 
 func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient) BrokerChainBridge {
@@ -54,6 +57,20 @@ func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesRes
 func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
 	_, err := b.client.SendTransaction(diff)
 	return err
+}
+
+func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
+	client, err := cosmosclient.NewRpcClient(b.chainNodeUrl)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := client.Block(context.Background(), &height)
+	if err != nil {
+		return "", err
+	}
+
+	return block.Block.Hash().String(), err
 }
 
 type Broker struct {
@@ -653,6 +670,12 @@ func GetNodeIntendedStatusForPhase(phase types.EpochPhase) types.HardwareNodeSta
 	}
 	return types.HardwareNodeStatus_STOPPED
 }
+
+type pocParams struct {
+	startPoCBlockHeight int64
+	startPoCBlockHash   string
+}
+
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	currentEpoch := epochPhaseInfo.Epoch
@@ -665,6 +688,8 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		"epoch", currentEpoch,
 		"blockHeigh", currentBlockHeight,
 		"intendedNodeStatusForPhase", intendedNodeStatusForPhase.String())
+
+	var currentPoCParams *pocParams = nil
 
 	// Collect nodes that need reconciliation
 	needsReconciliation := make(map[string]NodeWorkerCommand)
@@ -705,12 +730,20 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			case types.HardwareNodeStatus_INFERENCE:
 				needsReconciliation[nodeId] = InferenceUpNodeCommand{}
 			case types.HardwareNodeStatus_POC:
-				pocParams := b.phaseTracker.GetPoCParameters()
-				if pocParams.IsInPoC && pocParams.PoCStartHeight > 0 {
+				if currentPoCParams == nil {
+					queriedParams, err := b.queryCurrentPoCParams(epochPhaseInfo)
+					if err != nil {
+						logging.Error("Failed to query current PoC parameters", types.Nodes, "err", err)
+					} else {
+						currentPoCParams = queriedParams
+					}
+				}
+
+				if currentPoCParams != nil && currentPoCParams.startPoCBlockHeight > 0 {
 					totalNodes := len(b.nodes)
 					needsReconciliation[nodeId] = StartPoCNodeCommand{
-						BlockHeight: pocParams.PoCStartHeight,
-						BlockHash:   pocParams.PoCStartHash,
+						BlockHeight: currentPoCParams.startPoCBlockHeight,
+						BlockHash:   currentPoCParams.startPoCBlockHash,
 						PubKey:      b.participantInfo.GetPubKey(),
 						CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
 						TotalNodes:  totalNodes,
@@ -718,14 +751,12 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 				} else {
 					logging.Warn("Cannot reconcile to PoC: missing PoC parameters", types.Nodes,
 						"node_id", nodeId)
-					needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "POC reconciliation: missing parameters"}
 				}
 			case types.HardwareNodeStatus_STOPPED:
 				needsReconciliation[nodeId] = StopNodeCommand{}
 			default:
 				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
 					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
-				needsReconciliation[nodeId] = &NoOpNodeCommand{Message: "Unknown state reconciliation"}
 			}
 		}
 	}
@@ -778,6 +809,19 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		"submitted", submitted, "failed", failed, "batch_size", processed)
 
 	command.Response <- true
+}
+
+func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocParams, error) {
+	startHeight := chainphase.CalculatePoCStartHeight(info.BlockHeight, &info.EpochParams)
+	hash, err := b.chainBridge.GetBlockHash(startHeight)
+	if err != nil {
+		logging.Error("Failed to query PoC start block hash", types.Nodes, "error", err)
+		return nil, err
+	}
+	return &pocParams{
+		startPoCBlockHeight: startHeight,
+		startPoCBlockHash:   hash,
+	}, nil
 }
 
 func (b *Broker) reconcileNodeToInference(node *NodeWithState) error {

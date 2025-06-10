@@ -3,8 +3,6 @@ package chainphase
 import (
 	"sync"
 
-	"decentralized-api/logging"
-
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -52,11 +50,15 @@ func (t *ChainPhaseTracker) GetBlockHeight() int64 {
 	return t.currentBlockHeight
 }
 
-// calculatePoCStartHeight calculates the PoC start height for the current epoch
-func (t *ChainPhaseTracker) calculatePoCStartHeight(currentHeight int64) int64 {
+// CalculatePoCStartHeight calculates the PoC start height for the current epoch
+func (t *ChainPhaseTracker) CalculatePoCStartHeight(currentHeight int64) int64 {
 	params := t.GetEpochParams()
 
-	shiftedHeight := currentHeight + params.EpochShift
+	return CalculatePoCStartHeight(currentHeight, params)
+}
+
+func CalculatePoCStartHeight(height int64, params *types.EpochParams) int64 {
+	shiftedHeight := height + params.EpochShift
 
 	epochNumber := shiftedHeight / params.EpochLength
 
@@ -64,16 +66,6 @@ func (t *ChainPhaseTracker) calculatePoCStartHeight(currentHeight int64) int64 {
 	pocStartShifted := epochStartShifted + params.GetStartOfPoCStage()
 
 	return pocStartShifted - params.EpochShift
-}
-
-// queryBlockHashAtHeight queries the chain for the block hash at a specific height
-func (t *ChainPhaseTracker) queryBlockHashAtHeight(height int64) string {
-	// This would require a tendermint client to query historical blocks
-	// For now, we'll log a warning and return empty string
-	// In a full implementation, you'd use the tendermint RPC client
-	logging.Warn("Need to query block hash at historical height - not implemented yet", types.System,
-		"height", height)
-	return ""
 }
 
 func (t *ChainPhaseTracker) GetPhase(height int64) types.EpochPhase {
@@ -97,6 +89,7 @@ type EpochPhaseInfo struct {
 	Epoch       uint64
 	BlockHeight int64
 	Phase       types.EpochPhase
+	EpochParams types.EpochParams
 }
 
 func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() EpochPhaseInfo {
@@ -111,6 +104,7 @@ func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() EpochPhaseInfo {
 		Epoch:       epoch,
 		BlockHeight: blockHeight,
 		Phase:       phase,
+		EpochParams: *t.currentEpochParams,
 	}
 }
 
@@ -131,24 +125,4 @@ func getEpoch(blockHeight int64, params *types.EpochParams) uint64 {
 	epochNumber := uint64(shiftedHeight / params.EpochLength)
 
 	return epochNumber
-}
-
-type PoCParameters struct {
-	PoCStartHeight     int64
-	PoCStartHash       string
-	CurrentBlockHeight int64
-	IsInPoC            bool
-}
-
-func (t *ChainPhaseTracker) GetPoCParameters() PoCParameters {
-	currentPhase, blockHeight := t.GetCurrentPhase()
-	pocStartHeight := t.calculatePoCStartHeight(blockHeight)
-	hash := t.queryBlockHashAtHeight(pocStartHeight)
-	isInPoc := currentPhase == types.PoCGeneratePhase
-	return PoCParameters{
-		PoCStartHeight:     pocStartHeight,
-		PoCStartHash:       hash,
-		CurrentBlockHeight: blockHeight,
-		IsInPoC:            isInPoc,
-	}
 }

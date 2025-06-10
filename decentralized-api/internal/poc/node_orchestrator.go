@@ -16,7 +16,7 @@ const (
 )
 
 type NodePoCOrchestrator interface {
-	StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase types.EpochPhase)
+	StartPoC(blockHeight int64, blockHash string)
 	StopPoC()
 	MoveToValidationStage(encOfPoCBlockHeight int64)
 	ValidateReceivedBatches(startOfValStageHeight int64)
@@ -96,7 +96,7 @@ func (o *NodePoCOrchestratorImpl) getPocValidateCallbackUrl() string {
 	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
 }
 
-func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string, currentEpoch uint64, currentPhase types.EpochPhase) {
+func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string) {
 	command := broker.StartPocCommand{
 		BlockHeight: blockHeight,
 		BlockHash:   blockHash,
