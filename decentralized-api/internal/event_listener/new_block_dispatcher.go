@@ -238,7 +238,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	// Check for PoC start
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages)
-		d.nodePocOrchestrator.StartPoC(blockHeight, blockHash, phaseInfo.CurrentEpoch, phaseInfo.CurrentPhase)
+		d.nodePocOrchestrator.StartPoC(blockHeight, blockHash)
 		d.randomSeedManager.GenerateSeed(blockHeight)
 
 		return

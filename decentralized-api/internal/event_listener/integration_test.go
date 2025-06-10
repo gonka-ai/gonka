@@ -6,6 +6,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ var epochParams = types.EpochParams{
 	PocValidationDuration: 10,
 }
 
-var reconcileConfig = MlNodeReconciliationConfig{
+var defaultReconcileConfig = MlNodeReconciliationConfig{
 	BlockInterval: 50,             // TODO: Set to 5 and see how everything fails!
 	TimeInterval:  60 * time.Hour, // Effectively disable for tests
 	LastTime:      time.Now(),
@@ -89,6 +90,10 @@ func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardware
 	return args.Error(0)
 }
 
+func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
+	return "block-hash-" + strconv.FormatInt(height, 10), nil
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 }
@@ -127,7 +132,7 @@ type IntegrationTestSetup struct {
 	MockSeedManager   *MockRandomSeedManager
 }
 
-func createIntegrationTestSetup() *IntegrationTestSetup {
+func createIntegrationTestSetup(reconcileConfig *MlNodeReconciliationConfig) *IntegrationTestSetup {
 	mockQueryClient := &MockQueryClient{}
 	mockSeedManager := &MockRandomSeedManager{}
 
@@ -180,6 +185,12 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney").Return()
 
+	var finalReconcileConfig MlNodeReconciliationConfig
+	if reconcileConfig == nil {
+		finalReconcileConfig = defaultReconcileConfig
+	} else {
+		finalReconcileConfig = *reconcileConfig
+	}
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
@@ -189,7 +200,7 @@ func createIntegrationTestSetup() *IntegrationTestSetup {
 		mockStatusFunc,
 		mockSetHeightFunc,
 		mockSeedManager,
-		reconcileConfig,
+		finalReconcileConfig,
 	)
 
 	return &IntegrationTestSetup{
@@ -280,8 +291,18 @@ func waitForAsync(duration time.Duration) {
 	time.Sleep(duration)
 }
 
+func testReconcileConfig(blockInterval int) MlNodeReconciliationConfig {
+	return MlNodeReconciliationConfig{
+		BlockInterval:   blockInterval,
+		TimeInterval:    60 * time.Minute, // Disable for test
+		LastTime:        time.Now(),
+		LastBlockHeight: 0,
+	}
+}
+
 func TestInferenceReconciliation(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	reconcileConfig := testReconcileConfig(5)
+	setup := createIntegrationTestSetup(&reconcileConfig)
 
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
@@ -308,7 +329,7 @@ func TestInferenceReconciliation(t *testing.T) {
 }
 
 func TestRegularPocScenario(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup(nil)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -344,7 +365,7 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
-	for i := int64(epochParams.EpochLength + 1); i <= epochParams.EpochLength+epochParams.PocStageDuration; i++ {
+	for i := epochParams.EpochLength + 1; i < epochParams.EpochLength+epochParams.PocStageDuration; i++ {
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
 
@@ -371,7 +392,7 @@ func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *ml
 
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
 func TestNodeDisableScenario_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup(nil)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -402,7 +423,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 // Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled
 func TestNodeEnableScenario_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup(nil)
 
 	// Add two nodes - node-1 initially disabled, node-2 enabled
 	setup.addTestNode("node-1", 8081)
@@ -450,7 +471,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 
 // Test Scenario 3: Reconciliation triggers inference commands
 func TestReconciliationTriggersInferenceCommands_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup(nil)
 
 	// Add one node
 	setup.addTestNode("node-1", 8081)
@@ -475,7 +496,7 @@ func TestReconciliationTriggersInferenceCommands_Integration(t *testing.T) {
 
 // Test Scenario 4: Full epoch transition with PoC commands
 func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	setup := createIntegrationTestSetup(nil)
 
 	// Add two nodes
 	setup.addTestNode("node-1", 8081)
@@ -537,7 +558,8 @@ func TestIntegrationTestsSummary(t *testing.T) {
 
 // Simple test to verify basic setup
 func TestBasicSetup(t *testing.T) {
-	setup := createIntegrationTestSetup()
+	reconcileConfig := testReconcileConfig(5)
+	setup := createIntegrationTestSetup(&reconcileConfig)
 	require.NotNil(t, setup)
 	require.NotNil(t, setup.Dispatcher)
 	require.NotNil(t, setup.NodeBroker)
