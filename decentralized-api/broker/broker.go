@@ -251,6 +251,8 @@ func (b *Broker) processCommands() {
 			b.inferenceUpAll(command)
 		case StartPocCommand:
 			command.Execute(b)
+		case InitValidateCommand:
+			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -358,9 +360,9 @@ func (b *Broker) removeNode(command RemoveNode) {
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	var leastBusyNode *NodeWithState = nil
-
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version, command.CurrentEpoch, command.CurrentPhase) {
+		if b.nodeAvailable(node, command.Model, command.Version, epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -378,8 +380,6 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 					Model:                command.Model,
 					Response:             command.Response,
 					AcceptEarlierVersion: false,
-					CurrentEpoch:         command.CurrentEpoch,
-					CurrentPhase:         command.CurrentPhase,
 				},
 			)
 		} else {
@@ -439,22 +439,12 @@ func LockNode[T any](
 ) (T, error) {
 	var zero T
 
-	// Get current phase data
-	var currentEpoch uint64
-	var currentPhase types.EpochPhase
-	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
-		currentPhase, _ = b.phaseTracker.GetCurrentPhase()
-	}
-
 	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
 		Model:                model,
 		Response:             nodeChan,
 		Version:              version,
 		AcceptEarlierVersion: true,
-		CurrentEpoch:         currentEpoch,
-		CurrentPhase:         currentPhase,
 	})
 	if err != nil {
 		return zero, err

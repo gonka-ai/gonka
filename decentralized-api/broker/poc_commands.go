@@ -1,20 +1,17 @@
 package broker
 
 import (
-	"decentralized-api/chainphase"
 	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 type StartPocCommand struct {
-	BlockHeight  int64
-	BlockHash    string
-	PubKey       string
-	CallbackUrl  string
-	CurrentEpoch uint64
-	CurrentPhase chainphase.Phase
-	Response     chan bool
+	BlockHeight int64
+	BlockHash   string
+	PubKey      string
+	CallbackUrl string
+	Response    chan bool
 }
 
 func (c StartPocCommand) GetResponseChannelCapacity() int {
@@ -22,9 +19,10 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartPocCommand) Execute(b *Broker) {
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(c.CurrentEpoch, c.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
@@ -56,13 +54,11 @@ func (c StartPocCommand) Execute(b *Broker) {
 }
 
 type InitValidateCommand struct {
-	BlockHeight  int64
-	BlockHash    string
-	PubKey       string
-	CallbackUrl  string
-	CurrentEpoch uint64
-	CurrentPhase chainphase.Phase
-	Response     chan bool
+	BlockHeight int64
+	BlockHash   string
+	PubKey      string
+	CallbackUrl string
+	Response    chan bool
 }
 
 func (c InitValidateCommand) GetResponseChannelCapacity() int {
@@ -70,9 +66,10 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InitValidateCommand) Execute(b *Broker) {
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(c.CurrentEpoch, c.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,

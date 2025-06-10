@@ -93,6 +93,27 @@ func (t *ChainPhaseTracker) GetCurrentPhase() (types.EpochPhase, int64) {
 	return phase, blockHeight
 }
 
+type EpochPhaseInfo struct {
+	Epoch       uint64
+	BlockHeight int64
+	Phase       types.EpochPhase
+}
+
+func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() EpochPhaseInfo {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	blockHeight := t.currentBlockHeight
+	phase := t.currentEpochParams.GetCurrentPhase(blockHeight)
+	epoch := getEpoch(blockHeight, t.currentEpochParams)
+
+	return EpochPhaseInfo{
+		Epoch:       epoch,
+		BlockHeight: blockHeight,
+		Phase:       phase,
+	}
+}
+
 // GetCurrentEpoch returns the current epoch number based on block height
 func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
 	t.mu.RLock()
@@ -102,9 +123,12 @@ func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
 		return 0
 	}
 
-	// Calculate epoch number from block height
-	shiftedHeight := t.currentBlockHeight + t.currentEpochParams.EpochShift
-	epochNumber := uint64(shiftedHeight / t.currentEpochParams.EpochLength)
+	return getEpoch(t.currentBlockHeight, t.currentEpochParams)
+}
+
+func getEpoch(blockHeight int64, params *types.EpochParams) uint64 {
+	shiftedHeight := blockHeight + params.EpochShift
+	epochNumber := uint64(shiftedHeight / params.EpochLength)
 
 	return epochNumber
 }
