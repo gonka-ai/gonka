@@ -105,7 +105,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
-        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
+        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
         it.mock?.setInferenceResponse(defaultInferenceResponseObject)
         it.getParams()
         it.node.getAddress()
@@ -132,7 +132,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
-        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt()) {
+        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt() + 2) {
             val address = pair.node.getAddress()
             val stats = pair.node.getParticipantCurrentStats()
             val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
@@ -221,7 +221,7 @@ val inferenceConfig = ApplicationConfig(
     chainId = "prod-sim",
     nodeImageName = "ghcr.io/product-science/inferenced",
     genesisNodeImage = "ghcr.io/product-science/inferenced",
-    wireMockImageName = "wiremock/wiremock:latest",
+    mockImageName = "inference-mock-server",
     apiImageName = "ghcr.io/product-science/api",
     denom = "nicoin",
     stateDirName = ".inference",

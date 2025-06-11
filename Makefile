@@ -1,17 +1,23 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1
 
 node-build-docker:
 	@make -C inference-chain build-docker SET_LATEST=1 GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE)
+
+mock-server-build-docker:
+	@echo "Building mock-server JAR file..."
+	@cd testermint/mock_server && ./gradlew shadowJar
+	@echo "Building mock-server docker image..."
+	@docker build -t inference-mock-server -f testermint/Dockerfile testermint
 
 release: decentralized-api-release inference-chain-release tmkms-release
 	@git tag $(TAG_NAME)

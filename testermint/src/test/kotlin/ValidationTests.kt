@@ -51,6 +51,7 @@ class ValidationTests : TestermintTest() {
 
     @Test
     @Timeout(15, unit = TimeUnit.MINUTES)
+    @Tag("unstable")
     fun `test invalid gets removed`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()

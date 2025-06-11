@@ -35,7 +35,7 @@ data class DockerGroup(
     val adminPort: Int,
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
-    val wiremockExternalPort: Int,
+    val mockExternalPort: Int,
     val workingDirectory: String,
     val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
@@ -98,7 +98,7 @@ data class DockerGroup(
             put("ADMIN_SERVER_PORT", adminPort.toString())
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
-            put("WIREMOCK_PORT", wiremockExternalPort.toString())
+            put("WIREMOCK_PORT", mockExternalPort.toString())
             put("GENESIS_OVERRIDES_FILE", genesisOverridesFile)
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
@@ -193,7 +193,7 @@ fun createDockerGroup(
             [
               {
                 "id": "wiremock",
-                "host": "$keyName-wiremock",
+                "host": "$keyName-mock-server",
                 "inference_port": 8080,
                 "poc_port": 8080,
                 "max_concurrent": 10,
@@ -213,7 +213,7 @@ fun createDockerGroup(
         adminPort = 9002 + iteration,
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
-        wiremockExternalPort = 8090 + iteration,
+        mockExternalPort = 8090 + iteration,
         workingDirectory = repoRoot,
         genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
         genesisGroup = genesisUrls,

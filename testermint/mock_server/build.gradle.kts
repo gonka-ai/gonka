@@ -19,11 +19,21 @@ dependencies {
     implementation("io.ktor:ktor-server-content-negotiation:2.3.9")
     implementation("io.ktor:ktor-serialization-jackson:2.3.9")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.9")
-    
+    implementation("io.ktor:ktor-server-call-logging:2.3.9")
+
+    // Ktor client dependencies
+    implementation("io.ktor:ktor-client-core:2.3.9")
+    implementation("io.ktor:ktor-client-cio:2.3.9")
+    implementation("io.ktor:ktor-client-content-negotiation:2.3.9")
+    implementation("io.ktor:ktor-client-json:2.3.9")
+
+    // Jackson for JSON processing
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
+
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation("org.slf4j:slf4j-api:2.0.9")
-    
+
     // Testing
     testImplementation("io.ktor:ktor-server-test-host:2.3.9")
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.0.10")

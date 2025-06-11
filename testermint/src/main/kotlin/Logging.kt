@@ -137,7 +137,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
     }
 
     private fun parseEntry(logEntry: String): Pair<String, String> {
-        val cosmosLogRegex = "(?:\\x1B\\[[0-9;]*m)*([A-Z]{3,4})(?:\\x1B\\[[0-9;]*m)*\\s+(.*)".toRegex()
+        val cosmosLogRegex = "(?:\\x1B\\[[0-9;]*m)*([A-Z]{3,5})(?:\\x1B\\[[0-9;]*m)*\\s+(.*)".toRegex()
         val match = cosmosLogRegex.find(logEntry)
         if (match != null) {
             return match.groupValues[1] to match.groupValues[2]
