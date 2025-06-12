@@ -19,17 +19,19 @@ type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
 	mlClient mlnodeclient.MLNodeClient
+	broker   *Broker
 	commands chan commandWithContext
 	shutdown chan struct{}
 	wg       sync.WaitGroup
 }
 
 // NewNodeWorkerWithClient creates a new worker with a custom client (for testing)
-func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodeclient.MLNodeClient) *NodeWorker {
+func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodeclient.MLNodeClient, broker *Broker) *NodeWorker {
 	worker := &NodeWorker{
 		nodeId:   nodeId,
 		node:     node,
 		mlClient: client,
+		broker:   broker,
 		commands: make(chan commandWithContext, 10),
 		shutdown: make(chan struct{}),
 	}
@@ -42,23 +44,32 @@ func (w *NodeWorker) run() {
 	for {
 		select {
 		case item := <-w.commands:
-			if item.ctx.Err() != nil {
-				logging.Info("Node command cancelled before execution", types.Nodes,
-					"node_id", w.nodeId)
-				w.wg.Done()
-				continue
+			result := item.cmd.Execute(item.ctx, w)
+
+			// Queue a command back to the broker to update the state
+			updateCmd := UpdateNodeResultCommand{
+				NodeId:   w.nodeId,
+				Result:   result,
+				Response: make(chan bool, 1),
 			}
-			if err := item.cmd.Execute(item.ctx, w); err != nil {
-				logging.Error("Node command execution failed", types.Nodes,
+			if err := w.broker.QueueMessage(updateCmd); err != nil {
+				logging.Error("Failed to queue node result update command", types.Nodes,
 					"node_id", w.nodeId, "error", err)
 			}
+			// We don't wait for the response from updateCmd, the worker's job is done.
 			w.wg.Done()
 		case <-w.shutdown:
 			// Drain remaining commands before shutting down
 			close(w.commands)
 			for item := range w.commands {
-				if err := item.cmd.Execute(item.ctx, w); err != nil {
-					logging.Error("Node command execution failed during shutdown", types.Nodes,
+				result := item.cmd.Execute(item.ctx, w)
+				updateCmd := UpdateNodeResultCommand{
+					NodeId:   w.nodeId,
+					Result:   result,
+					Response: make(chan bool, 1),
+				}
+				if err := w.broker.QueueMessage(updateCmd); err != nil {
+					logging.Error("Failed to queue node result update command during shutdown", types.Nodes,
 						"node_id", w.nodeId, "error", err)
 				}
 				w.wg.Done()

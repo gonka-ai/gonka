@@ -11,25 +11,35 @@ import (
 
 // NodeWorkerCommand defines the interface for commands executed by NodeWorker
 type NodeWorkerCommand interface {
-	Execute(ctx context.Context, worker *NodeWorker) error
+	Execute(ctx context.Context, worker *NodeWorker) NodeResult
 }
 
 // StopNodeCommand stops the ML node
 type StopNodeCommand struct{}
 
-func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
+	result := NodeResult{
+		OriginalTarget: types.HardwareNodeStatus_STOPPED,
 	}
+
+	if ctx.Err() != nil {
+		result.Succeeded = false
+		result.Error = ctx.Err().Error()
+		result.FinalStatus = worker.node.State.CurrentStatus // Status is unchanged
+		return result
+	}
+
 	err := worker.mlClient.Stop()
 	if err != nil {
-		logging.Error("Failed to stop node", types.Nodes,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to stop")
-		return err
+		logging.Error("Failed to stop node", types.Nodes, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+	} else {
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_STOPPED
 	}
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-	return nil
+	return result
 }
 
 // StartPoCNodeCommand starts PoC on a single node
@@ -41,60 +51,55 @@ type StartPoCNodeCommand struct {
 	TotalNodes  int
 }
 
-func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
-	// Check if already in PoC state (idempotent)
-	if ctx.Err() != nil {
-		return ctx.Err()
+func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
+	result := NodeResult{
+		OriginalTarget: types.HardwareNodeStatus_POC,
 	}
+
+	if ctx.Err() != nil {
+		result.Succeeded = false
+		result.Error = ctx.Err().Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		return result
+	}
+
+	// Idempotency check
 	status, err := worker.mlClient.GetPowStatus()
 	if err == nil && status.Status == mlnodeclient.POW_GENERATING {
 		logging.Info("Node already in PoC state", types.PoC, "node_id", worker.nodeId)
-		worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
-		return nil
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_POC
+		return result
 	}
 
 	// Stop node if needed
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
 	nodeState, _ := worker.mlClient.NodeState()
 	if nodeState != nil && nodeState.State != mlnodeclient.MlNodeState_STOPPED {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := worker.mlClient.Stop(); err != nil {
+			logging.Error("Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+			result.Succeeded = false
+			result.Error = err.Error()
+			result.FinalStatus = types.HardwareNodeStatus_FAILED
+			return result
 		}
-		err := worker.mlClient.Stop()
-		if err != nil {
-			logging.Error("Failed to stop node for PoC", types.PoC,
-				"node_id", worker.nodeId, "error", err)
-			worker.node.State.Failure("Failed to stop for PoC")
-			return err
-		}
-		worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 	}
 
 	// Start PoC
 	dto := mlnodeclient.BuildInitDto(
-		c.BlockHeight,
-		c.PubKey,
-		int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum),
-		c.BlockHash,
-		c.CallbackUrl,
+		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
+		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
 	)
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := worker.mlClient.InitGenerate(dto); err != nil {
+		logging.Error("Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+	} else {
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_POC
+		logging.Info("Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
 	}
-	err = worker.mlClient.InitGenerate(dto)
-	if err != nil {
-		logging.Error("Failed to start PoC", types.PoC,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to start PoC")
-		return err
-	}
-
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
-	logging.Info("Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
-	return nil
+	return result
 }
 
 type InitValidateNodeCommand struct {
@@ -105,85 +110,88 @@ type InitValidateNodeCommand struct {
 	TotalNodes  int
 }
 
-func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
-	// Check if already in PoC state (idempotent)
-	if ctx.Err() != nil {
-		return ctx.Err()
+func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
+	result := NodeResult{
+		OriginalTarget: types.HardwareNodeStatus_POC,
 	}
+
+	if ctx.Err() != nil {
+		result.Succeeded = false
+		result.Error = ctx.Err().Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		return result
+	}
+
+	// Idempotency check
 	status, err := worker.mlClient.GetPowStatus()
 	if err == nil && status.Status == mlnodeclient.POW_VALIDATING {
 		logging.Info("Node already in POW_VALIDATING state", types.PoC, "node_id", worker.nodeId)
-		worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
-		return nil
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_POC
+		return result
 	}
 
 	dto := mlnodeclient.BuildInitDto(
-		c.BlockHeight,
-		c.PubKey,
-		int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum),
-		c.BlockHash,
-		c.CallbackUrl,
+		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
+		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
 	)
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := worker.mlClient.InitValidate(dto); err != nil {
+		logging.Error("Failed to transition to PoC validate", types.PoC, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+	} else {
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_POC
+		logging.Info("Successfully transitioned node to PoC init validate stage", types.PoC, "node_id", worker.nodeId)
 	}
-	err = worker.mlClient.InitValidate(dto)
-	if err != nil {
-		logging.Error("Failed to transition node to PoC init validate stage", types.PoC,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to transitions PoC to init validate stage")
-		return err
-	}
-
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_POC)
-	logging.Info("Successfully transitioned node to PoC init validate stage", types.PoC, "node_id", worker.nodeId)
-	return nil
+	return result
 }
 
 // InferenceUpNodeCommand brings up inference on a single node
 type InferenceUpNodeCommand struct{}
 
-func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
-	worker.node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-
-	// Check if already in inference state (idempotent)
-	if ctx.Err() != nil {
-		return ctx.Err()
+func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
+	result := NodeResult{
+		OriginalTarget: types.HardwareNodeStatus_INFERENCE,
 	}
+	if ctx.Err() != nil {
+		result.Succeeded = false
+		result.Error = ctx.Err().Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		return result
+	}
+
+	// Idempotency check
 	state, err := worker.mlClient.NodeState()
 	if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
-		healthy, _ := worker.mlClient.InferenceHealth()
-		if healthy {
+		if healthy, _ := worker.mlClient.InferenceHealth(); healthy {
 			logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
-			worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-			return nil
+			result.Succeeded = true
+			result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+			return result
 		}
 	}
 
 	// Stop node first
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := worker.mlClient.Stop(); err != nil {
+		logging.Error("Failed to stop node for inference up", types.Nodes, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		return result
 	}
-	err = worker.mlClient.Stop()
-	if err != nil {
-		logging.Error("Failed to stop node for inference up", types.Nodes,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to stop for inference")
-		return err
-	}
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 
 	// Start inference
 	if len(worker.node.Node.Models) == 0 {
-		logging.Error("No models found for node", types.Nodes,
-			"node_id", worker.nodeId)
-		worker.node.State.Failure("No models available")
-		return err
+		result.Succeeded = false
+		result.Error = "No models available"
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+		return result
 	}
 
-	// Use first available model
 	var model string
 	var modelArgs []string
 	for modelName, args := range worker.node.Node.Models {
@@ -193,26 +201,24 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	if model == "" {
-		logging.Error("No inference model set in config", types.Nodes,
-			"node_id", worker.nodeId)
-		worker.node.State.Failure("No inference model set in config")
-		return errors.New("no model available for inference")
+		result.Succeeded = false
+		result.Error = "No inference model set in config"
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+		return result
 	}
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := worker.mlClient.InferenceUp(model, modelArgs); err != nil {
+		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+	} else {
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
 	}
-	err = worker.mlClient.InferenceUp(model, modelArgs)
-	if err != nil {
-		logging.Error("Failed to bring up inference", types.Nodes,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to start inference")
-		return err
-	}
-
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-	logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
-	return nil
+	return result
 }
 
 // StartTrainingNodeCommand starts training on a single node
@@ -224,49 +230,53 @@ type StartTrainingNodeCommand struct {
 	WorldSize      int
 }
 
-func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
+func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
+	result := NodeResult{
+		OriginalTarget: types.HardwareNodeStatus_TRAINING,
+	}
+
+	if ctx.Err() != nil {
+		result.Succeeded = false
+		result.Error = ctx.Err().Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		return result
+	}
+
 	rank, ok := c.NodeRanks[worker.nodeId]
 	if !ok {
-		logging.Error("Rank not found for node in StartTrainingNodeCommand", types.Training, "node_id", worker.nodeId)
-		return errors.New("rank not found for node")
+		err := errors.New("rank not found for node")
+		logging.Error(err.Error(), types.Training, "node_id", worker.nodeId)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		return result
 	}
 
 	// Stop node first
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := worker.mlClient.Stop(); err != nil {
+		logging.Error("Failed to stop node for training", types.Training, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		return result
 	}
-	err := worker.mlClient.Stop()
-	if err != nil {
-		logging.Error("Failed to stop node for training", types.Training,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to stop for training")
-		return err
-	}
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
 
 	// Start training
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	err = worker.mlClient.StartTraining(
-		c.TaskId,
-		c.Participant,
-		worker.nodeId,
-		c.MasterNodeAddr,
-		rank,
-		c.WorldSize,
+	trainingErr := worker.mlClient.StartTraining(
+		c.TaskId, c.Participant, worker.nodeId,
+		c.MasterNodeAddr, rank, c.WorldSize,
 	)
-	if err != nil {
-		logging.Error("Failed to start training", types.Training,
-			"node_id", worker.nodeId, "error", err)
-		worker.node.State.Failure("Failed to start training")
-		return err
+	if trainingErr != nil {
+		logging.Error("Failed to start training", types.Training, "node_id", worker.nodeId, "error", trainingErr)
+		result.Succeeded = false
+		result.Error = trainingErr.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+	} else {
+		result.Succeeded = true
+		result.FinalStatus = types.HardwareNodeStatus_TRAINING
+		logging.Info("Successfully started training on node", types.Training, "node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
 	}
-
-	worker.node.State.UpdateStatusNow(types.HardwareNodeStatus_TRAINING)
-	logging.Info("Successfully started training on node", types.Training,
-		"node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
-	return nil
+	return result
 }
 
 // NoOpNodeCommand is a command that does nothing (used as placeholder)
@@ -274,9 +284,13 @@ type NoOpNodeCommand struct {
 	Message string
 }
 
-func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) error {
+func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	if c.Message != "" {
 		logging.Debug(c.Message, types.Nodes, "node_id", worker.nodeId)
 	}
-	return nil
+	return NodeResult{
+		Succeeded:      true,
+		FinalStatus:    worker.node.State.CurrentStatus,
+		OriginalTarget: worker.node.State.CurrentStatus,
+	}
 }

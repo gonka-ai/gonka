@@ -156,3 +156,20 @@ func NewInferenceUpAllCommand() InferenceUpAllCommand {
 func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
+
+type NodeResult struct {
+	Succeeded      bool
+	FinalStatus    types.HardwareNodeStatus // The status the node ended up in
+	OriginalTarget types.HardwareNodeStatus // The status it was trying to achieve
+	Error          string
+}
+
+type UpdateNodeResultCommand struct {
+	NodeId   string
+	Result   NodeResult
+	Response chan bool
+}
+
+func (c UpdateNodeResultCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
