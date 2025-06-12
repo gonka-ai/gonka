@@ -390,14 +390,6 @@ func TestRegularPocScenario(t *testing.T) {
 		i++
 	}
 
-	require.Equal(t, node1Client.LastInitDto.BlockHeight, node1Client.LastInitValidateDto.BlockHeight)
-	require.Equal(t, node1Client.LastInitDto.BlockHash, node1Client.LastInitValidateDto.BlockHash)
-	require.Equal(t, node2Client.LastInitDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
-	require.Equal(t, node2Client.LastInitDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
-
-	require.Equal(t, node1Client.LastInitValidateDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
-	require.Equal(t, node1Client.LastInitValidateDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
-
 	pocValStart := i
 	pocValEnd := pocValStart + defaultEpochParams.PocValidationDelay + defaultEpochParams.PocValidationDuration
 	for i < pocValEnd {
@@ -415,6 +407,14 @@ func TestRegularPocScenario(t *testing.T) {
 		i++
 	}
 	require.Equal(t, pocValEnd, i)
+
+	require.Equal(t, node1Client.LastInitDto.BlockHeight, node1Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node1Client.LastInitDto.BlockHash, node1Client.LastInitValidateDto.BlockHash)
+	require.Equal(t, node2Client.LastInitDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node2Client.LastInitDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
+
+	require.Equal(t, node1Client.LastInitValidateDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node1Client.LastInitValidateDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
 
 	err := setup.simulateBlock(i)
 	require.NoError(t, err)

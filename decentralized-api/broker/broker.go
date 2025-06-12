@@ -802,7 +802,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	nodesToCancel := make(map[string]func())
 	b.mu.RLock()
 	for id, node := range b.nodes {
-		if node.State.ReconcileInfo != nil && node.State.ReconcileInfo.Status != node.State.IntendedStatus {
+		if node.State.ReconcileInfo != nil && (node.State.ReconcileInfo.Status != node.State.IntendedStatus || node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
 			if node.State.cancelInFlightTask != nil {
 				nodesToCancel[id] = node.State.cancelInFlightTask
 			}
@@ -824,8 +824,6 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	// Phase 2: Dispatch new tasks
 	var currentPoCParams *pocParams
 	var pocParamsErr error
-	var validationBlockHash string
-	var validationHashErr error
 
 	nodesToDispatch := make(map[string]*NodeWithState)
 	b.mu.RLock()
@@ -844,28 +842,19 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	b.mu.RUnlock()
 
 	// Pre-fetch PoC params if needed to avoid multiple lookups
-	needsPocGenParams := false
-	needsPocValParams := false
+	needsPocParams := false
 	for _, node := range nodesToDispatch {
 		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
-			if epochPhaseInfo.Phase == types.PoCGeneratePhase {
-				needsPocGenParams = true
-			}
-			if epochPhaseInfo.Phase == types.PoCValidatePhase {
-				needsPocValParams = true
+			if node.State.PocIntendedStatus == PocStatusGenerating || node.State.PocIntendedStatus == PocStatusValidating {
+				needsPocParams = true
 			}
 		}
 	}
-	if needsPocGenParams {
+
+	if needsPocParams {
 		currentPoCParams, pocParamsErr = b.queryCurrentPoCParams(epochPhaseInfo)
 		if pocParamsErr != nil {
 			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
-		}
-	}
-	if needsPocValParams {
-		validationBlockHash, validationHashErr = b.chainBridge.GetBlockHash(epochPhaseInfo.BlockHeight)
-		if validationHashErr != nil {
-			logging.Error("Failed to query PoC Validation block hash, skipping PoC reconciliation", types.Nodes, "error", validationHashErr, "blockHeight", blockHeight)
 		}
 	}
 
@@ -905,7 +894,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 		}
 
 		// Create and dispatch the command
-		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, validationBlockHash, validationHashErr, len(nodesToDispatch), epochPhaseInfo)
+		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, len(nodesToDispatch), epochPhaseInfo)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -932,7 +921,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	}
 }
 
-func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, pocValHash string, pocValHashErr error, totalNodes int, epochPhaseInfo chainphase.EpochPhaseInfo) NodeWorkerCommand {
+func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, totalNodes int, epochPhaseInfo chainphase.EpochPhaseInfo) NodeWorkerCommand {
 	switch status {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
@@ -951,16 +940,16 @@ func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus P
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
 		case PocStatusValidating:
-			if pocValHashErr == nil {
+			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
 				return InitValidateNodeCommand{
-					BlockHeight: epochPhaseInfo.BlockHeight,
-					BlockHash:   pocValHash,
+					BlockHeight: pocGenParams.startPoCBlockHeight,
+					BlockHash:   pocGenParams.startPoCBlockHash,
 					PubKey:      b.participantInfo.GetPubKey(),
 					CallbackUrl: GetPocValidateCallbackUrl(b.callbackUrl),
 					TotalNodes:  totalNodes,
 				}
 			}
-			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocValHashErr)
+			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
 		default:
 			return nil // No action for other phases if status is POC
