@@ -107,12 +107,27 @@ data class ApplicationAPI(
     }
 
     fun getNodes(): List<NodeResponse> =
-        wrapLog("GetNodes", false) {
+        wrapLog("getNodes", false) {
             val url = urlFor(SERVER_TYPE_ADMIN)
-            val response = Fuel.get("$url/admin/v1/nodes")
-                .responseObject<List<NodeResponse>>(gsonDeserializer(cosmosJson))
-            logResponse(response)
-            response.third.get()
+            var lastException: Exception? = null
+            for (attempt in 1..3) {
+                try {
+                    val response = Fuel.get("$url/admin/v1/nodes")
+                        .timeout(1000 * 10)  // 10 seconds connection timeout
+                        .timeoutRead(1000 * 10)  // 10 seconds read timeout
+                        .responseObject<List<NodeResponse>>(gsonDeserializer(cosmosJson))
+                    logResponse(response)
+                    return@wrapLog response.third.get()
+                } catch (e: Exception) {
+                    lastException = e
+                    Logger.warn(e, "Exception during getNodes, retrying")
+                    if (attempt < 3) {
+                        Thread.sleep(5000) // 5 seconds delay
+                        continue
+                    }
+                }
+            }
+            throw lastException ?: Exception("Failed to get nodes after 3 attempts")
         }
 
     fun addNode(node: InferenceNode): InferenceNode = wrapLog("AddNode", true) {

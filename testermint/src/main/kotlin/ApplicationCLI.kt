@@ -1,22 +1,26 @@
 package com.productscience
 
-import com.github.dockerjava.api.model.Volume
-import com.github.dockerjava.core.DockerClientBuilder
 import com.google.gson.reflect.TypeToken
 import com.productscience.data.*
+import org.tinylog.ThreadContext
 import org.tinylog.kotlin.Logger
 import java.io.Closeable
 import java.time.Duration
 import java.time.Instant
 
+interface CliExecutor {
+    fun exec(args: List<String>): List<String>
+    fun createContainer(doNotStartChain: Boolean = false)
+    fun kill()
+}
+
 // Usage
 data class ApplicationCLI(
-    val containerId: String,
     override val config: ApplicationConfig,
-    val logOutput: LogOutput
+    val logOutput: LogOutput,
+    val executor: CliExecutor,
+    val retryRules: List<CliRetryRule>
 ) : HasConfig, Closeable {
-    private val dockerClient = DockerClientBuilder.getInstance()
-        .build()
 
     fun getGenesisState(): AppExport =
         wrapLog("getGenesisJson", false) {
@@ -30,41 +34,17 @@ data class ApplicationCLI(
 
     fun createContainer(doNotStartChain: Boolean = false) {
         wrapLog("createContainer", false) {
-            this.killNameConflicts()
-            Logger.info("Creating container,  id={}", containerId)
-            var createCmd = dockerClient.createContainerCmd(config.nodeImageName)
-                .withName(containerId)
-                .withVolumes(Volume(config.mountDir))
-            if (doNotStartChain) {
-                createCmd = createCmd.withCmd("tail", "-f", "/dev/null")
-            }
-            createCmd.exec()
-            dockerClient.startContainerCmd(containerId).exec()
-        }
-    }
-
-    private fun killNameConflicts() {
-        wrapLog("killNameConflicts", false) {
-            val containers = dockerClient.listContainersCmd().exec()
-            containers.forEach {
-                if (it.names.contains("/$containerId")) {
-                    Logger.info("Killing conflicting container, id={}", it.id)
-                    dockerClient.killContainerCmd(it.id).exec()
-                    dockerClient.removeContainerCmd(it.id).exec()
-                }
-            }
+            this.executor.createContainer(doNotStartChain)
         }
     }
 
     override fun close() {
-        this.killContainer()
+        this.killExecutor()
     }
 
-    fun killContainer() {
+    fun killExecutor() {
         wrapLog("killContainer", false) {
-            Logger.info("Killing container, id={}", containerId)
-            dockerClient.killContainerCmd(containerId).exec()
-            dockerClient.removeContainerCmd(containerId).exec()
+            this.executor.kill()
         }
     }
 
@@ -154,14 +134,28 @@ data class ApplicationCLI(
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
-    var addresss: String? = null
-    fun getAddress(): String = wrapLog("getAddress", false) {
-        if (addresss == null) {
-            val keys = getKeys()
-            addresss = (keys.firstOrNull { it.name == this.config.pairName.drop(1) } ?: keys.first()).address
-        }
-        addresss!!
+    fun getVersion(): String = wrapLog("getVersion", false) {
+        exec(listOf(config.execName, "version")).first()
     }
+
+    var accountKey: Validator? = null
+    fun getAddress(): String = wrapLog("getAddress", false) {
+        getAccountIfNeeded()
+        accountKey!!.address
+    }
+
+    private fun getAccountIfNeeded() {
+        if (accountKey == null) {
+            val keys = getKeys()
+            accountKey = (keys.firstOrNull { it.type == "local" && !it.name.startsWith("POOL") } ?: keys.first())
+        }
+    }
+
+    fun getAccountName(): String = wrapLog("getAccountName", false) {
+        getAccountIfNeeded()
+        accountKey!!.name
+    }
+
 
     // Use TypeToken to properly deserialize List<Validator>
     fun getKeys(): List<Validator> = wrapLog("getKeys", false) {
@@ -193,6 +187,10 @@ data class ApplicationCLI(
 
     fun getGovParams(): GovState = wrapLog("getGovParams", false) {
         execAndParse(listOf("query", "gov", "params"))
+    }
+
+    fun getGovVotes(proposalId: String): ProposalVotes = wrapLog("getGovVotes", false) {
+        execAndParse(listOf("query", "gov", "votes", proposalId))
     }
 
     fun getInferenceParams(): InferenceParamsWrapper = wrapLog("getInferenceParams", false) {
@@ -245,23 +243,24 @@ data class ApplicationCLI(
 
 
     fun exec(args: List<String>): List<String> {
-        val execCreateCmdResponse = dockerClient.execCreateCmd(containerId)
-            .withAttachStdout(true)
-            .withAttachStderr(true)
-            .withTty(true)
-            .withCmd(*args.toTypedArray())
-            .exec()
+        var retries = 0
+        while (true) {
+            val output = executor.exec(args)
 
-        val output = ExecCaptureOutput()
-        Logger.trace("Executing command: {}", args.joinToString(" "))
-        val execResponse = dockerClient.execStartCmd(execCreateCmdResponse.id).exec(output)
-        execResponse.awaitCompletion()
-        Logger.trace("Command complete: output={}", output.output)
-        if (output.output.isNotEmpty() && output.output.first().startsWith("Usage:")) {
-            val error = output.output.joinToString(separator = "").lines().last { it.isNotBlank() }
-            throw getExecException(error)
+            if (output.isNotEmpty() && output.first().startsWith("Usage:")) {
+                val error = output.joinToString(separator = "").lines().last { it.isNotBlank() }
+                throw getExecException(error)
+            }
+            val operation = ThreadContext.get("operation") ?: "unknown"
+            val fullOutput = output.joinToString("")
+            val retryWait = retryRules.firstNotNullOfOrNull { it.retryDuration(operation, fullOutput, retries) }
+            if (retryWait != null) {
+                retries++
+                Thread.sleep(retryWait)
+                continue
+            }
+            return output
         }
-        return output.output
     }
 
     private fun extractSignature(response: List<String>): String {
@@ -319,6 +318,8 @@ data class ApplicationCLI(
 
 
     fun getTransactionJson(args: List<String>): String {
+        val from = this.getAccountName()
+        Logger.info("Getting transaction json for account {}", from)
         val finalArgs = listOf(
             config.execName,
             "tx"
@@ -330,7 +331,7 @@ data class ApplicationCLI(
             "--yes",
             "--generate-only",
             "--from",
-            this.config.pairName.trimStart('/')
+            from
         )
         return exec(finalArgs).joinToString("")
     }
@@ -402,3 +403,31 @@ class AccountSequenceMismatchException(val expected: Int, val actual: Int) :
     Exception("Account sequence mismatch, expected $expected, got $actual")
 
 class TxNotFoundException(val txHash: String) : Exception("Transaction not found: $txHash")
+
+val k8sRetryRule = CliRetryRule(
+    retries = 5,
+    delay = Duration.ofSeconds(3),
+    operationRegexes = listOf("^get.+"),
+    responseRegexes = listOf("Unknown stream id.+discarding message", "Unable to connect to the server")
+)
+
+data class CliRetryRule(
+    val retries: Int,
+    val delay: Duration,
+    val operationRegexes: List<String>,
+    val responseRegexes: List<String>,
+) {
+    private fun matchesOperation(operation: String): Boolean =
+        operationRegexes.isEmpty() || operationRegexes.any { it.toRegex().containsMatchIn(operation) }
+
+    private fun matchesResponse(response: String): Boolean =
+        responseRegexes.isEmpty() || responseRegexes.any { it.toRegex().containsMatchIn(response) }
+
+    fun retryDuration(operation: String, response: String, retryCount: Int): Duration? {
+        return if (retryCount < retries && matchesOperation(operation) && matchesResponse(response)) {
+            delay
+        } else {
+            null
+        }
+    }
+}

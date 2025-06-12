@@ -978,21 +978,3 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 		return types.HardwareNodeStatus_UNKNOWN
 	}
 }
-
-func inferenceUp(node *Node, nodeClient mlnodeclient.MLNodeClient) error {
-	if len(node.Models) == 0 {
-		logging.Error("No models found for node, can't inference up", types.Nodes,
-			"node_id", node.Id, "error")
-		return errors.New("no models found for node, can't inference up")
-	}
-
-	model := ""
-	var modelArgs []string
-	for modelName, args := range node.Models {
-		model = modelName
-		modelArgs = args.Args
-		break
-	}
-
-	return nodeClient.InferenceUp(model, modelArgs)
-}

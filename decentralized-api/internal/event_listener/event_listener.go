@@ -44,6 +44,7 @@ type EventListener struct {
 	nodeCaughtUp        atomic.Bool
 	phaseTracker        *chainphase.ChainPhaseTracker
 	dispatcher          *OnNewBlockDispatcher
+	cancelFunc          context.CancelFunc
 
 	ws *websocket.Conn
 }
@@ -55,6 +56,7 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	cancelFunc context.CancelFunc,
 	phaseTracker *chainphase.ChainPhaseTracker,
 ) *EventListener {
 	// Create the new block dispatcher
@@ -75,6 +77,7 @@ func NewEventListener(
 		trainingExecutor:    trainingExecutor,
 		phaseTracker:        phaseTracker,
 		dispatcher:          dispatcher,
+		cancelFunc:          cancelFunc,
 	}
 }
 
@@ -171,8 +174,9 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 					logging.Warn("Websocket connection closed", types.EventProcessing, "errorType", fmt.Sprintf("%T", err), "error", err)
 
 					if upgrade.CheckForUpgrade(el.configManager) {
-						logging.Error("Upgrade required! Exiting...", types.Upgrades)
-						panic("Upgrade required")
+						logging.Error("Upgrade required! Shutting down the entire system...", types.Upgrades)
+						el.cancelFunc()
+						return
 					}
 
 				}
