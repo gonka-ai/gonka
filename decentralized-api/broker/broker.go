@@ -802,7 +802,9 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	nodesToCancel := make(map[string]func())
 	b.mu.RLock()
 	for id, node := range b.nodes {
-		if node.State.ReconcileInfo != nil && (node.State.ReconcileInfo.Status != node.State.IntendedStatus || node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
+		if node.State.ReconcileInfo != nil &&
+			(node.State.ReconcileInfo.Status != node.State.IntendedStatus ||
+				node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
 			if node.State.cancelInFlightTask != nil {
 				nodesToCancel[id] = node.State.cancelInFlightTask
 			}
@@ -821,10 +823,6 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 		b.mu.Unlock()
 	}
 
-	// Phase 2: Dispatch new tasks
-	var currentPoCParams *pocParams
-	var pocParamsErr error
-
 	nodesToDispatch := make(map[string]*NodeWithState)
 	b.mu.RLock()
 	for id, node := range b.nodes {
@@ -841,29 +839,14 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	}
 	b.mu.RUnlock()
 
-	// Pre-fetch PoC params if needed to avoid multiple lookups
-	needsPocParams := false
-	for _, node := range nodesToDispatch {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
-			if node.State.PocIntendedStatus == PocStatusGenerating || node.State.PocIntendedStatus == PocStatusValidating {
-				needsPocParams = true
-			}
-		}
-	}
-
-	if needsPocParams {
-		currentPoCParams, pocParamsErr = b.queryCurrentPoCParams(epochPhaseInfo)
-		if pocParamsErr != nil {
-			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
-		}
-	}
+	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochPhaseInfo, nodesToDispatch, blockHeight)
 
 	for id, node := range nodesToDispatch {
 		// Re-check conditions under write lock to prevent races
 		b.mu.Lock()
 		currentNode, ok := b.nodes[id]
 		if !ok ||
-			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) ||
+			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && (currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus)) ||
 			currentNode.State.ReconcileInfo != nil {
 			b.mu.Unlock()
 			continue
@@ -918,6 +901,27 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 			}
 			b.mu.Unlock()
 		}
+	}
+}
+
+func (b *Broker) prefetchPocParams(epochPhaseInfo chainphase.EpochPhaseInfo, nodesToDispatch map[string]*NodeWithState, blockHeight int64) (*pocParams, error) {
+	needsPocParams := false
+	for _, node := range nodesToDispatch {
+		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
+			if node.State.PocIntendedStatus == PocStatusGenerating || node.State.PocIntendedStatus == PocStatusValidating {
+				needsPocParams = true
+			}
+		}
+	}
+
+	if needsPocParams {
+		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(epochPhaseInfo)
+		if pocParamsErr != nil {
+			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
+		}
+		return currentPoCParams, pocParamsErr
+	} else {
+		return nil, nil
 	}
 }
 

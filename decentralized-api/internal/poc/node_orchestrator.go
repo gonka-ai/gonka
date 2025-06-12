@@ -7,7 +7,6 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
-	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -86,16 +85,6 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 	}
 }
 
-func (o *NodePoCOrchestratorImpl) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
-}
-
-func (o *NodePoCOrchestratorImpl) getPocValidateCallbackUrl() string {
-	// For now the URl is the same, the node inference server appends "/validated" to the URL
-	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
-}
-
 func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string) {
 	command := broker.StartPocCommand{
 		Response: make(chan bool, 2),
@@ -117,20 +106,12 @@ func (o *NodePoCOrchestratorImpl) StopPoC() {
 }
 
 func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int64) {
-	epochParams := o.phaseTracker.GetEpochParams()
-	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(endOfPoCBlockHeight)
-	startOfPoCBlockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
-	if err != nil {
-		logging.Error("MoveToValidationStage. Failed to get block hash", types.PoC, "error", err)
-		return
-	}
-
-	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "startOfPoCBlockHash", startOfPoCBlockHash)
+	logging.Info("Moving to PoC Validation Stage", types.PoC, "endOfPoCBlockHeight", endOfPoCBlockHeight)
 
 	cmd := broker.InitValidateCommand{
 		Response: make(chan bool, 2),
 	}
-	err = o.nodeBroker.QueueMessage(cmd)
+	err := o.nodeBroker.QueueMessage(cmd)
 	if err != nil {
 		logging.Error("Failed to send init-validate command", types.PoC, "error", err)
 		return

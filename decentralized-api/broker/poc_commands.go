@@ -27,12 +27,11 @@ func (c StartPocCommand) Execute(b *Broker) {
 				"admin_epoch", node.State.AdminState.Epoch,
 				"current_epoch", epochPhaseInfo,
 				"current_phase", epochPhaseInfo.Phase)
-			continue
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_POC
+			node.State.PocIntendedStatus = PocStatusGenerating
 		}
-
-		// Update intended status only
-		node.State.IntendedStatus = types.HardwareNodeStatus_POC
-		node.State.PocIntendedStatus = PocStatusGenerating
 	}
 	b.mu.Unlock()
 
@@ -62,11 +61,11 @@ func (c InitValidateCommand) Execute(b *Broker) {
 				"admin_epoch", node.State.AdminState.Epoch,
 				"current_epoch", epochPhaseInfo,
 				"current_phase", epochPhaseInfo.Phase)
-			continue
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_POC
+			node.State.PocIntendedStatus = PocStatusValidating
 		}
-
-		node.State.IntendedStatus = types.HardwareNodeStatus_POC
-		node.State.PocIntendedStatus = PocStatusValidating
 	}
 	b.mu.Unlock()
 
@@ -87,9 +86,10 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 				"admin_epoch", node.State.AdminState.Epoch,
 				"current_epoch", epochPhaseInfo,
 				"current_phase", epochPhaseInfo.Phase)
-			continue
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 		}
-		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 	b.mu.Unlock()
 
