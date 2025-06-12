@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"encoding/json"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -643,4 +644,23 @@ func assertStreamedEventChoices(t *testing.T, r Response) *Delta {
 	}
 
 	return r.Choices[0].Delta
+}
+
+func TestStreamedResponseSerialization(t *testing.T) {
+	lines := readLines(t, "test_data/response_streamed.txt")
+	require.NotEmpty(t, lines, "Read 0 events from responseprocessor_test_data.txt")
+
+	resp, err := NewCompletionResponseFromLines(lines)
+	require.NoError(t, err)
+	require.IsType(t, &StreamedCompletionResponse{}, resp)
+
+	bytes, err := resp.GetBodyBytes()
+	bytesString := string(bytes)
+
+	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytesString)
+	require.NoError(t, err)
+	require.IsType(t, &StreamedCompletionResponse{}, resp2)
+
+	require.Equal(t, len(resp.(*StreamedCompletionResponse).Lines), len(resp2.(*StreamedCompletionResponse).Lines))
+	require.Equal(t, len(resp.(*StreamedCompletionResponse).Resp.Data), len(resp2.(*StreamedCompletionResponse).Resp.Data))
 }

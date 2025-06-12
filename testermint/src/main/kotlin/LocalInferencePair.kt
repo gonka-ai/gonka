@@ -3,6 +3,7 @@ package com.productscience
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
@@ -51,9 +52,13 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         Logger.info("  $SERVER_TYPE_PUBLIC: ${apiUrls[SERVER_TYPE_PUBLIC]}")
         Logger.info("  $SERVER_TYPE_ML: ${apiUrls[SERVER_TYPE_ML]}")
         Logger.info("  $SERVER_TYPE_ADMIN: ${apiUrls[SERVER_TYPE_ADMIN]}")
+        val executor = DockerExecutor(
+            chainContainer.id,
+            configWithName
+        )
 
         LocalInferencePair(
-            node = ApplicationCLI(chainContainer.id, configWithName, nodeLogs),
+            node = ApplicationCLI(configWithName, nodeLogs, executor, listOf()),
             api = ApplicationAPI(apiUrls, configWithName, dapiLogs),
             mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name = name,
@@ -239,8 +244,24 @@ data class LocalInferencePair(
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        val start = Instant.now()
         val json = this.node.getTransactionJson(args)
-        val submittedTransaction = this.api.submitTransaction(json)
+        val submittedTransaction = try {
+            this.api.submitTransaction(json)
+        } catch (e: FuelError) {
+            Logger.info("Checking for read timeout in " + e.toString())
+            // We are seeing in k8s (remote) connections this timesout, even though the submit worked. This should pick
+            // up the TXHash from the api logs instead.
+            if (e.toString().contains("Read timed out")) {
+                Logger.info("Found read timeout, checking node logs for TX hash in " +
+                        this.api.logOutput.mostRecentTxResp)
+                this.api.logOutput.mostRecentTxResp?.takeIf { it.time.isAfter(start) }?.let {
+                    TxResponse(0, it.hash, "", 0, "", "", "", 0, 0, null, null, listOf())
+                } ?: throw e
+            } else {
+                throw e
+            }
+        }
         return if (waitForProcessed) {
             this.node.waitForTxProcessed(submittedTransaction.txhash)
         } else {
@@ -286,14 +307,19 @@ data class LocalInferencePair(
     fun submitUpgradeProposal(
         title: String,
         description: String,
-        binaryPath: String,
-        apiBinaryPath: String,
+        binaries: Map<String, String>,
+        apiBinaries: Map<String, String>,
         height: Long,
         nodeVersion: String,
+        deposit: Int,
     ): TxResponse = wrapLog("submitUpgradeProposal", true) {
-        val proposer = this.node.getKeys()[0].address
+        // Convert maps to JSON format
+        val binariesJsonObj = binaries.entries.joinToString(",") { (arch, path) -> "\"$arch\":\"$path\"" }
+        val apiBinariesJsonObj = apiBinaries.entries.joinToString(",") { (arch, path) -> "\"$arch\":\"$path\"" }
+
         val binariesJson =
-            """{"binaries":{"linux/amd64":"$binaryPath"},"api_binaries":{"linux/amd64":"$apiBinaryPath"}, "node_version": "$nodeVersion"}"""
+            """{"binaries":{$binariesJsonObj},"api_binaries":{$apiBinariesJsonObj}, "node_version": "$nodeVersion"}"""
+
         this.submitTransaction(
             listOf(
                 "upgrade",
@@ -309,12 +335,28 @@ data class LocalInferencePair(
                 description,
                 "--deposit",
                 // TODO: Denom and amount should not be hardcoded
-                "100000nicoin",
-                "--from",
-                proposer,
+                "${deposit}nicoin",
             )
         )
     }
+
+    // Overloaded version for backward compatibility
+    fun submitUpgradeProposal(
+        title: String,
+        description: String,
+        binaryPath: String,
+        apiBinaryPath: String,
+        height: Long,
+        nodeVersion: String,
+    ): TxResponse = submitUpgradeProposal(
+        title = title,
+        description = description,
+        binaries = mapOf("linux/amd64" to binaryPath),
+        apiBinaries = mapOf("linux/amd64" to apiBinaryPath),
+        height = height,
+        nodeVersion = nodeVersion,
+        deposit = 1000000
+    )
 
     fun runProposal(cluster: LocalCluster, proposal: GovernanceMessage, noVoters: List<String> = emptyList()): String =
         wrapLog("runProposal", true) {
@@ -342,29 +384,23 @@ data class LocalInferencePair(
         }
 
     fun makeGovernanceDeposit(proposalId: String, amount: Long): TxResponse = wrapLog("makeGovernanceDeposit", true) {
-        val depositor = this.node.getKeys()[0].address
         this.submitTransaction(
             listOf(
                 "gov",
                 "deposit",
                 proposalId,
                 "$amount${config.denom}",
-                "--from",
-                depositor,
             )
         )
     }
 
     fun voteOnProposal(proposalId: String, option: String): TxResponse = wrapLog("voteOnProposal", true) {
-        val voter = this.node.getKeys()[0].address
         this.submitTransaction(
             listOf(
                 "gov",
                 "vote",
                 proposalId,
                 option,
-                "--from",
-                voter,
             )
         )
     }

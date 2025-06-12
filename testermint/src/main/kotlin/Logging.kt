@@ -24,6 +24,9 @@ fun <T> logContext(context: Map<String, String>, block: () -> T): T {
 
 interface HasConfig {
     val config: ApplicationConfig
+    fun <T> wrapLog(block: () -> T): T =
+        logContext(mapOf("pair" to config.pairName, "source" to "test")) { block() }
+
     fun <T> wrapLog(operation: String, infoLevel: Boolean, block: () -> T): T =
         logContext(
             mapOf(
@@ -47,11 +50,17 @@ interface HasConfig {
         }
 }
 
+data class TxResp(
+    val hash: String,
+    val time: Instant,
+)
+
 class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
     var currentHeight = 0L
     var minimumHeight = Long.MAX_VALUE
     val currentMessage = StringBuilder()
     val currentTimestamp: Instant? = null
+    var mostRecentTxResp: TxResp? = null
 
     override fun onNext(frame: Frame) = logContext(
         mapOf(
@@ -84,18 +93,7 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
     }
 
     private fun log(logEntry: String) {
-        if (logEntry.contains("indexed block events")) {
-            "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
-                val height = it.groupValues[1].toLong()
-                if (height > currentHeight) {
-                    Logger.info("New block, height={}", height)
-                    currentHeight = height
-                    if (currentHeight < minimumHeight) {
-                        minimumHeight = currentHeight
-                    }
-                }
-            }
-        }
+        extractData(logEntry)
 
         val (level, message) = parseEntry(logEntry)
         if (level.startsWith("INF")) {
@@ -108,6 +106,33 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
             Logger.warn(message)
         } else {
             Logger.trace(message)
+        }
+    }
+
+    private fun extractData(logEntry: String) {
+        if (logEntry.contains("indexed block events")) {
+            "height=?.+\\[0m(\\d+)".toRegex().find(logEntry)?.let {
+                val height = it.groupValues[1].toLong()
+                if (height > currentHeight) {
+                    Logger.info("New block, height={}", height)
+                    currentHeight = height
+                    if (currentHeight < minimumHeight) {
+                        minimumHeight = currentHeight
+                    }
+                }
+            }
+        }
+        if (logEntry.contains("TxResp")) {
+            Logger.info("TxResp received, height={}", currentHeight)
+            val txHashPattern = "txhash: ([A-F0-9]+)".toRegex()
+            val txHash = txHashPattern.find(logEntry)?.groupValues?.get(1)
+
+            if (txHash != null) {
+                mostRecentTxResp = TxResp(
+                    hash = txHash,
+                    time = Instant.now()
+                )
+            }
         }
     }
 

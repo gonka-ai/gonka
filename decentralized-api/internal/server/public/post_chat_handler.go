@@ -168,13 +168,13 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	proxyResponse(resp, w, true, responseProcessor)
 
-	jsonOrStreamedResponse, err := responseProcessor.GetResponse()
-	if err != nil || jsonOrStreamedResponse == nil {
-		logging.Error("Failed to parse response data into jsonOrStreamedResponse", types.Inferences, "error", err)
+	completionResponse, err := responseProcessor.GetResponse()
+	if err != nil || completionResponse == nil {
+		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, *jsonOrStreamedResponse, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -199,7 +199,7 @@ func (s *Server) getExecutorForRequest(ctx context.Context, model string) (*Exec
 	}, nil
 }
 
-func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.JsonOrStreamedResponse, modifiedRequestBodyBytes []byte, accountName string) error {
+func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.CompletionResponse, modifiedRequestBodyBytes []byte, accountName string) error {
 	promptHash, promptPayload, err := getPromptHash(modifiedRequestBodyBytes)
 	if err != nil {
 		return err

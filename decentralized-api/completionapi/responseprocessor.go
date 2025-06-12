@@ -87,11 +87,11 @@ func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 	return rt.jsonResponseBytes, nil
 }
 
-func (rt *ExecutorResponseProcessor) GetResponse() (*JsonOrStreamedResponse, error) {
+func (rt *ExecutorResponseProcessor) GetResponse() (CompletionResponse, error) {
 	if rt.jsonResponseBytes != nil {
-		return NewJsonOrStreamedResponseFromBytes(rt.jsonResponseBytes)
+		return NewCompletionResponseFromBytes(rt.jsonResponseBytes)
 	} else if rt.streamedResponse != nil {
-		return NewJsonOrStreamedResponseFromLines(rt.streamedResponse)
+		return NewCompletionResponseFromLines(rt.streamedResponse)
 	}
 
 	return nil, errors.New("ExecutorResponseProcessor: can't get response; both jsonResponseBytes and streamedResponse are empty")

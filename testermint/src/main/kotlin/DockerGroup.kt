@@ -157,6 +157,12 @@ data class DockerGroup(
         Files.createDirectories(inferenceDir)
         mappingsSourceDir.copyToRecursively(mappingsDir, overwrite = true, followLinks = false)
 
+        val templatePath = "testermint/src/main/resources/alternative-mappings/validate_poc_batch.template.json"
+        val templateContent = baseDir.resolve(templatePath).toFile().readText()
+        val content = templateContent.replace("{{KEY_NAME}}", keyName)
+        val mappingFile = mappingsDir.resolve("validate_poc_batch.json")
+        Files.writeString(mappingFile, content)
+
         if (Files.exists(publicHtmlDir)) {
             publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
         }
@@ -348,10 +354,17 @@ data class LocalCluster(
 class Consumer(val name: String, val pair: LocalInferencePair, val address: String) {
     companion object {
         fun create(localCluster: LocalCluster, name: String): Consumer {
-            val cli = ApplicationCLI(
+            // TODO: Add Kube creation
+            val newConfig = localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName)
+            val dockerExec = DockerExecutor(
                 name,
-                localCluster.genesis.config.copy(execName = localCluster.genesis.config.appName),
-                LogOutput(name, "consumer")
+                newConfig,
+            )
+            val cli = ApplicationCLI(
+                newConfig,
+                LogOutput(name, "consumer"),
+                dockerExec,
+                listOf()
             )
             cli.createContainer(doNotStartChain = true)
             val newKey = cli.createKey(name)

@@ -1,0 +1,161 @@
+name: Update Voting Configuration
+on:
+  workflow_run:
+    workflows: [ "Build and Release to race-releases" ]
+    types:
+      - completed
+  workflow_dispatch: # Allows manual triggering
+    inputs:
+      release_tag:
+        description: 'Release tag to use for testing'
+        required: false
+        type: string
+        default: 'v0.0.0-manual-test'
+
+jobs:
+  vote_for_update:
+    runs-on: ubuntu-latest
+    # Run if manually dispatched OR if triggered by a successful workflow_run
+    # if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+      actions: 'read' # Still needed if workflow_run triggers and we download artifact
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Download release tag artifact (if triggered by workflow_run)
+        if: github.event_name == 'workflow_run' # Only run this step if triggered by another workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: release-tag-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          # Use the GITHUB_TOKEN to authenticate and download the artifact
+          # Artifact is downloaded as a .zip that needs to be extracted
+        # Continue even if artifact download fails for some reason, next step handles missing file.
+        continue-on-error: true
+      
+      - name: Extract artifact (if needed)
+        if: github.event_name == 'workflow_run'
+        run: |
+          # Find and unzip any .zip files in the workspace
+          find . -name "*.zip" -exec unzip -o {} \;
+          # List files for debugging purposes
+          echo "Files after extraction:"
+          ls -la
+        continue-on-error: true
+
+      - name: Determine Release Tag
+        id: release_info
+        run: |
+          DEFAULT_TAG="v0.0.0-manual-test" # Default tag for manual runs or if artifact is missing
+          TAG_VALUE="$DEFAULT_TAG"
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "Workflow triggered by 'workflow_run'."
+            if [[ -f release_tag.txt ]]; then
+              TAG_VALUE=$(cat release_tag.txt)
+              echo "Using tag from downloaded artifact: $TAG_VALUE"
+            else
+              echo "WARNING: 'workflow_run' trigger but release_tag.txt not found (or download failed). Using default tag: $TAG_VALUE"
+            fi
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ -n "${{ inputs.release_tag }}" ]]; then
+              TAG_VALUE="${{ inputs.release_tag }}"
+              echo "Using provided release tag: $TAG_VALUE"
+            else
+              echo "No release tag provided. Using default tag: $TAG_VALUE"
+            fi
+          else
+            echo "Workflow triggered by '${{ github.event_name }}'. Using default tag: $TAG_VALUE"
+          fi
+          echo "Final Release Tag: $TAG_VALUE"
+          echo "release_tag=$TAG_VALUE" >> $GITHUB_OUTPUT
+
+      - uses: ./.github/actions/gcp-auth-and-gcloud-setup # Assumes this sets up gcloud CLI
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Define GCE/K8s parameters
+        id: params
+        run: |
+          echo "GCE_PROJECT_ID=$(gcloud config get-value project)" >> $GITHUB_OUTPUT
+          echo "GCE_ZONE=us-central1-a" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_NAME=k8s-control-plane" >> $GITHUB_OUTPUT
+          echo "K8S_CONTROL_PLANE_USER=dev" >> $GITHUB_OUTPUT
+
+      - name: Configure kubectl
+        env:
+          GCE_PROJECT_ID: ${{ steps.params.outputs.GCE_PROJECT_ID }}
+          GCE_ZONE: ${{ steps.params.outputs.GCE_ZONE }}
+          K8S_CONTROL_PLANE_NAME: ${{ steps.params.outputs.K8S_CONTROL_PLANE_NAME }}
+          K8S_CONTROL_PLANE_USER: ${{ steps.params.outputs.K8S_CONTROL_PLANE_USER }}
+        run: |
+          echo "Fetching kubeconfig from ${K8S_CONTROL_PLANE_NAME} in zone ${GCE_ZONE}..."
+          mkdir -p $HOME/.kube
+          gcloud compute scp ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME}:~/.kube/config $HOME/.kube/config --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID}
+          export KUBECONFIG=$HOME/.kube/config
+          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
+
+          # ---- IMPORTANT: SSH Tunnel (if K8s API server is not directly accessible) ----
+          # If your K8s API server isn't publicly accessible, you'll need an SSH tunnel.
+          # 1. Uncomment and adapt the following lines.
+          # 2. Ensure your kubeconfig (once copied) targets 'https://127.0.0.1:6443' or similar.
+          #
+          echo "Setting up SSH tunnel to ${K8S_CONTROL_PLANE_NAME}..."
+          gcloud compute ssh ${K8S_CONTROL_PLANE_USER}@${K8S_CONTROL_PLANE_NAME} --zone ${GCE_ZONE} --project ${GCE_PROJECT_ID} \
+            --ssh-flag="-L 6443:127.0.0.1:6443 -N -f"
+          sleep 5 # Give tunnel time to establish
+          echo "Kubeconfig modified to use tunnel."
+          # ---- End SSH Tunnel Section ----
+
+          echo "Verifying kubectl connection..."
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=30s
+          kubectl get pods --all-namespaces --field-selector spec.nodeName=k8s-worker-1 -o wide
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+
+      - name: Check file permissions
+        run: ls -l $HOME/.kube/config
+
+      - name: Run k8sUpgrade Test
+        env:
+          RELEASE_TAG: ${{ steps.release_info.outputs.release_tag }}
+          KUBECONFIG: ${{ env.KUBECONFIG }}
+        run: |
+          cd testermint
+          sudo -E ./gradlew test --tests "KubernetesTests.k8sUpgrade" \
+            -DRELEASE_TAG=${RELEASE_TAG} \
+            -DKUBECONFIG=${KUBECONFIG}
+
+      - name: Archive Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-upgrade-test-logs
+          path: ./testermint/logs
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: K8s Upgrade Test
+          path: ./testermint/build/test-results/**/*.xml
+          reporter: java-junit

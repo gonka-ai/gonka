@@ -139,7 +139,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(genesis.node.addresss)
+        assertThat(topMiner.address).isEqualTo(genesis.node.getAddress())
         val startTime = topMiner.firstQualifiedStarted
         assertThat(topMiner.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner.lastUpdatedTime).isEqualTo(startTime)
@@ -150,7 +150,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners2 = genesis.node.getTopMiners()
         assertThat(topMiners2.topMiner).hasSize(1)
         val topMiner2 = topMiners2.topMiner.first()
-        assertThat(topMiner2.address).isEqualTo(genesis.node.addresss)
+        assertThat(topMiner2.address).isEqualTo(genesis.node.getAddress())
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(3))
@@ -192,7 +192,7 @@ class InferenceAccountingTests : TestermintTest() {
         val topMiners = genesis.node.getTopMiners()
         assertThat(topMiners.topMiner).hasSize(1)
         val topMiner = topMiners.topMiner.first()
-        assertThat(topMiner.address).isEqualTo(firstJoin.node.addresss)
+        assertThat(topMiner.address).isEqualTo(firstJoin.node.getAddress())
         val standardizedExpectedReward = getTopMinerReward(localCluster)
         val currentBalance = firstJoin.node.getSelfBalance("nicoin")
         // greater, because it's done validation work at some point, no doubt.
@@ -212,7 +212,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster: LocalCluster,
         failingAddress: String,
         requestingNode: LocalInferencePair = cluster.genesis,
-        requester: String? = cluster.genesis.node.addresss,
+        requester: String? = cluster.genesis.node.getAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
