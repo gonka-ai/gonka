@@ -1,6 +1,10 @@
 package mlnodeclient
 
-import "context"
+import (
+	"context"
+	"decentralized-api/logging"
+	"github.com/productscience/inference/x/inference/types"
+)
 
 // MockClient is a mock implementation of MLNodeClient for testing
 type MockClient struct {
@@ -57,6 +61,7 @@ func NewMockClient() *MockClient {
 }
 
 func (m *MockClient) Stop(ctx context.Context) error {
+	logging.Info("MockClient. Stop: called", types.Testing)
 	m.StopCalled++
 	if m.StopError != nil {
 		return m.StopError
@@ -85,6 +90,7 @@ func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, erro
 }
 
 func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
+	logging.Info("MockClient. InitGenerate: called", types.Testing)
 	m.InitGenerateCalled++
 	m.LastInitDto = &dto
 	if m.InitGenerateError != nil {
@@ -96,6 +102,7 @@ func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
 }
 
 func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
+	logging.Info("MockClient. InitValidate: called", types.Testing)
 	m.InitValidateCalled++
 	m.LastInitValidateDto = &dto
 	if m.InitValidateError != nil {

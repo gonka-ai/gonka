@@ -526,37 +526,57 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 // Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled
 func TestNodeEnableScenario_Integration(t *testing.T) {
-	setup := createIntegrationTestSetup(nil, nil)
+	reconciliationConfig := testreconcilialtionConfig(4)
+	setup := createIntegrationTestSetup(&reconciliationConfig, nil)
 
 	// Add two nodes - node-1 initially disabled, node-2 enabled
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
+	_, node1State := setup.getNode("node-1")
+	_, node2State := setup.getNode("node-2")
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
+
 	// Disable node-1 initially
 	err := setup.setNodeAdminState("node-1", false)
 	require.NoError(t, err)
+	waitForAsync(100 * time.Millisecond)
 
-	// Get mock clients for verification
-	node1Client := setup.getNodeClient("node-1", 8081)
-	node2Client := setup.getNodeClient("node-2", 8082)
+	require.Equal(t, false, node1State.AdminState.Enabled)
+	require.Equal(t, uint64(0), node1State.AdminState.Epoch)
+	require.Equal(t, true, node2State.AdminState.Enabled)
+	require.Equal(t, uint64(0), node2State.AdminState.Epoch)
 
 	// Simulate first PoC (block 100) - only node-2 should participate
 	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
 	// Give time for processing
-	waitForAsync(200 * time.Millisecond)
+	waitForAsync(500 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command
-	assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
-	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Enabled node-2 should receive InitGenerate call")
-
-	// Reset call counters
-	setup.MockClientFactory.Reset()
+	require.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
+	require.Equal(t, 1, node2Client.InitGenerateCalled, "Enabled node-2 should receive InitGenerate call")
+	require.Equal(t, types.HardwareNodeStatus_STOPPED, node1State.CurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
 
 	// Enable node-1 during inference phase
 	err = setup.setNodeAdminState("node-1", true)
 	require.NoError(t, err)
+	waitForAsync(300 * time.Millisecond)
+
+	var i = int64(150)
+	for i < int64(150+reconciliationConfig.BlockInterval) {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+		i++
+	}
+	waitForAsync(300 * time.Millisecond)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node1State.CurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
 
 	// Simulate next epoch PoC (block 200) - both nodes should participate
 	err = setup.simulateBlock(200)
@@ -565,11 +585,14 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	// Give time for processing
 	waitForAsync(200 * time.Millisecond)
 
-	// Verify both nodes received PoC start command
-	assert.Greater(t, node1Client.InitGenerateCalled, 0, "Node-1 should receive InitGenerate call after being enabled")
-	assert.Greater(t, node2Client.InitGenerateCalled, 0, "Node-2 should continue to receive InitGenerate call")
+	require.Equal(t, types.HardwareNodeStatus_POC, node1State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node1State.PocCurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
 
-	t.Logf("✅ Test 2 passed: Node participated in PoC after being enabled")
+	// Verify both nodes received PoC start command
+	require.Equal(t, 1, node1Client.InitGenerateCalled, "Node-1 should receive InitGenerate call after being enabled")
+	require.Equal(t, 2, node2Client.InitGenerateCalled, "Node-2 should continue to receive InitGenerate call")
 }
 
 // Test Scenario 4: Full epoch transition with PoC commands
