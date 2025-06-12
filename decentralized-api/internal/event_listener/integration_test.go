@@ -351,8 +351,6 @@ func TestRegularPocScenario(t *testing.T) {
 
 	var i int64 = 1
 	for i <= defaultEpochParams.EpochLength {
-		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node1Client.StopCalled, i)
-		// require.Equal(t, 0, node1Client.StopCalled, "Stop was called. n = %d. i = %d", node2Client.StopCalled, i)
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
 		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
 		err := setup.simulateBlock(int64(i))
