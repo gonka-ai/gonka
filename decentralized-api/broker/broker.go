@@ -995,7 +995,7 @@ type statusQueryResult struct {
 func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult, error) {
 	client := b.NewNodeClient(&node)
 
-	status, err := client.NodeState()
+	status, err := client.NodeState(context.Background())
 
 	nodeId := node.Id
 	if err != nil {
@@ -1009,7 +1009,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
 	if currentStatus == types.HardwareNodeStatus_INFERENCE {
-		ok, err := client.InferenceHealth()
+		ok, err := client.InferenceHealth(context.Background())
 		if !ok || err != nil {
 			currentStatus = types.HardwareNodeStatus_FAILED
 			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)

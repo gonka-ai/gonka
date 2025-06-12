@@ -98,11 +98,7 @@ func (o *NodePoCOrchestratorImpl) getPocValidateCallbackUrl() string {
 
 func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string) {
 	command := broker.StartPocCommand{
-		BlockHeight: blockHeight,
-		BlockHash:   blockHash,
-		PubKey:      o.pubKey,
-		CallbackUrl: o.getPocBatchesCallbackUrl(),
-		Response:    make(chan bool, 2),
+		Response: make(chan bool, 2),
 	}
 	err := o.nodeBroker.QueueMessage(command)
 	if err != nil {
@@ -132,11 +128,7 @@ func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int6
 	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "startOfPoCBlockHash", startOfPoCBlockHash)
 
 	cmd := broker.InitValidateCommand{
-		BlockHeight: startOfPoCBlockHeight,
-		BlockHash:   startOfPoCBlockHash,
-		PubKey:      o.pubKey,
-		CallbackUrl: o.getPocValidateCallbackUrl(),
-		Response:    make(chan bool, 2),
+		Response: make(chan bool, 2),
 	}
 	err = o.nodeBroker.QueueMessage(cmd)
 	if err != nil {
@@ -192,7 +184,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 
 		// FIXME: copying: doesn't look good for large PoCBatch structures?
 		nodeClient := o.nodeBroker.NewNodeClient(node.Node)
-		err = nodeClient.ValidateBatch(joinedBatch)
+		err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
 		if err != nil {
 			logging.Error("Failed to send validate batch request to node", types.PoC, "node", node.Node.Host, "error", err)
 			continue

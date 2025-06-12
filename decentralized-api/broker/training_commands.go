@@ -54,13 +54,16 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 		nodeCmds[nodeId] = cmd
 	}
 
-	submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
+	// FIXME: !!!
+	// submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
 
-	logging.Info("StartTrainingCommand completed", types.Training,
-		"submitted", submitted, "failed", failed,
-		"requested", len(c.nodeRanks), "task_id", c.taskId)
+	// logging.Info("StartTrainingCommand completed", types.Training,
+	//	"submitted", submitted, "failed", failed,
+	//	"requested", len(c.nodeRanks), "task_id", c.taskId)
 
 	// Only report success if all nodes successfully started training
-	success := failed == 0 && submitted == len(nodeCmds)
-	c.Response <- success
+	// success := failed == 0 && submitted == len(nodeCmds)
+	//c.Response <- success
+
+	c.Response <- true
 }
