@@ -362,8 +362,10 @@ func TestRegularPocScenario(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, nodeState1.PocCurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, nodeState2.PocCurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
 
 	// +1 stop call for inference reconciliation
@@ -387,6 +389,14 @@ func TestRegularPocScenario(t *testing.T) {
 		assertNodeClient(t, expected, node2Client)
 		i++
 	}
+
+	require.Equal(t, node1Client.LastInitDto.BlockHeight, node1Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node1Client.LastInitDto.BlockHash, node1Client.LastInitValidateDto.BlockHash)
+	require.Equal(t, node2Client.LastInitDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node2Client.LastInitDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
+
+	require.Equal(t, node1Client.LastInitValidateDto.BlockHeight, node2Client.LastInitValidateDto.BlockHeight)
+	require.Equal(t, node1Client.LastInitValidateDto.BlockHash, node2Client.LastInitValidateDto.BlockHash)
 
 	pocValStart := i
 	pocValEnd := pocValStart + defaultEpochParams.PocValidationDelay + defaultEpochParams.PocValidationDuration

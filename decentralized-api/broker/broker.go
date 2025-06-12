@@ -140,16 +140,13 @@ type AdminState struct {
 }
 
 type NodeState struct {
-	IntendedStatus      types.HardwareNodeStatus  `json:"intended_status"`
-	CurrentStatus       types.HardwareNodeStatus  `json:"current_status"`
-	ReconcilingToStatus *types.HardwareNodeStatus `json:"reconciling_to_status,omitempty"`
-	cancelInFlightTask  func()
+	IntendedStatus     types.HardwareNodeStatus `json:"intended_status"`
+	CurrentStatus      types.HardwareNodeStatus `json:"current_status"`
+	ReconcileInfo      *ReconcileInfo           `json:"reconcile_info,omitempty"`
+	cancelInFlightTask func()
 
-	// PoC sub-state machine
-	PocIntendedStatus      PocStatus  `json:"poc_intended_status"`
-	PocCurrentStatus       PocStatus  `json:"poc_current_status"`
-	PocReconcilingToStatus *PocStatus `json:"poc_reconciling_to_status,omitempty"`
-	PocStatusTimestamp     time.Time  `json:"poc_status_timestamp"`
+	PocIntendedStatus PocStatus `json:"poc_intended_status"`
+	PocCurrentStatus  PocStatus `json:"poc_current_status"`
 
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
@@ -159,14 +156,21 @@ type NodeState struct {
 	AdminState      AdminState `json:"admin_state"`
 }
 
+type ReconcileInfo struct {
+	Status         types.HardwareNodeStatus
+	PocStatus      PocStatus
+	TrainingTaskId uint64
+}
+
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
 	s.CurrentStatus = status
 	s.StatusTimestamp = time
 }
 
-func (s *NodeState) UpdatePocStatusNow(status PocStatus) {
-	s.PocCurrentStatus = status
-	s.PocStatusTimestamp = time.Now()
+func (s *NodeState) UpdateStatusWithPocStatusNow(status types.HardwareNodeStatus, pocStatus PocStatus) {
+	s.CurrentStatus = status
+	s.PocCurrentStatus = pocStatus
+	s.StatusTimestamp = time.Now()
 }
 
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
@@ -357,16 +361,14 @@ func (b *Broker) registerNode(command RegisterNode) {
 	nodeWithState := &NodeWithState{
 		Node: node,
 		State: NodeState{
-			IntendedStatus:         types.HardwareNodeStatus_UNKNOWN,
-			CurrentStatus:          types.HardwareNodeStatus_UNKNOWN,
-			ReconcilingToStatus:    nil,
-			PocIntendedStatus:      PocStatusIdle,
-			PocCurrentStatus:       PocStatusIdle,
-			PocReconcilingToStatus: nil,
-			PocStatusTimestamp:     time.Now(),
-			LockCount:              0,
-			FailureReason:          "",
-			StatusTimestamp:        time.Now(),
+			IntendedStatus:    types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:     types.HardwareNodeStatus_UNKNOWN,
+			ReconcileInfo:     nil,
+			PocIntendedStatus: PocStatusIdle,
+			PocCurrentStatus:  PocStatusIdle,
+			LockCount:         0,
+			FailureReason:     "",
+			StatusTimestamp:   time.Now(),
 			AdminState: AdminState{
 				Enabled: true,
 				Epoch:   currentEpoch,
@@ -445,7 +447,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) bool {
 	available := node.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
-		node.State.ReconcilingToStatus == nil &&
+		node.State.ReconcileInfo == nil &&
 		node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
@@ -729,10 +731,11 @@ type pocParams struct {
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	intendedNodeStatusForPhase := GetNodeIntendedStatusForPhase(epochPhaseInfo.Phase)
+	blockHeight := epochPhaseInfo.BlockHeight
 	logging.Info("Reconciling nodes based on current phase", types.Nodes,
 		"phase", epochPhaseInfo.Phase,
 		"epoch", epochPhaseInfo.Epoch,
-		"blockHeigh", epochPhaseInfo.BlockHeight,
+		"blockHeight", blockHeight,
 		"intendedNodeStatusForPhase", intendedNodeStatusForPhase.String())
 
 	b.mu.Lock()
@@ -781,21 +784,25 @@ func (b *Broker) reconcilerLoop() {
 	for {
 		select {
 		case <-b.reconcileTrigger:
-			logging.Debug("Reconciliation triggered manually", types.Nodes)
-			b.reconcile()
+			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+			logging.Debug("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
+			b.reconcile(epochPhaseInfo)
 		case <-ticker.C:
-			logging.Debug("Periodic reconciliation triggered", types.Nodes)
-			b.reconcile()
+			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+			logging.Debug("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
+			b.reconcile(epochPhaseInfo)
 		}
 	}
 }
 
-func (b *Broker) reconcile() {
+func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
+	blockHeight := epochPhaseInfo.BlockHeight
+
 	// Phase 1: Cancel outdated tasks
 	nodesToCancel := make(map[string]func())
 	b.mu.RLock()
 	for id, node := range b.nodes {
-		if node.State.ReconcilingToStatus != nil && *node.State.ReconcilingToStatus != node.State.IntendedStatus {
+		if node.State.ReconcileInfo != nil && node.State.ReconcileInfo.Status != node.State.IntendedStatus {
 			if node.State.cancelInFlightTask != nil {
 				nodesToCancel[id] = node.State.cancelInFlightTask
 			}
@@ -804,13 +811,12 @@ func (b *Broker) reconcile() {
 	b.mu.RUnlock()
 
 	for id, cancel := range nodesToCancel {
-		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id)
+		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 		cancel()
 		b.mu.Lock()
 		if node, ok := b.nodes[id]; ok {
-			node.State.ReconcilingToStatus = nil
+			node.State.ReconcileInfo = nil
 			node.State.cancelInFlightTask = nil
-			node.State.PocReconcilingToStatus = nil
 		}
 		b.mu.Unlock()
 	}
@@ -823,9 +829,8 @@ func (b *Broker) reconcile() {
 
 	nodesToDispatch := make(map[string]*NodeWithState)
 	b.mu.RLock()
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for id, node := range b.nodes {
-		isStable := node.State.ReconcilingToStatus == nil && node.State.PocReconcilingToStatus == nil
+		isStable := node.State.ReconcileInfo == nil
 		if !isStable {
 			continue
 		}
@@ -854,13 +859,13 @@ func (b *Broker) reconcile() {
 	if needsPocGenParams {
 		currentPoCParams, pocParamsErr = b.queryCurrentPoCParams(epochPhaseInfo)
 		if pocParamsErr != nil {
-			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr)
+			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
 		}
 	}
 	if needsPocValParams {
 		validationBlockHash, validationHashErr = b.chainBridge.GetBlockHash(epochPhaseInfo.BlockHeight)
 		if validationHashErr != nil {
-			logging.Error("Failed to query PoC Validation block hash, skipping PoC reconciliation", types.Nodes, "error", validationHashErr)
+			logging.Error("Failed to query PoC Validation block hash, skipping PoC reconciliation", types.Nodes, "error", validationHashErr, "blockHeight", blockHeight)
 		}
 	}
 
@@ -870,29 +875,30 @@ func (b *Broker) reconcile() {
 		currentNode, ok := b.nodes[id]
 		if !ok ||
 			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) ||
-			(currentNode.State.ReconcilingToStatus != nil || currentNode.State.PocReconcilingToStatus != nil) {
+			currentNode.State.ReconcileInfo != nil {
 			b.mu.Unlock()
 			continue
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		intendedStatusCopy := currentNode.State.IntendedStatus
-		currentNode.State.ReconcilingToStatus = &intendedStatusCopy
 		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
-		currentNode.State.PocReconcilingToStatus = &pocIntendedStatusCopy
+		currentNode.State.ReconcileInfo = &ReconcileInfo{
+			Status:    intendedStatusCopy,
+			PocStatus: pocIntendedStatusCopy,
+		}
 		currentNode.State.cancelInFlightTask = cancel
 
 		worker, exists := b.nodeWorkGroup.GetWorker(id)
 		b.mu.Unlock()
 
 		if !exists {
-			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id)
+			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 			cancel() // Cancel context if worker doesn't exist
 			b.mu.Lock()
 			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcilingToStatus = nil
+				nodeToClean.State.ReconcileInfo = nil
 				nodeToClean.State.cancelInFlightTask = nil
-				nodeToClean.State.PocReconcilingToStatus = nil
 			}
 			b.mu.Unlock()
 			continue
@@ -902,15 +908,14 @@ func (b *Broker) reconcile() {
 		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, validationBlockHash, validationHashErr, len(nodesToDispatch), epochPhaseInfo)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
-				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus)
+				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
 			if !worker.Submit(ctx, cmd) {
-				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id)
+				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 				cancel()
 				b.mu.Lock()
 				if nodeToClean, ok := b.nodes[id]; ok {
-					nodeToClean.State.ReconcilingToStatus = nil
+					nodeToClean.State.ReconcileInfo = nil
 					nodeToClean.State.cancelInFlightTask = nil
-					nodeToClean.State.PocReconcilingToStatus = nil
 				}
 				b.mu.Unlock()
 			}
@@ -919,9 +924,8 @@ func (b *Broker) reconcile() {
 			cancel()
 			b.mu.Lock()
 			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcilingToStatus = nil
+				nodeToClean.State.ReconcileInfo = nil
 				nodeToClean.State.cancelInFlightTask = nil
-				nodeToClean.State.PocReconcilingToStatus = nil
 			}
 			b.mu.Unlock()
 		}
@@ -1118,21 +1122,13 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 	}
 
 	// Critical safety check
-	if node.State.ReconcilingToStatus == nil || *node.State.ReconcilingToStatus != command.Result.OriginalTarget {
+	if node.State.ReconcileInfo == nil || node.State.ReconcileInfo.Status != command.Result.OriginalTarget || node.State.ReconcileInfo.PocStatus != command.Result.OriginalPocTarget {
 		logging.Info("Ignoring stale result for node", types.Nodes,
 			"node_id", command.NodeId,
 			"original_target", command.Result.OriginalTarget,
-			"current_reconciling_target", node.State.ReconcilingToStatus)
-		command.Response <- false
-		return
-	}
-
-	// Critical safety check for PoC status
-	if node.State.PocReconcilingToStatus == nil || *node.State.PocReconcilingToStatus != command.Result.OriginalPocTarget {
-		logging.Info("Ignoring stale PoC result for node", types.Nodes,
-			"node_id", command.NodeId,
-			"original_poc_target", command.Result.OriginalPocTarget,
-			"current_reconciling_poc_target", node.State.PocReconcilingToStatus)
+			"current_reconciling_target.status", node.State.ReconcileInfo.Status,
+			"current_reconciling_target.poc_status", node.State.ReconcileInfo.PocStatus,
+			"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
 		command.Response <- false
 		return
 	}
@@ -1144,13 +1140,12 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 		"to_status", command.Result.FinalStatus,
 		"from_poc_status", node.State.PocCurrentStatus,
 		"to_poc_status", command.Result.FinalPocStatus,
-		"succeeded", command.Result.Succeeded)
+		"succeeded", command.Result.Succeeded,
+		"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
 
-	node.State.UpdateStatusNow(command.Result.FinalStatus)
-	node.State.ReconcilingToStatus = nil
+	node.State.UpdateStatusWithPocStatusNow(command.Result.FinalStatus, command.Result.FinalPocStatus)
+	node.State.ReconcileInfo = nil
 	node.State.cancelInFlightTask = nil
-	node.State.UpdatePocStatusNow(command.Result.FinalPocStatus)
-	node.State.PocReconcilingToStatus = nil
 	if !command.Result.Succeeded {
 		node.State.FailureReason = command.Result.Error
 	}

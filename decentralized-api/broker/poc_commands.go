@@ -32,6 +32,7 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 		// Update intended status only
 		node.State.IntendedStatus = types.HardwareNodeStatus_POC
+		node.State.PocIntendedStatus = PocStatusGenerating
 	}
 	b.mu.Unlock()
 
@@ -65,6 +66,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		}
 
 		node.State.IntendedStatus = types.HardwareNodeStatus_POC
+		node.State.PocIntendedStatus = PocStatusValidating
 	}
 	b.mu.Unlock()
 
