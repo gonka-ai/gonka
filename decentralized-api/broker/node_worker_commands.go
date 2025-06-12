@@ -29,7 +29,7 @@ func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeRe
 		return result
 	}
 
-	err := worker.mlClient.Stop()
+	err := worker.mlClient.Stop(ctx)
 	if err != nil {
 		logging.Error("Failed to stop node", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
@@ -64,7 +64,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	}
 
 	// Idempotency check
-	status, err := worker.mlClient.GetPowStatus()
+	status, err := worker.mlClient.GetPowStatus(ctx)
 	if err == nil && status.Status == mlnodeclient.POW_GENERATING {
 		logging.Info("Node already in PoC state", types.PoC, "node_id", worker.nodeId)
 		result.Succeeded = true
@@ -73,9 +73,9 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	}
 
 	// Stop node if needed
-	nodeState, _ := worker.mlClient.NodeState()
+	nodeState, _ := worker.mlClient.NodeState(ctx)
 	if nodeState != nil && nodeState.State != mlnodeclient.MlNodeState_STOPPED {
-		if err := worker.mlClient.Stop(); err != nil {
+		if err := worker.mlClient.Stop(ctx); err != nil {
 			logging.Error("Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 			result.Succeeded = false
 			result.Error = err.Error()
@@ -89,7 +89,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
 		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
 	)
-	if err := worker.mlClient.InitGenerate(dto); err != nil {
+	if err := worker.mlClient.InitGenerate(ctx, dto); err != nil {
 		logging.Error("Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -123,7 +123,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 	}
 
 	// Idempotency check
-	status, err := worker.mlClient.GetPowStatus()
+	status, err := worker.mlClient.GetPowStatus(ctx)
 	if err == nil && status.Status == mlnodeclient.POW_VALIDATING {
 		logging.Info("Node already in POW_VALIDATING state", types.PoC, "node_id", worker.nodeId)
 		result.Succeeded = true
@@ -136,7 +136,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
 	)
 
-	if err := worker.mlClient.InitValidate(dto); err != nil {
+	if err := worker.mlClient.InitValidate(ctx, dto); err != nil {
 		logging.Error("Failed to transition to PoC validate", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -164,9 +164,9 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	// Idempotency check
-	state, err := worker.mlClient.NodeState()
+	state, err := worker.mlClient.NodeState(ctx)
 	if err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
-		if healthy, _ := worker.mlClient.InferenceHealth(); healthy {
+		if healthy, _ := worker.mlClient.InferenceHealth(ctx); healthy {
 			logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_INFERENCE
@@ -175,7 +175,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	}
 
 	// Stop node first
-	if err := worker.mlClient.Stop(); err != nil {
+	if err := worker.mlClient.Stop(ctx); err != nil {
 		logging.Error("Failed to stop node for inference up", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -208,7 +208,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	if err := worker.mlClient.InferenceUp(model, modelArgs); err != nil {
+	if err := worker.mlClient.InferenceUp(ctx, model, modelArgs); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -253,7 +253,7 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 	}
 
 	// Stop node first
-	if err := worker.mlClient.Stop(); err != nil {
+	if err := worker.mlClient.Stop(ctx); err != nil {
 		logging.Error("Failed to stop node for training", types.Training, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -263,7 +263,7 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 
 	// Start training
 	trainingErr := worker.mlClient.StartTraining(
-		c.TaskId, c.Participant, worker.nodeId,
+		ctx, c.TaskId, c.Participant, worker.nodeId,
 		c.MasterNodeAddr, rank, c.WorldSize,
 	)
 	if trainingErr != nil {

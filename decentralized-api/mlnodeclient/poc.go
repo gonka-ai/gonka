@@ -1,6 +1,7 @@
 package mlnodeclient
 
 import (
+	"context"
 	"decentralized-api/utils"
 	"net/url"
 )
@@ -119,13 +120,13 @@ type ValidatedBatch struct {
 	FraudDetected     bool      `json:"fraud_detected"`
 }
 
-func (api *Client) InitGenerate(dto InitDto) error {
+func (api *Client) InitGenerate(context context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, dto)
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
 	if err != nil {
 		return err
 	}
@@ -133,13 +134,13 @@ func (api *Client) InitGenerate(dto InitDto) error {
 	return nil
 }
 
-func (api *Client) InitValidate(dto InitDto) error {
+func (api *Client) InitValidate(context context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitValidatePath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, dto)
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
 	if err != nil {
 		return err
 	}
@@ -147,13 +148,13 @@ func (api *Client) InitValidate(dto InitDto) error {
 	return nil
 }
 
-func (api *Client) ValidateBatch(batch ProofBatch) error {
+func (api *Client) ValidateBatch(context context.Context, batch ProofBatch) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, ValidateBatchPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, batch)
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, batch)
 	if err != nil {
 		return err
 	}

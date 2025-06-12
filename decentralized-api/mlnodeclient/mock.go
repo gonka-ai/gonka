@@ -1,5 +1,7 @@
 package mlnodeclient
 
+import "context"
+
 // MockClient is a mock implementation of MLNodeClient for testing
 type MockClient struct {
 	// State tracking
@@ -54,7 +56,7 @@ func NewMockClient() *MockClient {
 	}
 }
 
-func (m *MockClient) Stop() error {
+func (m *MockClient) Stop(ctx context.Context) error {
 	m.StopCalled++
 	if m.StopError != nil {
 		return m.StopError
@@ -63,7 +65,7 @@ func (m *MockClient) Stop() error {
 	return nil
 }
 
-func (m *MockClient) NodeState() (*StateResponse, error) {
+func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
 	m.NodeStateCalled++
 	if m.NodeStateError != nil {
 		return nil, m.NodeStateError
@@ -71,7 +73,7 @@ func (m *MockClient) NodeState() (*StateResponse, error) {
 	return &StateResponse{State: m.CurrentState}, nil
 }
 
-func (m *MockClient) GetPowStatus() (*PowStatusResponse, error) {
+func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, error) {
 	m.GetPowStatusCalled++
 	if m.GetPowStatusError != nil {
 		return nil, m.GetPowStatusError
@@ -82,7 +84,7 @@ func (m *MockClient) GetPowStatus() (*PowStatusResponse, error) {
 	}, nil
 }
 
-func (m *MockClient) InitGenerate(dto InitDto) error {
+func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
 	m.InitGenerateCalled++
 	m.LastInitDto = &dto
 	if m.InitGenerateError != nil {
@@ -93,7 +95,7 @@ func (m *MockClient) InitGenerate(dto InitDto) error {
 	return nil
 }
 
-func (m *MockClient) InitValidate(dto InitDto) error {
+func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
 	m.InitValidateCalled++
 	m.LastInitValidateDto = &dto
 	if m.InitValidateError != nil {
@@ -104,7 +106,7 @@ func (m *MockClient) InitValidate(dto InitDto) error {
 	return nil
 }
 
-func (m *MockClient) ValidateBatch(batch ProofBatch) error {
+func (m *MockClient) ValidateBatch(ctx context.Context, batch ProofBatch) error {
 	m.ValidateBatchCalled++
 	m.LastValidateBatch = batch
 	if m.ValiateBatchError != nil {
@@ -115,7 +117,7 @@ func (m *MockClient) ValidateBatch(batch ProofBatch) error {
 	return nil
 }
 
-func (m *MockClient) InferenceHealth() (bool, error) {
+func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
 	m.InferenceHealthCalled++
 	if m.InferenceHealthError != nil {
 		return false, m.InferenceHealthError
@@ -123,7 +125,7 @@ func (m *MockClient) InferenceHealth() (bool, error) {
 	return m.IsHealthy, nil
 }
 
-func (m *MockClient) InferenceUp(model string, args []string) error {
+func (m *MockClient) InferenceUp(ctx context.Context, model string, args []string) error {
 	m.InferenceUpCalled++
 	m.LastInferenceModel = model
 	m.LastInferenceArgs = args
@@ -135,7 +137,7 @@ func (m *MockClient) InferenceUp(model string, args []string) error {
 	return nil
 }
 
-func (m *MockClient) StartTraining(taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
+func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
 	m.StartTrainingCalled++
 	m.LastTrainingParams.TaskId = taskId
 	m.LastTrainingParams.Participant = participant
@@ -150,7 +152,7 @@ func (m *MockClient) StartTraining(taskId uint64, participant string, nodeId str
 	return nil
 }
 
-func (m *MockClient) GetTrainingStatus() error {
+func (m *MockClient) GetTrainingStatus(ctx context.Context) error {
 	// Not implemented for now
 	return nil
 }

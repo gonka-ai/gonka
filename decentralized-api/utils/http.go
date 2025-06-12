@@ -2,11 +2,13 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"decentralized-api/logging"
 	"encoding/json"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func NewHttpClient(timeout time.Duration) *http.Client {
@@ -15,20 +17,20 @@ func NewHttpClient(timeout time.Duration) *http.Client {
 	}
 }
 
-func SendPostJsonRequest(client *http.Client, url string, payload any) (*http.Response, error) {
+func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
 	if payload == nil {
 		// Create a POST request with no body if payload is nil.
-		req, err = http.NewRequest(http.MethodPost, url, nil)
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	} else {
 		// Marshal the payload to JSON.
 		jsonData, err := json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
-		req, err = http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonData))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	}
 
 	if err != nil {
@@ -42,8 +44,8 @@ func SendPostJsonRequest(client *http.Client, url string, payload any) (*http.Re
 	return client.Do(req)
 }
 
-func SendGetRequest(client *http.Client, url string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func SendGetRequest(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
