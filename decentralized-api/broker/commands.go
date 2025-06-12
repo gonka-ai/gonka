@@ -119,14 +119,6 @@ func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
-type ReconcileNodesCommand struct {
-	Response chan bool
-}
-
-func (c ReconcileNodesCommand) GetResponseChannelCapacity() int {
-	return cap(c.Response)
-}
-
 type SetNodesActualStatusCommand struct {
 	StatusUpdates []StatusUpdate
 	Response      chan bool

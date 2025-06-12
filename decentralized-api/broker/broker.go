@@ -280,8 +280,6 @@ func (b *Broker) processCommands() {
 			b.lockNodesForTraining(command)
 		case StartTrainingCommand:
 			command.Execute(b)
-		case ReconcileNodesCommand:
-			b.reconcileNodes(command)
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
 		case SetNodeAdminStateCommand:
@@ -707,34 +705,12 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 	return true
 }
 
-func GetNodeIntendedStatusForPhase(phase types.EpochPhase) types.HardwareNodeStatus {
-	switch phase {
-	case types.InferencePhase:
-		return types.HardwareNodeStatus_INFERENCE
-	case types.PoCGeneratePhase:
-		return types.HardwareNodeStatus_POC
-	case types.PoCGenerateWindDownPhase:
-		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
-	case types.PoCValidatePhase:
-		return types.HardwareNodeStatus_POC
-	case types.PoCValidateWindDownPhase:
-		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
-	}
-	return types.HardwareNodeStatus_STOPPED
-}
-
 type pocParams struct {
 	startPoCBlockHeight int64
 	startPoCBlockHash   string
 }
 
-func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
-	// TODO: delete this one!
-
-	command.Response <- true
-}
-
-const reconciliationInterval = 5 * time.Second
+const reconciliationInterval = 30 * time.Second
 
 func (b *Broker) TriggerReconciliation() {
 	select {
@@ -751,11 +727,11 @@ func (b *Broker) reconcilerLoop() {
 		select {
 		case <-b.reconcileTrigger:
 			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-			logging.Debug("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
+			logging.Info("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
 			b.reconcile(epochPhaseInfo)
 		case <-ticker.C:
 			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-			logging.Debug("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
+			logging.Info("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
 			b.reconcile(epochPhaseInfo)
 		}
 	}
@@ -843,7 +819,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 		}
 
 		// Create and dispatch the command
-		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, len(nodesToDispatch), epochPhaseInfo)
+		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, len(nodesToDispatch))
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -891,7 +867,7 @@ func (b *Broker) prefetchPocParams(epochPhaseInfo chainphase.EpochPhaseInfo, nod
 	}
 }
 
-func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, totalNodes int, epochPhaseInfo chainphase.EpochPhaseInfo) NodeWorkerCommand {
+func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
 	switch status {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
@@ -1113,7 +1089,4 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 	}
 
 	command.Response <- true
-
-	// A state change occurred, trigger another reconciliation pass
-	b.TriggerReconciliation()
 }
