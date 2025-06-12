@@ -277,6 +277,8 @@ func (b *Broker) processCommands() {
 			command.Execute(b)
 		case InitValidateCommand:
 			command.Execute(b)
+		case UpdateNodeResultCommand:
+			b.updateNodeResult(command)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -364,7 +366,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 
 		// Create and register a worker for this node
 		client := b.NewNodeClient(&node)
-		worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client)
+		worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client, b)
 		b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
 	}()
 
@@ -1033,4 +1035,46 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
+}
+
+func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, exists := b.nodes[command.NodeId]
+	if !exists {
+		logging.Warn("Received result for unknown node", types.Nodes, "node_id", command.NodeId)
+		command.Response <- false
+		return
+	}
+
+	// Critical safety check
+	if node.State.ReconcilingToStatus == nil || *node.State.ReconcilingToStatus != command.Result.OriginalTarget {
+		logging.Info("Ignoring stale result for node", types.Nodes,
+			"node_id", command.NodeId,
+			"original_target", command.Result.OriginalTarget,
+			"current_reconciling_target", node.State.ReconcilingToStatus)
+		command.Response <- false
+		return
+	}
+
+	// Update state
+	logging.Info("Finalizing state transition for node", types.Nodes,
+		"node_id", command.NodeId,
+		"from_status", node.State.CurrentStatus,
+		"to_status", command.Result.FinalStatus,
+		"succeeded", command.Result.Succeeded)
+
+	node.State.CurrentStatus = command.Result.FinalStatus
+	node.State.ReconcilingToStatus = nil
+	node.State.cancelInFlightTask = nil
+	node.State.LastStateChange = time.Now()
+	if !command.Result.Succeeded {
+		node.State.FailureReason = command.Result.Error
+	}
+
+	command.Response <- true
+
+	// A state change occurred, trigger another reconciliation pass
+	b.TriggerReconciliation()
 }
