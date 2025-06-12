@@ -10,6 +10,12 @@ type StartPocCommand struct {
 	Response chan bool
 }
 
+func NewStartPocCommand() StartPocCommand {
+	return StartPocCommand{
+		Response: make(chan bool, 2),
+	}
+}
+
 func (c StartPocCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
@@ -42,6 +48,12 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 type InitValidateCommand struct {
 	Response chan bool
+}
+
+func NewInitValidateCommand() InitValidateCommand {
+	return InitValidateCommand{
+		Response: make(chan bool, 2),
+	}
 }
 
 func (c InitValidateCommand) GetResponseChannelCapacity() int {
@@ -101,6 +113,8 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 				"current_epoch", epochPhaseInfo,
 				"current_phase", epochPhaseInfo.Phase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
+			continue
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 		}

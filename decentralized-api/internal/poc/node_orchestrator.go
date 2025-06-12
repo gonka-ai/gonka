@@ -108,9 +108,7 @@ func (o *NodePoCOrchestratorImpl) StopPoC() {
 func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int64) {
 	logging.Info("Moving to PoC Validation Stage", types.PoC, "endOfPoCBlockHeight", endOfPoCBlockHeight)
 
-	cmd := broker.InitValidateCommand{
-		Response: make(chan bool, 2),
-	}
+	cmd := broker.NewInitValidateCommand()
 	err := o.nodeBroker.QueueMessage(cmd)
 	if err != nil {
 		logging.Error("Failed to send init-validate command", types.PoC, "error", err)

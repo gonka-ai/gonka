@@ -62,9 +62,15 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a fresh dispatcher for each test case
 			dispatcher := &OnNewBlockDispatcher{
-				reconciliationConfig: MlNodeStageReconciliationConfig{
-					BlockInterval:   tc.blockInterval,
-					TimeInterval:    tc.timeInterval,
+				reconciliationConfig: MlNodeReconciliationConfig{
+					Inference: &MlNodeStageReconciliationConfig{
+						BlockInterval: tc.blockInterval,
+						TimeInterval:  tc.timeInterval,
+					},
+					PoC: &MlNodeStageReconciliationConfig{
+						BlockInterval: tc.blockInterval,
+						TimeInterval:  tc.timeInterval,
+					},
 					LastBlockHeight: tc.lastBlockHeight,
 					LastTime:        tc.lastTime,
 				},

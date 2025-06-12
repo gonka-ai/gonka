@@ -326,12 +326,14 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 		"epoch", phaseInfo.CurrentEpoch,
 		"phase", phaseInfo.CurrentPhase)
 
-	// Create reconciliation command with current phase info
-	response := make(chan bool, 1)
-	err := d.nodeBroker.QueueMessage(broker.ReconcileNodesCommand{
-		Response: response,
-	})
+	cmd, response := getCommandForPhase(phaseInfo)
+	if cmd == nil || response == nil {
+		logging.Info("No command required for phase", types.Nodes,
+			"phase", phaseInfo.CurrentPhase, "height", phaseInfo.BlockHeight)
+		return
+	}
 
+	err := d.nodeBroker.QueueMessage(cmd)
 	if err != nil {
 		logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
 		return
@@ -341,7 +343,22 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 	d.reconciliationConfig.LastBlockHeight = phaseInfo.BlockHeight
 	d.reconciliationConfig.LastTime = time.Now()
 
-	// Note: We don't wait for the response to avoid blocking block processing
+	// Wait for a response or not?
+}
+
+func getCommandForPhase(phaseInfo *PhaseInfo) (broker.Command, *chan bool) {
+	switch phaseInfo.CurrentPhase {
+	case types.PoCGeneratePhase:
+		cmd := broker.NewStartPocCommand()
+		return cmd, &cmd.Response
+	case types.PoCValidatePhase:
+		cmd := broker.NewInitValidateCommand()
+		return cmd, &cmd.Response
+	case types.InferencePhase:
+		cmd := broker.NewInferenceUpAllCommand()
+		return cmd, &cmd.Response
+	}
+	return nil, nil
 }
 
 // parseNewBlockInfo extracts NewBlockInfo from a JSONRPCResponse event
