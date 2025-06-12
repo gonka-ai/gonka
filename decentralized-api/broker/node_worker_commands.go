@@ -26,6 +26,7 @@ func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeRe
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
 		result.FinalStatus = worker.node.State.CurrentStatus // Status is unchanged
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		return result
 	}
 
@@ -38,6 +39,7 @@ func (c StopNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeRe
 	} else {
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_STOPPED
+		result.FinalPocStatus = PocStatusIdle
 	}
 	return result
 }
@@ -53,13 +55,15 @@ type StartPoCNodeCommand struct {
 
 func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
-		OriginalTarget: types.HardwareNodeStatus_POC,
+		OriginalTarget:    types.HardwareNodeStatus_POC,
+		OriginalPocTarget: PocStatusGenerating,
 	}
 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
 		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		return result
 	}
 
@@ -69,6 +73,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 		logging.Info("Node already in PoC state", types.PoC, "node_id", worker.nodeId)
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
+		result.FinalPocStatus = PocStatusGenerating
 		return result
 	}
 
@@ -97,6 +102,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	} else {
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
+		result.FinalPocStatus = PocStatusGenerating
 		logging.Info("Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
 	}
 	return result
@@ -112,13 +118,15 @@ type InitValidateNodeCommand struct {
 
 func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
-		OriginalTarget: types.HardwareNodeStatus_POC,
+		OriginalTarget:    types.HardwareNodeStatus_POC,
+		OriginalPocTarget: PocStatusValidating,
 	}
 
 	if ctx.Err() != nil {
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
 		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		return result
 	}
 
@@ -128,6 +136,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 		logging.Info("Node already in POW_VALIDATING state", types.PoC, "node_id", worker.nodeId)
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
+		result.FinalPocStatus = PocStatusValidating
 		return result
 	}
 
@@ -144,6 +153,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 	} else {
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
+		result.FinalPocStatus = PocStatusValidating
 		logging.Info("Successfully transitioned node to PoC init validate stage", types.PoC, "node_id", worker.nodeId)
 	}
 	return result
@@ -160,6 +170,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
 		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		return result
 	}
 
@@ -170,6 +181,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 			logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+			result.FinalPocStatus = PocStatusIdle
 			return result
 		}
 	}
@@ -216,6 +228,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 	} else {
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+		result.FinalPocStatus = PocStatusIdle
 		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
 	}
 	return result
@@ -239,6 +252,7 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 		result.Succeeded = false
 		result.Error = ctx.Err().Error()
 		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
 		return result
 	}
 
@@ -258,22 +272,10 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 		result.Succeeded = false
 		result.Error = err.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		return result
-	}
-
-	// Start training
-	trainingErr := worker.mlClient.StartTraining(
-		ctx, c.TaskId, c.Participant, worker.nodeId,
-		c.MasterNodeAddr, rank, c.WorldSize,
-	)
-	if trainingErr != nil {
-		logging.Error("Failed to start training", types.Training, "node_id", worker.nodeId, "error", trainingErr)
-		result.Succeeded = false
-		result.Error = trainingErr.Error()
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
 	} else {
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_TRAINING
+		result.FinalPocStatus = PocStatusIdle
 		logging.Info("Successfully started training on node", types.Training, "node_id", worker.nodeId, "rank", rank, "task_id", c.TaskId)
 	}
 	return result

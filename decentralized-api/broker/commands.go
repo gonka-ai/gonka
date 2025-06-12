@@ -157,11 +157,21 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
+type PocStatus string
+
+const (
+	PocStatusIdle       PocStatus = "IDLE"
+	PocStatusGenerating PocStatus = "GENERATING"
+	PocStatusValidating PocStatus = "VALIDATING"
+)
+
 type NodeResult struct {
-	Succeeded      bool
-	FinalStatus    types.HardwareNodeStatus // The status the node ended up in
-	OriginalTarget types.HardwareNodeStatus // The status it was trying to achieve
-	Error          string
+	Succeeded         bool
+	FinalStatus       types.HardwareNodeStatus // The status the node ended up in
+	OriginalTarget    types.HardwareNodeStatus // The status it was trying to achieve
+	FinalPocStatus    PocStatus
+	OriginalPocTarget PocStatus
+	Error             string
 }
 
 type UpdateNodeResultCommand struct {

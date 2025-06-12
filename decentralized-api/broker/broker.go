@@ -145,6 +145,12 @@ type NodeState struct {
 	ReconcilingToStatus *types.HardwareNodeStatus `json:"reconciling_to_status,omitempty"`
 	cancelInFlightTask  func()
 
+	// PoC sub-state machine
+	PocIntendedStatus      PocStatus  `json:"poc_intended_status"`
+	PocCurrentStatus       PocStatus  `json:"poc_current_status"`
+	PocReconcilingToStatus *PocStatus `json:"poc_reconciling_to_status,omitempty"`
+	PocStatusTimestamp     time.Time  `json:"poc_status_timestamp"`
+
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
 	TrainingTaskId  uint64     `json:"training_task_id"`
@@ -156,6 +162,11 @@ type NodeState struct {
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
 	s.CurrentStatus = status
 	s.StatusTimestamp = time
+}
+
+func (s *NodeState) UpdatePocStatusNow(status PocStatus) {
+	s.PocCurrentStatus = status
+	s.PocStatusTimestamp = time.Now()
 }
 
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
@@ -346,12 +357,16 @@ func (b *Broker) registerNode(command RegisterNode) {
 	nodeWithState := &NodeWithState{
 		Node: node,
 		State: NodeState{
-			IntendedStatus:      types.HardwareNodeStatus_UNKNOWN,
-			CurrentStatus:       types.HardwareNodeStatus_UNKNOWN,
-			ReconcilingToStatus: nil,
-			LockCount:           0,
-			FailureReason:       "",
-			StatusTimestamp:     time.Now(),
+			IntendedStatus:         types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:          types.HardwareNodeStatus_UNKNOWN,
+			ReconcilingToStatus:    nil,
+			PocIntendedStatus:      PocStatusIdle,
+			PocCurrentStatus:       PocStatusIdle,
+			PocReconcilingToStatus: nil,
+			PocStatusTimestamp:     time.Now(),
+			LockCount:              0,
+			FailureReason:          "",
+			StatusTimestamp:        time.Now(),
 			AdminState: AdminState{
 				Enabled: true,
 				Epoch:   currentEpoch,
@@ -699,7 +714,7 @@ func GetNodeIntendedStatusForPhase(phase types.EpochPhase) types.HardwareNodeSta
 	case types.PoCGenerateWindDownPhase:
 		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
 	case types.PoCValidatePhase:
-		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
+		return types.HardwareNodeStatus_POC
 	case types.PoCValidateWindDownPhase:
 		return types.HardwareNodeStatus_STOPPED // FIXME: hanlde me
 	}
@@ -729,8 +744,18 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		shouldBeOperational := node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase)
 		if shouldBeOperational {
 			node.State.IntendedStatus = intendedNodeStatusForPhase
+			// Set the PoC sub-state
+			switch epochPhaseInfo.Phase {
+			case types.PoCGeneratePhase:
+				node.State.PocIntendedStatus = PocStatusGenerating
+			case types.PoCValidatePhase:
+				node.State.PocIntendedStatus = PocStatusValidating
+			default:
+				node.State.PocIntendedStatus = PocStatusIdle
+			}
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+			node.State.PocIntendedStatus = PocStatusIdle
 		}
 	}
 	b.mu.Unlock()
@@ -785,6 +810,7 @@ func (b *Broker) reconcile() {
 		if node, ok := b.nodes[id]; ok {
 			node.State.ReconcilingToStatus = nil
 			node.State.cancelInFlightTask = nil
+			node.State.PocReconcilingToStatus = nil
 		}
 		b.mu.Unlock()
 	}
@@ -799,8 +825,14 @@ func (b *Broker) reconcile() {
 	b.mu.RLock()
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for id, node := range b.nodes {
-		if node.State.IntendedStatus != node.State.CurrentStatus && node.State.ReconcilingToStatus == nil {
-			nodeCopy := *node // Create a shallow copy for the dispatch map
+		isStable := node.State.ReconcilingToStatus == nil && node.State.PocReconcilingToStatus == nil
+		if !isStable {
+			continue
+		}
+
+		// Condition: The primary or PoC intended state does not match the current state.
+		if node.State.IntendedStatus != node.State.CurrentStatus || node.State.PocIntendedStatus != node.State.PocCurrentStatus {
+			nodeCopy := *node
 			nodesToDispatch[id] = &nodeCopy
 		}
 	}
@@ -836,7 +868,9 @@ func (b *Broker) reconcile() {
 		// Re-check conditions under write lock to prevent races
 		b.mu.Lock()
 		currentNode, ok := b.nodes[id]
-		if !ok || currentNode.State.IntendedStatus == currentNode.State.CurrentStatus || currentNode.State.ReconcilingToStatus != nil {
+		if !ok ||
+			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) ||
+			(currentNode.State.ReconcilingToStatus != nil || currentNode.State.PocReconcilingToStatus != nil) {
 			b.mu.Unlock()
 			continue
 		}
@@ -844,6 +878,8 @@ func (b *Broker) reconcile() {
 		ctx, cancel := context.WithCancel(context.Background())
 		intendedStatusCopy := currentNode.State.IntendedStatus
 		currentNode.State.ReconcilingToStatus = &intendedStatusCopy
+		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
+		currentNode.State.PocReconcilingToStatus = &pocIntendedStatusCopy
 		currentNode.State.cancelInFlightTask = cancel
 
 		worker, exists := b.nodeWorkGroup.GetWorker(id)
@@ -856,16 +892,17 @@ func (b *Broker) reconcile() {
 			if nodeToClean, ok := b.nodes[id]; ok {
 				nodeToClean.State.ReconcilingToStatus = nil
 				nodeToClean.State.cancelInFlightTask = nil
+				nodeToClean.State.PocReconcilingToStatus = nil
 			}
 			b.mu.Unlock()
 			continue
 		}
 
 		// Create and dispatch the command
-		cmd := b.getCommandForState(node.State.IntendedStatus, currentPoCParams, pocParamsErr, validationBlockHash, validationHashErr, len(nodesToDispatch), epochPhaseInfo)
+		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, validationBlockHash, validationHashErr, len(nodesToDispatch), epochPhaseInfo)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
-				"node_id", id, "target_status", node.State.IntendedStatus)
+				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus)
 			if !worker.Submit(ctx, cmd) {
 				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id)
 				cancel()
@@ -873,6 +910,7 @@ func (b *Broker) reconcile() {
 				if nodeToClean, ok := b.nodes[id]; ok {
 					nodeToClean.State.ReconcilingToStatus = nil
 					nodeToClean.State.cancelInFlightTask = nil
+					nodeToClean.State.PocReconcilingToStatus = nil
 				}
 				b.mu.Unlock()
 			}
@@ -883,19 +921,20 @@ func (b *Broker) reconcile() {
 			if nodeToClean, ok := b.nodes[id]; ok {
 				nodeToClean.State.ReconcilingToStatus = nil
 				nodeToClean.State.cancelInFlightTask = nil
+				nodeToClean.State.PocReconcilingToStatus = nil
 			}
 			b.mu.Unlock()
 		}
 	}
 }
 
-func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocGenParams *pocParams, pocGenErr error, pocValHash string, pocValHashErr error, totalNodes int, epochPhaseInfo chainphase.EpochPhaseInfo) NodeWorkerCommand {
+func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, pocValHash string, pocValHashErr error, totalNodes int, epochPhaseInfo chainphase.EpochPhaseInfo) NodeWorkerCommand {
 	switch status {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
 	case types.HardwareNodeStatus_POC:
-		switch epochPhaseInfo.Phase {
-		case types.PoCGeneratePhase:
+		switch pocStatus {
+		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
 				return StartPoCNodeCommand{
 					BlockHeight: pocGenParams.startPoCBlockHeight,
@@ -907,7 +946,7 @@ func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocGenParam
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
 			return nil
-		case types.PoCValidatePhase:
+		case PocStatusValidating:
 			if pocValHashErr == nil {
 				return InitValidateNodeCommand{
 					BlockHeight: epochPhaseInfo.BlockHeight,
@@ -1088,17 +1127,30 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 		return
 	}
 
+	// Critical safety check for PoC status
+	if node.State.PocReconcilingToStatus == nil || *node.State.PocReconcilingToStatus != command.Result.OriginalPocTarget {
+		logging.Info("Ignoring stale PoC result for node", types.Nodes,
+			"node_id", command.NodeId,
+			"original_poc_target", command.Result.OriginalPocTarget,
+			"current_reconciling_poc_target", node.State.PocReconcilingToStatus)
+		command.Response <- false
+		return
+	}
+
 	// Update state
 	logging.Info("Finalizing state transition for node", types.Nodes,
 		"node_id", command.NodeId,
 		"from_status", node.State.CurrentStatus,
 		"to_status", command.Result.FinalStatus,
+		"from_poc_status", node.State.PocCurrentStatus,
+		"to_poc_status", command.Result.FinalPocStatus,
 		"succeeded", command.Result.Succeeded)
 
-	node.State.CurrentStatus = command.Result.FinalStatus
+	node.State.UpdateStatusNow(command.Result.FinalStatus)
 	node.State.ReconcilingToStatus = nil
 	node.State.cancelInFlightTask = nil
-	node.State.LastStateChange = time.Now()
+	node.State.UpdatePocStatusNow(command.Result.FinalPocStatus)
+	node.State.PocReconcilingToStatus = nil
 	if !command.Result.Succeeded {
 		node.State.FailureReason = command.Result.Error
 	}
