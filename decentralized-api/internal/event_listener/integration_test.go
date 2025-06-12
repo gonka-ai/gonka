@@ -542,7 +542,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 	assertNodeClient(t, node1Expected, node1Client)
 	require.Equal(t, types.HardwareNodeStatus_STOPPED, node1State.CurrentStatus)
 
-	node2Expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
+	node2Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
 	assertNodeClient(t, node2Expected, node2Client)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
 }
