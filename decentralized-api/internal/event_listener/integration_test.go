@@ -316,9 +316,9 @@ func TestInferenceReconciliation(t *testing.T) {
 	_, nodeState1 := setup.getNode("node-1")
 	_, nodeState2 := setup.getNode("node-2")
 
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.IntendedStatus)
 
 	for i := 1; i <= 5; i++ {
@@ -328,9 +328,9 @@ func TestInferenceReconciliation(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond) // Wait for async reconcile command processing
 
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.IntendedStatus)
 }
 
@@ -363,9 +363,9 @@ func TestRegularPocScenario(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.Status)
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.Status)
+	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
 
 	// +1 stop call for inference reconciliation

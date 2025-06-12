@@ -26,7 +26,7 @@ func createTestNode(id string) *NodeWithState {
 			NodeNum:          1,
 		},
 		State: NodeState{
-			Status:         types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:  types.HardwareNodeStatus_UNKNOWN,
 			IntendedStatus: types.HardwareNodeStatus_UNKNOWN,
 			AdminState: AdminState{
 				Enabled: true,

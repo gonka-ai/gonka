@@ -56,8 +56,8 @@ func NewEventListener(
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
-	cancelFunc context.CancelFunc,
 	phaseTracker *chainphase.ChainPhaseTracker,
+	cancelFunc context.CancelFunc,
 ) *EventListener {
 	// Create the new block dispatcher
 	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
