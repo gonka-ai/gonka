@@ -143,20 +143,6 @@ func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
-type InferenceUpAllCommand struct {
-	Response chan bool
-}
-
-func NewInferenceUpAllCommand() InferenceUpAllCommand {
-	return InferenceUpAllCommand{
-		Response: make(chan bool, 2),
-	}
-}
-
-func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
-	return cap(c.Response)
-}
-
 type PocStatus string
 
 const (

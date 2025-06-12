@@ -74,6 +74,20 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	c.Response <- true
 }
 
+type InferenceUpAllCommand struct {
+	Response chan bool
+}
+
+func NewInferenceUpAllCommand() InferenceUpAllCommand {
+	return InferenceUpAllCommand{
+		Response: make(chan bool, 2),
+	}
+}
+
+func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 

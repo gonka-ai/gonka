@@ -454,6 +454,13 @@ type NodeClientAssertion struct {
 }
 
 func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *mlnodeclient.MockClient) {
+	lock := nodeClient.Mu.TryLock()
+	if !lock {
+		t.Fatal("Failed to acquire lock on nodeClient")
+	} else {
+		defer nodeClient.Mu.Unlock()
+	}
+
 	require.Equal(t, expected.InitGenerateCalled, nodeClient.InitGenerateCalled, "InitGenerate was called. n = %d", nodeClient.InitGenerateCalled)
 	require.Equal(t, expected.InitValidateCalled, nodeClient.InitValidateCalled, "InitValidate was called. n = %d", nodeClient.InitValidateCalled)
 	require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
@@ -510,18 +517,22 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 	waitForAsync(300 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command, node-1 should be excluded
-	assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
-	assert.Equal(t, 1, node2Client.InitGenerateCalled, "Enabled node-2 should receive InitGenerate call")
-	assert.Equal(t, 0, node1Client.InitValidateCalled, "Disabled node-1 should NOT receive InitGenerate call")
-	assert.Equal(t, 1, node2Client.InitValidateCalled, "Enabled node-2 should receive InitGenerate call")
+	node1Client.WithTryLock(t, func() {
+		assert.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
+		assert.Equal(t, 0, node1Client.InitValidateCalled, "Disabled node-1 should NOT receive InitGenerate call")
+	})
+	node2Client.WithTryLock(t, func() {
+		assert.Equal(t, 1, node2Client.InitGenerateCalled, "Enabled node-2 should receive InitGenerate call")
+		assert.Equal(t, 1, node2Client.InitValidateCalled, "Enabled node-2 should receive InitGenerate call")
+	})
 
 	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
 	assertNodeClient(t, node1Expected, node1Client)
 	require.Equal(t, types.HardwareNodeStatus_STOPPED, node1State.CurrentStatus)
 
-	// node2Expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
-	// assertNodeClient(t, node2Expected, node2Client)
-	// require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
+	node2Expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
+	assertNodeClient(t, node2Expected, node2Client)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
 }
 
 // Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled

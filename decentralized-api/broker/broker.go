@@ -729,41 +729,7 @@ type pocParams struct {
 }
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-	intendedNodeStatusForPhase := GetNodeIntendedStatusForPhase(epochPhaseInfo.Phase)
-	blockHeight := epochPhaseInfo.BlockHeight
-	logging.Info("Reconciling nodes based on current phase", types.Nodes,
-		"phase", epochPhaseInfo.Phase,
-		"epoch", epochPhaseInfo.Epoch,
-		"blockHeight", blockHeight,
-		"intendedNodeStatusForPhase", intendedNodeStatusForPhase.String())
-
-	b.mu.Lock()
-	for _, node := range b.nodes {
-		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			continue // Do not override training status
-		}
-
-		shouldBeOperational := node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase)
-		if shouldBeOperational {
-			node.State.IntendedStatus = intendedNodeStatusForPhase
-			// Set the PoC sub-state
-			switch epochPhaseInfo.Phase {
-			case types.PoCGeneratePhase:
-				node.State.PocIntendedStatus = PocStatusGenerating
-			case types.PoCValidatePhase:
-				node.State.PocIntendedStatus = PocStatusValidating
-			default:
-				node.State.PocIntendedStatus = PocStatusIdle
-			}
-		} else {
-			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
-			node.State.PocIntendedStatus = PocStatusIdle
-		}
-	}
-	b.mu.Unlock()
-
-	b.TriggerReconciliation()
+	// TODO: delete this one!
 
 	command.Response <- true
 }

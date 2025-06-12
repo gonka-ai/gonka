@@ -3,11 +3,15 @@ package mlnodeclient
 import (
 	"context"
 	"decentralized-api/logging"
+	"sync"
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // MockClient is a mock implementation of MLNodeClient for testing
 type MockClient struct {
+	Mu sync.Mutex
 	// State tracking
 	CurrentState MLNodeState
 	PowStatus    PowState
@@ -60,7 +64,20 @@ func NewMockClient() *MockClient {
 	}
 }
 
+func (m *MockClient) WithTryLock(t *testing.T, f func()) {
+	lock := m.Mu.TryLock()
+	if !lock {
+		t.Fatal("TryLock called more than once")
+	} else {
+		defer m.Mu.Unlock()
+	}
+
+	f()
+}
+
 func (m *MockClient) Stop(ctx context.Context) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	logging.Info("MockClient. Stop: called", types.Testing)
 	m.StopCalled++
 	if m.StopError != nil {
@@ -71,6 +88,8 @@ func (m *MockClient) Stop(ctx context.Context) error {
 }
 
 func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.NodeStateCalled++
 	if m.NodeStateError != nil {
 		return nil, m.NodeStateError
@@ -79,6 +98,8 @@ func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
 }
 
 func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.GetPowStatusCalled++
 	if m.GetPowStatusError != nil {
 		return nil, m.GetPowStatusError
@@ -90,6 +111,8 @@ func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, erro
 }
 
 func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	logging.Info("MockClient. InitGenerate: called", types.Testing)
 	m.InitGenerateCalled++
 	m.LastInitDto = &dto
@@ -102,6 +125,8 @@ func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
 }
 
 func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	logging.Info("MockClient. InitValidate: called", types.Testing)
 	m.InitValidateCalled++
 	m.LastInitValidateDto = &dto
@@ -114,6 +139,8 @@ func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
 }
 
 func (m *MockClient) ValidateBatch(ctx context.Context, batch ProofBatch) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.ValidateBatchCalled++
 	m.LastValidateBatch = batch
 	if m.ValiateBatchError != nil {
@@ -125,6 +152,8 @@ func (m *MockClient) ValidateBatch(ctx context.Context, batch ProofBatch) error 
 }
 
 func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.InferenceHealthCalled++
 	if m.InferenceHealthError != nil {
 		return false, m.InferenceHealthError
@@ -133,6 +162,8 @@ func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
 }
 
 func (m *MockClient) InferenceUp(ctx context.Context, model string, args []string) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.InferenceUpCalled++
 	m.LastInferenceModel = model
 	m.LastInferenceArgs = args
@@ -145,6 +176,8 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 }
 
 func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.StartTrainingCalled++
 	m.LastTrainingParams.TaskId = taskId
 	m.LastTrainingParams.Participant = participant
@@ -160,6 +193,8 @@ func (m *MockClient) StartTraining(ctx context.Context, taskId uint64, participa
 }
 
 func (m *MockClient) GetTrainingStatus(ctx context.Context) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	// Not implemented for now
 	return nil
 }
