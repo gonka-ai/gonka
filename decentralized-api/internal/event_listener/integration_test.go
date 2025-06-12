@@ -34,9 +34,15 @@ var defaultEpochParams = types.EpochParams{
 }
 
 var defaultReconciliationConfig = MlNodeReconciliationConfig{
-	BlockInterval: 50,             // TODO: Set to 5 and see how everything fails!
-	TimeInterval:  60 * time.Hour, // Effectively disable for tests
-	LastTime:      time.Now(),
+	Inference: &MlNodeStageReconciliationConfig{
+		BlockInterval: 50,
+		TimeInterval:  60 * time.Hour,
+	},
+	PoC: &MlNodeStageReconciliationConfig{
+		BlockInterval: 1,
+		TimeInterval:  60 * time.Hour,
+	},
+	LastTime: time.Now(),
 }
 
 // Mock implementations using minimal interfaces
@@ -301,8 +307,14 @@ func waitForAsync(duration time.Duration) {
 
 func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 	return MlNodeReconciliationConfig{
-		BlockInterval:   blockInterval,
-		TimeInterval:    60 * time.Minute, // Disable for test
+		Inference: &MlNodeStageReconciliationConfig{
+			BlockInterval: blockInterval,
+			TimeInterval:  60 * time.Minute,
+		},
+		PoC: &MlNodeStageReconciliationConfig{
+			BlockInterval: 1,
+			TimeInterval:  60 * time.Minute,
+		},
 		LastTime:        time.Now(),
 		LastBlockHeight: 0,
 	}
@@ -329,7 +341,7 @@ func TestInferenceReconciliation(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	var i = int64(1)
-	for i <= int64(reconciliationConfig.BlockInterval) {
+	for i <= int64(reconciliationConfig.Inference.BlockInterval) {
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
 
@@ -579,7 +591,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	waitForAsync(300 * time.Millisecond)
 
 	var i = int64(150)
-	for i < int64(150+reconciliationConfig.BlockInterval) {
+	for i < int64(150+reconciliationConfig.Inference.BlockInterval) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 		i++
@@ -703,7 +715,7 @@ func TestPoCRetry(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 2, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
 
-	for i < params.EpochLength+int64(reconciliationConfig.BlockInterval) {
+	for i < params.EpochLength+int64(reconciliationConfig.Inference.BlockInterval) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 

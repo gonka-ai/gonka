@@ -52,12 +52,17 @@ type PoCParams struct {
 	StartBlockHash   string
 }
 
-// MlNodeReconciliationConfig defines when reconciliation should be triggered
+// MlNodeStageReconciliationConfig defines when reconciliation should be triggered
+type MlNodeStageReconciliationConfig struct {
+	BlockInterval int           // Trigger every N blocks
+	TimeInterval  time.Duration // OR every N time duration
+}
+
 type MlNodeReconciliationConfig struct {
-	BlockInterval   int           // Trigger every N blocks
-	TimeInterval    time.Duration // OR every N time duration
-	LastBlockHeight int64         // Track last reconciliation block
-	LastTime        time.Time     // Track last reconciliation time
+	Inference       *MlNodeStageReconciliationConfig
+	PoC             *MlNodeStageReconciliationConfig
+	LastBlockHeight int64     // Track last reconciliation block
+	LastTime        time.Time // Track last reconciliation time
 }
 
 // OnNewBlockDispatcher orchestrates processing of new block events
@@ -82,9 +87,16 @@ type SyncInfo struct {
 }
 
 var DefaultReconciliationConfig = MlNodeReconciliationConfig{
-	BlockInterval: 5,                // Every 5 blocks
-	TimeInterval:  30 * time.Second, // OR every 30 seconds
-	LastTime:      time.Now(),
+	Inference: &MlNodeStageReconciliationConfig{
+		BlockInterval: 10,
+		TimeInterval:  60 * time.Second,
+	},
+	PoC: &MlNodeStageReconciliationConfig{
+		BlockInterval: 1,
+		TimeInterval:  30 * time.Second,
+	},
+	LastTime:        time.Now(),
+	LastBlockHeight: 0,
 }
 
 // NewOnNewBlockDispatcher creates a new dispatcher with default configuration
@@ -282,15 +294,25 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(phaseInfo *PhaseInfo) bool {
+	switch phaseInfo.CurrentPhase {
+	case types.PoCGeneratePhase, types.PoCValidatePhase:
+		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.PoC)
+	case types.InferencePhase:
+		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.Inference)
+	}
+	return false
+}
+
+func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliationConfig, stageConfig *MlNodeStageReconciliationConfig) bool {
 	// Check block interval
-	blocksSinceLastReconciliation := phaseInfo.BlockHeight - d.reconciliationConfig.LastBlockHeight
-	if blocksSinceLastReconciliation >= int64(d.reconciliationConfig.BlockInterval) {
+	blocksSinceLastReconciliation := blockHeight - config.LastBlockHeight
+	if blocksSinceLastReconciliation >= int64(stageConfig.BlockInterval) {
 		return true
 	}
 
 	// Check time interval
-	timeSinceLastReconciliation := time.Since(d.reconciliationConfig.LastTime)
-	if timeSinceLastReconciliation >= d.reconciliationConfig.TimeInterval {
+	timeSinceLastReconciliation := time.Since(config.LastTime)
+	if timeSinceLastReconciliation >= stageConfig.TimeInterval {
 		return true
 	}
 
