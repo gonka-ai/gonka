@@ -68,18 +68,20 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	}
 
 	// Idempotency check
-	status, err := worker.mlClient.GetPowStatus(ctx)
-	if err == nil && status.Status == mlnodeclient.POW_GENERATING {
-		logging.Info("Node already in PoC state", types.PoC, "node_id", worker.nodeId)
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_POC
-		result.FinalPocStatus = PocStatusGenerating
-		return result
+	state, err := worker.mlClient.NodeState(ctx)
+	if err == nil && state.State == mlnodeclient.MlNodeState_POW {
+		powStatus, powErr := worker.mlClient.GetPowStatus(ctx)
+		if powErr == nil && powStatus.Status == mlnodeclient.POW_GENERATING {
+			logging.Info("Node already in PoC generating state", types.PoC, "node_id", worker.nodeId)
+			result.Succeeded = true
+			result.FinalStatus = types.HardwareNodeStatus_POC
+			result.FinalPocStatus = PocStatusGenerating
+			return result
+		}
 	}
 
 	// Stop node if needed
-	nodeState, _ := worker.mlClient.NodeState(ctx)
-	if nodeState != nil && nodeState.State != mlnodeclient.MlNodeState_STOPPED {
+	if state != nil && state.State != mlnodeclient.MlNodeState_STOPPED {
 		if err := worker.mlClient.Stop(ctx); err != nil {
 			logging.Error("Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 			result.Succeeded = false
@@ -131,13 +133,27 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 	}
 
 	// Idempotency check
-	status, err := worker.mlClient.GetPowStatus(ctx)
-	if err == nil && status.Status == mlnodeclient.POW_VALIDATING {
-		logging.Info("Node already in POW_VALIDATING state", types.PoC, "node_id", worker.nodeId)
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_POC
-		result.FinalPocStatus = PocStatusValidating
-		return result
+	state, err := worker.mlClient.NodeState(ctx)
+	if err == nil && state.State == mlnodeclient.MlNodeState_POW {
+		powStatus, powErr := worker.mlClient.GetPowStatus(ctx)
+		if powErr == nil && powStatus.Status == mlnodeclient.POW_VALIDATING {
+			logging.Info("Node already in PoC validating state", types.PoC, "node_id", worker.nodeId)
+			result.Succeeded = true
+			result.FinalStatus = types.HardwareNodeStatus_POC
+			result.FinalPocStatus = PocStatusValidating
+			return result
+		}
+	}
+
+	// Stop node if needed
+	if state != nil && state.State != mlnodeclient.MlNodeState_STOPPED && state.State != mlnodeclient.MlNodeState_POW {
+		if err := worker.mlClient.Stop(ctx); err != nil {
+			logging.Error("Failed to stop node for PoC validation", types.PoC, "node_id", worker.nodeId, "error", err)
+			result.Succeeded = false
+			result.Error = err.Error()
+			result.FinalStatus = types.HardwareNodeStatus_FAILED
+			return result
+		}
 	}
 
 	dto := mlnodeclient.BuildInitDto(
@@ -272,6 +288,19 @@ func (c StartTrainingNodeCommand) Execute(ctx context.Context, worker *NodeWorke
 		logging.Error("Failed to stop node for training", types.Training, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		return result
+	}
+
+	// Start training
+	trainingErr := worker.mlClient.StartTraining(
+		ctx, c.TaskId, c.Participant, worker.nodeId,
+		c.MasterNodeAddr, rank, c.WorldSize,
+	)
+	if trainingErr != nil {
+		logging.Error("Failed to start training", types.Training, "node_id", worker.nodeId, "error", trainingErr)
+		result.Succeeded = false
+		result.Error = trainingErr.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
 	} else {
 		result.Succeeded = true

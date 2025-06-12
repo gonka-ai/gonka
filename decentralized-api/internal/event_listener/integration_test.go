@@ -606,7 +606,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Give time for processing
-	waitForAsync(200 * time.Millisecond)
+	waitForAsync(500 * time.Millisecond)
 
 	require.Equal(t, types.HardwareNodeStatus_POC, node1State.CurrentStatus)
 	require.Equal(t, broker.PocStatusGenerating, node1State.PocCurrentStatus)

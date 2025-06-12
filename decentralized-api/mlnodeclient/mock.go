@@ -171,6 +171,7 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 		return m.InferenceUpError
 	}
 	m.CurrentState = MlNodeState_INFERENCE
+	m.PowStatus = POW_IDLE
 	m.IsHealthy = true
 	return nil
 }
