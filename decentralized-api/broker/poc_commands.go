@@ -7,11 +7,7 @@ import (
 )
 
 type StartPocCommand struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	CallbackUrl string
-	Response    chan bool
+	Response chan bool
 }
 
 func (c StartPocCommand) GetResponseChannelCapacity() int {
@@ -20,11 +16,8 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 
 func (c StartPocCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-	nodeCmds := make(map[string]NodeWorkerCommand)
-	var totalNodes int
 
 	b.mu.Lock()
-	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
@@ -37,35 +30,18 @@ func (c StartPocCommand) Execute(b *Broker) {
 			continue
 		}
 
-		// Update intended status first
+		// Update intended status only
 		node.State.IntendedStatus = types.HardwareNodeStatus_POC
-
-		// Create StartPoCNodeCommand for the worker
-		cmd := StartPoCNodeCommand{
-			BlockHeight: c.BlockHeight,
-			BlockHash:   c.BlockHash,
-			PubKey:      c.PubKey,
-			CallbackUrl: c.CallbackUrl,
-			TotalNodes:  totalNodes,
-		}
-
-		nodeCmds[node.Node.Id] = cmd
 	}
 	b.mu.Unlock()
 
-	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
-	logging.Info("StartPocCommand completed", types.PoC,
-		"submitted", submitted, "failed", failed, "total", totalNodes)
-
+	b.TriggerReconciliation()
+	logging.Info("StartPocCommand completed, reconciliation triggered", types.PoC)
 	c.Response <- true
 }
 
 type InitValidateCommand struct {
-	BlockHeight int64
-	BlockHash   string
-	PubKey      string
-	CallbackUrl string
-	Response    chan bool
+	Response chan bool
 }
 
 func (c InitValidateCommand) GetResponseChannelCapacity() int {
@@ -74,11 +50,8 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 
 func (c InitValidateCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-	nodeCmds := make(map[string]NodeWorkerCommand)
-	var totalNodes int
 
 	b.mu.Lock()
-	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
@@ -92,34 +65,18 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		}
 
 		node.State.IntendedStatus = types.HardwareNodeStatus_POC
-
-		cmd := InitValidateNodeCommand{
-			BlockHeight: c.BlockHeight,
-			BlockHash:   c.BlockHash,
-			PubKey:      c.PubKey,
-			CallbackUrl: c.CallbackUrl,
-			TotalNodes:  totalNodes,
-		}
-
-		nodeCmds[node.Node.Id] = cmd
 	}
 	b.mu.Unlock()
 
-	// Execute init validate on all nodes in parallel
-	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
-	logging.Info("InitValidateCommand completed", types.PoC,
-		"submitted", submitted, "failed", failed, "total", totalNodes)
-
+	b.TriggerReconciliation()
+	logging.Info("InitValidateCommand completed, reconciliation triggered for PoC validation", types.PoC)
 	c.Response <- true
 }
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-	nodeCmds := make(map[string]NodeWorkerCommand)
-	var totalNodes int
 
 	b.mu.Lock()
-	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping inference up for administratively disabled node", types.PoC,
@@ -130,16 +87,11 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 				"current_phase", epochPhaseInfo.Phase)
 			continue
 		}
-
-		nodeCmds[node.Node.Id] = InferenceUpNodeCommand{}
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	}
 	b.mu.Unlock()
 
-	// Execute inference up on all nodes in parallel
-	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
-
-	logging.Info("InferenceUpAllCommand completed", types.Nodes,
-		"submitted", submitted, "failed", failed, "total", totalNodes)
-
+	b.TriggerReconciliation()
+	logging.Info("InferenceUpAllCommand completed, reconciliation triggered", types.Nodes)
 	c.Response <- true
 }

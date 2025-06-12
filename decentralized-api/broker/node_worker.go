@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"sync"
@@ -8,12 +9,17 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+type commandWithContext struct {
+	cmd NodeWorkerCommand
+	ctx context.Context
+}
+
 // NodeWorker handles asynchronous operations for a specific node
 type NodeWorker struct {
 	nodeId   string
 	node     *NodeWithState
 	mlClient mlnodeclient.MLNodeClient
-	commands chan NodeWorkerCommand
+	commands chan commandWithContext
 	shutdown chan struct{}
 	wg       sync.WaitGroup
 }
@@ -24,7 +30,7 @@ func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodecl
 		nodeId:   nodeId,
 		node:     node,
 		mlClient: client,
-		commands: make(chan NodeWorkerCommand, 10),
+		commands: make(chan commandWithContext, 10),
 		shutdown: make(chan struct{}),
 	}
 	go worker.run()
@@ -35,8 +41,14 @@ func NewNodeWorkerWithClient(nodeId string, node *NodeWithState, client mlnodecl
 func (w *NodeWorker) run() {
 	for {
 		select {
-		case cmd := <-w.commands:
-			if err := cmd.Execute(w); err != nil {
+		case item := <-w.commands:
+			if item.ctx.Err() != nil {
+				logging.Info("Node command cancelled before execution", types.Nodes,
+					"node_id", w.nodeId)
+				w.wg.Done()
+				continue
+			}
+			if err := item.cmd.Execute(item.ctx, w); err != nil {
 				logging.Error("Node command execution failed", types.Nodes,
 					"node_id", w.nodeId, "error", err)
 			}
@@ -44,8 +56,8 @@ func (w *NodeWorker) run() {
 		case <-w.shutdown:
 			// Drain remaining commands before shutting down
 			close(w.commands)
-			for cmd := range w.commands {
-				if err := cmd.Execute(w); err != nil {
+			for item := range w.commands {
+				if err := item.cmd.Execute(item.ctx, w); err != nil {
 					logging.Error("Node command execution failed during shutdown", types.Nodes,
 						"node_id", w.nodeId, "error", err)
 				}
@@ -57,10 +69,10 @@ func (w *NodeWorker) run() {
 }
 
 // Submit queues a command for execution on this node
-func (w *NodeWorker) Submit(cmd NodeWorkerCommand) bool {
+func (w *NodeWorker) Submit(ctx context.Context, cmd NodeWorkerCommand) bool {
 	w.wg.Add(1)
 	select {
-	case w.commands <- cmd:
+	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx}:
 		return true
 	default:
 		w.wg.Done()
@@ -103,69 +115,6 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 		worker.Shutdown()
 		delete(g.workers, nodeId)
 	}
-}
-
-// ExecuteOnAll submits a command to all workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnAll(cmd NodeWorkerCommand) (submitted, failed int) {
-	g.mu.RLock()
-	workersCopy := make(map[string]*NodeWorker)
-	for k, v := range g.workers {
-		workersCopy[k] = v
-	}
-	g.mu.RUnlock()
-
-	// Submit command to all workers
-	for nodeId, worker := range workersCopy {
-		if worker.Submit(cmd) {
-			submitted++
-		} else {
-			failed++
-			logging.Error("Failed to submit command to worker", types.Nodes,
-				"node_id", nodeId, "reason", "queue full")
-		}
-	}
-
-	// Wait for all submitted commands to complete
-	for _, worker := range workersCopy {
-		worker.wg.Wait()
-	}
-
-	return submitted, failed
-}
-
-// ExecuteOnNodes submits a command to specific workers and waits for completion
-func (g *NodeWorkGroup) ExecuteOnNodes(nodeCmds map[string]NodeWorkerCommand) (submitted, failed int) {
-	g.mu.RLock()
-	selectedWorkers := make(map[string]*NodeWorker)
-	for nodeId, _ := range nodeCmds {
-		if worker, exists := g.workers[nodeId]; exists {
-			selectedWorkers[nodeId] = worker
-		}
-	}
-	g.mu.RUnlock()
-
-	// Submit command to selected workers
-	for nodeId, worker := range selectedWorkers {
-		cmd := nodeCmds[nodeId]
-		if cmd == nil {
-			panic("Illegal state, command cannot be nil for node " + nodeId)
-		}
-
-		if worker.Submit(cmd) {
-			submitted++
-		} else {
-			failed++
-			logging.Error("Failed to submit command to worker", types.Nodes,
-				"node_id", nodeId, "reason", "queue full")
-		}
-	}
-
-	// Wait for all submitted commands to complete
-	for _, worker := range selectedWorkers {
-		worker.wg.Wait()
-	}
-
-	return submitted, failed
 }
 
 // GetWorker returns a specific worker (useful for node-specific commands)

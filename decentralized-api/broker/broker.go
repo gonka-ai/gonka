@@ -85,6 +85,7 @@ type Broker struct {
 	participantInfo     participant.CurrenParticipantInfo
 	callbackUrl         string
 	mlNodeClientFactory mlnodeclient.ClientFactory
+	reconcileTrigger    chan struct{}
 }
 
 const (
@@ -200,6 +201,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		participantInfo:     participantInfo,
 		callbackUrl:         callbackUrl,
 		mlNodeClientFactory: clientFactory,
+		reconcileTrigger:    make(chan struct{}, 1),
 	}
 
 	// Initialize NodeWorkGroup
@@ -210,6 +212,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	// Reconciliation is now triggered by OnNewBlockDispatcher
 	// go nodeReconciliationWorker(broker)
 	go nodeStatusQueryWorker(broker)
+	go broker.reconcilerLoop()
 	return broker
 }
 
@@ -708,139 +711,192 @@ type pocParams struct {
 
 func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-	currentEpoch := epochPhaseInfo.Epoch
-	currentPhase := epochPhaseInfo.Phase
-	currentBlockHeight := epochPhaseInfo.BlockHeight
-
 	intendedNodeStatusForPhase := GetNodeIntendedStatusForPhase(epochPhaseInfo.Phase)
 	logging.Info("Reconciling nodes based on current phase", types.Nodes,
-		"phase", currentPhase,
-		"epoch", currentEpoch,
-		"blockHeigh", currentBlockHeight,
+		"phase", epochPhaseInfo.Phase,
+		"epoch", epochPhaseInfo.Epoch,
+		"blockHeigh", epochPhaseInfo.BlockHeight,
 		"intendedNodeStatusForPhase", intendedNodeStatusForPhase.String())
 
-	var currentPoCParams *pocParams = nil
-
-	// Collect nodes that need reconciliation
-	needsReconciliation := make(map[string]NodeWorkerCommand)
-
 	b.mu.Lock()
-	for nodeId, node := range b.nodes {
-		// Skip nodes in training state
+	for _, node := range b.nodes {
 		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
-			continue
+			continue // Do not override training status
 		}
 
-		// Check if node should be operational based on admin state
-		shouldBeOperational := node.State.ShouldBeOperational(currentEpoch, currentPhase)
-
-		if !shouldBeOperational {
-			// Node should be stopped
-			if node.State.CurrentStatus != types.HardwareNodeStatus_STOPPED {
-				logging.Info("Node should be stopped due to admin state", types.Nodes,
-					"node_id", nodeId,
-					"admin_enabled", node.State.AdminState.Enabled,
-					"admin_epoch", node.State.AdminState.Epoch,
-					"current_epoch", currentEpoch)
-				needsReconciliation[nodeId] = StopNodeCommand{}
-			}
-			continue
-		}
-
-		// Update intended status based on phase
-		node.State.IntendedStatus = intendedNodeStatusForPhase
-
-		// Check if reconciliation is needed
-		if node.State.CurrentStatus != node.State.IntendedStatus {
-			logging.Info("Node state mismatch detected", types.Nodes,
-				"node_id", nodeId,
-				"current_state", node.State.CurrentStatus.String(),
-				"intended_state", node.State.IntendedStatus.String())
-
-			switch node.State.IntendedStatus {
-			case types.HardwareNodeStatus_INFERENCE:
-				needsReconciliation[nodeId] = InferenceUpNodeCommand{}
-			case types.HardwareNodeStatus_POC:
-				if currentPoCParams == nil {
-					queriedParams, err := b.queryCurrentPoCParams(epochPhaseInfo)
-					if err != nil {
-						logging.Error("Failed to query current PoC parameters", types.Nodes, "err", err)
-					} else {
-						currentPoCParams = queriedParams
-					}
-				}
-
-				if currentPoCParams != nil && currentPoCParams.startPoCBlockHeight > 0 {
-					totalNodes := len(b.nodes)
-					needsReconciliation[nodeId] = StartPoCNodeCommand{
-						BlockHeight: currentPoCParams.startPoCBlockHeight,
-						BlockHash:   currentPoCParams.startPoCBlockHash,
-						PubKey:      b.participantInfo.GetPubKey(),
-						CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
-						TotalNodes:  totalNodes,
-					}
-				} else {
-					logging.Warn("Cannot reconcile to PoC: missing PoC parameters", types.Nodes,
-						"node_id", nodeId)
-				}
-			case types.HardwareNodeStatus_STOPPED:
-				needsReconciliation[nodeId] = StopNodeCommand{}
-			default:
-				logging.Info("Reconciliation for state not yet implemented", types.Nodes,
-					"node_id", nodeId, "intended_state", node.State.IntendedStatus.String())
-			}
+		shouldBeOperational := node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase)
+		if shouldBeOperational {
+			node.State.IntendedStatus = intendedNodeStatusForPhase
+		} else {
+			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		}
 	}
 	b.mu.Unlock()
 
-	if len(needsReconciliation) == 0 {
-		logging.Debug("All nodes are in their intended state", types.Nodes)
-		command.Response <- true
-		return
-	}
-
-	// Limit concurrent reconciliations and execute
-	const maxConcurrentReconciliations = 10
-	submitted := 0
-	failed := 0
-	processed := 0
-
-	for nodeId, cmd := range needsReconciliation {
-		if processed >= maxConcurrentReconciliations {
-			logging.Info("Limiting reconciliation batch", types.Nodes,
-				"total_needs_reconciliation", len(needsReconciliation),
-				"batch_size", maxConcurrentReconciliations)
-			break
-		}
-		if worker, exists := b.nodeWorkGroup.GetWorker(nodeId); exists {
-			if worker.Submit(cmd) {
-				submitted++
-			} else {
-				failed++
-				logging.Error("Failed to submit reconciliation command to worker", types.Nodes,
-					"node_id", nodeId, "reason", "queue full")
-			}
-		} else {
-			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", nodeId)
-			failed++ // Count as failed if worker doesn't exist
-		}
-		processed++
-	}
-
-	// Wait for submitted commands
-	for nodeId := range needsReconciliation {
-		if worker, exists := b.nodeWorkGroup.GetWorker(nodeId); exists {
-			// Check if this cmd was actually submitted (could be tricky if map iteration order matters)
-			// For simplicity, just wait on all workers that had commands.
-			// A better way would be to track submitted workers.
-			worker.wg.Wait()
-		}
-	}
-
-	logging.Info("Reconciliation batch completed", types.Nodes,
-		"submitted", submitted, "failed", failed, "batch_size", processed)
+	b.TriggerReconciliation()
 
 	command.Response <- true
+}
+
+const reconciliationInterval = 5 * time.Second
+
+func (b *Broker) TriggerReconciliation() {
+	select {
+	case b.reconcileTrigger <- struct{}{}:
+	default:
+	}
+}
+
+func (b *Broker) reconcilerLoop() {
+	ticker := time.NewTicker(reconciliationInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-b.reconcileTrigger:
+			logging.Debug("Reconciliation triggered manually", types.Nodes)
+			b.reconcile()
+		case <-ticker.C:
+			logging.Debug("Periodic reconciliation triggered", types.Nodes)
+			b.reconcile()
+		}
+	}
+}
+
+func (b *Broker) reconcile() {
+	// Phase 1: Cancel outdated tasks
+	nodesToCancel := make(map[string]func())
+	b.mu.RLock()
+	for id, node := range b.nodes {
+		if node.State.ReconcilingToStatus != nil && *node.State.ReconcilingToStatus != node.State.IntendedStatus {
+			if node.State.cancelInFlightTask != nil {
+				nodesToCancel[id] = node.State.cancelInFlightTask
+			}
+		}
+	}
+	b.mu.RUnlock()
+
+	for id, cancel := range nodesToCancel {
+		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id)
+		cancel()
+		b.mu.Lock()
+		if node, ok := b.nodes[id]; ok {
+			node.State.ReconcilingToStatus = nil
+			node.State.cancelInFlightTask = nil
+		}
+		b.mu.Unlock()
+	}
+
+	// Phase 2: Dispatch new tasks
+	var currentPoCParams *pocParams
+	var pocParamsErr error
+
+	nodesToDispatch := make(map[string]*NodeWithState)
+	b.mu.RLock()
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	for id, node := range b.nodes {
+		if node.State.IntendedStatus != node.State.CurrentStatus && node.State.ReconcilingToStatus == nil {
+			nodeCopy := *node // Create a shallow copy for the dispatch map
+			nodesToDispatch[id] = &nodeCopy
+		}
+	}
+	b.mu.RUnlock()
+
+	// Pre-fetch PoC params if needed to avoid multiple lookups
+	needsPocParams := false
+	for _, node := range nodesToDispatch {
+		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
+			needsPocParams = true
+			break
+		}
+	}
+	if needsPocParams {
+		currentPoCParams, pocParamsErr = b.queryCurrentPoCParams(epochPhaseInfo)
+		if pocParamsErr != nil {
+			logging.Error("Failed to query PoC parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr)
+		}
+	}
+
+	for id, node := range nodesToDispatch {
+		// Re-check conditions under write lock to prevent races
+		b.mu.Lock()
+		currentNode, ok := b.nodes[id]
+		if !ok || currentNode.State.IntendedStatus == currentNode.State.CurrentStatus || currentNode.State.ReconcilingToStatus != nil {
+			b.mu.Unlock()
+			continue
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		intendedStatusCopy := currentNode.State.IntendedStatus
+		currentNode.State.ReconcilingToStatus = &intendedStatusCopy
+		currentNode.State.cancelInFlightTask = cancel
+
+		worker, exists := b.nodeWorkGroup.GetWorker(id)
+		b.mu.Unlock()
+
+		if !exists {
+			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id)
+			cancel() // Cancel context if worker doesn't exist
+			b.mu.Lock()
+			if nodeToClean, ok := b.nodes[id]; ok {
+				nodeToClean.State.ReconcilingToStatus = nil
+				nodeToClean.State.cancelInFlightTask = nil
+			}
+			b.mu.Unlock()
+			continue
+		}
+
+		// Create and dispatch the command
+		cmd := b.getCommandForState(node.State.IntendedStatus, currentPoCParams, pocParamsErr, len(nodesToDispatch))
+		if cmd != nil {
+			logging.Info("Dispatching reconciliation command", types.Nodes,
+				"node_id", id, "target_status", node.State.IntendedStatus)
+			if !worker.Submit(ctx, cmd) {
+				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id)
+				cancel()
+				b.mu.Lock()
+				if nodeToClean, ok := b.nodes[id]; ok {
+					nodeToClean.State.ReconcilingToStatus = nil
+					nodeToClean.State.cancelInFlightTask = nil
+				}
+				b.mu.Unlock()
+			}
+		} else {
+			// No valid command, clean up
+			cancel()
+			b.mu.Lock()
+			if nodeToClean, ok := b.nodes[id]; ok {
+				nodeToClean.State.ReconcilingToStatus = nil
+				nodeToClean.State.cancelInFlightTask = nil
+			}
+			b.mu.Unlock()
+		}
+	}
+}
+
+func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocParams *pocParams, pocErr error, totalNodes int) NodeWorkerCommand {
+	switch status {
+	case types.HardwareNodeStatus_INFERENCE:
+		return InferenceUpNodeCommand{}
+	case types.HardwareNodeStatus_POC:
+		if pocParams != nil && pocParams.startPoCBlockHeight > 0 {
+			return StartPoCNodeCommand{
+				BlockHeight: pocParams.startPoCBlockHeight,
+				BlockHash:   pocParams.startPoCBlockHash,
+				PubKey:      b.participantInfo.GetPubKey(),
+				CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
+				TotalNodes:  totalNodes,
+			}
+		}
+		logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocErr)
+		return nil
+	case types.HardwareNodeStatus_STOPPED:
+		return StopNodeCommand{}
+	default:
+		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
+			"intended_state", status.String())
+		return nil
+	}
 }
 
 func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocParams, error) {
