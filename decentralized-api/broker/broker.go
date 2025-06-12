@@ -1111,12 +1111,15 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 	}
 
 	// Critical safety check
-	if node.State.ReconcileInfo == nil || node.State.ReconcileInfo.Status != command.Result.OriginalTarget || node.State.ReconcileInfo.PocStatus != command.Result.OriginalPocTarget {
+	if node.State.ReconcileInfo == nil ||
+		node.State.ReconcileInfo.Status != command.Result.OriginalTarget ||
+		(node.State.ReconcileInfo.Status == types.HardwareNodeStatus_POC && node.State.ReconcileInfo.PocStatus != command.Result.OriginalPocTarget) {
 		logging.Info("Ignoring stale result for node", types.Nodes,
 			"node_id", command.NodeId,
 			"original_target", command.Result.OriginalTarget,
-			"current_reconciling_target.status", node.State.ReconcileInfo.Status,
-			"current_reconciling_target.poc_status", node.State.ReconcileInfo.PocStatus,
+			"original_poc_target", command.Result.OriginalPocTarget,
+			"current_reconciling_target", node.State.ReconcileInfo.Status,
+			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
 			"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
 		command.Response <- false
 		return

@@ -164,7 +164,8 @@ type InferenceUpNodeCommand struct{}
 
 func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
-		OriginalTarget: types.HardwareNodeStatus_INFERENCE,
+		OriginalTarget:    types.HardwareNodeStatus_INFERENCE,
+		OriginalPocTarget: PocStatusIdle,
 	}
 	if ctx.Err() != nil {
 		result.Succeeded = false

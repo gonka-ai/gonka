@@ -131,6 +131,7 @@ type IntegrationTestSetup struct {
 	MockChainBridge   *MockBrokerChainBridge
 	MockQueryClient   *MockQueryClient
 	MockSeedManager   *MockRandomSeedManager
+	EpochParams       *types.EpochParams
 }
 
 func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfig, params *types.EpochParams) *IntegrationTestSetup {
@@ -191,11 +192,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney").Return()
 
-	var finalReconcilialtionConfig MlNodeReconciliationConfig
+	var finalReconciliationConfig MlNodeReconciliationConfig
 	if reconcilialtionConfig == nil {
-		finalReconcilialtionConfig = defaultReconciliationConfig
+		finalReconciliationConfig = defaultReconciliationConfig
 	} else {
-		finalReconcilialtionConfig = *reconcilialtionConfig
+		finalReconciliationConfig = *reconcilialtionConfig
 	}
 	// Create dispatcher with mocked dependencies
 	dispatcher := NewOnNewBlockDispatcher(
@@ -206,7 +207,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockStatusFunc,
 		mockSetHeightFunc,
 		mockSeedManager,
-		finalReconcilialtionConfig,
+		finalReconciliationConfig,
 	)
 
 	return &IntegrationTestSetup{
@@ -218,6 +219,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		MockChainBridge:   mockChainBridge,
 		MockQueryClient:   mockQueryClient,
 		MockSeedManager:   mockSeedManager,
+		EpochParams:       paramsToReturn,
 	}
 }
 
@@ -307,8 +309,8 @@ func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 }
 
 func TestInferenceReconciliation(t *testing.T) {
-	reconcilialtionConfig := testreconcilialtionConfig(5)
-	setup := createIntegrationTestSetup(&reconcilialtionConfig, nil)
+	reconciliationConfig := testreconcilialtionConfig(5)
+	setup := createIntegrationTestSetup(&reconciliationConfig, nil)
 
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
@@ -321,17 +323,36 @@ func TestInferenceReconciliation(t *testing.T) {
 	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.IntendedStatus)
 
-	for i := 1; i <= 5; i++ {
+	node1Client := setup.getNodeClient("node-1", 8081)
+	node2Client := setup.getNodeClient("node-2", 8082)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
+
+	var i = int64(1)
+	for i <= int64(reconciliationConfig.BlockInterval) {
 		err := setup.simulateBlock(int64(i))
 		require.NoError(t, err)
+
+		i++
 	}
 
-	time.Sleep(100 * time.Millisecond) // Wait for async reconcile command processing
+	waitForAsync(500 * time.Millisecond)
 
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.IntendedStatus)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.CurrentStatus)
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.IntendedStatus)
+
+	expected := NodeClientAssertion{1, 0, 0, 1}
+	assertNodeClient(t, expected, node1Client)
+	assertNodeClient(t, expected, node2Client)
+
+	for i < setup.EpochParams.EpochLength {
+		i++
+	}
+
+	assertNodeClient(t, expected, node1Client)
+	assertNodeClient(t, expected, node2Client)
 }
 
 func TestRegularPocScenario(t *testing.T) {
