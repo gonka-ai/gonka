@@ -139,24 +139,26 @@ type AdminState struct {
 }
 
 type NodeState struct {
-	LockCount       int                      `json:"lock_count"`
-	Operational     bool                     `json:"operational"`
-	FailureReason   string                   `json:"failure_reason"`
-	TrainingTaskId  uint64                   `json:"training_task_id"`
-	Status          types.HardwareNodeStatus `json:"status"`
-	StatusTimestamp time.Time                `json:"status_timestamp"`
-	IntendedStatus  types.HardwareNodeStatus `json:"intended_status,omitempty"`
-	LastStateChange time.Time                `json:"last_state_change"`
-	AdminState      AdminState               `json:"admin_state"`
+	IntendedStatus      types.HardwareNodeStatus  `json:"intended_status"`
+	CurrentStatus       types.HardwareNodeStatus  `json:"current_status"`
+	ReconcilingToStatus *types.HardwareNodeStatus `json:"reconciling_to_status,omitempty"`
+	cancelInFlightTask  func()                    `json:"-"`
+
+	LockCount       int        `json:"lock_count"`
+	FailureReason   string     `json:"failure_reason"`
+	TrainingTaskId  uint64     `json:"training_task_id"`
+	StatusTimestamp time.Time  `json:"status_timestamp"`
+	LastStateChange time.Time  `json:"last_state_change"`
+	AdminState      AdminState `json:"admin_state"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
-	s.Status = status
+	s.CurrentStatus = status
 	s.StatusTimestamp = time
 }
 
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
-	s.Status = status
+	s.CurrentStatus = status
 	s.StatusTimestamp = time.Now()
 }
 
@@ -166,7 +168,7 @@ func (s *NodeState) Failure(reason string) {
 }
 
 func (s *NodeState) IsOperational() bool {
-	return s.Status != types.HardwareNodeStatus_FAILED
+	return s.CurrentStatus != types.HardwareNodeStatus_FAILED
 }
 
 // ShouldBeOperational checks if node should be operational based on admin state and current epoch
@@ -339,11 +341,12 @@ func (b *Broker) registerNode(command RegisterNode) {
 	nodeWithState := &NodeWithState{
 		Node: node,
 		State: NodeState{
-			LockCount:       0,
-			FailureReason:   "",
-			Status:          types.HardwareNodeStatus_UNKNOWN,
-			StatusTimestamp: time.Now(),
-			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
+			IntendedStatus:      types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:       types.HardwareNodeStatus_UNKNOWN,
+			ReconcilingToStatus: nil,
+			LockCount:           0,
+			FailureReason:       "",
+			StatusTimestamp:     time.Now(),
 			AdminState: AdminState{
 				Enabled: true,
 				Epoch:   currentEpoch,
@@ -421,7 +424,9 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 }
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) bool {
-	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
+	available := node.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+		node.State.ReconcilingToStatus == nil &&
+		node.State.LockCount < node.Node.MaxConcurrent
 	if !available {
 		return false
 	}
@@ -607,7 +612,7 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 
 	return &types.HardwareNode{
 		LocalId:  node.Id,
-		Status:   in.State.Status,
+		Status:   in.State.CurrentStatus,
 		Hardware: hardware,
 		Models:   modelsNames,
 		Host:     node.Host,
@@ -731,7 +736,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 
 		if !shouldBeOperational {
 			// Node should be stopped
-			if node.State.Status != types.HardwareNodeStatus_STOPPED {
+			if node.State.CurrentStatus != types.HardwareNodeStatus_STOPPED {
 				logging.Info("Node should be stopped due to admin state", types.Nodes,
 					"node_id", nodeId,
 					"admin_enabled", node.State.AdminState.Enabled,
@@ -746,10 +751,10 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 		node.State.IntendedStatus = intendedNodeStatusForPhase
 
 		// Check if reconciliation is needed
-		if node.State.Status != node.State.IntendedStatus {
+		if node.State.CurrentStatus != node.State.IntendedStatus {
 			logging.Info("Node state mismatch detected", types.Nodes,
 				"node_id", nodeId,
-				"current_state", node.State.Status.String(),
+				"current_state", node.State.CurrentStatus.String(),
 				"intended_state", node.State.IntendedStatus.String())
 
 			switch node.State.IntendedStatus {
@@ -941,7 +946,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		return nil, err
 	}
 
-	prevStatus := state.Status
+	prevStatus := state.CurrentStatus
 	currentStatus := toStatus(*status)
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
