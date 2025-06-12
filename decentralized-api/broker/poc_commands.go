@@ -21,6 +21,10 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 func (c StartPocCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	nodeCmds := make(map[string]NodeWorkerCommand)
+	var totalNodes int
+
+	b.mu.Lock()
+	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
@@ -42,15 +46,16 @@ func (c StartPocCommand) Execute(b *Broker) {
 			BlockHash:   c.BlockHash,
 			PubKey:      c.PubKey,
 			CallbackUrl: c.CallbackUrl,
-			TotalNodes:  len(b.nodes),
+			TotalNodes:  totalNodes,
 		}
 
 		nodeCmds[node.Node.Id] = cmd
 	}
+	b.mu.Unlock()
 
 	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
 	logging.Info("StartPocCommand completed", types.PoC,
-		"submitted", submitted, "failed", failed, "total", len(b.nodes))
+		"submitted", submitted, "failed", failed, "total", totalNodes)
 
 	c.Response <- true
 }
@@ -70,6 +75,10 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 func (c InitValidateCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	nodeCmds := make(map[string]NodeWorkerCommand)
+	var totalNodes int
+
+	b.mu.Lock()
+	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
@@ -89,16 +98,17 @@ func (c InitValidateCommand) Execute(b *Broker) {
 			BlockHash:   c.BlockHash,
 			PubKey:      c.PubKey,
 			CallbackUrl: c.CallbackUrl,
-			TotalNodes:  len(b.nodes),
+			TotalNodes:  totalNodes,
 		}
 
 		nodeCmds[node.Node.Id] = cmd
 	}
+	b.mu.Unlock()
 
 	// Execute init validate on all nodes in parallel
 	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
 	logging.Info("InitValidateCommand completed", types.PoC,
-		"submitted", submitted, "failed", failed, "total", len(b.nodes))
+		"submitted", submitted, "failed", failed, "total", totalNodes)
 
 	c.Response <- true
 }
@@ -106,6 +116,10 @@ func (c InitValidateCommand) Execute(b *Broker) {
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	nodeCmds := make(map[string]NodeWorkerCommand)
+	var totalNodes int
+
+	b.mu.Lock()
+	totalNodes = len(b.nodes)
 	for _, node := range b.nodes {
 		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
 			logging.Info("Skipping inference up for administratively disabled node", types.PoC,
@@ -119,12 +133,13 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 		nodeCmds[node.Node.Id] = InferenceUpNodeCommand{}
 	}
+	b.mu.Unlock()
 
 	// Execute inference up on all nodes in parallel
 	submitted, failed := b.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
 
 	logging.Info("InferenceUpAllCommand completed", types.Nodes,
-		"submitted", submitted, "failed", failed, "total", len(b.nodes))
+		"submitted", submitted, "failed", failed, "total", totalNodes)
 
 	c.Response <- true
 }

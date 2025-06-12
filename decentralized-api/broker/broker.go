@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -76,6 +77,7 @@ func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
 type Broker struct {
 	commands            chan Command
 	nodes               map[string]*NodeWithState
+	mu                  sync.RWMutex
 	curMaxNodesNum      atomic.Uint64
 	chainBridge         BrokerChainBridge
 	nodeWorkGroup       *NodeWorkGroup
@@ -292,6 +294,8 @@ func (b *Broker) QueueMessage(command Command) error {
 }
 
 func (b *Broker) getNodes(command GetNodesCommand) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	var nodeResponses []NodeResponse
 	for _, node := range b.nodes {
 		nodeResponses = append(nodeResponses, NodeResponse{
@@ -347,12 +351,16 @@ func (b *Broker) registerNode(command RegisterNode) {
 		},
 	}
 
-	b.nodes[command.Node.Id] = nodeWithState
+	func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.nodes[command.Node.Id] = nodeWithState
 
-	// Create and register a worker for this node
-	client := b.NewNodeClient(&node)
-	worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client)
-	b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
+		// Create and register a worker for this node
+		client := b.NewNodeClient(&node)
+		worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client)
+		b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
+	}()
 
 	logging.Debug("Registered node", types.Nodes, "node", command.Node)
 	command.Response <- &command.Node
@@ -366,6 +374,9 @@ func (b *Broker) removeNode(command RemoveNode) {
 	// Remove the worker first (it will wait for pending jobs)
 	b.nodeWorkGroup.RemoveWorker(command.NodeId)
 
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if _, ok := b.nodes[command.NodeId]; !ok {
 		command.Response <- false
 		return
@@ -376,6 +387,8 @@ func (b *Broker) removeNode(command RemoveNode) {
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var leastBusyNode *NodeWithState = nil
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
 	for _, node := range b.nodes {
@@ -432,6 +445,8 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version 
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if node, ok := b.nodes[command.NodeId]; !ok {
 		command.Response <- false
 		return
@@ -512,14 +527,22 @@ func (b *Broker) syncNodes() {
 		return
 	}
 	logging.Info("[sync nodes] Fetched chain nodes", types.Nodes, "size", len(resp.Nodes.HardwareNodes))
-	logging.Info("[sync nodes] Local nodes", types.Nodes, "size", len(b.nodes))
 
 	chainNodesMap := make(map[string]*types.HardwareNode)
 	for _, node := range resp.Nodes.HardwareNodes {
 		chainNodesMap[node.LocalId] = node
 	}
 
-	diff := b.calculateNodesDiff(chainNodesMap)
+	b.mu.RLock()
+	nodesCopy := make(map[string]*NodeWithState, len(b.nodes))
+	for id, node := range b.nodes {
+		nodesCopy[id] = node
+	}
+	b.mu.RUnlock()
+
+	logging.Info("[sync nodes] Local nodes", types.Nodes, "size", len(nodesCopy))
+
+	diff := b.calculateNodesDiff(chainNodesMap, nodesCopy)
 
 	logging.Info("[sync nodes] Hardware diff computed", types.Nodes, "diff", diff)
 
@@ -533,11 +556,11 @@ func (b *Broker) syncNodes() {
 	}
 }
 
-func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode) types.MsgSubmitHardwareDiff {
+func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode, localNodes map[string]*NodeWithState) types.MsgSubmitHardwareDiff {
 	var diff types.MsgSubmitHardwareDiff
 	diff.Creator = b.participantInfo.GetAddress()
 
-	for id, localNode := range b.nodes {
+	for id, localNode := range localNodes {
 		localHWNode := convertInferenceNodeToHardwareNode(localNode)
 
 		chainNode, exists := chainNodesMap[id]
@@ -549,7 +572,7 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 	}
 
 	for id, chainNode := range chainNodesMap {
-		if _, exists := b.nodes[id]; !exists {
+		if _, exists := localNodes[id]; !exists {
 			diff.Removed = append(diff.Removed, chainNode)
 		}
 	}
@@ -557,6 +580,8 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 }
 
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	// PRTODO: implement
 	command.Response <- true
 }
@@ -694,6 +719,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 	// Collect nodes that need reconciliation
 	needsReconciliation := make(map[string]NodeWorkerCommand)
 
+	b.mu.Lock()
 	for nodeId, node := range b.nodes {
 		// Skip nodes in training state
 		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
@@ -760,6 +786,7 @@ func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
 			}
 		}
 	}
+	b.mu.Unlock()
 
 	if len(needsReconciliation) == 0 {
 		logging.Debug("All nodes are in their intended state", types.Nodes)
@@ -825,6 +852,8 @@ func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocPara
 }
 
 func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for _, update := range command.StatusUpdates {
 		nodeId := update.NodeId
 		node, exists := b.nodes[nodeId]
