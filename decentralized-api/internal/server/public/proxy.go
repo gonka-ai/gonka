@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -46,7 +47,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		line := scanner.Text()
 
 		// DEBUG LOG
-		logging.Debug("Chunk", types.Inferences, "line", line)
+		logging.Info("Chunk", types.Inferences, "line", line)
 
 		var lineToProxy = line
 		if responseProcessor != nil {
@@ -63,6 +64,12 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		// Forward the line to the client
 		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
+			if opErr, ok := err.(*net.OpError); ok {
+				logging.Warn("Stream cancelled during streaming", types.Inferences, "error", opErr)
+				resp.Body.Close()
+				return
+			}
+
 			logging.Error("Error while streaming response", types.Inferences, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -70,7 +77,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 	}
 
 	if err := scanner.Err(); err != nil {
-		logging.Error("Error while streaming response", types.Inferences, "error", err)
+		logging.Error("Error after streaming response", types.Inferences, "error", err)
 	}
 }
 

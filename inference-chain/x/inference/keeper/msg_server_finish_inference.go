@@ -5,6 +5,7 @@ import (
 	sdkerrors "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -128,6 +129,20 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, currentEpochGroup *
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
 		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+	}
+	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
+		members, err := modelEpochGroup.GetGroupMembers(ctx)
+		if err != nil {
+			members = []*group.GroupMember{}
+		}
+		k.LogWarn("Executor Power equals Total Power", types.Validation,
+			"model", existingInference.Model,
+			"group_id", modelEpochGroup.GroupData.EpochGroupId,
+			"inference_id", existingInference.InferenceId,
+			"executor_id", inferenceDetails.ExecutorId,
+			"executor_power", inferenceDetails.ExecutorPower,
+			"members", members,
+		)
 	}
 	k.LogDebug(
 		"Adding Inference Validation Details",

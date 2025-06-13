@@ -169,6 +169,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 	proxyResponse(resp, w, true, responseProcessor)
 
 	completionResponse, err := responseProcessor.GetResponse()
+
 	if err != nil || completionResponse == nil {
 		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
 		return err
@@ -222,7 +223,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	}
 	usage, err := response.GetUsage()
 	if err != nil {
-		logging.Error("Failed to get usage from response", types.Inferences, "error", err)
+		logging.Warn("Failed to get usage from response", types.Inferences, "error", err)
 		return err
 	}
 	bodyBytes, err := response.GetBodyBytes()
@@ -269,7 +270,7 @@ func (s *Server) createInferenceFinishedTransaction(id string, transaction Infer
 		ExecutedBy:           accountName,
 	}
 
-	logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
+	logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
 	err := s.recorder.FinishInference(message)
 	if err != nil {
 		logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
