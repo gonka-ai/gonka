@@ -20,6 +20,10 @@ The architecture is designed around the following key principles:
 
 ---
 
+### TODOs:
+
+- [ ] CRITICAL: Rewrite how determining current epoch and stages is determined. Right now it assumes epoch length never changes: `epoch := int64(blockHeight / EpochLength)`.
+
 ### UML Sequence Diagram
 
 ```mermaid
