@@ -2,27 +2,10 @@
   "mappings": [
     {
       "scenarioName": "ModelState",
-      "requiredScenarioState": "Started",
-      "request": {
-        "method": "GET",
-        "urlPath": "/api/v1/state"
-      },
-      "response": {
-        "status": 200,
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "jsonBody": {
-          "state": "STARTED"
-        }
-      }
-    },
-    {
-      "scenarioName": "ModelState",
       "requiredScenarioState": "POW",
       "request": {
         "method": "GET",
-        "urlPath": "/api/v1/state"
+        "urlPath": "/api/v1/pow/status"
       },
       "response": {
         "status": 200,
@@ -30,7 +13,7 @@
           "Content-Type": "application/json"
         },
         "jsonBody": {
-          "state": "POW"
+          "status": "GENERATING"
         }
       }
     },
@@ -39,7 +22,7 @@
       "requiredScenarioState": "POW_VALIDATE",
       "request": {
         "method": "GET",
-        "urlPath": "/api/v1/state"
+        "urlPath": "/api/v1/pow/status"
       },
       "response": {
         "status": 200,
@@ -47,7 +30,7 @@
           "Content-Type": "application/json"
         },
         "jsonBody": {
-          "state": "POW"
+          "status": "VALIDATING"
         }
       }
     },
@@ -56,7 +39,7 @@
       "requiredScenarioState": "INFERENCE",
       "request": {
         "method": "GET",
-        "urlPath": "/api/v1/state"
+        "urlPath": "/api/v1/pow/status"
       },
       "response": {
         "status": 200,
@@ -64,24 +47,7 @@
           "Content-Type": "application/json"
         },
         "jsonBody": {
-          "state": "INFERENCE"
-        }
-      }
-    },
-    {
-      "scenarioName": "ModelState",
-      "requiredScenarioState": "TRAIN",
-      "request": {
-        "method": "GET",
-        "urlPath": "/api/v1/state"
-      },
-      "response": {
-        "status": 200,
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "jsonBody": {
-          "state": "TRAIN"
+          "status": "IDLE"
         }
       }
     },
@@ -90,7 +56,7 @@
       "requiredScenarioState": "STOPPED",
       "request": {
         "method": "GET",
-        "urlPath": "/api/v1/state"
+        "urlPath": "/api/v1/pow/status"
       },
       "response": {
         "status": 200,
@@ -98,7 +64,7 @@
           "Content-Type": "application/json"
         },
         "jsonBody": {
-          "state": "STOPPED"
+          "status": "IDLE"
         }
       }
     }
