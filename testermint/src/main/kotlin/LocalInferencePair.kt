@@ -186,6 +186,41 @@ data class LocalInferencePair(
         return api.makeInferenceRequest(request, address, signature)
     }
 
+    /**
+     * Makes a streaming inference request that can be interrupted.
+     * 
+     * @param request The request body as a string. The request should include "stream": true.
+     * @param account The account to use for signing the payload (optional)
+     * @return A StreamConnection object that can be used to read from the stream and interrupt it
+     */
+    fun streamInferenceRequest(request: String, account: String? = null): StreamConnection {
+        // Ensure the request has the stream flag set to true
+        val requestWithStream = if (!request.contains("\"stream\"")) {
+            // If the request doesn't contain the stream flag, add it
+            val lastBrace = request.lastIndexOf("}")
+            if (lastBrace > 0) {
+                val prefix = request.substring(0, lastBrace)
+                val suffix = request.substring(lastBrace)
+                val separator = if (prefix.trim().endsWith(",")) "" else ","
+                "$prefix$separator\"stream\":true$suffix"
+            } else {
+                // If the request doesn't have a valid JSON structure, just use it as is
+                request
+            }
+        } else if (!request.contains("\"stream\":true") && !request.contains("\"stream\": true")) {
+            // If the request contains the stream flag but it's not set to true, set it to true
+            request.replace("\"stream\":false", "\"stream\":true")
+                .replace("\"stream\": false", "\"stream\": true")
+        } else {
+            // If the request already has the stream flag set to true, use it as is
+            request
+        }
+
+        val signature = node.signPayload(requestWithStream, account)
+        val address = node.getAddress()
+        return api.createInferenceStreamConnection(requestWithStream, address, signature)
+    }
+
     fun getCurrentBlockHeight(): Long {
         return node.getStatus().syncInfo.latestBlockHeight
     }

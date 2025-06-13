@@ -1,5 +1,6 @@
 package com.productscience.mockserver.routes
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -9,6 +10,7 @@ import com.productscience.mockserver.service.ResponseService
 import com.productscience.mockserver.model.OpenAIResponse
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import org.slf4j.LoggerFactory
 
 /**
  * Data class for setting inference response
@@ -16,6 +18,8 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 data class SetInferenceResponseRequest(
     val response: String,
     val delay: Int = 0,
+    @JsonProperty("stream_delay")
+    val streamDelay: Long = 0,
     val segment: String = "",
     val model: String? = null
 )
@@ -36,14 +40,18 @@ data class SetPocResponseRequest(
  */
 fun Route.responseRoutes(responseService: ResponseService) {
     val objectMapper = ObjectMapper().registerKotlinModule()
+    val logger = LoggerFactory.getLogger(this::class.java)
 
     // POST /api/v1/responses/inference - Sets the response for the inference endpoint
     post("/api/v1/responses/inference") {
         try {
             val request = call.receive<SetInferenceResponseRequest>()
+            logger.info("Received inference response request: $request")
+
             val endpoint = responseService.setInferenceResponse(
                 request.response,
                 request.delay,
+                request.streamDelay,
                 request.segment,
                 request.model
             )

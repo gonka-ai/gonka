@@ -10,10 +10,11 @@ import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
 
 interface IInferenceMock {
-    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "", model: String? = null): StubMapping?
+    fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): StubMapping?
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Int = 0,
+        streamDelay: Long = 0,
         segment: String = "",
         model: String? = null
     ): StubMapping?
@@ -27,7 +28,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
 
-    override fun setInferenceResponse(response: String, delay: Int, segment: String, model: String?) =
+    override fun setInferenceResponse(response: String, delay: Int, streamDelay: Long, segment: String, model: String?) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
                 .apply {
@@ -46,11 +47,12 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
     override fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Int,
+        streamDelay: Long,
         segment: String,
         model: String?
     ) =
         this.setInferenceResponse(
-            openAiJson.toJson(openAIResponse), delay, segment)
+            openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model)
 
     override fun setPocResponse(weight: Long, scenarioName: String) {
         // Generate 'weight' number of nonces

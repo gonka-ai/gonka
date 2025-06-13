@@ -100,6 +100,29 @@ data class ApplicationAPI(
             stream(url = "$url/v1/chat/completions", address = address, signature = signature, jsonBody = request)
         }
 
+    /**
+     * Creates a stream connection for inference requests that can be interrupted.
+     * 
+     * @param request The request body as a string
+     * @param address The requester address
+     * @param signature The authorization signature
+     * @return A StreamConnection object that can be used to read from the stream and interrupt it
+     */
+    fun createInferenceStreamConnection(
+        request: String,
+        address: String,
+        signature: String,
+    ): StreamConnection =
+        wrapLog("CreateInferenceStreamConnection", true) {
+            val url = urlFor(SERVER_TYPE_PUBLIC)
+            createStreamConnection(
+                url = "$url/v1/chat/completions", 
+                address = address, 
+                signature = signature, 
+                jsonBody = request
+            )
+        }
+
     fun setNodesTo(node: InferenceNode) {
         val nodes = getNodes()
         nodes.forEach { removeNode(it.node.id) }
@@ -292,4 +315,85 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
     connection.disconnect()
 
     return lines
+}
+
+/**
+ * Creates a stream connection for inference requests that can be interrupted.
+ * 
+ * @param url The URL to connect to
+ * @param address The requester address
+ * @param signature The authorization signature
+ * @param jsonBody The JSON request body
+ * @return A StreamConnection object that can be used to read from the stream and interrupt it
+ */
+fun createStreamConnection(url: String, address: String, signature: String, jsonBody: String): StreamConnection {
+    // Set up the URL and connection
+    val url = URL(url)
+    val connection = url.openConnection() as HttpURLConnection
+    connection.requestMethod = "POST"
+    connection.setRequestProperty("X-Requester-Address", address)
+    connection.setRequestProperty("Authorization", signature)
+    connection.setRequestProperty("Content-Type", "application/json")
+    connection.doOutput = true
+
+    // Send the request body
+    connection.outputStream.use { outputStream ->
+        BufferedWriter(OutputStreamWriter(outputStream, "UTF-8")).use { writer ->
+            writer.write(jsonBody)
+            writer.flush()
+        }
+    }
+
+    // Check response code
+    val responseCode = connection.responseCode
+    if (responseCode == HttpURLConnection.HTTP_OK) {
+        // Create a reader for the input stream
+        val reader = BufferedReader(InputStreamReader(connection.inputStream))
+        return StreamConnection(connection, reader)
+    } else {
+        Logger.error("Failed to connect to API: ResponseCode={}", responseCode)
+        connection.disconnect()
+        throw RuntimeException("Failed to connect to API: ResponseCode=$responseCode")
+    }
+}
+
+/**
+ * A class representing a connection to a stream that can be interrupted.
+ */
+class StreamConnection(
+    private val connection: HttpURLConnection,
+    private val reader: BufferedReader
+) : AutoCloseable {
+    private var closed = false
+
+    /**
+     * Reads the next line from the stream.
+     * 
+     * @return The next line, or null if the stream is closed or has reached the end
+     */
+    fun readLine(): String? {
+        if (closed) return null
+        return try {
+            reader.readLine()
+        } catch (e: Exception) {
+            Logger.error(e, "Error reading from stream")
+            close()
+            null
+        }
+    }
+
+    /**
+     * Closes the connection and the reader.
+     */
+    override fun close() {
+        if (!closed) {
+            try {
+                reader.close()
+            } catch (e: Exception) {
+                Logger.error(e, "Error closing reader")
+            }
+            connection.disconnect()
+            closed = true
+        }
+    }
 }

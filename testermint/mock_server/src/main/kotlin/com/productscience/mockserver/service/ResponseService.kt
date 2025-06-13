@@ -10,10 +10,12 @@ import java.util.concurrent.ConcurrentHashMap
  * Service for managing and modifying responses for various endpoints.
  */
 class ResponseService {
-    private val objectMapper = ObjectMapper().registerKotlinModule()
+    private val objectMapper = ObjectMapper()
+        .registerKotlinModule()
+        .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE)
 
-    // Store for inference responses by endpoint path
-    private val inferenceResponses = ConcurrentHashMap<String, Pair<String, Int>>()
+    // Store for inference responses by endpoint path: response body, delay, stream_delay
+    private val inferenceResponses = ConcurrentHashMap<String, Triple<String, Int, Long>>()
 
     // Store for POC responses
     private val pocResponses = ConcurrentHashMap<String, Long>()
@@ -23,13 +25,14 @@ class ResponseService {
      * 
      * @param response The response body as a string
      * @param delay The delay in milliseconds before responding
+     * @param streamDelay The delay in milliseconds between SSE events when streaming
      * @param segment Optional URL segment to prepend to the endpoint path
      * @param model Optional model name to filter requests by
      * @return The endpoint path where the response is set
      */
-    fun setInferenceResponse(response: String, delay: Int = 0, segment: String = "", model: String? = null): String {
+    fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): String {
         val endpoint = "$segment/v1/chat/completions"
-        inferenceResponses[endpoint] = Pair(response, delay)
+        inferenceResponses[endpoint] = Triple(response, delay, streamDelay)
         return endpoint
     }
 
@@ -38,6 +41,7 @@ class ResponseService {
      * 
      * @param openAIResponse The OpenAIResponse object
      * @param delay The delay in milliseconds before responding
+     * @param streamDelay The delay in milliseconds between SSE events when streaming
      * @param segment Optional URL segment to prepend to the endpoint path
      * @param model Optional model name to filter requests by
      * @return The endpoint path where the response is set
@@ -45,20 +49,21 @@ class ResponseService {
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Int = 0,
+        streamDelay: Long = 0,
         segment: String = "",
         model: String? = null
     ): String {
         val response = objectMapper.writeValueAsString(openAIResponse)
-        return setInferenceResponse(response, delay, segment, model)
+        return setInferenceResponse(response, delay, streamDelay, segment, model)
     }
 
     /**
      * Gets the response for the inference endpoint.
      * 
      * @param endpoint The endpoint path
-     * @return Pair of response body and delay, or null if not found
+     * @return Triple of response body, delay, and stream delay, or null if not found
      */
-    fun getInferenceResponse(endpoint: String): Pair<String, Int>? {
+    fun getInferenceResponse(endpoint: String): Triple<String, Int, Long>? {
         return inferenceResponses[endpoint]
     }
 

@@ -17,15 +17,17 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
      *
      * @param response The response body as a string
      * @param delay The delay in milliseconds before responding
+     * @param streamDelay The delay in milliseconds between SSE events when streaming
      * @param segment Optional URL segment to prepend to the endpoint path
      * @param model Optional model name to filter requests by
      * @return null (StubMapping is not used in this implementation)
      */
-    override fun setInferenceResponse(response: String, delay: Int, segment: String, model: String?): StubMapping? {
+    override fun setInferenceResponse(response: String, delay: Int, streamDelay: Long, segment: String, model: String?): StubMapping? {
         val requestBody = """
             {
                 "response": ${cosmosJson.toJson(response)},
                 "delay": $delay,
+                "stream_delay": $streamDelay,
                 "segment": ${cosmosJson.toJson(segment)},
                 "model": ${if (model != null) cosmosJson.toJson(model) else "null"}
             }
@@ -49,6 +51,7 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
      *
      * @param openAIResponse The OpenAIResponse object
      * @param delay The delay in milliseconds before responding
+     * @param streamDelay The delay in milliseconds between SSE events when streaming
      * @param segment Optional URL segment to prepend to the endpoint path
      * @param model Optional model name to filter requests by
      * @return null (StubMapping is not used in this implementation)
@@ -56,9 +59,10 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
     override fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
         delay: Int,
+        streamDelay: Long,
         segment: String,
         model: String?
-    ): StubMapping? = this.setInferenceResponse(openAiJson.toJson(openAIResponse), delay, segment, model)
+    ): StubMapping? = this.setInferenceResponse(openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model)
 
     /**
      * Sets the POC response with the specified weight.

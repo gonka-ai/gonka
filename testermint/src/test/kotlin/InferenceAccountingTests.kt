@@ -1,17 +1,44 @@
-import com.productscience.*
-import com.productscience.data.*
+import com.productscience.EpochStage
+import com.productscience.InferenceResult
+import com.productscience.LocalCluster
+import com.productscience.LocalInferencePair
+import com.productscience.data.AppState
+import com.productscience.data.GenesisOnlyParams
+import com.productscience.data.InferenceParams
+import com.productscience.data.InferencePayload
+import com.productscience.data.InferenceState
+import com.productscience.data.InferenceStatus
+import com.productscience.data.Participant
+import com.productscience.data.spec
+import com.productscience.getInferenceResult
+import com.productscience.getInterruptedStreamingInferenceResult
+import com.productscience.getStreamingInferenceResult
+import com.productscience.inferenceConfig
+import com.productscience.inferenceRequest
+import com.productscience.inferenceRequestStreamObject
+import com.productscience.initCluster
+import com.productscience.logSection
+import com.productscience.makeInterruptedStreamingInferenceRequest
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.time.Duration
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
+import kotlin.random.Random
 import kotlin.test.assertNotNull
 
 val DELAY_SEED = 8675309
+
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
 
@@ -33,6 +60,135 @@ class InferenceAccountingTests : TestermintTest() {
             )
         }
     }
+
+    @Test
+    @Tag("sanity")
+    fun `test immediate pre settle amounts for streaming`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing claims")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making streaming inference")
+        val beforeBalances = genesis.api.getParticipants()
+        val inferenceResult = getStreamingInferenceResult(genesis)
+        logSection("Verifying inference changes")
+        val afterBalances = genesis.api.getParticipants()
+        val expectedCoinBalanceChanges = expectedCoinBalanceChanges(listOf(inferenceResult.inference))
+        expectedCoinBalanceChanges.forEach { (address, change) ->
+            assertThat(afterBalances.first { it.id == address }.coinsOwed).isEqualTo(
+                beforeBalances.first { it.id == address }.coinsOwed + change
+            )
+        }
+    }
+
+    @Test
+    fun `test interrupted streaming request payment`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing claims")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making interrupted streaming inference")
+        val beforeBalances = genesis.api.getParticipants()
+
+        val inference = makeInterruptedStreamingInferenceRequest(genesis, inferenceRequestStreamObject.toJson(), 1)
+        Thread.sleep(Duration.ofSeconds(20))
+        logSection("Verifying some payment was made despite interruption")
+        val actualInference = genesis.api.getInference(inference.inferenceId)
+        val afterBalances = genesis.api.getParticipants()
+
+        assertThat(actualInference.executedBy).isNotNull()
+        Logger.warn("Inference:$actualInference")
+        val beforeExecutor = beforeBalances.find { it.id == actualInference.assignedTo }
+        val afterExecutor = afterBalances.find{ it.id == actualInference.assignedTo }
+
+        assertThat(beforeExecutor).isNotNull()
+        assertThat(afterExecutor).isNotNull()
+
+        assertThat(afterExecutor!!.coinsOwed).isGreaterThan(beforeExecutor!!.coinsOwed)
+        // Cannot test actual cost, as that will vary
+    }
+
+    @Test
+    @Tag("unstable")
+    fun `spam interrupted streaming requests`() {
+        val maxConcurrentRequests = 100
+        val totalRequests = 100
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing claims")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making interrupted streaming inference")
+        val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
+
+        runBlocking {
+            val requests = List(totalRequests) { i ->
+                async(limitedDispatcher) {
+                    Logger.info("Starting request $i")
+                    makeInterruptedStreamingInferenceRequest(
+                        genesis,
+                        inferenceRequestStreamObject.toJson(),
+                        Random.nextInt(80),
+                        check = false
+                    )
+                }
+            }
+            requests.awaitAll()
+        }
+        Thread.sleep(Duration.ofMinutes(5))
+    }
+
+    @Test
+    fun `test interrupted streaming request payment verification`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing claims")
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making interrupted streaming inference")
+        val beforeBalances = genesis.api.getParticipants()
+
+        // Make an interrupted streaming inference request
+        val inferenceResult = getInterruptedStreamingInferenceResult(genesis, maxLinesToRead = 2)
+
+        logSection("Verifying some payment was made despite interruption")
+        val afterBalances = genesis.api.getParticipants()
+
+        // Log the inference status and other details for debugging
+        Logger.info("Inference status: ${inferenceResult.inference.status}")
+        Logger.info("Inference actual cost: ${inferenceResult.inference.actualCost}")
+
+        // Get the executor (assignedTo) from the inference result
+        val executor = inferenceResult.inference.assignedTo
+
+        // Check if executor is assigned
+        assertThat(executor).isNotNull()
+            .withFailMessage("No executor assigned to the inference")
+
+        // If executor is null, we can't continue with the test
+        if (executor == null) {
+            return
+        }
+
+        // Find the executor in the before and after balances
+        val executorBefore = beforeBalances.find { it.id == executor }
+        val executorAfter = afterBalances.find { it.id == executor }
+
+        // Check if executor is found in participants
+        assertThat(executorBefore).isNotNull()
+            .withFailMessage("Executor not found in participants before inference")
+        assertThat(executorAfter).isNotNull()
+            .withFailMessage("Executor not found in participants after inference")
+
+        // If executor is not found, we can't continue with the test
+        if (executorBefore == null || executorAfter == null) {
+            return
+        }
+
+        // Log the executor's balance before and after
+        Logger.info("Executor before coins owed: ${executorBefore.coinsOwed}")
+        Logger.info("Executor after coins owed: ${executorAfter.coinsOwed}")
+
+        // This assertion is expected to fail, showing that no payment was made
+        // In a real implementation, there should be some payment even for interrupted requests
+        assertThat(executorAfter.coinsOwed).isGreaterThan(executorBefore.coinsOwed)
+            .withFailMessage("No payment was made to the executor despite partial work being done")
+    }
+
 
     @Test
     fun `start comes after finish inference`() {

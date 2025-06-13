@@ -147,8 +147,8 @@ data class DockerGroup(
         }
 
         val inferenceDir = baseDir.resolve("prod-local/$keyName")
-        val mappingsDir = baseDir.resolve("prod-local/wiremock/$keyName/mappings")
-        val filesDir = baseDir.resolve("prod-local/wiremock/$keyName/__files")
+        val mappingsDir = baseDir.resolve("prod-local/mock-server/$keyName/mappings")
+        val filesDir = baseDir.resolve("prod-local/mock-server/$keyName/__files")
         val mappingsSourceDir = baseDir.resolve("testermint/src/main/resources/mappings")
         val publicHtmlDir = baseDir.resolve("public-html")
 
@@ -183,7 +183,7 @@ fun createDockerGroup(
     useSnapshots: Boolean
 ): DockerGroup {
     val keyName = if (iteration == 0) "genesis" else "join$joinIter"
-    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_wiremock_$keyName.json"
+    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_mock-server_$keyName.json"
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
@@ -192,7 +192,7 @@ fun createDockerGroup(
             nodeFile, """
             [
               {
-                "id": "wiremock",
+                "id": "mock-server",
                 "host": "$keyName-mock-server",
                 "inference_port": 8080,
                 "poc_port": 8080,

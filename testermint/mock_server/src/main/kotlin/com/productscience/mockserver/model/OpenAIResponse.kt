@@ -1,5 +1,7 @@
 package com.productscience.mockserver.model
 
+import com.fasterxml.jackson.annotation.JsonProperty
+
 /**
  * Data classes representing the OpenAI API response structure.
  * These are used for serialization/deserialization of OpenAI API responses.
@@ -35,7 +37,7 @@ data class OpenAIResponse(
 }
 
 data class Choice(
-    val finishReason: String,
+    val finishReason: String?,
     val index: Int,
     val logprobs: Logprobs?,
     val message: ResponseMessage,
@@ -50,6 +52,7 @@ data class Content(
     val bytes: List<Int>,
     val logprob: Double,
     val token: String,
+    @JsonProperty("top_logprobs")
     val topLogprobs: List<TopLogprob>,
 )
 
@@ -62,7 +65,7 @@ data class TopLogprob(
 data class ResponseMessage(
     val content: String,
     val role: String,
-    val toolCalls: List<Any>,
+    val toolCalls: List<Any>?,
 )
 
 data class Usage(
