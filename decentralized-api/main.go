@@ -73,7 +73,7 @@ func main() {
 		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
-	chainBridge := broker.NewBrokerChainBridgeImpl(recorder)
+	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, config.GetChainNodeConfig().Url)
 	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
 	nodes := config.GetNodes()
 	for _, node := range nodes {

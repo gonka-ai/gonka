@@ -43,8 +43,8 @@ type BrokerChainBridgeImpl struct {
 	chainNodeUrl string
 }
 
-func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient) BrokerChainBridge {
-	return &BrokerChainBridgeImpl{client: client}
+func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient, chainNodeUrl string) BrokerChainBridge {
+	return &BrokerChainBridgeImpl{client: client, chainNodeUrl: chainNodeUrl}
 }
 
 func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
