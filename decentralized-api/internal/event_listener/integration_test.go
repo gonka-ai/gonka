@@ -680,8 +680,6 @@ func TestBasicSetup(t *testing.T) {
 	setup.addTestNode("test-node", 8081)
 	client := setup.getNodeClient("test-node", 8081)
 	require.NotNil(t, client)
-
-	t.Log("✅ Basic setup test passed")
 }
 
 func TestPoCRetry(t *testing.T) {
@@ -701,6 +699,8 @@ func TestPoCRetry(t *testing.T) {
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
+	_, node1State := setup.getNode("node-1")
+	_, node2State := setup.getNode("node-2")
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
@@ -708,14 +708,18 @@ func TestPoCRetry(t *testing.T) {
 
 	var i = params.EpochLength
 	err := setup.simulateBlock(i)
+	i++
 	require.NoError(t, err)
 
 	waitForAsync(100 * time.Millisecond)
 
-	assertNodeClient(t, NodeClientAssertion{0, 2, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	require.Equal(t, types.HardwareNodeStatus_FAILED, node1State.CurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
 
-	for i < params.EpochLength+int64(reconciliationConfig.Inference.BlockInterval) {
+	for i <= params.EpochLength+int64(reconciliationConfig.PoC.BlockInterval) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 
@@ -725,8 +729,11 @@ func TestPoCRetry(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// check PoC init generate was retried
-	assertNodeClient(t, NodeClientAssertion{0, 3, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 2, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	require.Equal(t, types.HardwareNodeStatus_FAILED, node1State.CurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
 
 	node1Client.InitGenerateError = nil
 
@@ -740,6 +747,10 @@ func TestPoCRetry(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// check only 1 retry happened and then it stopped once we removed the error
-	assertNodeClient(t, NodeClientAssertion{0, 4, 0, 0}, node1Client)
+	assertNodeClient(t, NodeClientAssertion{0, 3, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
+	require.Equal(t, types.HardwareNodeStatus_POC, node1State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node1State.PocCurrentStatus)
+	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
+	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
 }

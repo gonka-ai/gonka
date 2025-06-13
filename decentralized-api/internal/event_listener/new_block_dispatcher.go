@@ -250,9 +250,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	// Check for PoC start
 	if epochParams.IsStartOfPoCStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
-		d.nodePocOrchestrator.StartPoC(blockHeight, blockHash)
 		d.randomSeedManager.GenerateSeed(blockHeight)
-
 		return
 	}
 
@@ -260,7 +258,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	if epochParams.IsEndOfPoCStage(blockHeight) {
 		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages,
 			"blockHeigh", blockHeight, "blockHash", blockHash)
-		d.nodePocOrchestrator.MoveToValidationStage(blockHeight)
+		command := broker.NewInitValidateCommand()
+		err := d.nodeBroker.QueueMessage(command)
+		if err != nil {
+			logging.Error("Failed to send init validate command", types.PoC, "error", err)
+			return
+		}
 	}
 
 	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
@@ -271,8 +274,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	}
 
 	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
-		logging.Info("IsEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
-		d.nodePocOrchestrator.StopPoC()
+		command := broker.NewInferenceUpAllCommand()
+		err := d.nodeBroker.QueueMessage(command)
+		if err != nil {
+			logging.Error("Failed to send inference up command", types.PoC, "error", err)
+			return
+		}
 		return
 	}
 

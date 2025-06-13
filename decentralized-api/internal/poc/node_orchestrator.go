@@ -10,14 +10,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const (
-	PoCBatchesPath = "/v1/poc-batches"
-)
-
 type NodePoCOrchestrator interface {
-	StartPoC(blockHeight int64, blockHash string)
-	StopPoC()
-	MoveToValidationStage(encOfPoCBlockHeight int64)
 	ValidateReceivedBatches(startOfValStageHeight int64)
 }
 
@@ -82,37 +75,6 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 		callbackUrl:  callbackUrl,
 		chainBridge:  chainBridge,
 		phaseTracker: phaseTracker,
-	}
-}
-
-func (o *NodePoCOrchestratorImpl) StartPoC(blockHeight int64, blockHash string) {
-	command := broker.StartPocCommand{
-		Response: make(chan bool, 2),
-	}
-	err := o.nodeBroker.QueueMessage(command)
-	if err != nil {
-		logging.Error("Failed to send start PoC command", types.PoC, "error", err)
-		return
-	}
-}
-
-func (o *NodePoCOrchestratorImpl) StopPoC() {
-	command := broker.NewInferenceUpAllCommand()
-	err := o.nodeBroker.QueueMessage(command)
-	if err != nil {
-		logging.Error("Failed to send inference up command", types.PoC, "error", err)
-		return
-	}
-}
-
-func (o *NodePoCOrchestratorImpl) MoveToValidationStage(endOfPoCBlockHeight int64) {
-	logging.Info("Moving to PoC Validation Stage", types.PoC, "endOfPoCBlockHeight", endOfPoCBlockHeight)
-
-	cmd := broker.NewInitValidateCommand()
-	err := o.nodeBroker.QueueMessage(cmd)
-	if err != nil {
-		logging.Error("Failed to send init-validate command", types.PoC, "error", err)
-		return
 	}
 }
 
