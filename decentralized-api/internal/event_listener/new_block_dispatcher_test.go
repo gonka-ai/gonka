@@ -1,6 +1,7 @@
 package event_listener
 
 import (
+	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
 
@@ -27,7 +28,8 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			lastBlockHeight: 10,
 			lastTime:        time.Now().Add(-10 * time.Second), // Recent time
 			phaseInfo: &PhaseInfo{
-				BlockHeight: 16, // 16 - 10 = 6 blocks, >= 5
+				CurrentPhase: types.InferencePhase,
+				BlockHeight:  16, // 16 - 10 = 6 blocks, >= 5
 			},
 			expectedResult: true,
 			description:    "6 blocks since last reconciliation, should trigger",
@@ -51,7 +53,8 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			lastBlockHeight: 10,
 			lastTime:        time.Now().Add(-40 * time.Second), // Old time
 			phaseInfo: &PhaseInfo{
-				BlockHeight: 12, // Only 2 blocks
+				CurrentPhase: types.InferencePhase,
+				BlockHeight:  12, // Only 2 blocks
 			},
 			expectedResult: true,
 			description:    "Time interval exceeded (40s > 30s)",
