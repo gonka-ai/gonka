@@ -18,21 +18,23 @@ func (c SetNodeAdminStateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c SetNodeAdminStateCommand) Execute(b *Broker) {
-	node, exists := b.nodes[c.NodeId]
-	if !exists {
-		c.Response <- fmt.Errorf("node not found: %s", c.NodeId)
-		return
-	}
-
 	// Get current epoch
 	var currentEpoch uint64
 	if b.phaseTracker != nil {
 		currentEpoch = b.phaseTracker.GetCurrentEpoch()
 	}
 
+	b.mu.Lock()
+	node, exists := b.nodes[c.NodeId]
+	if !exists {
+		c.Response <- fmt.Errorf("node not found: %s", c.NodeId)
+		return
+	}
+
 	// Update admin state
 	node.State.AdminState.Enabled = c.Enabled
 	node.State.AdminState.Epoch = currentEpoch
+	b.mu.Unlock()
 
 	logging.Info("Updated node admin state", types.Nodes,
 		"node_id", c.NodeId,
