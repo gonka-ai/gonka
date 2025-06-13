@@ -29,41 +29,37 @@ func (c StartTrainingCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartTrainingCommand) Execute(broker *Broker) {
-	// First, verify all nodes exist and update their intended status
-	nodeCmds := make(map[string]NodeWorkerCommand)
-	// Create a single command instance with common parameters
-	// Rank will be set within the command's Execute method based on worker.nodeId
-	cmd := StartTrainingNodeCommand{
-		TaskId:         c.taskId,
-		Participant:    broker.participantInfo.GetAddress(),
-		MasterNodeAddr: c.masterNodeAddress,
-		WorldSize:      c.worldSize,
-		NodeRanks:      c.nodeRanks,
-	}
+	epochPhaseInfo := broker.phaseTracker.GetCurrentEpochPhaseInfo()
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
 	for nodeId := range c.nodeRanks {
 		node, nodeFound := broker.nodes[nodeId]
 		if !nodeFound || node == nil {
 			logging.Error("Node not found or nil for training", types.Nodes,
 				"node_id", nodeId, "nodeFound", nodeFound, "node == nil", node == nil)
-			c.Response <- false
-			return
+			continue
 		}
-		node.State.IntendedStatus = types.HardwareNodeStatus_TRAINING
-		node.State.TrainingTaskId = c.taskId
 
-		nodeCmds[nodeId] = cmd
+		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+			logging.Error("Selected disabled node for training", types.Nodes,
+				"node_id", nodeId,
+				"AdminState.Epoch", node.State.AdminState.Epoch,
+				"AdminState.Enabled", node.State.AdminState.Enabled,
+				"current_epoch", epochPhaseInfo.Epoch,
+				"current_phase", epochPhaseInfo.Phase)
+			continue
+		}
+
+		node.State.IntendedStatus = types.HardwareNodeStatus_TRAINING
+		node.State.TrainingTask = &TrainingTaskPayload{
+			Id:             c.taskId,
+			MasterNodeAddr: c.masterNodeAddress,
+			NodeRanks:      c.nodeRanks,
+			WorldSize:      c.worldSize,
+		}
 	}
 
-	// FIXME: !!!
-	// submitted, failed := broker.nodeWorkGroup.ExecuteOnNodes(nodeCmds)
-
-	// logging.Info("StartTrainingCommand completed", types.Training,
-	//	"submitted", submitted, "failed", failed,
-	//	"requested", len(c.nodeRanks), "task_id", c.taskId)
-
-	// Only report success if all nodes successfully started training
-	// success := failed == 0 && submitted == len(nodeCmds)
-	//c.Response <- success
+	broker.TriggerReconciliation()
 
 	c.Response <- true
 }

@@ -148,12 +148,20 @@ type NodeState struct {
 	PocIntendedStatus PocStatus `json:"poc_intended_status"`
 	PocCurrentStatus  PocStatus `json:"poc_current_status"`
 
+	TrainingTask *TrainingTaskPayload
+
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
-	TrainingTaskId  uint64     `json:"training_task_id"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	LastStateChange time.Time  `json:"last_state_change"`
 	AdminState      AdminState `json:"admin_state"`
+}
+
+type TrainingTaskPayload struct {
+	Id             uint64         `json:"id"`
+	MasterNodeAddr string         `json:"master_node_addr"`
+	NodeRanks      map[string]int `json:"node_ranks"`
+	WorldSize      int            `json:"world_size"`
 }
 
 type ReconcileInfo struct {
@@ -291,7 +299,7 @@ func (b *Broker) processCommands() {
 		case InitValidateCommand:
 			command.Execute(b)
 		case UpdateNodeResultCommand:
-			b.updateNodeResult(command)
+			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 		}
@@ -622,19 +630,19 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		})
 	}
 
-	modelsNames := make([]string, 0)
+	modelNames := make([]string, 0)
 	for model := range node.Models {
-		modelsNames = append(modelsNames, model)
+		modelNames = append(modelNames, model)
 	}
 
 	// sort models names to make sure they will be in same order every time
-	sort.Strings(modelsNames)
+	sort.Strings(modelNames)
 
 	return &types.HardwareNode{
 		LocalId:  node.Id,
 		Status:   in.State.CurrentStatus,
 		Hardware: hardware,
-		Models:   modelsNames,
+		Models:   modelNames,
 		Host:     node.Host,
 		Port:     strconv.Itoa(node.PoCPort),
 	}
@@ -819,7 +827,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 		}
 
 		// Create and dispatch the command
-		cmd := b.getCommandForState(node.State.IntendedStatus, node.State.PocIntendedStatus, currentPoCParams, pocParamsErr, len(nodesToDispatch))
+		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, len(nodesToDispatch))
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
@@ -834,7 +842,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 				b.mu.Unlock()
 			}
 		} else {
-			// No valid command, clean up
+			logging.Info("No valid command for reconciliation, cleaning up", types.Nodes, "node_id", id)
 			cancel()
 			b.mu.Lock()
 			if nodeToClean, ok := b.nodes[id]; ok {
@@ -867,12 +875,12 @@ func (b *Broker) prefetchPocParams(epochPhaseInfo chainphase.EpochPhaseInfo, nod
 	}
 }
 
-func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus PocStatus, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
-	switch status {
+func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
+	switch nodeState.IntendedStatus {
 	case types.HardwareNodeStatus_INFERENCE:
 		return InferenceUpNodeCommand{}
 	case types.HardwareNodeStatus_POC:
-		switch pocStatus {
+		switch nodeState.PocIntendedStatus {
 		case PocStatusGenerating:
 			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
 				return StartPoCNodeCommand{
@@ -902,9 +910,21 @@ func (b *Broker) getCommandForState(status types.HardwareNodeStatus, pocStatus P
 		}
 	case types.HardwareNodeStatus_STOPPED:
 		return StopNodeCommand{}
+	case types.Training:
+		if nodeState.TrainingTask == nil {
+			logging.Error("Training task ID is nil, cannot create StartTrainingCommand", types.Nodes)
+			return nil
+		}
+		return StartTrainingNodeCommand{
+			TaskId:         nodeState.TrainingTask.Id,
+			Participant:    b.participantInfo.GetAddress(),
+			MasterNodeAddr: nodeState.TrainingTask.MasterNodeAddr,
+			NodeRanks:      nodeState.TrainingTask.NodeRanks,
+			WorldSize:      nodeState.TrainingTask.WorldSize,
+		}
 	default:
 		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
-			"intended_state", status.String())
+			"intended_state", nodeState.IntendedStatus.String())
 		return nil
 	}
 }

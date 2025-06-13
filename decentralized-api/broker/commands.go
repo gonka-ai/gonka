@@ -2,6 +2,7 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/logging"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -160,4 +161,50 @@ type UpdateNodeResultCommand struct {
 
 func (c UpdateNodeResultCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
+}
+
+func (c UpdateNodeResultCommand) Execute(b *Broker) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	node, exists := b.nodes[c.NodeId]
+	if !exists {
+		logging.Warn("Received result for unknown node", types.Nodes, "node_id", c.NodeId)
+		c.Response <- false
+		return
+	}
+
+	// Critical safety check
+	if node.State.ReconcileInfo == nil ||
+		node.State.ReconcileInfo.Status != c.Result.OriginalTarget ||
+		(node.State.ReconcileInfo.Status == types.HardwareNodeStatus_POC && node.State.ReconcileInfo.PocStatus != c.Result.OriginalPocTarget) {
+		logging.Info("Ignoring stale result for node", types.Nodes,
+			"node_id", c.NodeId,
+			"original_target", c.Result.OriginalTarget,
+			"original_poc_target", c.Result.OriginalPocTarget,
+			"current_reconciling_target", node.State.ReconcileInfo.Status,
+			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
+			"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+		c.Response <- false
+		return
+	}
+
+	// Update state
+	logging.Info("Finalizing state transition for node", types.Nodes,
+		"node_id", c.NodeId,
+		"from_status", node.State.CurrentStatus,
+		"to_status", c.Result.FinalStatus,
+		"from_poc_status", node.State.PocCurrentStatus,
+		"to_poc_status", c.Result.FinalPocStatus,
+		"succeeded", c.Result.Succeeded,
+		"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+
+	node.State.UpdateStatusWithPocStatusNow(c.Result.FinalStatus, c.Result.FinalPocStatus)
+	node.State.ReconcileInfo = nil
+	node.State.cancelInFlightTask = nil
+	if !c.Result.Succeeded {
+		node.State.FailureReason = c.Result.Error
+	}
+
+	c.Response <- true
 }
