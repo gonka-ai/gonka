@@ -30,6 +30,13 @@ func (c StartTrainingCommand) GetResponseChannelCapacity() int {
 
 func (c StartTrainingCommand) Execute(broker *Broker) {
 	epochPhaseInfo := broker.phaseTracker.GetCurrentEpochPhaseInfo()
+	if epochPhaseInfo.Phase != types.InferencePhase {
+		logging.Error("StartTrainingCommand executed in wrong phase", types.Training,
+			"current_phase", epochPhaseInfo.Phase, "expected_phase", types.InferencePhase)
+		c.Response <- false
+		return
+	}
+
 	broker.mu.Lock()
 	defer broker.mu.Unlock()
 	for nodeId := range c.nodeRanks {
