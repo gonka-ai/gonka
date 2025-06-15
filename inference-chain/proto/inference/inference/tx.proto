@@ -205,6 +205,10 @@ message MsgRegisterModel {
   string proposed_by                = 2;
   string id                         = 3;
   uint64 units_of_compute_per_token = 4;
+  // uint64 context_in_ai_tokens       = 5;
+  // string quantization               = 6;
+  // uint64 input_price_in_ai_tokens   = 7;
+  // uint64 output_price_in_ai_tokens  = 8;
 }
 
 message MsgRegisterModelResponse {}

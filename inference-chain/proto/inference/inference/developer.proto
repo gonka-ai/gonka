@@ -14,6 +14,7 @@ message InferenceStats {
   uint64 epoch_poc_block_height = 2;
   InferenceStatus status = 3;
   uint64 ai_tokens_used = 4;
+  string model = 5;
 }
 
 message DeveloperStatsByTime {

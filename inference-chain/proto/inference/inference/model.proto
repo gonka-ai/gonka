@@ -7,4 +7,8 @@ message Model {
   string proposed_by = 1;
   string id = 2;
   uint64 units_of_compute_per_token = 3;
+  uint64 context_in_ai_tokens       = 4;
+  string quantization               = 5;
+  uint64 input_price_in_ai_tokens   = 6;
+  uint64 output_price_in_ai_tokens  = 7;
 }

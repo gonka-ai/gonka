@@ -256,6 +256,11 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/all_stats_by_time";
   }
 
+  rpc InferencesAndTokensStatsByModels(QueryInferencesAndTokensStatsByModelsRequest)
+      returns (QueryInferencesAndTokensStatsByModelsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/models_stats_by_time";
+  }
+
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
@@ -624,6 +629,21 @@ message QueryInferencesAndTokensStatsByEpochsBackwardsRequest {
 message QueryInferencesAndTokensStatsByTimePeriodRequest {
   int64 time_from = 2;
   int64 time_to = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message ModelStats {
+  string model = 1;
+  int64 ai_tokens = 2;
+  int32 inferences = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsResponse {
+  repeated ModelStats stats_models = 1;
 }
 
 message QueryInferencesAndTokensStatsResponse {

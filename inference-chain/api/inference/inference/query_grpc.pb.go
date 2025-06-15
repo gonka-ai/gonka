@@ -61,6 +61,7 @@ const (
 	Query_DebugStatsDeveloperStats_FullMethodName                  = "/inference.inference.Query/DebugStatsDeveloperStats"
 	Query_InferencesAndTokensStatsByEpochsBackwards_FullMethodName = "/inference.inference.Query/InferencesAndTokensStatsByEpochsBackwards"
 	Query_InferencesAndTokensStatsByTimePeriod_FullMethodName      = "/inference.inference.Query/InferencesAndTokensStatsByTimePeriod"
+	Query_InferencesAndTokensStatsByModels_FullMethodName          = "/inference.inference.Query/InferencesAndTokensStatsByModels"
 	Query_GetMinimumValidationAverage_FullMethodName               = "/inference.inference.Query/GetMinimumValidationAverage"
 	Query_InProgressTrainingTasks_FullMethodName                   = "/inference.inference.Query/InProgressTrainingTasks"
 	Query_PartialUpgrade_FullMethodName                            = "/inference.inference.Query/PartialUpgrade"
@@ -139,6 +140,7 @@ type QueryClient interface {
 	DebugStatsDeveloperStats(ctx context.Context, in *QueryDebugStatsRequest, opts ...grpc.CallOption) (*QueryDebugStatsResponse, error)
 	InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, in *QueryInferencesAndTokensStatsByEpochsBackwardsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error)
 	InferencesAndTokensStatsByTimePeriod(ctx context.Context, in *QueryInferencesAndTokensStatsByTimePeriodRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsResponse, error)
+	InferencesAndTokensStatsByModels(ctx context.Context, in *QueryInferencesAndTokensStatsByModelsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsByModelsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error)
 	// Queries a list of InProgressTrainingTasks items.
@@ -534,6 +536,15 @@ func (c *queryClient) InferencesAndTokensStatsByTimePeriod(ctx context.Context, 
 	return out, nil
 }
 
+func (c *queryClient) InferencesAndTokensStatsByModels(ctx context.Context, in *QueryInferencesAndTokensStatsByModelsRequest, opts ...grpc.CallOption) (*QueryInferencesAndTokensStatsByModelsResponse, error) {
+	out := new(QueryInferencesAndTokensStatsByModelsResponse)
+	err := c.cc.Invoke(ctx, Query_InferencesAndTokensStatsByModels_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) GetMinimumValidationAverage(ctx context.Context, in *QueryGetMinimumValidationAverageRequest, opts ...grpc.CallOption) (*QueryGetMinimumValidationAverageResponse, error) {
 	out := new(QueryGetMinimumValidationAverageResponse)
 	err := c.cc.Invoke(ctx, Query_GetMinimumValidationAverage_FullMethodName, in, out, opts...)
@@ -642,6 +653,7 @@ type QueryServer interface {
 	DebugStatsDeveloperStats(context.Context, *QueryDebugStatsRequest) (*QueryDebugStatsResponse, error)
 	InferencesAndTokensStatsByEpochsBackwards(context.Context, *QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*QueryInferencesAndTokensStatsResponse, error)
 	InferencesAndTokensStatsByTimePeriod(context.Context, *QueryInferencesAndTokensStatsByTimePeriodRequest) (*QueryInferencesAndTokensStatsResponse, error)
+	InferencesAndTokensStatsByModels(context.Context, *QueryInferencesAndTokensStatsByModelsRequest) (*QueryInferencesAndTokensStatsByModelsResponse, error)
 	// Queries a list of GetMinimumValidationAverage items.
 	GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error)
 	// Queries a list of InProgressTrainingTasks items.
@@ -781,6 +793,9 @@ func (UnimplementedQueryServer) InferencesAndTokensStatsByEpochsBackwards(contex
 }
 func (UnimplementedQueryServer) InferencesAndTokensStatsByTimePeriod(context.Context, *QueryInferencesAndTokensStatsByTimePeriodRequest) (*QueryInferencesAndTokensStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InferencesAndTokensStatsByTimePeriod not implemented")
+}
+func (UnimplementedQueryServer) InferencesAndTokensStatsByModels(context.Context, *QueryInferencesAndTokensStatsByModelsRequest) (*QueryInferencesAndTokensStatsByModelsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InferencesAndTokensStatsByModels not implemented")
 }
 func (UnimplementedQueryServer) GetMinimumValidationAverage(context.Context, *QueryGetMinimumValidationAverageRequest) (*QueryGetMinimumValidationAverageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMinimumValidationAverage not implemented")
@@ -1563,6 +1578,24 @@ func _Query_InferencesAndTokensStatsByTimePeriod_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_InferencesAndTokensStatsByModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryInferencesAndTokensStatsByModelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).InferencesAndTokensStatsByModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_InferencesAndTokensStatsByModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).InferencesAndTokensStatsByModels(ctx, req.(*QueryInferencesAndTokensStatsByModelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_GetMinimumValidationAverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetMinimumValidationAverageRequest)
 	if err := dec(in); err != nil {
@@ -1809,6 +1842,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InferencesAndTokensStatsByTimePeriod",
 			Handler:    _Query_InferencesAndTokensStatsByTimePeriod_Handler,
+		},
+		{
+			MethodName: "InferencesAndTokensStatsByModels",
+			Handler:    _Query_InferencesAndTokensStatsByModels_Handler,
 		},
 		{
 			MethodName: "GetMinimumValidationAverage",

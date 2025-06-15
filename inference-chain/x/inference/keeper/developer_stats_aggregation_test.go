@@ -14,6 +14,9 @@ func TestDeveloperStats(t *testing.T) {
 		developer1 = "developer1"
 		developer2 = "developer2"
 
+		testModel  = "test_model"
+		testModel2 = "test_model_2"
+
 		epochId1 = uint64(1)
 		epochId2 = uint64(2)
 		tokens   = uint64(10)
@@ -25,7 +28,8 @@ func TestDeveloperStats(t *testing.T) {
 		CompletionTokenCount: tokens * 2,
 		RequestedBy:          developer1,
 		Status:               types.InferenceStatus_STARTED,
-		StartBlockTimestamp:  time.Now().Add(-time.Second * 3).UTC().Unix(),
+		Model:                testModel,
+		StartBlockTimestamp:  time.Now().Add(-time.Second * 3).UnixMilli(),
 	}
 
 	inference2Developer1 := types.Inference{
@@ -33,8 +37,9 @@ func TestDeveloperStats(t *testing.T) {
 		PromptTokenCount:     tokens,
 		CompletionTokenCount: tokens,
 		RequestedBy:          developer1,
+		Model:                testModel2,
 		Status:               types.InferenceStatus_VALIDATED,
-		StartBlockTimestamp:  time.Now().UTC().Unix(),
+		StartBlockTimestamp:  time.Now().UnixMilli(),
 	}
 
 	inference1Developer2 := types.Inference{
@@ -43,7 +48,8 @@ func TestDeveloperStats(t *testing.T) {
 		CompletionTokenCount: tokens,
 		RequestedBy:          developer2,
 		Status:               types.InferenceStatus_FINISHED,
-		StartBlockTimestamp:  time.Now().UTC().Unix(),
+		Model:                testModel2,
+		StartBlockTimestamp:  time.Now().UnixMilli(),
 		EpochGroupId:         epochId2,
 	}
 
@@ -52,8 +58,9 @@ func TestDeveloperStats(t *testing.T) {
 		PromptTokenCount:     tokens,
 		CompletionTokenCount: tokens,
 		RequestedBy:          developer2,
+		Model:                testModel2,
 		Status:               types.InferenceStatus_EXPIRED,
-		StartBlockTimestamp:  time.Now().UTC().Unix(),
+		StartBlockTimestamp:  time.Now().UnixMilli(),
 	}
 
 	t.Parallel()
@@ -78,8 +85,8 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Equal(t, inference2Developer1.Status, inferenceStat2.Status)
 		assert.Equal(t, inference2Developer1.CompletionTokenCount+inference2Developer1.PromptTokenCount, inferenceStat2.AiTokensUsed)
 
-		now := time.Now().UTC()
-		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Second).Unix(), now.Unix())
+		now := time.Now()
+		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Second).UnixMilli(), now.UnixMilli())
 		assert.Equal(t, 1, len(statsByTime))
 		assert.Equal(t, inference2Developer1.Status, statsByTime[0].Inference.Status)
 		assert.Equal(t, inference2Developer1.CompletionTokenCount+inference2Developer1.PromptTokenCount, statsByTime[0].Inference.AiTokensUsed)
@@ -138,8 +145,8 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Equal(t, updatedInference.Status, inferenceStat.Status)
 		assert.Equal(t, updatedInference.PromptTokenCount+updatedInference.CompletionTokenCount, inferenceStat.AiTokensUsed)
 
-		now := time.Now().UTC()
-		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Second*4).Unix(), now.Unix())
+		now := time.Now()
+		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Second*4).UnixMilli(), now.UnixMilli())
 		assert.Equal(t, 1, len(statsByTime))
 		assert.Equal(t, updatedInference.Status, statsByTime[0].Inference.Status)
 		assert.Equal(t, updatedInference.PromptTokenCount+updatedInference.CompletionTokenCount, statsByTime[0].Inference.AiTokensUsed)
@@ -150,8 +157,8 @@ func TestDeveloperStats(t *testing.T) {
 
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1))
 
-		now := time.Now().UTC()
-		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Minute*2).Unix(), now.Add(-time.Minute).Unix())
+		now := time.Now()
+		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Minute*2).UnixMilli(), now.Add(-time.Minute).UnixMilli())
 		assert.Empty(t, statsByTime)
 	})
 
@@ -163,13 +170,35 @@ func TestDeveloperStats(t *testing.T) {
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
 		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer2))
 
-		now := time.Now().UTC()
-		tokens, requests := keeper.CountTotalInferenceInPeriod(ctx, now.Add(-time.Second*10).Unix(), now.Add(-time.Second*2).Unix())
-		assert.Equal(t,
-			int64(inference1Developer1.CompletionTokenCount+inference1Developer1.PromptTokenCount),
-			tokens)
+		now := time.Now()
+		summary := keeper.CountTotalInferenceInPeriod(ctx, now.Add(-time.Second*10).UnixMilli(), now.Add(-time.Second*2).UnixMilli())
+		assert.Equal(t, int64(inference1Developer1.CompletionTokenCount+inference1Developer1.PromptTokenCount), summary.TokensUsed)
+		assert.Equal(t, 1, summary.InferenceCount)
+	})
 
-		assert.Equal(t, 1, requests)
+	t.Run("count ai tokens and inference requests by time and model", func(t *testing.T) {
+		keeper, ctx := keepertest.InferenceKeeper(t)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1)) // tagged to time now() - 3 sec
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1))
+		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer2))
+
+		now := time.Now().UTC()
+		summary := keeper.GetStatsGroupedByModelAndTimePeriod(ctx, now.Add(-time.Second*10).UnixMilli(), now.Add(-time.Second*2).UnixMilli())
+		assert.Equal(t, 1, len(summary))
+
+		stat, ok := summary[inference1Developer1.Model]
+		assert.True(t, ok)
+		assert.Equal(t, int64(inference1Developer1.CompletionTokenCount+inference1Developer1.PromptTokenCount), stat.TokensUsed)
+		assert.Equal(t, 1, stat.InferenceCount)
+
+		summary = keeper.GetStatsGroupedByModelAndTimePeriod(ctx, now.Add(-time.Second*1).UnixMilli(), now.Add(time.Second).UnixMilli())
+		stat, ok = summary[testModel2]
+		assert.True(t, ok)
+
+		assert.Equal(t, int64(inference2Developer1.CompletionTokenCount+inference2Developer1.PromptTokenCount+inference1Developer2.CompletionTokenCount+inference1Developer2.PromptTokenCount), stat.TokensUsed)
+		assert.Equal(t, 2, stat.InferenceCount)
 	})
 
 	t.Run("count ai tokens and inference by epochs and developer", func(t *testing.T) {
@@ -187,24 +216,24 @@ func TestDeveloperStats(t *testing.T) {
 
 		tokensExpectedForLast2Epochs := inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount
 
-		tokens, requests := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
-		assert.Equal(t, int64(tokensExpectedForLast2Epochs), tokens)
-		assert.Equal(t, 1, requests)
+		summary := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
+		assert.Equal(t, int64(tokensExpectedForLast2Epochs), summary.TokensUsed)
+		assert.Equal(t, 1, summary.InferenceCount)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
-		assert.Equal(t, int64(0), tokens)
-		assert.Equal(t, 0, requests)
+		summary = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
+		assert.Equal(t, int64(0), summary.TokensUsed)
+		assert.Equal(t, 0, summary.InferenceCount)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 2)
-		assert.Equal(t, int64(inference1Developer2.PromptTokenCount+inference1Developer2.CompletionTokenCount), tokens)
-		assert.Equal(t, 1, requests)
+		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 2)
+		assert.Equal(t, int64(inference1Developer2.PromptTokenCount+inference1Developer2.CompletionTokenCount), summary.TokensUsed)
+		assert.Equal(t, 1, summary.InferenceCount)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 3)
-		assert.Equal(t, int64(inference1Developer1.PromptTokenCount+inference1Developer1.CompletionTokenCount), tokens)
-		assert.Equal(t, 1, requests)
+		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 3)
+		assert.Equal(t, int64(inference1Developer1.PromptTokenCount+inference1Developer1.CompletionTokenCount), summary.TokensUsed)
+		assert.Equal(t, 1, summary.InferenceCount)
 
-		tokens, requests = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 1)
-		assert.Equal(t, int64(0), tokens)
-		assert.Equal(t, 0, requests)
+		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 1)
+		assert.Equal(t, int64(0), summary.TokensUsed)
+		assert.Equal(t, 0, summary.InferenceCount)
 	})
 }
