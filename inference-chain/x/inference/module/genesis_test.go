@@ -18,7 +18,7 @@ func TestGenesis(t *testing.T) {
 	genesisState := types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
-		ContractsParams:   baseGenesis.ContractsParams,
+		CosmWasmParams:    baseGenesis.CosmWasmParams,
 
 		InferenceList: []types.Inference{
 			{
