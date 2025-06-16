@@ -5,10 +5,9 @@ import (
 	"context"
 	"decentralized-api/logging"
 	"encoding/json"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"time"
-
-	"github.com/productscience/inference/x/inference/types"
 )
 
 func NewHttpClient(timeout time.Duration) *http.Client {
