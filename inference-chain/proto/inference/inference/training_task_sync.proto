@@ -1,0 +1,37 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message TrainingTaskKVRecord {
+  uint64 task_id = 1;
+  string participant = 2;
+  string key = 3;
+  string value = 4;
+}
+
+message TrainingTaskNodeEpochActivity {
+  uint64 task_id = 1;
+  string participant = 2;
+  string node_id = 3;
+  int32 rank = 4;
+  TrainingTaskHeartbeat heartbeat = 5;
+}
+
+message TrainingTaskHeartbeat {
+  int32 inner_step = 1;
+  int32 outer_step = 2;
+  int32 epoch = 3;
+  int64 block_height = 4;
+  int64 block_time = 5;
+}
+
+message TrainingTaskBarrier {
+  string barrier_id = 1;
+  uint64 task_id = 2;
+  string participant = 3;
+  string node_id = 4;
+  int32 outer_step = 5;
+  int64 block_height = 6;
+  int64 block_time = 7;
+}

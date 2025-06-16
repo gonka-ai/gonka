@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+service NetworkNodeService {
+  rpc JoinTraining(JoinTrainingRequest) returns (MLNodeTrainStatus);
+
+  rpc GetJoinTrainingStatus(JoinTrainingRequest) returns (MLNodeTrainStatus);
+
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  rpc GetAliveNodes(GetAliveNodesRequest) returns (GetAliveNodesResponse);
+
+  rpc SetBarrier(SetBarrierRequest) returns (SetBarrierResponse);
+
+  rpc GetBarrierStatus(GetBarrierStatusRequest) returns (GetBarrierStatusResponse);
+
+  rpc SetStoreRecord(SetStoreRecordRequest) returns (SetStoreRecordResponse);
+
+  rpc GetStoreRecord(GetStoreRecordRequest) returns (GetStoreRecordResponse);
+
+  rpc ListStoreKeys(StoreListKeysRequest) returns (StoreListKeysResponse);
+}
+
+message JoinTrainingRequest {
+  string node_id = 1;
+  uint64 run_id = 2;
+  int32 outer_step = 3;
+}
+
+message MLNodeTrainStatus {
+  MLNodeTrainStatusEnum status = 1;
+  string node_id = 2;
+  int32 outer_step = 3;
+  repeated string active_nodes = 4;
+  int32 rank = 5;
+}
+
+enum MLNodeTrainStatusEnum {
+  OK = 0;
+  ERROR = 1;
+  JOINED = 2;
+  NOT_JOINED = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  uint64 run_id = 2;
+  int32 local_rank = 3;
+  double timestamp = 4;
+  int32 inner_step = 5;
+  int32 outer_step = 6;
+  int32 epoch = 7;
+}
+
+message HeartbeatResponse {
+  HeartbeatStatusEnum status = 1;
+}
+
+enum HeartbeatStatusEnum {
+  HEARTBEAT_OK = 0;
+  HEARTBEAT_ERROR = 1;
+}
+
+message GetAliveNodesRequest {
+  uint64 run_id = 1;
+  int32 outer_step = 2;
+}
+
+message GetAliveNodesResponse {
+  repeated string alive_nodes = 1;
+}
+
+message SetBarrierRequest {
+  string barrier_id = 1;
+  string node_id = 2;
+  uint64 run_id = 3;
+  int32 outer_step = 4;
+}
+
+message SetBarrierResponse {
+  BarrierStatusEnum status = 1;
+}
+
+enum BarrierStatusEnum {
+  READY = 0;
+  NOT_READY = 1;
+}
+
+message GetBarrierStatusRequest {
+  string barrier_id = 1;
+  uint64 run_id = 2;
+  int32 outer_step = 3;
+}
+
+message GetBarrierStatusResponse {
+  bool all_ready = 1;
+  repeated string not_ready = 2;
+  repeated string alive_nodes = 3;
+}
+
+message SetStoreRecordRequest {
+  uint64 run_id = 1;
+  Record record = 2;
+}
+
+message Record {
+  string key = 1;
+  string value = 2;
+}
+
+message SetStoreRecordResponse {
+  StoreRecordStatusEnum status = 1;
+}
+
+enum StoreRecordStatusEnum {
+  SET_RECORD_OK = 0;
+  SET_RECORD_ERROR = 1;
+}
+
+message GetStoreRecordRequest {
+  uint64 run_id = 1;
+  string key = 2;
+}
+
+message GetStoreRecordResponse {
+  Record record = 1;
+}
+
+message StoreListKeysRequest {
+  uint64 run_id = 1;
+}
+
+message StoreListKeysResponse {
+  repeated string keys = 1;
+}

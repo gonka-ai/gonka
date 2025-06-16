@@ -34,7 +34,7 @@ data:
               "poc_stage_duration": "30",
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
-              "poc_validation_duration": "20",
+              "poc_validation_duration": "10",
               "default_unit_of_compute_price": "100"
             }
           },
