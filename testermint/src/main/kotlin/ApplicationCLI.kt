@@ -144,6 +144,10 @@ data class ApplicationCLI(
         accountKey!!.address
     }
 
+    fun getVersion(): String = wrapLog("getVersion", false) {
+        exec(listOf(config.execName, "version")).first()
+    }
+
     private fun getAccountIfNeeded() {
         if (accountKey == null) {
             val keys = getKeys()

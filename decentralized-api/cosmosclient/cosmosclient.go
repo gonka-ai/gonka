@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
@@ -120,6 +121,7 @@ type CosmosMessageClient interface {
 	AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error)
 	SubmitUnitOfComputePriceProposal(transaction *inference.MsgSubmitUnitOfComputePriceProposal) error
 	NewInferenceQueryClient() types.QueryClient
+	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error)
 	GetContext() *context.Context
@@ -378,6 +380,10 @@ func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClie
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() types.QueryClient {
 	return types.NewQueryClient(icc.Client.Context())
+}
+
+func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
+	return cmtservice.NewServiceClient(icc.Client.Context())
 }
 
 func (icc *InferenceCosmosClient) QueryRandomExecutor() (*types.Participant, error) {
