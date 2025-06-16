@@ -3,6 +3,7 @@ package training
 import (
 	"context"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"fmt"
 	"github.com/cometbft/cometbft/libs/rand"
@@ -222,6 +223,11 @@ func (a *Assigner) checkTaskIsStillClaimed() {
 		slog.Info(logTag+"Task is no longer claimed by me", "taskId", a.task.task.Id)
 		a.task = nil
 	}
+
+	if resp.Task.AssignedAtBlockHeight > 0 {
+		slog.Info(logTag+"Task is already assigned", "taskId", a.task.task.Id)
+		a.task = nil
+	}
 }
 
 type participantHardwareNodes struct {
@@ -410,6 +416,7 @@ type lockTrainingNodesDto struct {
 }
 
 func confirmAvailability(client *http.Client, participantUrl string, taskId uint64, nodeIds []string) error {
+	logging.Debug("confirmAvailability", types.Training, "participantUrl", participantUrl, "taskId", taskId, "nodeIds", nodeIds)
 	url := participantUrl + "/v1/training/lock-nodes"
 	payload := lockTrainingNodesDto{
 		TrainingTaskId: taskId,

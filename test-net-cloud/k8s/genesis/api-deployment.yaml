@@ -28,29 +28,35 @@ spec:
         - containerPort: 9100
           name: ml-server
         - containerPort: 9200
-          name: admin 
+          name: admin
+        - containerPort: 9300
+          name: ml-grpc-server
         env:
         - name: KEY_NAME
           value: "genesis"
+        - name: NODE_CONFIG_PATH
+          value: "/root/node_config.json"
         - name: DAPI_API__POC_CALLBACK_URL
           value: "http://api-private:9100"
+        - name: DAPI_API__ML_GRPC_CALLBACK_ADDRESS
+          value: "api-private:9300"
         - name: DAPI_API__PUBLIC_URL
           valueFrom:
             configMapKeyRef:
               name: config
               key: DAPI_API_PUBLIC_URL
-        - name: DAPI_CHAIN_NODE__IS_GENESIS
-          value: "true"
-        - name: DAPI_CHAIN_NODE__URL
-          value: "http://node:26657" # Assumes 'node' service DNS resolves
-        - name: NODE_CONFIG_PATH
-          value: "/root/node_config.json"
         - name: DAPI_API__PUBLIC_SERVER_PORT
           value: "9000"
         - name: DAPI_API__ML_SERVER_PORT
           value: "9100"
         - name: DAPI_API__ADMIN_SERVER_PORT
           value: "9200"
+        - name: DAPI_API__ML_GRPC_SERVER_PORT
+          value: "9300"
+        - name: DAPI_CHAIN_NODE__IS_GENESIS
+          value: "true"
+        - name: DAPI_CHAIN_NODE__URL
+          value: "http://node:26657"
         volumeMounts:
         - name: data
           mountPath: /root/.inference

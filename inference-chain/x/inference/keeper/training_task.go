@@ -87,6 +87,7 @@ func (k Keeper) StartTask(ctx sdk.Context, taskId uint64, assignees []*types.Tra
 
 	// Here update the task object
 	task.Assignees = assignees
+	task.AssignedAtBlockHeight = uint64(ctx.BlockHeight())
 	updatedBz := k.cdc.MustMarshal(&task)
 	store.Set(taskKey, updatedBz)
 
@@ -181,7 +182,7 @@ func (k Keeper) GetTasks(ctx sdk.Context, ids []uint64) ([]*types.TrainingTask, 
 }
 
 func (k Keeper) GetAllTrainingTasks(ctx sdk.Context) ([]*types.TrainingTask, error) {
-	return GetAllValues(ctx, k, []byte(types.TrainingTaskKeyPrefix), func() *types.TrainingTask {
+	return GetAllValues(ctx, &k, []byte(types.TrainingTaskKeyPrefix), func() *types.TrainingTask {
 		return &types.TrainingTask{}
 	})
 }

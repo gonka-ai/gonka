@@ -10,5 +10,5 @@ func (k Keeper) SetModel(ctx context.Context, model *types.Model) {
 }
 
 func (k Keeper) GetAllModels(ctx context.Context) ([]*types.Model, error) {
-	return GetAllValues(ctx, k, types.KeyPrefix(types.ModelKeyPrefix), func() *types.Model { return &types.Model{} })
+	return GetAllValues(ctx, &k, types.KeyPrefix(types.ModelKeyPrefix), func() *types.Model { return &types.Model{} })
 }

@@ -58,6 +58,10 @@ const (
 	Query_InProgressTrainingTasks_FullMethodName          = "/inference.inference.Query/InProgressTrainingTasks"
 	Query_PartialUpgrade_FullMethodName                   = "/inference.inference.Query/PartialUpgrade"
 	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
+	Query_TrainingKvRecord_FullMethodName                 = "/inference.inference.Query/TrainingKvRecord"
+	Query_ListTrainingKvRecordKeys_FullMethodName         = "/inference.inference.Query/ListTrainingKvRecordKeys"
+	Query_TrainingBarrier_FullMethodName                  = "/inference.inference.Query/TrainingBarrier"
+	Query_TrainingAliveNodes_FullMethodName               = "/inference.inference.Query/TrainingAliveNodes"
 )
 
 // QueryClient is the client API for Query service.
@@ -132,6 +136,14 @@ type QueryClient interface {
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(ctx context.Context, in *QueryGetPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(ctx context.Context, in *QueryAllPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryAllPartialUpgradeResponse, error)
+	// Queries a list of TrainingKvRecord items.
+	TrainingKvRecord(ctx context.Context, in *QueryTrainingKvRecordRequest, opts ...grpc.CallOption) (*QueryTrainingKvRecordResponse, error)
+	// Queries a list of ListTrainingKvRecordKeys items.
+	ListTrainingKvRecordKeys(ctx context.Context, in *QueryListTrainingKvRecordKeysRequest, opts ...grpc.CallOption) (*QueryListTrainingKvRecordKeysResponse, error)
+	// Queries a list of TrainingBarrier items.
+	TrainingBarrier(ctx context.Context, in *QueryTrainingBarrierRequest, opts ...grpc.CallOption) (*QueryTrainingBarrierResponse, error)
+	// Queries a list of TrainingAliveNodes items.
+	TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error)
 }
 
 type queryClient struct {
@@ -493,6 +505,42 @@ func (c *queryClient) PartialUpgradeAll(ctx context.Context, in *QueryAllPartial
 	return out, nil
 }
 
+func (c *queryClient) TrainingKvRecord(ctx context.Context, in *QueryTrainingKvRecordRequest, opts ...grpc.CallOption) (*QueryTrainingKvRecordResponse, error) {
+	out := new(QueryTrainingKvRecordResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingKvRecord_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ListTrainingKvRecordKeys(ctx context.Context, in *QueryListTrainingKvRecordKeysRequest, opts ...grpc.CallOption) (*QueryListTrainingKvRecordKeysResponse, error) {
+	out := new(QueryListTrainingKvRecordKeysResponse)
+	err := c.cc.Invoke(ctx, Query_ListTrainingKvRecordKeys_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainingBarrier(ctx context.Context, in *QueryTrainingBarrierRequest, opts ...grpc.CallOption) (*QueryTrainingBarrierResponse, error) {
+	out := new(QueryTrainingBarrierResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingBarrier_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainingAliveNodes(ctx context.Context, in *QueryTrainingAliveNodesRequest, opts ...grpc.CallOption) (*QueryTrainingAliveNodesResponse, error) {
+	out := new(QueryTrainingAliveNodesResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingAliveNodes_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -565,6 +613,14 @@ type QueryServer interface {
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error)
+	// Queries a list of TrainingKvRecord items.
+	TrainingKvRecord(context.Context, *QueryTrainingKvRecordRequest) (*QueryTrainingKvRecordResponse, error)
+	// Queries a list of ListTrainingKvRecordKeys items.
+	ListTrainingKvRecordKeys(context.Context, *QueryListTrainingKvRecordKeysRequest) (*QueryListTrainingKvRecordKeysResponse, error)
+	// Queries a list of TrainingBarrier items.
+	TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error)
+	// Queries a list of TrainingAliveNodes items.
+	TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -688,6 +744,18 @@ func (UnimplementedQueryServer) PartialUpgrade(context.Context, *QueryGetPartial
 }
 func (UnimplementedQueryServer) PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PartialUpgradeAll not implemented")
+}
+func (UnimplementedQueryServer) TrainingKvRecord(context.Context, *QueryTrainingKvRecordRequest) (*QueryTrainingKvRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingKvRecord not implemented")
+}
+func (UnimplementedQueryServer) ListTrainingKvRecordKeys(context.Context, *QueryListTrainingKvRecordKeysRequest) (*QueryListTrainingKvRecordKeysResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListTrainingKvRecordKeys not implemented")
+}
+func (UnimplementedQueryServer) TrainingBarrier(context.Context, *QueryTrainingBarrierRequest) (*QueryTrainingBarrierResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingBarrier not implemented")
+}
+func (UnimplementedQueryServer) TrainingAliveNodes(context.Context, *QueryTrainingAliveNodesRequest) (*QueryTrainingAliveNodesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingAliveNodes not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1404,6 +1472,78 @@ func _Query_PartialUpgradeAll_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_TrainingKvRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingKvRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingKvRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingKvRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingKvRecord(ctx, req.(*QueryTrainingKvRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ListTrainingKvRecordKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryListTrainingKvRecordKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ListTrainingKvRecordKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ListTrainingKvRecordKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ListTrainingKvRecordKeys(ctx, req.(*QueryListTrainingKvRecordKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainingBarrier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingBarrierRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingBarrier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingBarrier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingBarrier(ctx, req.(*QueryTrainingBarrierRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainingAliveNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingAliveNodesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingAliveNodes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingAliveNodes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingAliveNodes(ctx, req.(*QueryTrainingAliveNodesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1566,6 +1706,22 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PartialUpgradeAll",
 			Handler:    _Query_PartialUpgradeAll_Handler,
+		},
+		{
+			MethodName: "TrainingKvRecord",
+			Handler:    _Query_TrainingKvRecord_Handler,
+		},
+		{
+			MethodName: "ListTrainingKvRecordKeys",
+			Handler:    _Query_ListTrainingKvRecordKeys_Handler,
+		},
+		{
+			MethodName: "TrainingBarrier",
+			Handler:    _Query_TrainingBarrier_Handler,
+		},
+		{
+			MethodName: "TrainingAliveNodes",
+			Handler:    _Query_TrainingAliveNodes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

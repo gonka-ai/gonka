@@ -56,7 +56,7 @@ To write or debug tests interactively:
 3. From the root of the project, run:
 
    ```bash
-   ./test-chain-sh
+   ./stop-rebuild-launch.sh
    ```
 
    This ensures the necessary Docker containers are built and ready.

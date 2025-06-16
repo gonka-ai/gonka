@@ -30,6 +30,7 @@ type Broker struct {
 	nodes          map[string]*NodeWithState
 	curMaxNodesNum atomic.Uint64
 	client         cosmosclient.CosmosMessageClient
+	chainState     ChainState
 }
 
 type ModelArgs struct {
@@ -74,6 +75,19 @@ type NodeState struct {
 	LastStateChange time.Time                `json:"last_state_change"`
 }
 
+type ChainState int
+
+const (
+	ChainStateUnknown    ChainState = 0
+	ChainStatePOC        ChainState = 1
+	ChainStateValidation ChainState = 2
+	ChainStateWork       ChainState = 3
+)
+
+func (b *Broker) SetChainState(state ChainState) {
+	b.chainState = state
+}
+
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
 	s.Status = status
 	s.StatusTimestamp = time
@@ -100,9 +114,10 @@ type NodeResponse struct {
 
 func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
 	broker := &Broker{
-		commands: make(chan Command, 100),
-		nodes:    make(map[string]*NodeWithState),
-		client:   client,
+		commands:   make(chan Command, 100),
+		nodes:      make(map[string]*NodeWithState),
+		client:     client,
+		chainState: ChainStateUnknown,
 	}
 
 	go broker.processCommands()
@@ -139,6 +154,9 @@ func nodeSyncWorker(broker *Broker) {
 }
 
 func (b *Broker) processCommands() {
+	if b.chainState == ChainStateUnknown {
+		b.SetChainState(ChainStateWork)
+	}
 	for command := range b.commands {
 		logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
 		switch command := command.(type) {
@@ -157,14 +175,26 @@ func (b *Broker) processCommands() {
 		case LockNodesForTrainingCommand:
 			b.lockNodesForTraining(command)
 		case StartTrainingCommand:
-			b.startTraining(command)
+			command.Execute(b)
 		case ReconcileNodesCommand:
+			if b.chainState != ChainStateWork {
+				logging.Info("Skipping reconcile nodes command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			b.reconcileNodes(command)
 		case SetNodesActualStatusCommand:
 			b.setNodesActualStatus(command)
 		case InferenceUpAllCommand:
+			if b.chainState != ChainStateWork {
+				logging.Info("Skipping inference up all command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			b.inferenceUpAll(command)
 		case StartPocCommand:
+			if b.chainState != ChainStatePOC {
+				logging.Info("Skipping start poc command", types.Nodes, "chain_state", b.chainState)
+				continue
+			}
 			command.Execute(b)
 		default:
 			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
@@ -434,35 +464,6 @@ func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
 	command.Response <- true
 }
 
-func (b *Broker) startTraining(command StartTrainingCommand) {
-	for nodeId, rank := range command.nodeRanks {
-		node, nodeFound := b.nodes[nodeId]
-		if !nodeFound {
-			logging.Error("Node not found", types.Nodes, "node_id", nodeId)
-			command.Response <- false
-			return
-		}
-
-		client := mlnodeclient.NewNodeClient(node.Node.PoCUrl(), node.Node.InferenceUrl())
-
-		err := client.Stop()
-		if err != nil {
-			logging.Error("Error stopping training", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
-
-		err = client.StartTraining(command.masterNodeAddress, rank, command.worldSize)
-		if err != nil {
-			logging.Error("Error starting training", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
-	}
-
-	command.Response <- true
-}
-
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
 func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 	node := in.Node
@@ -611,8 +612,21 @@ func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
 	client := newNodeClient(&node.Node)
 
 	nodeId := node.Node.Id
+
 	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-	err := client.Stop()
+	status, err := b.queryNodeStatus(node.Node, node.State)
+	if err != nil {
+		logging.Error("Failed to query node status", types.Nodes, "node_id", nodeId, "error", err)
+		return
+	}
+
+	if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
+		logging.Info("Node is already in INFERENCE state", types.Nodes, "node_id", nodeId)
+		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+		return
+	}
+
+	err = client.Stop()
 	if err != nil {
 		logging.Error("Failed to stop node during reconciliation", types.Nodes,
 			"node_id", nodeId, "error", err)
@@ -758,7 +772,27 @@ func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
 
 		client := newNodeClient(&node.Node)
 
-		err := client.Stop()
+		status, err := b.queryNodeStatus(node.Node, node.State)
+		if err != nil {
+			logging.Error("Failed to query node status", types.Nodes, "node_id", node.Node.Id, "error", err)
+			continue
+		}
+
+		if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
+			health, err := client.InferenceHealth()
+			if err != nil {
+				logging.Error("Failed to check inference health", types.Nodes, "node_id", node.Node.Id, "error", err)
+				continue
+			}
+
+			if health {
+				logging.Info("Node is already in INFERENCE state and healthy", types.Nodes, "node_id", node.Node.Id)
+				node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
+				continue
+			}
+		}
+
+		err = client.Stop()
 		if err != nil {
 			logging.Error("Failed to stop node for inference up", types.Nodes,
 				"node_id", node.Node.Id, "error", err)

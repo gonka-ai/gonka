@@ -22,8 +22,10 @@ import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/training_task.proto";
+import "inference/inference/training_task_sync.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
+import "inference/inference/network_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -232,7 +234,6 @@ service Query {
   rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
 
-
   }
 
   // Queries a list of PartialUpgrade items.
@@ -242,6 +243,30 @@ service Query {
   }
   rpc PartialUpgradeAll (QueryAllPartialUpgradeRequest) returns (QueryAllPartialUpgradeResponse) {
     option (google.api.http).get = "/productscience/inference/inference/partial_upgrade";
+
+  }
+
+  // Queries a list of TrainingKvRecord items.
+  rpc TrainingKvRecord (QueryTrainingKvRecordRequest) returns (QueryTrainingKvRecordResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_kv_record/{taskId}/{key}";
+
+  }
+
+  // Queries a list of ListTrainingKvRecordKeys items.
+  rpc ListTrainingKvRecordKeys (QueryListTrainingKvRecordKeysRequest) returns (QueryListTrainingKvRecordKeysResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_training_kv_record_keys/{taskId}";
+
+  }
+
+  // Queries a list of TrainingBarrier items.
+  rpc TrainingBarrier (QueryTrainingBarrierRequest) returns (QueryTrainingBarrierResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_barrier";
+
+  }
+
+  // Queries a list of TrainingAliveNodes items.
+  rpc TrainingAliveNodes (QueryTrainingAliveNodesRequest) returns (QueryTrainingAliveNodesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
 
   }
 }
@@ -577,4 +602,37 @@ message QueryAllPartialUpgradeRequest {
 message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination     = 2;
+}
+
+message QueryTrainingKvRecordRequest {
+  uint64 taskId      = 1;
+  string key         = 2;
+}
+
+message QueryTrainingKvRecordResponse {
+  TrainingTaskKVRecord record = 1;
+}
+
+message QueryListTrainingKvRecordKeysRequest {
+  uint64 taskId      = 1;
+}
+
+message QueryListTrainingKvRecordKeysResponse {
+  repeated string keys = 1;
+}
+
+message QueryTrainingBarrierRequest {
+  GetBarrierStatusRequest req = 1;
+}
+
+message QueryTrainingBarrierResponse {
+  GetBarrierStatusResponse resp = 2;
+}
+
+message QueryTrainingAliveNodesRequest {
+  GetAliveNodesRequest req = 1;
+}
+
+message QueryTrainingAliveNodesResponse {
+  GetAliveNodesResponse resp = 2;
 }
