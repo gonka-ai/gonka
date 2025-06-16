@@ -248,6 +248,20 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Shows a partial_upgrade",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
 				},
+				{
+					RpcMethod:      "TrainingKvRecord",
+					Use:            "training-kv-record [task-id] [key]",
+					Short:          "Query training-kv-record",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}, {ProtoField: "key"}},
+				},
+
+				{
+					RpcMethod:      "ListTrainingKvRecordKeys",
+					Use:            "list-training-kv-record-keys [task-id]",
+					Short:          "Query list-training-kv-record-keys",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "taskId"}},
+				},
+
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -360,6 +374,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "create-partial-upgrade [height] [node-version] [api-binaries-json]",
 					Short:          "Send a create_partial_upgrade tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}, {ProtoField: "nodeVersion"}, {ProtoField: "apiBinariesJson"}},
+				},
+				{
+					RpcMethod:      "SetBarrier",
+					Use:            "set-barrier",
+					Short:          "Send a set-barrier tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

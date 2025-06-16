@@ -6,8 +6,9 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/training"
-	"github.com/labstack/echo/v4"
 	"net/http"
+
+	"github.com/labstack/echo/v4"
 )
 
 type Server struct {
@@ -63,6 +64,8 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.GET("versions", s.getVersions)
 
 	g.POST("bridge/block", s.postBlock)
 	g.GET("bridge/status", s.getBridgeStatus)

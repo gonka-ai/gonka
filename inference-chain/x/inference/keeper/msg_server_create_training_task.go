@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"github.com/productscience/inference/x/inference/training"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -20,6 +21,7 @@ func (k msgServer) CreateTrainingTask(goCtx context.Context, msg *types.MsgCreat
 		FinishedAtBlockHeight: 0,
 		HardwareResources:     msg.HardwareResources,
 		Config:                msg.Config,
+		Epoch:                 training.NewEmptyEpochInfo(),
 	}
 
 	err := k.CreateTask(ctx, task)

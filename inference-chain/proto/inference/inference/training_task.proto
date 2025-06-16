@@ -14,6 +14,7 @@ message TrainingTask {
   repeated TrainingHardwareResources hardware_resources = 8;
   TrainingConfig config = 9;
   repeated TrainingTaskAssignee assignees = 10;
+  EpochInfo epoch = 11;
 }
 
 message TrainingHardwareResources {
@@ -34,4 +35,11 @@ message TrainingDatasets {
 message TrainingTaskAssignee {
   string participant = 1;
   repeated string node_ids = 2;
+}
+
+message EpochInfo {
+  int32 last_epoch = 1;
+  int64 last_epoch_block_height = 2;
+  int64 last_epoch_timestamp = 3; // Equals to the block time
+  bool  last_epoch_is_finished = 4;
 }
