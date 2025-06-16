@@ -10,7 +10,7 @@ on:
         description: 'Release tag to use for testing'
         required: false
         type: string
-        default: 'v0.0.0-manual-test'
+        default: 'release/v0.0.0-manual-test'
 
 jobs:
   vote_for_update:
@@ -23,6 +23,7 @@ jobs:
       id-token: 'write'
       packages: 'write'
       actions: 'read' # Still needed if workflow_run triggers and we download artifact
+      checks: 'write' # Needed for test results reporting
 
     steps:
       - uses: actions/checkout@v3
