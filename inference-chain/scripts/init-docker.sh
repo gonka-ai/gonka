@@ -29,6 +29,22 @@ run() {
 
 kv() { run "$APP_NAME" config set "$@"; }
 
+filter_cw20_code() {
+  input=$(cat)
+  # Remove cw20_code field and its value using sed
+  echo "$input" | sed -n -E '
+    # If we find cw20_code, skip until the next closing brace
+    /[[:space:]]*"cw20_code":[[:space:]]*"/ {
+      :skip
+      n
+      /^[[:space:]]*}[,}]?$/! b skip
+      n
+    }
+    # Print all other lines
+    p
+  '
+}
+
 ###############################################################################
 # Required / default environment
 ###############################################################################
@@ -62,15 +78,17 @@ fi
 ###############################################################################
 if $FIRST_RUN; then
   echo "Initialising node (first run)"
-  run "$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
-                       --default-denom "$COIN_DENOM" my-node
+  output=$("$APP_NAME" init --overwrite --chain-id "$CHAIN_ID" \
+                       --default-denom "$COIN_DENOM" my-node 2>&1)
+  echo "$output" | filter_cw20_code
 
   kv client chain-id "$CHAIN_ID"
   kv client keyring-backend "$KEYRING_BACKEND"
   kv app minimum-gas-prices "0${COIN_DENOM}"
 
   GENESIS_FILE="$STATE_DIR/config/genesis.json"
-  run "$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE"
+  output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
+  echo "$output" | filter_cw20_code
 
   run "$APP_NAME" keys add "$KEY_NAME" \
        --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"

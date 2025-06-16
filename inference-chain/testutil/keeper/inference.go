@@ -92,6 +92,7 @@ func InferenceKeeperWithMock(
 		validatorSet,
 		stakingKeeper,
 		accountKeeper,
+		nil,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

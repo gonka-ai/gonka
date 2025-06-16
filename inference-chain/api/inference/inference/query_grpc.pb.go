@@ -58,6 +58,8 @@ const (
 	Query_InProgressTrainingTasks_FullMethodName          = "/inference.inference.Query/InProgressTrainingTasks"
 	Query_PartialUpgrade_FullMethodName                   = "/inference.inference.Query/PartialUpgrade"
 	Query_PartialUpgradeAll_FullMethodName                = "/inference.inference.Query/PartialUpgradeAll"
+	Query_BridgeTransaction_FullMethodName                = "/inference.inference.Query/BridgeTransaction"
+	Query_BridgeTransactions_FullMethodName               = "/inference.inference.Query/BridgeTransactions"
 )
 
 // QueryClient is the client API for Query service.
@@ -132,6 +134,10 @@ type QueryClient interface {
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(ctx context.Context, in *QueryGetPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(ctx context.Context, in *QueryAllPartialUpgradeRequest, opts ...grpc.CallOption) (*QueryAllPartialUpgradeResponse, error)
+	// Queries a bridge transaction by its composite key
+	BridgeTransaction(ctx context.Context, in *QueryGetBridgeTransactionRequest, opts ...grpc.CallOption) (*QueryGetBridgeTransactionResponse, error)
+	// Queries all bridge transactions
+	BridgeTransactions(ctx context.Context, in *QueryAllBridgeTransactionsRequest, opts ...grpc.CallOption) (*QueryAllBridgeTransactionsResponse, error)
 }
 
 type queryClient struct {
@@ -493,6 +499,24 @@ func (c *queryClient) PartialUpgradeAll(ctx context.Context, in *QueryAllPartial
 	return out, nil
 }
 
+func (c *queryClient) BridgeTransaction(ctx context.Context, in *QueryGetBridgeTransactionRequest, opts ...grpc.CallOption) (*QueryGetBridgeTransactionResponse, error) {
+	out := new(QueryGetBridgeTransactionResponse)
+	err := c.cc.Invoke(ctx, Query_BridgeTransaction_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) BridgeTransactions(ctx context.Context, in *QueryAllBridgeTransactionsRequest, opts ...grpc.CallOption) (*QueryAllBridgeTransactionsResponse, error) {
+	out := new(QueryAllBridgeTransactionsResponse)
+	err := c.cc.Invoke(ctx, Query_BridgeTransactions_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -565,6 +589,10 @@ type QueryServer interface {
 	// Queries a list of PartialUpgrade items.
 	PartialUpgrade(context.Context, *QueryGetPartialUpgradeRequest) (*QueryGetPartialUpgradeResponse, error)
 	PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error)
+	// Queries a bridge transaction by its composite key
+	BridgeTransaction(context.Context, *QueryGetBridgeTransactionRequest) (*QueryGetBridgeTransactionResponse, error)
+	// Queries all bridge transactions
+	BridgeTransactions(context.Context, *QueryAllBridgeTransactionsRequest) (*QueryAllBridgeTransactionsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -688,6 +716,12 @@ func (UnimplementedQueryServer) PartialUpgrade(context.Context, *QueryGetPartial
 }
 func (UnimplementedQueryServer) PartialUpgradeAll(context.Context, *QueryAllPartialUpgradeRequest) (*QueryAllPartialUpgradeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PartialUpgradeAll not implemented")
+}
+func (UnimplementedQueryServer) BridgeTransaction(context.Context, *QueryGetBridgeTransactionRequest) (*QueryGetBridgeTransactionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BridgeTransaction not implemented")
+}
+func (UnimplementedQueryServer) BridgeTransactions(context.Context, *QueryAllBridgeTransactionsRequest) (*QueryAllBridgeTransactionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BridgeTransactions not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1404,6 +1438,42 @@ func _Query_PartialUpgradeAll_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BridgeTransaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetBridgeTransactionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BridgeTransaction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BridgeTransaction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BridgeTransaction(ctx, req.(*QueryGetBridgeTransactionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_BridgeTransactions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllBridgeTransactionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BridgeTransactions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BridgeTransactions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BridgeTransactions(ctx, req.(*QueryAllBridgeTransactionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1566,6 +1636,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PartialUpgradeAll",
 			Handler:    _Query_PartialUpgradeAll_Handler,
+		},
+		{
+			MethodName: "BridgeTransaction",
+			Handler:    _Query_BridgeTransaction_Handler,
+		},
+		{
+			MethodName: "BridgeTransactions",
+			Handler:    _Query_BridgeTransactions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
