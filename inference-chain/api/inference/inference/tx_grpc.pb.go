@@ -38,6 +38,12 @@ const (
 	Msg_CreatePartialUpgrade_FullMethodName             = "/inference.inference.Msg/CreatePartialUpgrade"
 	Msg_ClaimTrainingTaskForAssignment_FullMethodName   = "/inference.inference.Msg/ClaimTrainingTaskForAssignment"
 	Msg_AssignTrainingTask_FullMethodName               = "/inference.inference.Msg/AssignTrainingTask"
+	Msg_SubmitTrainingKvRecord_FullMethodName           = "/inference.inference.Msg/SubmitTrainingKvRecord"
+	Msg_JoinTraining_FullMethodName                     = "/inference.inference.Msg/JoinTraining"
+	Msg_TrainingHeartbeat_FullMethodName                = "/inference.inference.Msg/TrainingHeartbeat"
+	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
+	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
+	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
 )
 
 // MsgClient is the client API for Msg service.
@@ -65,6 +71,12 @@ type MsgClient interface {
 	CreatePartialUpgrade(ctx context.Context, in *MsgCreatePartialUpgrade, opts ...grpc.CallOption) (*MsgCreatePartialUpgradeResponse, error)
 	ClaimTrainingTaskForAssignment(ctx context.Context, in *MsgClaimTrainingTaskForAssignment, opts ...grpc.CallOption) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 	AssignTrainingTask(ctx context.Context, in *MsgAssignTrainingTask, opts ...grpc.CallOption) (*MsgAssignTrainingTaskResponse, error)
+	SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error)
+	JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error)
+	TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error)
+	SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error)
+	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
+	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
 }
 
 type msgClient struct {
@@ -246,6 +258,60 @@ func (c *msgClient) AssignTrainingTask(ctx context.Context, in *MsgAssignTrainin
 	return out, nil
 }
 
+func (c *msgClient) SubmitTrainingKvRecord(ctx context.Context, in *MsgSubmitTrainingKvRecord, opts ...grpc.CallOption) (*MsgSubmitTrainingKvRecordResponse, error) {
+	out := new(MsgSubmitTrainingKvRecordResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitTrainingKvRecord_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) JoinTraining(ctx context.Context, in *MsgJoinTraining, opts ...grpc.CallOption) (*MsgJoinTrainingResponse, error) {
+	out := new(MsgJoinTrainingResponse)
+	err := c.cc.Invoke(ctx, Msg_JoinTraining_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) TrainingHeartbeat(ctx context.Context, in *MsgTrainingHeartbeat, opts ...grpc.CallOption) (*MsgTrainingHeartbeatResponse, error) {
+	out := new(MsgTrainingHeartbeatResponse)
+	err := c.cc.Invoke(ctx, Msg_TrainingHeartbeat_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error) {
+	out := new(MsgSetBarrierResponse)
+	err := c.cc.Invoke(ctx, Msg_SetBarrier_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error) {
+	out := new(MsgJoinTrainingStatusResponse)
+	err := c.cc.Invoke(ctx, Msg_JoinTrainingStatus_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error) {
+	out := new(MsgCreateDummyTrainingTaskResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateDummyTrainingTask_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -271,6 +337,12 @@ type MsgServer interface {
 	CreatePartialUpgrade(context.Context, *MsgCreatePartialUpgrade) (*MsgCreatePartialUpgradeResponse, error)
 	ClaimTrainingTaskForAssignment(context.Context, *MsgClaimTrainingTaskForAssignment) (*MsgClaimTrainingTaskForAssignmentResponse, error)
 	AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error)
+	SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error)
+	JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error)
+	TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error)
+	SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error)
+	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
+	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -334,6 +406,24 @@ func (UnimplementedMsgServer) ClaimTrainingTaskForAssignment(context.Context, *M
 }
 func (UnimplementedMsgServer) AssignTrainingTask(context.Context, *MsgAssignTrainingTask) (*MsgAssignTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AssignTrainingTask not implemented")
+}
+func (UnimplementedMsgServer) SubmitTrainingKvRecord(context.Context, *MsgSubmitTrainingKvRecord) (*MsgSubmitTrainingKvRecordResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitTrainingKvRecord not implemented")
+}
+func (UnimplementedMsgServer) JoinTraining(context.Context, *MsgJoinTraining) (*MsgJoinTrainingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinTraining not implemented")
+}
+func (UnimplementedMsgServer) TrainingHeartbeat(context.Context, *MsgTrainingHeartbeat) (*MsgTrainingHeartbeatResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingHeartbeat not implemented")
+}
+func (UnimplementedMsgServer) SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetBarrier not implemented")
+}
+func (UnimplementedMsgServer) JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinTrainingStatus not implemented")
+}
+func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateDummyTrainingTask not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -690,6 +780,114 @@ func _Msg_AssignTrainingTask_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_SubmitTrainingKvRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitTrainingKvRecord)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitTrainingKvRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitTrainingKvRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitTrainingKvRecord(ctx, req.(*MsgSubmitTrainingKvRecord))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_JoinTraining_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgJoinTraining)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).JoinTraining(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_JoinTraining_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).JoinTraining(ctx, req.(*MsgJoinTraining))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_TrainingHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgTrainingHeartbeat)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).TrainingHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_TrainingHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).TrainingHeartbeat(ctx, req.(*MsgTrainingHeartbeat))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetBarrier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetBarrier)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetBarrier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetBarrier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetBarrier(ctx, req.(*MsgSetBarrier))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_JoinTrainingStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgJoinTrainingStatus)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).JoinTrainingStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_JoinTrainingStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).JoinTrainingStatus(ctx, req.(*MsgJoinTrainingStatus))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_CreateDummyTrainingTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateDummyTrainingTask)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreateDummyTrainingTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateDummyTrainingTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateDummyTrainingTask(ctx, req.(*MsgCreateDummyTrainingTask))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -772,6 +970,30 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AssignTrainingTask",
 			Handler:    _Msg_AssignTrainingTask_Handler,
+		},
+		{
+			MethodName: "SubmitTrainingKvRecord",
+			Handler:    _Msg_SubmitTrainingKvRecord_Handler,
+		},
+		{
+			MethodName: "JoinTraining",
+			Handler:    _Msg_JoinTraining_Handler,
+		},
+		{
+			MethodName: "TrainingHeartbeat",
+			Handler:    _Msg_TrainingHeartbeat_Handler,
+		},
+		{
+			MethodName: "SetBarrier",
+			Handler:    _Msg_SetBarrier_Handler,
+		},
+		{
+			MethodName: "JoinTrainingStatus",
+			Handler:    _Msg_JoinTrainingStatus_Handler,
+		},
+		{
+			MethodName: "CreateDummyTrainingTask",
+			Handler:    _Msg_CreateDummyTrainingTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

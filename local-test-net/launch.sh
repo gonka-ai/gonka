@@ -5,6 +5,7 @@ set -e
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
+export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
 export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 rm -r "prod-local" || true
@@ -37,6 +38,7 @@ export PUBLIC_IP="join1-api"
 export PUBLIC_SERVER_PORT=9010
 export ML_SERVER_PORT=9011
 export ADMIN_SERVER_PORT=9012
+export ML_GRPC_SERVER_PORT=9013
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
@@ -50,6 +52,7 @@ export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021
 export ADMIN_SERVER_PORT=9022
+export ML_GRPC_SERVER_PORT=9023
 export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202

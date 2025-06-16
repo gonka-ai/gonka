@@ -125,6 +125,7 @@ type CosmosMessageClient interface {
 	GetContext() *context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
+	GetCosmosClient() *cosmosclient.Client
 }
 
 func (icc *InferenceCosmosClient) GetContext() *context.Context {
@@ -137,6 +138,10 @@ func (icc *InferenceCosmosClient) GetAddress() string {
 
 func (icc *InferenceCosmosClient) GetAccount() *cosmosaccount.Account {
 	return icc.Account
+}
+
+func (icc *InferenceCosmosClient) GetCosmosClient() *cosmosclient.Client {
+	return icc.Client
 }
 
 func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
@@ -343,10 +348,19 @@ func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse,
 		logging.Error("Failed to broadcast transaction", types.Messages, "error", err)
 		return response, err
 	}
-	logging.Debug("Transaction broadcast successfully", types.Messages, "response", response.Data)
-	if response.Code != 0 {
-		logging.Error("Transaction failed", types.Messages, "response", response)
+
+	if response == nil {
+		logging.Warn("Broadcast returned nil response, potentially async mode or error", types.Messages, "id", id)
+		return nil, nil
 	}
+
+	logging.Debug("Transaction broadcast raw response", types.Messages, "id", id, "txHash", response.TxHash, "code", response.Code)
+
+	if response.Code != 0 {
+		logging.Error("Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "response", response)
+		return response, NewTransactionErrorFromResponse(response)
+	}
+	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", response.TxHash)
 	return response, nil
 }
 
@@ -417,5 +431,27 @@ func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.
 		return err
 	}
 
+	txResult := transactionAppliedResult.TxResult
+	if txResult.Code != 0 {
+		logging.Error("Transaction failed on-chain", types.Messages, "txHash", txHash, "code", txResult.Code, "codespace", txResult.Codespace, "rawLog", txResult.Log)
+		return NewTransactionErrorFromResult(transactionAppliedResult)
+	}
+
 	return ParseMsgResponse[T](transactionAppliedResult.TxResult.Data, 0, dstMsg)
+}
+
+func SendTransactionBlocking[In proto.Message, Out proto.Message](ctx context.Context, msgClient CosmosMessageClient, msg In, dstMsg Out) error {
+	txResponse, err := msgClient.SendTransaction(msg)
+	if err != nil {
+		logging.Error("Failed to send transaction", types.Messages, "error", err)
+		return err
+	}
+
+	err = WaitForResponse(ctx, msgClient.GetCosmosClient(), txResponse.TxHash, dstMsg)
+	if err != nil {
+		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
+		return err
+	}
+
+	return err
 }

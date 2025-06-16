@@ -99,6 +99,30 @@ const (
 	// TODO: Determine the simulation weight value
 	defaultWeightMsgCreatePartialUpgrade int = 100
 
+	opWeightMsgSubmitTrainingKvRecord = "op_weight_msg_submit_training_kv_record"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSubmitTrainingKvRecord int = 100
+
+	opWeightMsgJoinTraining = "op_weight_msg_join_training"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgJoinTraining int = 100
+
+	opWeightMsgTrainingHeartbeat = "op_weight_msg_training_heartbeat"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgTrainingHeartbeat int = 100
+
+	opWeightMsgSetBarrier = "op_weight_msg_set_barrier"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgSetBarrier int = 100
+
+	opWeightMsgJoinTrainingStatus = "op_weight_msg_join_training_status"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgJoinTrainingStatus int = 100
+
+	opWeightMsgCreateDummyTrainingTask = "op_weight_msg_create_dummy_training_task"
+	// TODO: Determine the simulation weight value
+	defaultWeightMsgCreateDummyTrainingTask int = 100
+
 	// this line is used by starport scaffolding # simapp/module/const
 )
 
@@ -320,6 +344,72 @@ func (am AppModule) WeightedOperations(simState module.SimulationState) []simtyp
 		inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper),
 	))
 
+	var weightMsgSubmitTrainingKvRecord int
+	simState.AppParams.GetOrGenerate(opWeightMsgSubmitTrainingKvRecord, &weightMsgSubmitTrainingKvRecord, nil,
+		func(_ *rand.Rand) {
+			weightMsgSubmitTrainingKvRecord = defaultWeightMsgSubmitTrainingKvRecord
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgSubmitTrainingKvRecord,
+		inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgJoinTraining int
+	simState.AppParams.GetOrGenerate(opWeightMsgJoinTraining, &weightMsgJoinTraining, nil,
+		func(_ *rand.Rand) {
+			weightMsgJoinTraining = defaultWeightMsgJoinTraining
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgJoinTraining,
+		inferencesimulation.SimulateMsgJoinTraining(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgTrainingHeartbeat int
+	simState.AppParams.GetOrGenerate(opWeightMsgTrainingHeartbeat, &weightMsgTrainingHeartbeat, nil,
+		func(_ *rand.Rand) {
+			weightMsgTrainingHeartbeat = defaultWeightMsgTrainingHeartbeat
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgTrainingHeartbeat,
+		inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgSetBarrier int
+	simState.AppParams.GetOrGenerate(opWeightMsgSetBarrier, &weightMsgSetBarrier, nil,
+		func(_ *rand.Rand) {
+			weightMsgSetBarrier = defaultWeightMsgSetBarrier
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgSetBarrier,
+		inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgJoinTrainingStatus int
+	simState.AppParams.GetOrGenerate(opWeightMsgJoinTrainingStatus, &weightMsgJoinTrainingStatus, nil,
+		func(_ *rand.Rand) {
+			weightMsgJoinTrainingStatus = defaultWeightMsgJoinTrainingStatus
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgJoinTrainingStatus,
+		inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
+	var weightMsgCreateDummyTrainingTask int
+	simState.AppParams.GetOrGenerate(opWeightMsgCreateDummyTrainingTask, &weightMsgCreateDummyTrainingTask, nil,
+		func(_ *rand.Rand) {
+			weightMsgCreateDummyTrainingTask = defaultWeightMsgCreateDummyTrainingTask
+		},
+	)
+	operations = append(operations, simulation.NewWeightedOperation(
+		weightMsgCreateDummyTrainingTask,
+		inferencesimulation.SimulateMsgCreateDummyTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper),
+	))
+
 	// this line is used by starport scaffolding # simapp/module/operation
 
 	return operations
@@ -469,6 +559,54 @@ func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.Wei
 			defaultWeightMsgCreatePartialUpgrade,
 			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
 				inferencesimulation.SimulateMsgCreatePartialUpgrade(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgSubmitTrainingKvRecord,
+			defaultWeightMsgSubmitTrainingKvRecord,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgSubmitTrainingKvRecord(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgJoinTraining,
+			defaultWeightMsgJoinTraining,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgJoinTraining(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgTrainingHeartbeat,
+			defaultWeightMsgTrainingHeartbeat,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgTrainingHeartbeat(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgSetBarrier,
+			defaultWeightMsgSetBarrier,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgSetBarrier(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgJoinTrainingStatus,
+			defaultWeightMsgJoinTrainingStatus,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgJoinTrainingStatus(am.accountKeeper, am.bankKeeper, am.keeper)
+				return nil
+			},
+		),
+		simulation.NewWeightedProposalMsg(
+			opWeightMsgCreateDummyTrainingTask,
+			defaultWeightMsgCreateDummyTrainingTask,
+			func(r *rand.Rand, ctx sdk.Context, accs []simtypes.Account) sdk.Msg {
+				inferencesimulation.SimulateMsgCreateDummyTrainingTask(am.accountKeeper, am.bankKeeper, am.keeper)
 				return nil
 			},
 		),

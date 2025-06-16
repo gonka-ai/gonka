@@ -5,12 +5,12 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
+	"github.com/productscience/inference/x/inference/training"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
-
-	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -23,9 +23,10 @@ const (
 )
 
 type Client struct {
-	pocUrl       string
-	inferenceUrl string
-	client       http.Client
+	pocUrl                string
+	inferenceUrl          string
+	client                http.Client
+	mlGrpcCallbackAddress string
 }
 
 func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
@@ -35,6 +36,7 @@ func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
 		client: http.Client{
 			Timeout: 15 * time.Minute,
 		},
+		mlGrpcCallbackAddress: "api-private:9300", // TODO: PRTODO: make this configurable
 	}
 }
 
@@ -87,6 +89,9 @@ type Checkpoint struct {
 }
 
 type TrainEnv struct {
+	TaskId          string `json:"TASK_ID"`
+	NodeId          string `json:"NODE_ID"`
+	StoreApiUrl     string `json:"STORE_API_URL"`
 	GlobalAddr      string `json:"GLOBAL_ADDR"`
 	GlobalPort      string `json:"GLOBAL_PORT"`
 	GlobalRank      string `json:"GLOBAL_RANK"`
@@ -133,13 +138,20 @@ const (
 	defaultTrainingBasePort   = "10001"
 )
 
-func (api *Client) StartTraining(masterNodeAddr string, rank int, worldSize int) error {
+func (api *Client) StartTraining(taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
 
+	globalNodeId := training.GlobalNodeId{
+		Participant: participant,
+		LocalNodeId: nodeId,
+	}
 	trainEnv := TrainEnv{
+		TaskId:          strconv.FormatUint(taskId, 10),
+		NodeId:          globalNodeId.ToString(),
+		StoreApiUrl:     api.mlGrpcCallbackAddress,
 		GlobalAddr:      masterNodeAddr,
 		GlobalPort:      defaultGlobalTrainingPort,
 		GlobalRank:      strconv.Itoa(rank),
