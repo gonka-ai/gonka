@@ -75,17 +75,18 @@ func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
 }
 
 type Broker struct {
-	commands            chan Command
-	nodes               map[string]*NodeWithState
-	mu                  sync.RWMutex
-	curMaxNodesNum      atomic.Uint64
-	chainBridge         BrokerChainBridge
-	nodeWorkGroup       *NodeWorkGroup
-	phaseTracker        *chainphase.ChainPhaseTracker
-	participantInfo     participant.CurrenParticipantInfo
-	callbackUrl         string
-	mlNodeClientFactory mlnodeclient.ClientFactory
-	reconcileTrigger    chan struct{}
+	highPriorityCommands chan Command
+	lowPriorityCommands  chan Command
+	nodes                map[string]*NodeWithState
+	mu                   sync.RWMutex
+	curMaxNodesNum       atomic.Uint64
+	chainBridge          BrokerChainBridge
+	nodeWorkGroup        *NodeWorkGroup
+	phaseTracker         *chainphase.ChainPhaseTracker
+	participantInfo      participant.CurrenParticipantInfo
+	callbackUrl          string
+	mlNodeClientFactory  mlnodeclient.ClientFactory
+	reconcileTrigger     chan struct{}
 }
 
 const (
@@ -217,14 +218,15 @@ type NodeResponse struct {
 
 func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
 	broker := &Broker{
-		commands:            make(chan Command, 10000),
-		nodes:               make(map[string]*NodeWithState),
-		chainBridge:         chainBridge,
-		phaseTracker:        phaseTracker,
-		participantInfo:     participantInfo,
-		callbackUrl:         callbackUrl,
-		mlNodeClientFactory: clientFactory,
-		reconcileTrigger:    make(chan struct{}, 1),
+		highPriorityCommands: make(chan Command, 100),
+		lowPriorityCommands:  make(chan Command, 10000),
+		nodes:                make(map[string]*NodeWithState),
+		chainBridge:          chainBridge,
+		phaseTracker:         phaseTracker,
+		participantInfo:      participantInfo,
+		callbackUrl:          callbackUrl,
+		mlNodeClientFactory:  clientFactory,
+		reconcileTrigger:     make(chan struct{}, 1),
 	}
 
 	// Initialize NodeWorkGroup
@@ -269,40 +271,54 @@ func nodeSyncWorker(broker *Broker) {
 }
 
 func (b *Broker) processCommands() {
-	for command := range b.commands {
-		logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
-		switch command := command.(type) {
-		case LockAvailableNode:
-			b.lockAvailableNode(command)
-		case ReleaseNode:
-			b.releaseNode(command)
-		case RegisterNode:
-			b.registerNode(command)
-		case RemoveNode:
-			b.removeNode(command)
-		case GetNodesCommand:
-			b.getNodes(command)
-		case SyncNodesCommand:
-			b.syncNodes()
-		case LockNodesForTrainingCommand:
-			b.lockNodesForTraining(command)
-		case StartTrainingCommand:
-			command.Execute(b)
-		case SetNodesActualStatusCommand:
-			b.setNodesActualStatus(command)
-		case SetNodeAdminStateCommand:
-			command.Execute(b)
-		case InferenceUpAllCommand:
-			command.Execute(b)
-		case StartPocCommand:
-			command.Execute(b)
-		case InitValidateCommand:
-			command.Execute(b)
-		case UpdateNodeResultCommand:
-			command.Execute(b)
+	for {
+		select {
+		case command := <-b.highPriorityCommands:
+			b.executeCommand(command)
 		default:
-			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
+			select {
+			case command := <-b.highPriorityCommands:
+				b.executeCommand(command)
+			case command := <-b.lowPriorityCommands:
+				b.executeCommand(command)
+			}
 		}
+	}
+}
+
+func (b *Broker) executeCommand(command Command) {
+	logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
+	switch command := command.(type) {
+	case LockAvailableNode:
+		b.lockAvailableNode(command)
+	case ReleaseNode:
+		b.releaseNode(command)
+	case RegisterNode:
+		b.registerNode(command)
+	case RemoveNode:
+		b.removeNode(command)
+	case GetNodesCommand:
+		b.getNodes(command)
+	case SyncNodesCommand:
+		b.syncNodes()
+	case LockNodesForTrainingCommand:
+		b.lockNodesForTraining(command)
+	case StartTrainingCommand:
+		command.Execute(b)
+	case SetNodesActualStatusCommand:
+		b.setNodesActualStatus(command)
+	case SetNodeAdminStateCommand:
+		command.Execute(b)
+	case InferenceUpAllCommand:
+		command.Execute(b)
+	case StartPocCommand:
+		command.Execute(b)
+	case InitValidateCommand:
+		command.Execute(b)
+	case UpdateNodeResultCommand:
+		command.Execute(b)
+	default:
+		logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 	}
 }
 
@@ -317,7 +333,13 @@ func (b *Broker) QueueMessage(command Command) error {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
 	}
-	b.commands <- command
+
+	switch command.(type) {
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand:
+		b.highPriorityCommands <- command
+	default:
+		b.lowPriorityCommands <- command
+	}
 	return nil
 }
 
