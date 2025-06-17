@@ -14,4 +14,7 @@ spec:
     targetPort: 9100 # Assuming api-deployment.yaml containerPort is 9100 (or named ml-api which resolves to 9100)
   - name: admin
     port: 9200
-    targetPort: 9200 # Assuming api-deployment.yaml containerPort is 9200 (or named admin-api which resolves to 9200) 
+    targetPort: 9200 # Assuming api-deployment.yaml containerPort is 9200 (or named admin-api which resolves to 9200)
+  - name: ml-grpc-server
+    port: 9300
+    targetPort: 9300 # Assuming api-deployment.yaml containerPort is 9300 (or named ml-grpc-api which resolves to 9300)

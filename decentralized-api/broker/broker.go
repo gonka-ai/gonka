@@ -175,7 +175,7 @@ func (b *Broker) processCommands() {
 		case LockNodesForTrainingCommand:
 			b.lockNodesForTraining(command)
 		case StartTrainingCommand:
-			b.startTraining(command)
+			command.Execute(b)
 		case ReconcileNodesCommand:
 			if b.chainState != ChainStateWork {
 				logging.Info("Skipping reconcile nodes command", types.Nodes, "chain_state", b.chainState)
@@ -461,35 +461,6 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
 	// PRTODO: implement
-	command.Response <- true
-}
-
-func (b *Broker) startTraining(command StartTrainingCommand) {
-	for nodeId, rank := range command.nodeRanks {
-		node, nodeFound := b.nodes[nodeId]
-		if !nodeFound {
-			logging.Error("Node not found", types.Nodes, "node_id", nodeId)
-			command.Response <- false
-			return
-		}
-
-		client := mlnodeclient.NewNodeClient(node.Node.PoCUrl(), node.Node.InferenceUrl())
-
-		err := client.Stop()
-		if err != nil {
-			logging.Error("Error stopping training", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
-
-		err = client.StartTraining(command.masterNodeAddress, rank, command.worldSize)
-		if err != nil {
-			logging.Error("Error starting training", types.Nodes, "error", err)
-			command.Response <- false
-			return
-		}
-	}
-
 	command.Response <- true
 }
 

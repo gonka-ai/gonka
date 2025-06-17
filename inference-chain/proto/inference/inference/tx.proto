@@ -10,6 +10,7 @@ import "google/protobuf/any.proto";
 import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
+import "inference/inference/network_node.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -38,6 +39,12 @@ service Msg {
   rpc CreatePartialUpgrade             (MsgCreatePartialUpgrade            ) returns (MsgCreatePartialUpgradeResponse            );
   rpc ClaimTrainingTaskForAssignment   (MsgClaimTrainingTaskForAssignment  ) returns (MsgClaimTrainingTaskForAssignmentResponse  );
   rpc AssignTrainingTask               (MsgAssignTrainingTask              ) returns (MsgAssignTrainingTaskResponse              );
+  rpc SubmitTrainingKvRecord           (MsgSubmitTrainingKvRecord          ) returns (MsgSubmitTrainingKvRecordResponse          );
+  rpc JoinTraining                     (MsgJoinTraining                    ) returns (MsgJoinTrainingResponse                    );
+  rpc TrainingHeartbeat                (MsgTrainingHeartbeat               ) returns (MsgTrainingHeartbeatResponse               );
+  rpc SetBarrier                       (MsgSetBarrier                      ) returns (MsgSetBarrierResponse                      );
+  rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
+  rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -239,8 +246,8 @@ message MsgClaimTrainingTaskForAssignmentResponse {}
 
 message MsgAssignTrainingTask {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  uint64 task_id = 2;
+           string               creator   = 1;
+           uint64               task_id   = 2;
   repeated TrainingTaskAssignee assignees = 3;
 }
 
@@ -248,7 +255,7 @@ message MsgAssignTrainingTaskResponse {}
 
 message MsgCreatePartialUpgrade {
   option (cosmos.msg.v1.signer) = "authority";
-  string authority         = 1;
+  string authority       = 1;
   uint64 height          = 2;
   string nodeVersion     = 3;
   string apiBinariesJson = 4;
@@ -256,3 +263,63 @@ message MsgCreatePartialUpgrade {
 
 message MsgCreatePartialUpgradeResponse {}
 
+message MsgSubmitTrainingKvRecord {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator     = 1;
+  uint64 taskId      = 2;
+  string participant = 3;
+  string key         = 4;
+  string value       = 5;
+}
+
+message MsgSubmitTrainingKvRecordResponse {}
+
+message MsgJoinTraining {
+  option (cosmos.msg.v1.signer) = "creator";
+  string              creator = 1;
+  JoinTrainingRequest req     = 2;
+}
+
+message MsgJoinTrainingResponse {
+  MLNodeTrainStatus status = 1;
+}
+
+message MsgTrainingHeartbeat {
+  option (cosmos.msg.v1.signer) = "creator";
+  string           creator = 1;
+  HeartbeatRequest req     = 2;
+}
+
+message MsgTrainingHeartbeatResponse {
+  HeartbeatResponse resp = 1;
+}
+
+message MsgSetBarrier {
+  option (cosmos.msg.v1.signer) = "creator";
+  string            creator = 1;
+  SetBarrierRequest req     = 2;
+}
+
+message MsgSetBarrierResponse {
+  SetBarrierResponse resp = 1;
+}
+
+message MsgJoinTrainingStatus {
+  option (cosmos.msg.v1.signer) = "creator";
+  string              creator = 1;
+  JoinTrainingRequest req     = 2;
+}
+
+message MsgJoinTrainingStatusResponse {
+  MLNodeTrainStatus status = 1;
+}
+
+message MsgCreateDummyTrainingTask {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  TrainingTask task = 2;
+}
+
+message MsgCreateDummyTrainingTaskResponse {
+  TrainingTask task = 1;
+}

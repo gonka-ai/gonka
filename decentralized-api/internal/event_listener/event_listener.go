@@ -13,12 +13,13 @@ import (
 	"decentralized-api/upgrade"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"github.com/productscience/inference/x/inference/types"
 	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -77,12 +78,15 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	}
 	el.ws = ws
 
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
-	subscribeToEvents(el.ws, "tm.event='NewBlock'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+submitGovProposalAction+"'")
-	subscribeToEvents(el.ws, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+	// WARNING: It looks like Tendermint can't support more than 5 subscriptions per websocket
+	// If we want to add more subscription we should subscribe to all TX and filter on our side
+	subscribeToEvents(el.ws, 1, "tm.event='Tx' AND message.action='"+finishInferenceAction+"'")
+	subscribeToEvents(el.ws, 2, "tm.event='Tx' AND message.action='"+startInferenceAction+"'")
+	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
+	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
+	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
+
+	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
 
 func (el *EventListener) Start(ctx context.Context) {
@@ -173,19 +177,30 @@ func (el *EventListener) listen(ctx context.Context, blockQueue, mainQueue *Unbo
 				continue
 			}
 
+			logging.Debug("Raw websocket message received", types.EventProcessing, "raw_message_bytes", string(message))
+
 			var event chainevents.JSONRPCResponse
 			if err = json.Unmarshal(message, &event); err != nil {
-				logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "message", message)
+				logging.Error("Error unmarshalling message to JSONRPCResponse", types.EventProcessing, "error", err, "raw_message_bytes", string(message))
 				continue
 			}
 
-			if event.Result.Data.Type == newBlockEventType {
-				logging.Debug("New block event received", types.EventProcessing, "ID", event.ID)
+			// Detailed logging for event type evaluation
+			isNewBlockTypeComparison := event.Result.Data.Type == newBlockEventType
+			logging.Info("Event unmarshalled. Evaluating type...", types.EventProcessing,
+				"event_id", event.ID,
+				"subscription_query", event.Result.Query,
+				"result_data_type", event.Result.Data.Type,
+				"comparing_against_type", newBlockEventType,
+				"is_new_block_event_type_result", isNewBlockTypeComparison)
+
+			if isNewBlockTypeComparison {
+				logging.Info("Event classified as NewBlock", types.EventProcessing, "ID", event.ID, "subscription_query", event.Result.Query, "result_data_type", event.Result.Data.Type)
 				blockQueue.In <- &event
 				continue
 			}
 
-			logging.Info("Adding event to queue", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
+			logging.Info("Adding event to the main event queue (classified as non-NewBlock)", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID, "subscription_query", event.Result.Query)
 			select {
 			case mainQueue.In <- &event:
 				logging.Debug("Event successfully queued", types.EventProcessing, "type", event.Result.Data.Type, "id", event.ID)
@@ -232,6 +247,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
 	case txEventType:
+		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
 	default:
 		logging.Warn("Unexpected event type received", types.EventProcessing, "type", event.Result.Data.Type)
@@ -240,6 +256,7 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
+		logging.Warn("Event height not reached yet, skipping", types.EventProcessing, "event", event)
 		return
 	}
 
@@ -252,7 +269,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 	}
 
 	action := actions[0]
-	logging.Debug("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
+	logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "action", action, "worker", name)
 	// Get the keys of the map event.Result.Events:
 	//for key := range event.Result.Events {
 	//	for i, attr := range event.Result.Events[key] {
@@ -276,7 +293,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 		logging.Debug("New proposal submitted", types.EventProcessing, "proposalId", proposalIdOrNil)
 	case trainingTaskAssignedAction:
 		if el.isNodeSynced() {
-			logging.Debug("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
+			logging.Info("MsgAssignTrainingTask event", types.EventProcessing, "event", event)
 			taskIds := event.Result.Events["training_task_assigned.task_id"]
 			if taskIds == nil {
 				logging.Error("No task ID found in training task assigned event", types.Training, "event", event)
@@ -292,7 +309,7 @@ func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name 
 			}
 		}
 	default:
-		logging.Debug("Unhandled action received", types.EventProcessing, "action", action)
+		logging.Warn("Unhandled action received", types.EventProcessing, "action", action)
 	}
 }
 

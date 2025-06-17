@@ -18,6 +18,9 @@ services:
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
+      - "9090:9090"
+      - "9091:9091"
+      - "1317:1317"
 
   api:
     container_name: ${KEY_NAME}-api
@@ -29,6 +32,7 @@ services:
       - "${PUBLIC_SERVER_PORT}:9000"
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"
+      - "${ML_GRPC_SERVER_PORT}:9300"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
@@ -37,6 +41,7 @@ services:
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
+      - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__IS_GENESIS=true
       - NODE_CONFIG_PATH=/root/node_config.json

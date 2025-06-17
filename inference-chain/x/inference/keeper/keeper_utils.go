@@ -47,7 +47,7 @@ func GetValueFromStore[T proto.Message](k *Keeper, object T, store prefix.Store,
 
 func GetAllValues[T proto.Message](
 	ctx context.Context,
-	k Keeper,
+	k *Keeper,
 	keyPrefix []byte,
 	newT func() T,
 ) ([]T, error) {
