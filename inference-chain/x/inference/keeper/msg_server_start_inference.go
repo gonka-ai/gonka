@@ -4,10 +4,9 @@ import (
 	"context"
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
-
-const DefaultMaxTokens = 5000
 
 func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInference) (*types.MsgStartInferenceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -43,7 +42,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		inference.Model = msg.Model
 		inference.StartBlockHeight = ctx.BlockHeight()
 		inference.StartBlockTimestamp = ctx.BlockTime().UnixMilli()
-		inference.MaxTokens = DefaultMaxTokens
+		inference.MaxTokens = calculations.DefaultMaxTokens
 		inference.AssignedTo = msg.AssignedTo
 		inference.NodeVersion = msg.NodeVersion
 	} else {
@@ -59,7 +58,7 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 			StartBlockHeight:    ctx.BlockHeight(),
 			StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 			// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-			MaxTokens:   DefaultMaxTokens,
+			MaxTokens:   calculations.DefaultMaxTokens,
 			AssignedTo:  msg.AssignedTo,
 			NodeVersion: msg.NodeVersion,
 		}

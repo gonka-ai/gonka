@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -32,7 +33,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 			EndBlockHeight:       ctx.BlockHeight(),
 			EndBlockTimestamp:    ctx.BlockTime().UnixMilli(),
 			// These fields will be updated when StartInference comes
-			MaxTokens: DefaultMaxTokens, // Use default for now
+			MaxTokens: calculations.DefaultMaxTokens, // Use default for now
 		}
 	}
 	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
