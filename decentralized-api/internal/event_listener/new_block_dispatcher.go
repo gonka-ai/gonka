@@ -30,13 +30,6 @@ type StatusFunc func() (*coretypes.ResultStatus, error)
 
 type SetHeightFunc func(blockHeight int64) error
 
-// NewBlockInfo contains parsed information from a new block event
-type NewBlockInfo struct {
-	Height    int64
-	Hash      string
-	Timestamp time.Time
-}
-
 // PhaseInfo contains complete phase and epoch information for a given block
 type PhaseInfo struct {
 	CurrentEpoch uint64
@@ -159,7 +152,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
-func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo NewBlockInfo) error {
+func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainphase.BlockInfo) error {
 	logging.Debug("Processing new block", types.Stages,
 		"height", blockInfo.Height,
 		"hash", blockInfo.Hash)
@@ -174,12 +167,12 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo Ne
 
 	// 2. Update phase tracker and get phase info
 	d.phaseTracker.Update(blockInfo.Height, networkInfo.CurrentEpochGroup, networkInfo.EpochParams)
-	epochContext, blockHeight, currentPhase, currentEpoch := d.phaseTracker.GetCurrentEpochPhaseInfo()
+	epochContext, _, currentPhase := d.phaseTracker.GetCurrentEpochState()
 
 	phaseInfo := &PhaseInfo{
-		CurrentEpoch: currentEpoch,
+		CurrentEpoch: epochContext.Epoch,
 		CurrentPhase: currentPhase,
-		BlockHeight:  blockHeight,
+		BlockHeight:  blockInfo.Height,
 		BlockHash:    blockInfo.Hash,
 		EpochParams:  networkInfo.EpochParams,
 		IsSynced:     networkInfo.IsSynced,
@@ -370,7 +363,7 @@ func getCommandForPhase(phaseInfo *PhaseInfo) (broker.Command, *chan bool) {
 }
 
 // parseNewBlockInfo extracts NewBlockInfo from a JSONRPCResponse event
-func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*NewBlockInfo, error) {
+func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInfo, error) {
 	blockHeight, err := getBlockHeight(event.Result.Data.Value)
 	if err != nil {
 		return nil, err
@@ -381,7 +374,7 @@ func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*NewBlockInfo, error
 		return nil, err
 	}
 
-	return &NewBlockInfo{
+	return &chainphase.BlockInfo{
 		Height:    blockHeight,
 		Hash:      blockHash,
 		Timestamp: time.Now(), // We could parse this from the event if needed

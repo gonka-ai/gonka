@@ -2,42 +2,44 @@ package chainphase
 
 import "github.com/productscience/inference/x/inference/types"
 
-// EpochContext provides a stable context for an epoch, anchored by its starting block height.
-// It is used to reliably calculate phases and transitions regardless of changes to epoch parameters.
+// EpochContext provides a stable context for an Epoch, anchored by its starting block height.
+// It is used to reliably calculate phases and transitions regardless of changes to Epoch parameters.
 type EpochContext struct {
-	pocStartBlockHeight uint64
-	epochParams         types.EpochParams
+	Epoch               uint64
+	PocStartBlockHeight uint64
+	EpochParams         types.EpochParams
 }
 
-// NewEpochContext creates a new, stable context for epoch calculations.
+// NewEpochContext creates a new, stable context for Epoch calculations.
 func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochParams) *EpochContext {
 	return &EpochContext{
-		pocStartBlockHeight: epochGroup.PocStartBlockHeight,
-		epochParams:         epochParams,
+		Epoch:               epochGroup.EpochGroupId,
+		PocStartBlockHeight: epochGroup.PocStartBlockHeight,
+		EpochParams:         epochParams,
 	}
 }
 
-// GetCurrentPhase calculates the current epoch phase based on the block height relative to the epoch's start.
+// GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
 func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
 	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
-	epochStartHeight := ec.pocStartBlockHeight
+	epochStartHeight := ec.PocStartBlockHeight
 	if blockHeight < int64(epochStartHeight) {
-		// This can happen during the initial epoch or if there's a state mismatch.
+		// This can happen during the initial Epoch or if there's a state mismatch.
 		// InferencePhase is the safest default.
 		return types.InferencePhase
 	}
 
-	// Calculate height relative to the epoch's true start.
+	// Calculate height relative to the Epoch's true start.
 	relativeBlockHeight := blockHeight - int64(epochStartHeight)
 
-	// If we are past the current epoch's length, we are in the PoC stages for the *next* epoch,
-	// but the "phase" is determined by the offsets defined in the *current* epoch's parameters.
-	relativeBlockHeight = relativeBlockHeight % ec.epochParams.EpochLength
+	// If we are past the current Epoch's length, we are in the PoC stages for the *next* Epoch,
+	// but the "phase" is determined by the offsets defined in the *current* Epoch's parameters.
+	relativeBlockHeight = relativeBlockHeight % ec.EpochParams.EpochLength
 
-	startOfPoC := ec.epochParams.GetStartOfPoCStage()
-	endOfPoC := ec.epochParams.GetEndOfPoCStage()
-	startOfPoCValidation := ec.epochParams.GetStartOfPoCValidationStage()
-	endOfPoCValidation := ec.epochParams.GetEndOfPoCValidationStage()
+	startOfPoC := ec.EpochParams.GetStartOfPoCStage()
+	endOfPoC := ec.EpochParams.GetEndOfPoCStage()
+	startOfPoCValidation := ec.EpochParams.GetStartOfPoCValidationStage()
+	endOfPoCValidation := ec.EpochParams.GetEndOfPoCValidationStage()
 
 	pocGenerateDuration := endOfPoC - startOfPoC
 	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*types.PoCGenerateWindDownFactor)
@@ -61,41 +63,41 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
 	return types.InferencePhase
 }
 
-// isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the epoch.
+// isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the Epoch.
 func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 	if ec.IsStartOfNextPoC(blockHeight) {
-		return phaseOffset == ec.epochParams.GetStartOfPoCStage()
+		return phaseOffset == ec.EpochParams.GetStartOfPoCStage()
 	}
 
-	relativeHeight := blockHeight - int64(ec.pocStartBlockHeight)
+	relativeHeight := blockHeight - int64(ec.PocStartBlockHeight)
 	if relativeHeight < 0 {
 		return false
 	}
 
-	return relativeHeight%ec.epochParams.EpochLength == phaseOffset
+	return relativeHeight%ec.EpochParams.EpochLength == phaseOffset
 }
 
-// IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next epoch.
+// IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next Epoch.
 func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
-	return blockHeight == int64(ec.pocStartBlockHeight)+ec.epochParams.EpochLength
+	return blockHeight == int64(ec.PocStartBlockHeight)+ec.EpochParams.EpochLength
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.epochParams.GetEndOfPoCStage())
+	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetEndOfPoCStage())
 }
 
 func (ec *EpochContext) IsStartOfPoCValidationStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.epochParams.GetStartOfPoCValidationStage())
+	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetStartOfPoCValidationStage())
 }
 
 func (ec *EpochContext) IsEndOfPoCValidationStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.epochParams.GetEndOfPoCValidationStage())
+	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetEndOfPoCValidationStage())
 }
 
 func (ec *EpochContext) IsSetNewValidatorsStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.epochParams.GetSetNewValidatorsStage())
+	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetSetNewValidatorsStage())
 }
 
 func (ec *EpochContext) IsClaimMoneyStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.epochParams.GetClaimMoneyStage())
+	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetClaimMoneyStage())
 }

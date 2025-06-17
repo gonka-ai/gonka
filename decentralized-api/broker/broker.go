@@ -952,7 +952,7 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 }
 
 func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocParams, error) {
-	startHeight := chainphase.CalculatePoCStartHeight(info.BlockHeight, &info.EpochParams)
+	startHeight := info.EpochStartBlockHeight // FIXME: is that true?
 	hash, err := b.chainBridge.GetBlockHash(startHeight)
 	if err != nil {
 		logging.Error("Failed to query PoC start block hash", types.Nodes, "error", err)

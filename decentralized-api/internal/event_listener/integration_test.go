@@ -266,7 +266,7 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 }
 
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
-	blockInfo := NewBlockInfo{
+	blockInfo := chainphase.BlockInfo{
 		Height:    height,
 		Hash:      fmt.Sprintf("hash-%d", height),
 		Timestamp: time.Now(),
