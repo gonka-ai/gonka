@@ -10,7 +10,7 @@ images:
   newTag: 0.1.2
 - name: inference
   newName: ghcr.io/product-science/mlnode
-  newTag: 3.0.4-alpha2
+  newTag: 3.0.4-alpha2-bcstore-test-0.2
 - name: tmkms
   newName: ghcr.io/product-science/tmkms-softsign-with-keygen
   newTag: 32165a2

@@ -18,6 +18,12 @@ data:
               "fp8"
             ]
           }
-        }
+        },
+        "hardware": [
+          {
+            "type": "L4",
+            "count": 1
+          }
+        ]
       }
     ]

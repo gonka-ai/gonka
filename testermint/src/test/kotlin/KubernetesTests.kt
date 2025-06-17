@@ -112,8 +112,9 @@ class KubernetesTests : TestermintTest() {
 
     @Test
     fun k8sUpgrade() {
-        val releaseTag = System.getenv("RELEASE_TAG") ?: "v0.1.4-25"
-
+        val releaseTag = System.getenv("RELEASE_TAG") ?: "release/v0.1.4-25"
+//        val releaseTag = "v0.1.4-28"
+        val releaseVersion = releaseTag.substringAfterLast("/")
         getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
             val genesis = k8sPairs.first { it.name == "genesis" }
             val govParams = genesis.node.getGovParams()
@@ -128,7 +129,7 @@ class KubernetesTests : TestermintTest() {
             val deposit = govParams.params.minDeposit.first().amount
             logSection("Submitting upgrade proposal")
             val response = genesis.submitUpgradeProposal(
-                title = releaseTag,
+                title = releaseVersion,
                 description = "Automated upgrade to latest release",
                 binaries = mapOf(
                     "linux/amd64" to amdBinaryPath,
@@ -159,6 +160,10 @@ class KubernetesTests : TestermintTest() {
             genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
             logSection("Waiting for upgrade to finish")
             Thread.sleep(Duration.ofMinutes(5))
+        }
+        // After 5 minutes and a reboot, we need to reconnect
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
             logSection("Verifying upgrade")
             genesis.node.waitForNextBlock(1)
             // Some other action?

@@ -28,26 +28,30 @@ spec:
           name: ml-api
         - containerPort: 9200
           name: admin-api
+        - containerPort: 9300
+          name: ml-grpc-server
         envFrom:
         - configMapRef:
             name: config
         env:
         - name: NODE_CONFIG_PATH
           value: "/root/node_config.json"
+        - name: DAPI_API__POC_CALLBACK_URL
+          value: "http://api-private:9100"
+        - name: DAPI_API__ML_GRPC_CALLBACK_ADDRESS
+          value: "api-private:9300"
         - name: DAPI_API__PUBLIC_SERVER_PORT
           value: "9000"
         - name: DAPI_API__ML_SERVER_PORT
           value: "9100"
         - name: DAPI_API__ADMIN_SERVER_PORT
           value: "9200"
-        - name: DAPI_API__POC_CALLBACK_URL
-          value: "http://api-private:9100"
-        - name: DAPI_CHAIN_NODE__URL
-          value: "http://node:26657"
+        - name: DAPI_API__ML_GRPC_SERVER_PORT
+          value: "9300"
         - name: DAPI_CHAIN_NODE__SEED_API_URL
           value: "http://34.9.136.116:30000"
-        - name: DAPI_CHAIN_NODE__P2P_URL
-          value: "http://node:26656"
+        - name: DAPI_CHAIN_NODE__URL
+          value: "http://node:26657"
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference
