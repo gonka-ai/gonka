@@ -43,9 +43,10 @@ class InferenceAccountingTests : TestermintTest() {
         genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
         val lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
         assertThat(lastRequest).isNotNull
-        val maxTokens = lastRequest?.maxTokens ?: lastRequest?.maxCompletionTokens
-        assertThat(maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
-        assertThat(maxTokens).isEqualTo(expectedMaxTokens)
+        assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
+        assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
+        assertThat(lastRequest?.maxCompletionTokens).withFailMessage { "Max completion tokens was not set" }.isNotNull()
+        assertThat(lastRequest?.maxCompletionTokens).isEqualTo(expectedMaxTokens)
         val difference = (0..100).asSequence().map {
             Thread.sleep(100)
             startBalance - genesis.node.getSelfBalance()
