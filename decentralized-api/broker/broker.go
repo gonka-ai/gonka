@@ -335,7 +335,7 @@ func (b *Broker) QueueMessage(command Command) error {
 	}
 
 	switch command.(type) {
-	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand:
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode:
 		b.highPriorityCommands <- command
 	default:
 		b.lowPriorityCommands <- command
