@@ -10,6 +10,7 @@ import java.time.Duration
 import java.util.concurrent.TimeUnit
 import kotlin.collections.component1
 import kotlin.collections.component2
+import kotlin.random.Random
 import kotlin.test.assertNotNull
 
 val DELAY_SEED = 8675309
@@ -20,21 +21,31 @@ class InferenceAccountingTests : TestermintTest() {
     @Test
     fun `test with maximum tokens`() {
         val (cluster, genesis) = initCluster()
-        verifyEscrow(genesis, inferenceRequestObject.copy(maxCompletionTokens = 100), 100L * defaultTokenCost)
+        verifyEscrow(cluster, inferenceRequestObject.copy(maxCompletionTokens = 100), 100L * defaultTokenCost, 100)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(genesis, inferenceRequestObject.copy(maxTokens = 100), 100L * defaultTokenCost)
+        verifyEscrow(cluster, inferenceRequestObject.copy(maxTokens = 100), 100L * defaultTokenCost, 100)
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(genesis, inferenceRequestObject, defaultTokens * defaultTokenCost)
+        verifyEscrow(cluster, inferenceRequestObject, defaultTokens * defaultTokenCost, defaultTokens.toInt())
     }
 
     private fun verifyEscrow(
-        genesis: LocalInferencePair,
+        cluster: LocalCluster,
         inference: InferenceRequestPayload,
-        expectedEscrow: Long
+        expectedEscrow: Long,
+        expectedMaxTokens: Int,
     ) {
+        val genesis = cluster.genesis
         val startBalance = genesis.node.getSelfBalance()
-        genesis.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(5))
-        genesis.makeInferenceRequest(inference.toJson())
+        cluster.allPairs.forEach {
+            it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(5))
+        }
+        val seed = Random.nextInt()
+        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        val lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+        assertThat(lastRequest).isNotNull
+        val maxTokens = lastRequest?.maxTokens ?: lastRequest?.maxCompletionTokens
+        assertThat(maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
+        assertThat(maxTokens).isEqualTo(expectedMaxTokens)
         val difference = (0..100).asSequence().map {
             Thread.sleep(100)
             startBalance - genesis.node.getSelfBalance()

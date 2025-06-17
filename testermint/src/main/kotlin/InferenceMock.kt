@@ -6,6 +6,8 @@ import com.github.tomakehurst.wiremock.client.WireMock.aResponse
 import com.github.tomakehurst.wiremock.client.WireMock.equalToJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
+import com.github.tomakehurst.wiremock.http.RequestMethod
+import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder
 import com.productscience.data.OpenAIResponse
 import kotlin.time.Duration
 
@@ -13,6 +15,15 @@ class InferenceMock(port: Int, val name: String) {
     private val mockClient = WireMock(port)
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
+
+    fun getLastInferenceRequest(): InferenceRequestPayload? {
+        val requests = mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("/v1/chat/completions")))
+        if (requests.isEmpty()) {
+            return null
+        }
+        val lastRequest = requests.last()
+        return openAiJson.fromJson(lastRequest.bodyAsString, InferenceRequestPayload::class.java)
+    }
 
     fun setInferenceResponse(response: String, delay: java.time.Duration = java.time.Duration.ZERO, segment: String = "", model: String? = null) =
         this.givenThat(

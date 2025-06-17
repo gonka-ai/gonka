@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"encoding/json"
+	"github.com/productscience/inference/x/inference/keeper"
 	"log"
 )
 
@@ -25,6 +26,10 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
 	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 5 {
 		requestMap["top_logprobs"] = 5
+	}
+
+	if requestMap["max_tokens"] == nil && requestMap["max_completion_tokens"] == nil {
+		requestMap["max_tokens"] = keeper.DefaultMaxTokens // Default value if not specified
 	}
 
 	if doStream, ok := requestMap["stream"]; ok && doStream.(bool) {
