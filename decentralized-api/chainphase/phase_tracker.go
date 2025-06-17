@@ -6,19 +6,71 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// ChainPhaseTracker acts as a thread-safe cache for the current epoch's state.
+// It is updated by the OnNewBlockDispatcher and used by other components like the Broker
+// to get consistent and reliable information about the current epoch and phase.
 type ChainPhaseTracker struct {
 	mu sync.RWMutex
 
 	currentBlockHeight int64
+	currentEpochGroup  *types.EpochGroupData
 	currentEpochParams *types.EpochParams
 }
 
-// NewChainPhaseTracker creates a new ChainPhaseTracker instance
+// NewChainPhaseTracker creates a new ChainPhaseTracker instance.
 func NewChainPhaseTracker() *ChainPhaseTracker {
-	return &ChainPhaseTracker{
-		currentBlockHeight: 0,
-		currentEpochParams: nil,
+	return &ChainPhaseTracker{}
+}
+
+// Update caches the latest epoch information from the network.
+// This method should be called by the OnNewBlockDispatcher on every new block.
+func (t *ChainPhaseTracker) Update(height int64, group *types.EpochGroupData, params *types.EpochParams) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.currentBlockHeight = height
+	t.currentEpochGroup = group
+	t.currentEpochParams = params
+}
+
+// GetCurrentEpochPhaseInfo returns a snapshot of the current epoch state.
+// It creates a new EpochContext on the fly to ensure calculations are based on the latest cached data.
+func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() (*EpochContext, int64, types.EpochPhase, uint64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.currentEpochGroup == nil || t.currentEpochParams == nil {
+		return nil, t.currentBlockHeight, types.InferencePhase, 0
 	}
+
+	// Create a new context for this specific query to ensure consistency
+	ctx := NewEpochContext(t.currentEpochGroup, *t.currentEpochParams)
+	phase := ctx.GetCurrentPhase(t.currentBlockHeight)
+	epoch := getEpoch(int64(t.currentEpochGroup.PocStartBlockHeight), t.currentEpochParams)
+
+	return ctx, t.currentBlockHeight, phase, epoch
+}
+
+// GetCurrentEpoch returns the current epoch number based on the cached epoch start height.
+func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.currentEpochGroup == nil || t.currentEpochParams == nil || t.currentEpochParams.EpochLength == 0 {
+		return 0
+	}
+
+	return getEpoch(int64(t.currentEpochGroup.PocStartBlockHeight), t.currentEpochParams)
+}
+
+func getEpoch(pocStartBlockHeight int64, params *types.EpochParams) uint64 {
+	if params == nil || params.EpochLength == 0 {
+		return 0
+	}
+	shiftedHeight := pocStartBlockHeight + params.EpochShift
+	epochNumber := uint64(shiftedHeight / params.EpochLength)
+
+	return epochNumber
 }
 
 func (t *ChainPhaseTracker) GetEpochParams() *types.EpochParams {
@@ -106,23 +158,4 @@ func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() EpochPhaseInfo {
 		Phase:       phase,
 		EpochParams: *t.currentEpochParams,
 	}
-}
-
-// GetCurrentEpoch returns the current epoch number based on block height
-func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	if t.currentEpochParams == nil || t.currentBlockHeight == 0 {
-		return 0
-	}
-
-	return getEpoch(t.currentBlockHeight, t.currentEpochParams)
-}
-
-func getEpoch(blockHeight int64, params *types.EpochParams) uint64 {
-	shiftedHeight := blockHeight + params.EpochShift
-	epochNumber := uint64(shiftedHeight / params.EpochLength)
-
-	return epochNumber
 }

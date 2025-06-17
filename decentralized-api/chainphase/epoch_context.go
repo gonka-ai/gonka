@@ -1,4 +1,4 @@
-package event_listener
+package chainphase
 
 import "github.com/productscience/inference/x/inference/types"
 

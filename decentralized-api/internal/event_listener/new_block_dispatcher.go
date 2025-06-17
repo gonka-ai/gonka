@@ -20,8 +20,9 @@ import (
 )
 
 // Minimal interface for query operations needed by the dispatcher
-type QueryParamsClient interface {
+type ChainStateClient interface {
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+	CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -44,6 +45,7 @@ type PhaseInfo struct {
 	BlockHash    string
 	EpochParams  *types.EpochParams
 	IsSynced     bool
+	EpochContext *chainphase.EpochContext
 }
 
 // PoCParams contains Proof of Compute parameters
@@ -69,7 +71,7 @@ type MlNodeReconciliationConfig struct {
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
 	nodePocOrchestrator  poc.NodePoCOrchestrator
-	queryClient          QueryParamsClient
+	queryClient          ChainStateClient
 	phaseTracker         *chainphase.ChainPhaseTracker
 	reconciliationConfig MlNodeReconciliationConfig
 	getStatusFunc        StatusFunc
@@ -103,7 +105,7 @@ var DefaultReconciliationConfig = MlNodeReconciliationConfig{
 func NewOnNewBlockDispatcher(
 	nodeBroker *broker.Broker,
 	nodePocOrchestrator poc.NodePoCOrchestrator,
-	queryClient QueryParamsClient,
+	queryClient ChainStateClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	getStatusFunc StatusFunc,
 	setHeightFunc SetHeightFunc,
@@ -170,8 +172,19 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo Ne
 		return err // Skip processing this block
 	}
 
-	// 2. Update phase tracker (pure functions) and get phase info
-	phaseInfo := d.updatePhaseAndGetInfo(blockInfo, networkInfo)
+	// 2. Update phase tracker and get phase info
+	d.phaseTracker.Update(blockInfo.Height, networkInfo.CurrentEpochGroup, networkInfo.EpochParams)
+	epochContext, blockHeight, currentPhase, currentEpoch := d.phaseTracker.GetCurrentEpochPhaseInfo()
+
+	phaseInfo := &PhaseInfo{
+		CurrentEpoch: currentEpoch,
+		CurrentPhase: currentPhase,
+		BlockHeight:  blockHeight,
+		BlockHash:    blockInfo.Hash,
+		EpochParams:  networkInfo.EpochParams,
+		IsSynced:     networkInfo.IsSynced,
+		EpochContext: epochContext,
+	}
 
 	// 3. Check for phase transitions and stage events
 	d.handlePhaseTransitions(phaseInfo)
@@ -192,8 +205,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo Ne
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {
-	EpochParams *types.EpochParams
-	IsSynced    bool
+	EpochParams       *types.EpochParams
+	IsSynced          bool
+	CurrentEpochGroup *types.EpochGroupData
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -211,51 +225,38 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 		return nil, err
 	}
 
-	return &NetworkInfo{
-		EpochParams: params.Params.EpochParams,
-		IsSynced:    isSynced,
-	}, nil
-}
-
-// updatePhaseAndGetInfo updates the phase tracker and returns complete phase info
-func (d *OnNewBlockDispatcher) updatePhaseAndGetInfo(blockInfo NewBlockInfo, networkInfo *NetworkInfo) *PhaseInfo {
-	// Update phase tracker with pure functions
-	d.phaseTracker.UpdateEpochParams(*networkInfo.EpochParams)
-	d.phaseTracker.UpdateBlockHeight(blockInfo.Height)
-
-	// Get current phase and epoch
-	currentPhase, _ := d.phaseTracker.GetCurrentPhase()
-	currentEpoch := d.phaseTracker.GetCurrentEpoch()
-
-	return &PhaseInfo{
-		CurrentEpoch: currentEpoch,
-		CurrentPhase: currentPhase,
-		BlockHeight:  blockInfo.Height,
-		BlockHash:    blockInfo.Hash,
-		EpochParams:  networkInfo.EpochParams,
-		IsSynced:     networkInfo.IsSynced,
+	// Query for the current epoch group data, which is our new source of truth
+	epochGroupData, err := d.queryClient.CurrentEpochGroupData(ctx, &types.QueryCurrentEpochGroupDataRequest{})
+	if err != nil {
+		return nil, err
 	}
+
+	return &NetworkInfo{
+		EpochParams:       params.Params.EpochParams,
+		IsSynced:          isSynced,
+		CurrentEpochGroup: &epochGroupData.EpochGroupData,
+	}, nil
 }
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
-	if phaseInfo.EpochParams == nil {
+	if phaseInfo.EpochContext == nil {
 		return
 	}
 
-	epochParams := phaseInfo.EpochParams
+	epochContext := phaseInfo.EpochContext
 	blockHeight := phaseInfo.BlockHeight
 	blockHash := phaseInfo.BlockHash
 
-	// Check for PoC start
-	if epochParams.IsStartOfPoCStage(blockHeight) {
+	// Check for PoC start for the next epoch. This is the most important transition.
+	if epochContext.IsStartOfNextPoC(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		d.randomSeedManager.GenerateSeed(blockHeight)
 		return
 	}
 
 	// Check for PoC validation stage transitions
-	if epochParams.IsEndOfPoCStage(blockHeight) {
+	if epochContext.IsEndOfPoCStage(blockHeight) {
 		logging.Info("IsEndOfPoCStage. Calling MoveToValidationStage", types.Stages,
 			"blockHeigh", blockHeight, "blockHash", blockHash)
 		command := broker.NewInitValidateCommand()
@@ -266,14 +267,14 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 		}
 	}
 
-	if epochParams.IsStartOfPoCValidationStage(blockHeight) {
+	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		logging.Info("IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.nodePocOrchestrator.ValidateReceivedBatches(blockHeight)
 		}()
 	}
 
-	if epochParams.IsEndOfPoCValidationStage(blockHeight) {
+	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		command := broker.NewInferenceUpAllCommand()
 		err := d.nodeBroker.QueueMessage(command)
 		if err != nil {
@@ -284,14 +285,14 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 	}
 
 	// Check for other stage transitions
-	if epochParams.IsSetNewValidatorsStage(blockHeight) {
+	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		logging.Info("IsSetNewValidatorsStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.randomSeedManager.ChangeCurrentSeed()
 		}()
 	}
 
-	if epochParams.IsClaimMoneyStage(blockHeight) {
+	if epochContext.IsClaimMoneyStage(blockHeight) {
 		logging.Info("IsClaimMoneyStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		go func() {
 			d.randomSeedManager.RequestMoney()
@@ -302,7 +303,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(phaseInfo *PhaseInfo) bool {
 	switch phaseInfo.CurrentPhase {
-	case types.PoCGeneratePhase, types.PoCValidatePhase:
+	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase, types.PoCValidatePhase, types.PoCValidateWindDownPhase:
 		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.PoC)
 	case types.InferencePhase:
 		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.Inference)
@@ -355,10 +356,10 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 
 func getCommandForPhase(phaseInfo *PhaseInfo) (broker.Command, *chan bool) {
 	switch phaseInfo.CurrentPhase {
-	case types.PoCGeneratePhase:
+	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase:
 		cmd := broker.NewStartPocCommand()
 		return cmd, &cmd.Response
-	case types.PoCValidatePhase:
+	case types.PoCValidatePhase, types.PoCValidateWindDownPhase:
 		cmd := broker.NewInitValidateCommand()
 		return cmd, &cmd.Response
 	case types.InferencePhase:
