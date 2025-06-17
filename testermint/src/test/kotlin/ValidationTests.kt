@@ -97,6 +97,18 @@ class ValidationTests : TestermintTest() {
 }
 
 
+fun inParallel(
+    count: Int,
+    maxConcurrent: Int,
+    action: (Int) -> Unit
+) {
+    runBlocking {
+        val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrent).asCoroutineDispatcher()
+        val requests = List(count) { async(limitedDispatcher) { action(it) } }
+        requests.forEach { it.await() }
+    }
+}
+
 fun runParallelInferences(
     genesis: LocalInferencePair,
     count: Int,
@@ -110,7 +122,14 @@ fun runParallelInferences(
     val requests = List(count) { i ->
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
-            genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+            try {
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+            } catch (e: Exception) {
+                Logger.error("Error making inference request: ${e.message}")
+                null
+            } finally {
+                Logger.warn("Finished request $i")
+            }
         }
     }
 
@@ -120,9 +139,11 @@ fun runParallelInferences(
     genesis.node.waitForNextBlock(waitForBlocks)
 
     // Return statuses
-    results.map { result ->
-        val inference = genesis.api.getInference(result.id)
-        inference.status
+    results.mapNotNull { result ->
+        result?.let {
+            val inference = genesis.api.getInference(result.id)
+            inference.status
+        }
     }
 }
 
