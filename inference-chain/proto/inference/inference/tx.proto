@@ -11,6 +11,7 @@ import "inference/inference/params.proto";
 import "inference/inference/training_task.proto";
 import "inference/inference/hardware_node.proto";
 import "inference/inference/network_node.proto";
+import "inference/inference/bridge_transaction.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -45,6 +46,7 @@ service Msg {
   rpc SetBarrier                       (MsgSetBarrier                      ) returns (MsgSetBarrierResponse                      );
   rpc JoinTrainingStatus               (MsgJoinTrainingStatus              ) returns (MsgJoinTrainingStatusResponse              );
   rpc CreateDummyTrainingTask          (MsgCreateDummyTrainingTask         ) returns (MsgCreateDummyTrainingTaskResponse         );
+  rpc BridgeExchange                   (MsgBridgeExchange                  ) returns (MsgBridgeExchangeResponse                  );
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -323,4 +325,21 @@ message MsgCreateDummyTrainingTask {
 
 message MsgCreateDummyTrainingTaskResponse {
   TrainingTask task = 1;
+}
+message MsgBridgeExchange {
+  option (cosmos.msg.v1.signer) = "validator";
+  string validator              = 1;
+  string originChain            = 2;  // e.g., "ethereum"
+  string contractAddress        = 3;  // original chain smart contract address
+  string ownerAddress           = 4;  // token owner's address on the origin chain
+  string ownerPubKey            = 5;  // public key of the token owner
+  string amount                 = 6;  // amount of tokens being bridged
+  string blockNumber            = 7;  // block number where the transaction occurred
+  string receiptIndex           = 8;  // index of the transaction receipt in the block
+  string receiptsRoot           = 9;  // merkle root of receipts trie for transaction verification
+  
+}
+
+message MsgBridgeExchangeResponse {
+  string id = 1;  // Unique bridge transaction ID (originChain_blockNumber_receiptIndex)
 }

@@ -1,12 +1,21 @@
 package app
 
 import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
 	"cosmossdk.io/core/appmodule"
 	storetypes "cosmossdk.io/store/types"
+	"github.com/CosmWasm/wasmd/x/wasm"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	"github.com/cosmos/cosmos-sdk/client/flags"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
-	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -28,18 +37,19 @@ import (
 	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 	ibc "github.com/cosmos/ibc-go/v8/modules/core"
-	ibcclienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	ibcclienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types" //nolint:all
 	ibcconnectiontypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
 	porttypes "github.com/cosmos/ibc-go/v8/modules/core/05-port/types"
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 	solomachine "github.com/cosmos/ibc-go/v8/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	"github.com/spf13/cast"
 	// this line is used by starport scaffolding # ibc/app/import
 )
 
-// registerIBCModules register IBC keepers and non dependency inject modules.
-func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
+// registerLegacyModules register IBC and WASM keepers and non dependency inject modules.
+func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts []wasmkeeper.Option) wasmtypes.WasmConfig {
 	// set up non depinject support modules store keys
 	if err := app.RegisterStores(
 		storetypes.NewKVStoreKey(capabilitytypes.StoreKey),
@@ -50,8 +60,10 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		storetypes.NewKVStoreKey(icacontrollertypes.StoreKey),
 		storetypes.NewMemoryStoreKey(capabilitytypes.MemStoreKey),
 		storetypes.NewTransientStoreKey(paramstypes.TStoreKey),
+		// wasm kv store
+		storetypes.NewKVStoreKey(wasmtypes.StoreKey),
 	); err != nil {
-		return err
+		panic(err)
 	}
 
 	// register the key tables for legacy param subspaces
@@ -140,6 +152,40 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 	)
 	app.GovKeeper.SetLegacyRouter(govRouter)
 
+	// wasm keepers
+	scopedWasmKeeper := app.CapabilityKeeper.ScopeToModule(wasmtypes.ModuleName)
+
+	app.ParamsKeeper.Subspace(wasmtypes.ModuleName)
+
+	homePath := cast.ToString(appOpts.Get(flags.FlagHome))
+	wasmDir := filepath.Join(homePath, "wasm")
+	wasmConfig, err := wasm.ReadWasmConfig(appOpts)
+	if err != nil {
+		panic(fmt.Sprintf("error while reading wasm config: %s", err))
+	}
+
+	availableCapabilities := strings.Join(AllCapabilities(), ",")
+	app.WasmKeeper = wasmkeeper.NewKeeper(
+		app.AppCodec(),
+		runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.StakingKeeper,
+		distrkeeper.NewQuerier(app.DistrKeeper),
+		app.IBCFeeKeeper, // ISC4 Wrapper: fee IBC middleware
+		app.IBCKeeper.ChannelKeeper,
+		app.IBCKeeper.PortKeeper,
+		scopedWasmKeeper,
+		app.TransferKeeper,
+		app.MsgServiceRouter(),
+		app.GRPCQueryRouter(),
+		wasmDir,
+		wasmConfig,
+		availableCapabilities,
+		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
+		wasmOpts...,
+	)
+
 	// Create IBC modules with ibcfee middleware
 	transferIBCModule := ibcfee.NewIBCMiddleware(ibctransfer.NewIBCModule(app.TransferKeeper), app.IBCFeeKeeper)
 
@@ -152,9 +198,15 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 
 	icaHostIBCModule := ibcfee.NewIBCMiddleware(icahost.NewIBCModule(app.ICAHostKeeper), app.IBCFeeKeeper)
 
+	// Create fee enabled wasm ibc Stack
+	var wasmStack porttypes.IBCModule
+	wasmStack = wasm.NewIBCHandler(app.WasmKeeper, app.IBCKeeper.ChannelKeeper, app.IBCFeeKeeper)
+	wasmStack = ibcfee.NewIBCMiddleware(wasmStack, app.IBCFeeKeeper)
+
 	// Create static IBC router, add transfer route, then set and seal it
 	ibcRouter := porttypes.NewRouter().
 		AddRoute(ibctransfertypes.ModuleName, transferIBCModule).
+		AddRoute(wasmtypes.ModuleName, wasmStack).
 		AddRoute(icacontrollertypes.SubModuleName, icaControllerIBCModule).
 		AddRoute(icahosttypes.SubModuleName, icaHostIBCModule)
 
@@ -174,19 +226,20 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		ibcfee.NewAppModule(app.IBCFeeKeeper),
 		icamodule.NewAppModule(&app.ICAControllerKeeper, &app.ICAHostKeeper),
 		capability.NewAppModule(app.appCodec, *app.CapabilityKeeper, false),
-		ibctm.NewAppModule(),
-		solomachine.NewAppModule(),
+		ibctm.AppModule{},
+		solomachine.AppModule{},
+		//wasm module
+		wasm.NewAppModule(app.AppCodec(), &app.WasmKeeper, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, app.MsgServiceRouter(), app.GetSubspace(wasmtypes.ModuleName)),
 	); err != nil {
-		return err
+		panic(err)
 	}
-
-	return nil
+	return wasmConfig
 }
 
-// RegisterIBC Since the IBC modules don't support dependency injection,
-// we need to manually register the modules on the client side.
+// Since the IBC and WASM modules don't support dependency injection, we need to
+// manually register the modules on the client side.
 // This needs to be removed after IBC supports App Wiring.
-func RegisterIBC(registry cdctypes.InterfaceRegistry) map[string]appmodule.AppModule {
+func RegisterLegacyModules(registry cdctypes.InterfaceRegistry) map[string]appmodule.AppModule {
 	modules := map[string]appmodule.AppModule{
 		ibcexported.ModuleName:      ibc.AppModule{},
 		ibctransfertypes.ModuleName: ibctransfer.AppModule{},
@@ -195,11 +248,31 @@ func RegisterIBC(registry cdctypes.InterfaceRegistry) map[string]appmodule.AppMo
 		capabilitytypes.ModuleName:  capability.AppModule{},
 		ibctm.ModuleName:            ibctm.AppModule{},
 		solomachine.ModuleName:      solomachine.AppModule{},
+		wasmtypes.ModuleName:        wasm.AppModule{},
 	}
 
-	for name, m := range modules {
-		module.CoreAppModuleBasicAdaptor(name, m).RegisterInterfaces(registry)
+	for _, module := range modules {
+		if mod, ok := module.(interface {
+			RegisterInterfaces(registry cdctypes.InterfaceRegistry)
+		}); ok {
+			mod.RegisterInterfaces(registry)
+		}
 	}
 
 	return modules
+}
+
+// AllCapabilities returns all capabilities available with the current wasmvm
+// See https://github.com/CosmWasm/cosmwasm/blob/main/docs/CAPABILITIES-BUILT-IN.md
+// This functionality is going to be moved upstream: https://github.com/CosmWasm/wasmvm/issues/425
+func AllCapabilities() []string {
+	return []string{
+		"iterator",
+		"staking",
+		"stargate",
+		"cosmwasm_1_1",
+		"cosmwasm_1_2",
+		"cosmwasm_1_3",
+		"cosmwasm_1_4",
+	}
 }

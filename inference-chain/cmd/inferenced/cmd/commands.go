@@ -24,6 +24,9 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/productscience/inference/app"
+
+	wasmclient "github.com/CosmWasm/wasmd/x/wasm/client/cli"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 )
 
 func initRootCmd(
@@ -91,6 +94,7 @@ func queryCommand() *cobra.Command {
 		server.QueryBlocksCmd(),
 		authcmd.QueryTxCmd(),
 		server.QueryBlockResultsCmd(),
+		wasmclient.GetQueryCmd(),
 	)
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 
@@ -117,6 +121,7 @@ func txCommand() *cobra.Command {
 		authcmd.GetEncodeCommand(),
 		authcmd.GetDecodeCommand(),
 		authcmd.GetSimulateCmd(),
+		wasmclient.GetTxCmd(),
 	)
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 
@@ -130,11 +135,13 @@ func newApp(
 	traceStore io.Writer,
 	appOpts servertypes.AppOptions,
 ) servertypes.Application {
+	var wasmOpts []wasmkeeper.Option
 	baseappOptions := server.DefaultBaseappOptions(appOpts)
 
 	app, err := app.New(
 		logger, db, traceStore, true,
 		appOpts,
+		wasmOpts,
 		baseappOptions...,
 	)
 	if err != nil {
@@ -155,8 +162,9 @@ func appExport(
 	modulesToExport []string,
 ) (servertypes.ExportedApp, error) {
 	var (
-		bApp *app.App
-		err  error
+		bApp          *app.App
+		err           error
+		emptyWasmOpts []wasmkeeper.Option
 	)
 
 	// this check is necessary as we use the flag in x/upgrade.
@@ -176,7 +184,7 @@ func appExport(
 	appOpts = viperAppOpts
 
 	if height != -1 {
-		bApp, err = app.New(logger, db, traceStore, false, appOpts)
+		bApp, err = app.New(logger, db, traceStore, false, appOpts, emptyWasmOpts)
 		if err != nil {
 			return servertypes.ExportedApp{}, err
 		}
@@ -185,7 +193,7 @@ func appExport(
 			return servertypes.ExportedApp{}, err
 		}
 	} else {
-		bApp, err = app.New(logger, db, traceStore, true, appOpts)
+		bApp, err = app.New(logger, db, traceStore, true, appOpts, emptyWasmOpts)
 		if err != nil {
 			return servertypes.ExportedApp{}, err
 		}

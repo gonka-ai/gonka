@@ -140,3 +140,18 @@ type ModelPriceDto struct {
 	UnitsOfComputePerToken uint64 `json:"units_of_compute_per_token"`
 	PricePerToken          uint64 `json:"price_per_token"`
 }
+
+// FinalizedBlock represents a finalized block with optional receipts
+type BridgeBlock struct {
+	BlockNumber  string          `json:"blockNumber"`
+	OriginChain  string          `json:"originChain"`        // Name of the origin chain (e.g., "ethereum")
+	ReceiptsRoot string          `json:"receiptsRoot"`       // Merkle root of receipts trie for transaction verification
+	Receipts     []BridgeReceipt `json:"receipts,omitempty"` // Optional list of receipts
+}
+type BridgeReceipt struct {
+	ContractAddress string `json:"contract"`     // Address of the smart contract on the origin chain
+	OwnerAddress    string `json:"owner"`        // Address of the token owner on the origin chain
+	OwnerPubKey     string `json:"publicKey"`    // Public key of the token owner on the origin chain
+	Amount          string `json:"amount"`       // Amount of tokens to be bridged
+	ReceiptIndex    string `json:"receiptIndex"` // Index of the transaction receipt in the block
+}
