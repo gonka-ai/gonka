@@ -1,6 +1,7 @@
 package event_listener
 
 import (
+	"decentralized-api/chainphase"
 	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 		timeInterval    time.Duration
 		lastBlockHeight int64
 		lastTime        time.Time
-		phaseInfo       *PhaseInfo
+		epochState      *chainphase.EpochState
 		expectedResult  bool
 		description     string
 	}{
@@ -27,9 +28,11 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			timeInterval:    30 * time.Second,
 			lastBlockHeight: 10,
 			lastTime:        time.Now().Add(-10 * time.Second), // Recent time
-			phaseInfo: &PhaseInfo{
+			epochState: &chainphase.EpochState{
 				CurrentPhase: types.InferencePhase,
-				BlockHeight:  16, // 16 - 10 = 6 blocks, >= 5
+				CurrentBlock: chainphase.BlockInfo{
+					Height: 16, // 16 - 10 = 6 blocks, >= 5
+				},
 			},
 			expectedResult: true,
 			description:    "6 blocks since last reconciliation, should trigger",
@@ -40,8 +43,10 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			timeInterval:    30 * time.Second,
 			lastBlockHeight: 10,
 			lastTime:        time.Now().Add(-10 * time.Second), // Recent time
-			phaseInfo: &PhaseInfo{
-				BlockHeight: 13, // 13 - 10 = 3 blocks, < 5
+			epochState: &chainphase.EpochState{
+				CurrentBlock: chainphase.BlockInfo{
+					Height: 13, // 13 - 10 = 3 blocks, < 5
+				},
 			},
 			expectedResult: false,
 			description:    "Only 3 blocks since last reconciliation and time is recent",
@@ -52,9 +57,11 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			timeInterval:    30 * time.Second,
 			lastBlockHeight: 10,
 			lastTime:        time.Now().Add(-40 * time.Second), // Old time
-			phaseInfo: &PhaseInfo{
+			epochState: &chainphase.EpochState{
 				CurrentPhase: types.InferencePhase,
-				BlockHeight:  12, // Only 2 blocks
+				CurrentBlock: chainphase.BlockInfo{
+					Height: 12, // Only 2 blocks
+				},
 			},
 			expectedResult: true,
 			description:    "Time interval exceeded (40s > 30s)",
@@ -79,7 +86,7 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 				},
 			}
 
-			result := dispatcher.shouldTriggerReconciliation(tc.phaseInfo)
+			result := dispatcher.shouldTriggerReconciliation(*tc.epochState)
 			assert.Equal(t, tc.expectedResult, result, tc.description)
 		})
 	}
@@ -118,5 +125,4 @@ func TestParseNewBlockInfo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(12345), blockInfo.Height)
 	assert.Equal(t, "ABCDEF123456", blockInfo.Hash)
-	assert.WithinDuration(t, time.Now(), blockInfo.Timestamp, time.Second)
 }

@@ -30,17 +30,6 @@ type StatusFunc func() (*coretypes.ResultStatus, error)
 
 type SetHeightFunc func(blockHeight int64) error
 
-// PhaseInfo contains complete phase and epoch information for a given block
-type PhaseInfo struct {
-	CurrentEpoch uint64
-	CurrentPhase types.EpochPhase
-	BlockHeight  int64
-	BlockHash    string
-	EpochParams  *types.EpochParams
-	IsSynced     bool
-	EpochContext *chainphase.EpochContext
-}
-
 // PoCParams contains Proof of Compute parameters
 type PoCParams struct {
 	StartBlockHeight int64
@@ -166,25 +155,17 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	// 2. Update phase tracker and get phase info
-	d.phaseTracker.Update(blockInfo.Height, networkInfo.CurrentEpochGroup, networkInfo.EpochParams)
-	epochContext, _, currentPhase := d.phaseTracker.GetCurrentEpochState()
-
-	phaseInfo := &PhaseInfo{
-		CurrentEpoch: epochContext.Epoch,
-		CurrentPhase: currentPhase,
-		BlockHeight:  blockInfo.Height,
-		BlockHash:    blockInfo.Hash,
-		EpochParams:  networkInfo.EpochParams,
-		IsSynced:     networkInfo.IsSynced,
-		EpochContext: epochContext,
-	}
+	// FIXME: It looks like a problem that queries are separate inside networkInfo, and blockInfo
+	// 	comes from a totally different source?
+	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
+	epochState := d.phaseTracker.GetCurrentEpochState()
 
 	// 3. Check for phase transitions and stage events
-	d.handlePhaseTransitions(phaseInfo)
+	d.handlePhaseTransitions(*epochState)
 
 	// 4. Check if reconciliation should be triggered
-	if d.shouldTriggerReconciliation(phaseInfo) {
-		d.triggerReconciliation(phaseInfo)
+	if d.shouldTriggerReconciliation(*epochState) {
+		d.triggerReconciliation(*epochState)
 	}
 
 	// 5. Update config manager height
@@ -232,14 +213,10 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 }
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
-func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
-	if phaseInfo.EpochContext == nil {
-		return
-	}
-
-	epochContext := phaseInfo.EpochContext
-	blockHeight := phaseInfo.BlockHeight
-	blockHash := phaseInfo.BlockHash
+func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
+	epochContext := epochState.CurrentEpoch
+	blockHeight := epochState.CurrentBlock.Height
+	blockHash := epochState.CurrentBlock.Hash
 
 	// Check for PoC start for the next epoch. This is the most important transition.
 	if epochContext.IsStartOfNextPoC(blockHeight) {
@@ -294,12 +271,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(phaseInfo *PhaseInfo) {
 }
 
 // shouldTriggerReconciliation determines if reconciliation should be triggered
-func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(phaseInfo *PhaseInfo) bool {
-	switch phaseInfo.CurrentPhase {
+func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase.EpochState) bool {
+	switch epochState.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase, types.PoCValidatePhase, types.PoCValidateWindDownPhase:
-		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.PoC)
+		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
 	case types.InferencePhase:
-		return shouldTriggerReconciliation(phaseInfo.BlockHeight, &d.reconciliationConfig, d.reconciliationConfig.Inference)
+		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.Inference)
 	}
 	return false
 }
@@ -321,16 +298,16 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 }
 
 // triggerReconciliation starts node reconciliation with current phase info
-func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
+func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
 	logging.Info("Triggering reconciliation", types.Nodes,
-		"height", phaseInfo.BlockHeight,
-		"epoch", phaseInfo.CurrentEpoch,
-		"phase", phaseInfo.CurrentPhase)
+		"height", epochState.CurrentBlock.Height,
+		"epoch", epochState.CurrentEpoch.Epoch,
+		"phase", epochState.CurrentPhase)
 
-	cmd, response := getCommandForPhase(phaseInfo)
+	cmd, response := getCommandForPhase(epochState)
 	if cmd == nil || response == nil {
 		logging.Info("No command required for phase", types.Nodes,
-			"phase", phaseInfo.CurrentPhase, "height", phaseInfo.BlockHeight)
+			"phase", epochState.CurrentPhase, "height", epochState.CurrentBlock.Height)
 		return
 	}
 
@@ -341,13 +318,13 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(phaseInfo *PhaseInfo) {
 	}
 
 	// Update reconciliation tracking
-	d.reconciliationConfig.LastBlockHeight = phaseInfo.BlockHeight
+	d.reconciliationConfig.LastBlockHeight = epochState.CurrentBlock.Height
 	d.reconciliationConfig.LastTime = time.Now()
 
 	// Wait for a response or not?
 }
 
-func getCommandForPhase(phaseInfo *PhaseInfo) (broker.Command, *chan bool) {
+func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {
 	switch phaseInfo.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase:
 		cmd := broker.NewStartPocCommand()
@@ -375,9 +352,8 @@ func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInf
 	}
 
 	return &chainphase.BlockInfo{
-		Height:    blockHeight,
-		Hash:      blockHash,
-		Timestamp: time.Now(), // We could parse this from the event if needed
+		Height: blockHeight,
+		Hash:   blockHash,
 	}, nil
 }
 

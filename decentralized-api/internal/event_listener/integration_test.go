@@ -126,6 +126,11 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *MockQueryClient) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
 // Test setup helpers
 
 type IntegrationTestSetup struct {
@@ -145,7 +150,6 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockSeedManager := &MockRandomSeedManager{}
 
 	phaseTracker := chainphase.NewChainPhaseTracker()
-	phaseTracker.UpdateEpochParams(defaultEpochParams)
 
 	// Create mock client factory that tracks calls
 	mockClientFactory := mlnodeclient.NewMockClientFactory()
@@ -267,9 +271,8 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 	blockInfo := chainphase.BlockInfo{
-		Height:    height,
-		Hash:      fmt.Sprintf("hash-%d", height),
-		Timestamp: time.Now(),
+		Height: height,
+		Hash:   fmt.Sprintf("hash-%d", height),
 	}
 	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
 }
