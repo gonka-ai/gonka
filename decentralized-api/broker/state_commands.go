@@ -21,18 +21,18 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartPocCommand) Execute(b *Broker) {
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	epochState := b.phaseTracker.GetCurrentEpochState()
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.Epoch, epochState.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
 				"admin_epoch", node.State.AdminState.Epoch,
-				"current_epoch", epochPhaseInfo,
-				"current_phase", epochPhaseInfo.Phase)
+				"current_epoch", epochState,
+				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_POC
@@ -61,18 +61,18 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InitValidateCommand) Execute(b *Broker) {
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+		if !node.State.ShouldBeOperational(epochPhaseInfo.CurrentEpoch.Epoch, epochPhaseInfo.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
 				"admin_epoch", node.State.AdminState.Epoch,
 				"current_epoch", epochPhaseInfo,
-				"current_phase", epochPhaseInfo.Phase)
+				"current_phase", epochPhaseInfo.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_POC
@@ -101,17 +101,17 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	epochState := b.phaseTracker.GetCurrentEpochState()
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if !node.State.ShouldBeOperational(epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.Epoch, epochState.CurrentPhase) {
 			logging.Info("Skipping inference up for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
 				"admin_epoch", node.State.AdminState.Epoch,
-				"current_epoch", epochPhaseInfo,
-				"current_phase", epochPhaseInfo.Phase)
+				"current_epoch", epochState,
+				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		} else if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
 			continue

@@ -52,7 +52,7 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 				"node_id", nodeId,
 				"AdminState.Epoch", node.State.AdminState.Epoch,
 				"AdminState.Enabled", node.State.AdminState.Enabled,
-				"effective_epoch", epochState.CurrentEpoch.Epoch,
+				"current_epoch", epochState.CurrentEpoch.Epoch,
 				"current_phase", epochState.CurrentPhase)
 			continue
 		}

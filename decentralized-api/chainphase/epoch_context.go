@@ -10,12 +10,19 @@ type EpochContext struct {
 	EpochParams         types.EpochParams
 }
 
-// NewEpochContext creates a new, stable context for Epoch calculations.
-func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochParams) *EpochContext {
-	return &EpochContext{
-		Epoch:               epochGroup.EpochGroupId,
-		PocStartBlockHeight: epochGroup.PocStartBlockHeight,
-		EpochParams:         epochParams,
+func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochParams, currentBlockHeight int64) *EpochContext {
+	if currentBlockHeight >= int64(epochGroup.PocStartBlockHeight)+epochParams.EpochLength {
+		return &EpochContext{
+			Epoch:               epochGroup.EpochGroupId + 1,
+			PocStartBlockHeight: epochGroup.PocStartBlockHeight + uint64(epochParams.EpochLength),
+			EpochParams:         epochParams,
+		}
+	} else {
+		return &EpochContext{
+			Epoch:               epochGroup.EpochGroupId,
+			PocStartBlockHeight: epochGroup.PocStartBlockHeight,
+			EpochParams:         epochParams,
+		}
 	}
 }
 
@@ -31,10 +38,6 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
 
 	// Calculate height relative to the Epoch's true start.
 	relativeBlockHeight := blockHeight - int64(epochStartHeight)
-
-	// If we are past the current Epoch's length, we are in the PoC stages for the *next* Epoch,
-	// but the "phase" is determined by the offsets defined in the *current* Epoch's parameters.
-	relativeBlockHeight = relativeBlockHeight % ec.EpochParams.EpochLength
 
 	startOfPoC := ec.EpochParams.GetStartOfPoCStage()
 	endOfPoC := ec.EpochParams.GetEndOfPoCStage()
