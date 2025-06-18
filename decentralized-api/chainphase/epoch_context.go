@@ -1,26 +1,50 @@
 package chainphase
 
-import "github.com/productscience/inference/x/inference/types"
+import (
+	"fmt"
+	"github.com/productscience/inference/x/inference/types"
+)
 
 // EpochContext provides a stable context for an Epoch, anchored by its starting block height.
 // It is used to reliably calculate phases and transitions regardless of changes to Epoch parameters.
 type EpochContext struct {
 	Epoch               uint64
-	PocStartBlockHeight uint64
+	PocStartBlockHeight int64
 	EpochParams         types.EpochParams
 }
 
 func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochParams, currentBlockHeight int64) *EpochContext {
+	if epochGroup == nil {
+		if currentBlockHeight < epochParams.EpochLength-epochParams.EpochShift {
+			return &EpochContext{
+				Epoch: 0,
+				// FIXME: or maybe make it zero and return to uint64 type here to avoid confusion?
+				PocStartBlockHeight: -epochParams.EpochShift,
+				EpochParams:         epochParams,
+			}
+		} else if currentBlockHeight < (epochParams.EpochLength-epochParams.EpochShift)+epochParams.GetSetNewValidatorsStage() {
+			return &EpochContext{
+				Epoch:               1,
+				PocStartBlockHeight: epochParams.EpochLength - epochParams.EpochShift,
+				EpochParams:         epochParams,
+			}
+		} else {
+			msg := fmt.Sprintf("epoch group in nil. currentBlockHeight = %d", currentBlockHeight)
+			panic(msg)
+		}
+	}
+
+	// TODO: should probably check if currentBlockHeight is still in the boundaries of the next epoch!
 	if currentBlockHeight >= int64(epochGroup.PocStartBlockHeight)+epochParams.EpochLength {
 		return &EpochContext{
 			Epoch:               epochGroup.EpochGroupId + 1,
-			PocStartBlockHeight: epochGroup.PocStartBlockHeight + uint64(epochParams.EpochLength),
+			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight) + epochParams.EpochLength,
 			EpochParams:         epochParams,
 		}
 	} else {
 		return &EpochContext{
 			Epoch:               epochGroup.EpochGroupId,
-			PocStartBlockHeight: epochGroup.PocStartBlockHeight,
+			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight),
 			EpochParams:         epochParams,
 		}
 	}
@@ -30,14 +54,14 @@ func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochPa
 func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
 	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
 	epochStartHeight := ec.PocStartBlockHeight
-	if blockHeight < int64(epochStartHeight) {
+	if blockHeight < epochStartHeight {
 		// This can happen during the initial Epoch or if there's a state mismatch.
 		// InferencePhase is the safest default.
 		return types.InferencePhase
 	}
 
 	// Calculate height relative to the Epoch's true start.
-	relativeBlockHeight := blockHeight - int64(epochStartHeight)
+	relativeBlockHeight := blockHeight - epochStartHeight
 
 	startOfPoC := ec.EpochParams.GetStartOfPoCStage()
 	endOfPoC := ec.EpochParams.GetEndOfPoCStage()
@@ -83,6 +107,10 @@ func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 // IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next Epoch.
 func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
 	return blockHeight == int64(ec.PocStartBlockHeight)+ec.EpochParams.EpochLength
+}
+
+func (ec *EpochContext) IsStartOfPoc(blockHeight int64) bool {
+	return blockHeight == ec.PocStartBlockHeight
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
