@@ -135,8 +135,8 @@ func Test(t *testing.T) {
 		PocValidationDuration: 10,
 	}
 	epochGroup := types.EpochGroupData{
-		PocStartBlockHeight: 110,
-		EpochGroupId:        1,
+		PocStartBlockHeight: 2800,
+		EpochGroupId:        5,
 	}
 
 	startOfNexEpochPoc := int64(epochGroup.PocStartBlockHeight) + epochParams.EpochLength

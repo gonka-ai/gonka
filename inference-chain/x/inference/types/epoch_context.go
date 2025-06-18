@@ -40,6 +40,20 @@ func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, curren
 			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight) + epochParams.EpochLength,
 			EpochParams:         epochParams,
 		}
+	} else if currentBlockHeight <= int64(epochGroup.PocStartBlockHeight)+epochParams.GetSetNewValidatorsStage() {
+		msg := fmt.Sprintf("Expected effective group to have an earlier poc start block height. "+
+			"currentBlockHeight = %d. "+
+			"epochGroup.PocStartBlockHeight = %d",
+			currentBlockHeight,
+			epochGroup.PocStartBlockHeight)
+		panic(msg)
+	} else if currentBlockHeight > int64(epochGroup.PocStartBlockHeight)+epochParams.EpochLength+epochParams.GetSetNewValidatorsStage() {
+		msg := fmt.Sprintf("Expecting effective group to change to the next one. "+
+			"currentBlockHeight = %d. "+
+			"epochGroup.PocStartBlockHeight = %d",
+			currentBlockHeight,
+			epochGroup.PocStartBlockHeight)
+		panic(msg)
 	} else {
 		return &EpochContext{
 			Epoch:               epochGroup.EpochGroupId,
