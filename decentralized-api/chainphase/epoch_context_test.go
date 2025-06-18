@@ -23,10 +23,16 @@ func Test(t *testing.T) {
 	}
 
 	startOfNexEpochPoc := int64(epochGroup.PocStartBlockHeight) + epochParams.EpochLength
+	require.Equal(t, startOfNexEpochPoc, int64(210))
+
 	var i = startOfNexEpochPoc
 	for i < startOfNexEpochPoc+epochParams.PocStageDuration {
 		ec := chainphase.NewEpochContext(&epochGroup, epochParams, i)
 		require.Equal(t, epochGroup.EpochGroupId+1, ec.Epoch)
+
+		currentPhase := ec.GetCurrentPhase(i)
+		_ = currentPhase
+
 		i++
 	}
 }
