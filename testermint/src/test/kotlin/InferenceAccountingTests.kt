@@ -1,3 +1,4 @@
+import com.productscience.ChatMessage
 import com.productscience.EpochStage
 import com.productscience.InferenceResult
 import com.productscience.LocalCluster
@@ -9,15 +10,19 @@ import com.productscience.data.InferencePayload
 import com.productscience.data.InferenceState
 import com.productscience.data.InferenceStatus
 import com.productscience.data.Participant
+import com.productscience.data.Usage
 import com.productscience.data.spec
+import com.productscience.defaultInferenceResponseObject
 import com.productscience.getInferenceResult
 import com.productscience.getInterruptedStreamingInferenceResult
 import com.productscience.getStreamingInferenceResult
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequest
+import com.productscience.inferenceRequestObject
 import com.productscience.inferenceRequestStreamObject
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.makeInferenceRequest
 import com.productscience.makeInterruptedStreamingInferenceRequest
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -59,6 +64,47 @@ class InferenceAccountingTests : TestermintTest() {
                 beforeBalances.first { it.id == address }.coinsOwed + change
             )
         }
+    }
+
+    @Test
+    fun `test prompt larger than max_tokens`() {
+        val (cluster, genesis) = initCluster()
+        logSection("Clearing claims")
+        cluster.allPairs.forEach {
+            it.mock?.setInferenceResponse(defaultInferenceResponseObject.copy(usage = Usage(completionTokens = 500, promptTokens = 10000, totalTokens = 10500)))
+        }
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        logSection("Making inference")
+        val genesisBalanceBefore = genesis.node.getSelfBalance()
+        val beforeBalances = genesis.api.getParticipants()
+        val request = inferenceRequestObject.copy(messages = listOf(ChatMessage("user", generateBigPrompt(20000))))
+        val inferenceResult = getInferenceResult(genesis, baseRequest = request)
+        logSection("Verifying inference changes")
+        val afterBalances = genesis.api.getParticipants()
+        val expectedCoinBalanceChanges = expectedCoinBalanceChanges(listOf(inferenceResult.inference))
+        expectedCoinBalanceChanges.forEach { (address, change) ->
+            assertThat(afterBalances.first { it.id == address }.coinsOwed).isEqualTo(
+                beforeBalances.first { it.id == address }.coinsOwed + change
+            )
+        }
+        val genesisBalanceAfter = genesis.node.getSelfBalance()
+        assertThat(genesisBalanceBefore - genesisBalanceAfter).isGreaterThan(1000*5000)
+    }
+
+    private fun generateBigPrompt(promptChars: Int): String {
+        val random = Random(42)
+        val chars = ('a'..'z').toList()
+        val result = StringBuilder()
+
+        while (result.length < promptChars) {
+            val wordLength = random.nextInt(1, 11)
+            val word = (1..wordLength)
+                .map { chars[random.nextInt(chars.size)] }
+                .joinToString("")
+            result.append(word).append(" ")
+        }
+
+        return result.toString()
     }
 
     @Test

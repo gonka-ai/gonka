@@ -27,12 +27,13 @@ fun main() {
 fun getInferenceResult(
     highestFunded: LocalInferencePair,
     modelName: String? = null,
-    seed: Int? = null
+    seed: Int? = null,
+    baseRequest:InferenceRequestPayload  = inferenceRequestObject
 ): InferenceResult {
     val beforeInferenceParticipants = highestFunded.api.getParticipants()
-    val inferenceObject = inferenceRequestObject
-        .copy(seed = seed ?: inferenceRequestObject.seed)
-        .copy(model = modelName ?: inferenceRequestObject.model)
+    val inferenceObject = baseRequest
+        .copy(seed = seed ?: baseRequest.seed)
+        .copy(model = modelName ?: baseRequest.model)
     val payload = inferenceObject.toJson()
 
     val inference = makeInferenceRequest(highestFunded, payload)
@@ -128,7 +129,7 @@ data class InferenceResult(
     val executorBalanceChange = executorAfter.balance - executorBefore.balance
 }
 
-private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
+fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
     highestFunded.waitForFirstValidators()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
