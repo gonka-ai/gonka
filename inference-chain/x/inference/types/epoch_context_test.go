@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestZeroEpoch(t *testing.T) {
+func TestNilEpoch(t *testing.T) {
 	epochParams := types.EpochParams{
 		EpochLength:           100,
 		EpochMultiplier:       1,
@@ -23,13 +23,7 @@ func TestZeroEpoch(t *testing.T) {
 		require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 		require.Equal(t, -epochParams.EpochShift, ec.PocStartBlockHeight)
 
-		require.False(t, ec.IsStartOfPoc(i))
-		require.False(t, ec.IsEndOfPoCStage(i))
-		require.False(t, ec.IsStartOfPoCValidationStage(i))
-		require.False(t, ec.IsEndOfPoCValidationStage(i))
-		require.False(t, ec.IsSetNewValidatorsStage(i))
-		require.False(t, ec.IsClaimMoneyStage(i))
-		require.False(t, ec.IsStartOfNextPoC(i))
+		requireNotAStageBoundary(t, ec, i)
 
 		i++
 	}
@@ -38,8 +32,51 @@ func TestZeroEpoch(t *testing.T) {
 	require.Equal(t, uint64(1), ec.Epoch)
 	require.Equal(t, types.PoCGeneratePhase, ec.GetCurrentPhase(i))
 	require.Equal(t, i, ec.PocStartBlockHeight)
-
 	require.True(t, ec.IsStartOfPoc(i))
+	startOfPoc := i
+
+	i++
+
+	for i < startOfPoc+epochParams.GetPoCWinddownStage() {
+		ec := types.NewEpochContext(nil, epochParams, i)
+		require.Equal(t, uint64(1), ec.Epoch)
+		require.Equal(t, types.PoCGeneratePhase, ec.GetCurrentPhase(i))
+		requireNotAStageBoundary(t, ec, i)
+
+		i++
+	}
+
+	valStart := startOfPoc + epochParams.GetStartOfPoCValidationStage()
+	for i < valStart {
+		ec := types.NewEpochContext(nil, epochParams, i)
+		require.Equal(t, uint64(1), ec.Epoch)
+		require.Equal(t, types.PoCGenerateWindDownPhase, ec.GetCurrentPhase(i))
+
+		if i == startOfPoc+epochParams.GetEndOfPoCStage() {
+			require.True(t, ec.IsEndOfPoCStage(i))
+		} else {
+			requireNotAStageBoundary(t, ec, i)
+		}
+
+		i++
+	}
+
+	// Validation phase starts
+	ec = types.NewEpochContext(nil, epochParams, i)
+	require.Equal(t, uint64(1), ec.Epoch)
+	require.Equal(t, types.PoCValidatePhase, ec.GetCurrentPhase(i))
+	require.True(t, ec.IsStartOfPoCValidationStage(i))
+	i++
+}
+
+func requireNotAStageBoundary(t *testing.T, ec *types.EpochContext, i int64) {
+	require.False(t, ec.IsStartOfPoc(i))
+	require.False(t, ec.IsEndOfPoCStage(i))
+	require.False(t, ec.IsStartOfPoCValidationStage(i))
+	require.False(t, ec.IsEndOfPoCValidationStage(i))
+	require.False(t, ec.IsSetNewValidatorsStage(i))
+	require.False(t, ec.IsClaimMoneyStage(i))
+	require.False(t, ec.IsStartOfNextPoC(i))
 }
 
 func Test(t *testing.T) {

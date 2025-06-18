@@ -17,44 +17,6 @@ const (
 	InferencePhase           EpochPhase = "Inference"
 )
 
-func (p *EpochParams) GetCurrentPhase(blockHeight int64) EpochPhase {
-	shiftedBlockHeight := p.shift(blockHeight)
-	if p.isZeroEpoch(shiftedBlockHeight) {
-		return InferencePhase
-	}
-
-	relativeBlockHeight := shiftedBlockHeight % p.EpochLength
-
-	startOfPoC := p.GetStartOfPoCStage()
-	endOfPoC := p.GetEndOfPoCStage()
-	startOfPoCValidation := p.GetStartOfPoCValidationStage()
-	endOfPoCValidation := p.GetEndOfPoCValidationStage()
-
-	pocGenerateDuration := endOfPoC - startOfPoC
-	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*PoCGenerateWindDownFactor)
-
-	pocValidateDuration := endOfPoCValidation - startOfPoCValidation
-	pocValidateWindDownStart := startOfPoCValidation + int64(float64(pocValidateDuration)*PoCValidateWindDownFactor)
-
-	if relativeBlockHeight >= startOfPoC && relativeBlockHeight < pocGenerateWindDownStart {
-		return PoCGeneratePhase
-	}
-
-	if relativeBlockHeight >= pocGenerateWindDownStart && relativeBlockHeight < startOfPoCValidation {
-		return PoCGenerateWindDownPhase
-	}
-
-	if relativeBlockHeight >= startOfPoCValidation && relativeBlockHeight < pocValidateWindDownStart {
-		return PoCValidatePhase
-	}
-
-	if relativeBlockHeight >= pocValidateWindDownStart && relativeBlockHeight < endOfPoCValidation {
-		return PoCValidateWindDownPhase
-	}
-
-	return InferencePhase
-}
-
 // PR TODO: validate epoch params and gather hardcoded params from the chain
 func (p *EpochParams) IsStartOfPoCStage(blockHeight int64) bool {
 	blockHeight = p.shift(blockHeight)
@@ -115,6 +77,10 @@ func (p *EpochParams) GetStartOfPoCStage() int64 {
 	return 0
 }
 
+func (p *EpochParams) GetPoCWinddownStage() int64 {
+	return p.GetStartOfPoCStage() + (int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor) * p.EpochMultiplier)
+}
+
 func (p *EpochParams) GetEndOfPoCStage() int64 {
 	return p.GetStartOfPoCStage() + (p.PocStageDuration * p.EpochMultiplier)
 }
@@ -126,6 +92,10 @@ func (p *EpochParams) GetPoCExchangeDeadline() int64 {
 // TODO: may be longer period between
 func (p *EpochParams) GetStartOfPoCValidationStage() int64 {
 	return p.GetEndOfPoCStage() + (p.PocValidationDelay * p.EpochMultiplier)
+}
+
+func (p *EpochParams) GetPoCValidationWindownStage() int64 {
+	return p.GetStartOfPoCValidationStage() + (int64(float64(p.PocValidationDuration)*PoCValidateWindDownFactor) * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetEndOfPoCValidationStage() int64 {

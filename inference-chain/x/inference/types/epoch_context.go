@@ -63,15 +63,10 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 	relativeBlockHeight := blockHeight - epochStartHeight
 
 	startOfPoC := ec.EpochParams.GetStartOfPoCStage()
-	endOfPoC := ec.EpochParams.GetEndOfPoCStage()
+	pocGenerateWindDownStart := ec.EpochParams.GetPoCWinddownStage()
 	startOfPoCValidation := ec.EpochParams.GetStartOfPoCValidationStage()
+	pocValidateWindDownStart := ec.EpochParams.GetPoCValidationWindownStage()
 	endOfPoCValidation := ec.EpochParams.GetEndOfPoCValidationStage()
-
-	pocGenerateDuration := endOfPoC - startOfPoC
-	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*PoCGenerateWindDownFactor)
-
-	pocValidateDuration := endOfPoCValidation - startOfPoCValidation
-	pocValidateWindDownStart := startOfPoCValidation + int64(float64(pocValidateDuration)*PoCValidateWindDownFactor)
 
 	if relativeBlockHeight >= startOfPoC && relativeBlockHeight < pocGenerateWindDownStart {
 		return PoCGeneratePhase
@@ -105,7 +100,7 @@ func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 
 // IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next Epoch.
 func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
-	return blockHeight == int64(ec.PocStartBlockHeight)+ec.EpochParams.EpochLength
+	return blockHeight == ec.PocStartBlockHeight+ec.EpochParams.EpochLength
 }
 
 func (ec *EpochContext) IsStartOfPoc(blockHeight int64) bool {

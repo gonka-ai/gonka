@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -82,48 +81,4 @@ func TestEpochParamsStages(t *testing.T) {
 	if startFromPocValidation != pocStart {
 		t.Errorf("Expected start block height from start of PoC validation stage to be %d, got %d", pocStart, startFromPocValidation)
 	}
-}
-
-func TestEpochParamsGetCurrentPhase(t *testing.T) {
-	params := types.EpochParams{
-		EpochLength:           100,
-		EpochMultiplier:       1,
-		EpochShift:            90,
-		PocStageDuration:      20,
-		PocExchangeDuration:   1,
-		PocValidationDelay:    1,
-		PocValidationDuration: 10,
-	}
-
-	for i := int64(1); i < 10; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.InferencePhase, phase, "Expected phase to be Inference for height %d", i)
-	}
-
-	for i := int64(10); i < 10+16; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.PoCGeneratePhase, phase, "Expected phase to be PoC for height %d", i)
-	}
-
-	for i := int64(10 + 16); i < 10+20+1; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.PoCGenerateWindDownPhase, phase, "Expected phase to be PoC Exchange for height %d", i)
-	}
-
-	for i := int64(10 + 20 + 1); i < 10+20+1+8; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.PoCValidatePhase, phase, "Expected phase to be PoC Exchange for height %d", i)
-	}
-
-	for i := int64(10 + 20 + 1 + 8); i < 10+20+1+10; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.PoCValidateWindDownPhase, phase, "Expected phase to be PoC Validation for height %d", i)
-	}
-
-	for i := int64(10 + 20 + 1 + 10); i < 100+10; i++ {
-		phase := params.GetCurrentPhase(i)
-		require.Equal(t, types.InferencePhase, phase, "Expected phase to be Inferences for height %d", i)
-	}
-
-	require.Equal(t, types.PoCGeneratePhase, params.GetCurrentPhase(10+100))
 }

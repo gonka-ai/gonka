@@ -409,15 +409,10 @@ func TestRegularPocScenario(t *testing.T) {
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
 
-	pocGenStart := setup.EpochParams.EpochLength + 1
-	require.Equal(t, pocGenStart, i)
-	pocGenEnd := setup.EpochParams.EpochLength + setup.EpochParams.PocStageDuration
+	pocGenEnd := setup.EpochParams.EpochLength + setup.EpochParams.GetEndOfPoCStage()
 	for i < pocGenEnd {
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
-		if i == pocGenStart {
-			waitForAsync(100 * time.Millisecond)
-		}
 
 		// Expect no new calls to ml node client
 		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
