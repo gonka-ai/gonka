@@ -44,6 +44,12 @@ export RPC_PORT=8101
 export P2P_PORT=8201
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+# Bridge service variables for join1 node
+export GETH_HTTP_PORT=8550
+export GETH_WS_PORT=8540
+export GETH_AUTH_PORT=8555
+export PRYSM_RPC_PORT=4010
+export PRYSM_GRPC_PORT=3510
 ./launch_network_node.sh
 
 # join node 'join2'
@@ -58,4 +64,10 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+# Bridge service variables for join2 node
+export GETH_HTTP_PORT=8650
+export GETH_WS_PORT=8640
+export GETH_AUTH_PORT=8655
+export PRYSM_RPC_PORT=4020
+export PRYSM_GRPC_PORT=3520
 ./launch_network_node.sh
