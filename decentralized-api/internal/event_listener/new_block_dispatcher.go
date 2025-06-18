@@ -159,6 +159,10 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 	comes from a totally different source?
 	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
+	if !epochState.IsSynced {
+		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
+		return nil
+	}
 
 	// 3. Check for phase transitions and stage events
 	d.handlePhaseTransitions(*epochState)
