@@ -1,7 +1,6 @@
-package chainphase_test
+package types_test
 
 import (
-	"decentralized-api/chainphase"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -19,7 +18,7 @@ func TestZeroEpoch(t *testing.T) {
 	}
 	var i = int64(1)
 	for i < 10 {
-		ec := chainphase.NewEpochContext(nil, epochParams, i)
+		ec := types.NewEpochContext(nil, epochParams, i)
 		require.Equal(t, uint64(0), ec.Epoch)
 		require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 		require.Equal(t, -epochParams.EpochShift, ec.PocStartBlockHeight)
@@ -35,7 +34,7 @@ func TestZeroEpoch(t *testing.T) {
 		i++
 	}
 
-	ec := chainphase.NewEpochContext(nil, epochParams, i)
+	ec := types.NewEpochContext(nil, epochParams, i)
 	require.Equal(t, uint64(1), ec.Epoch)
 	require.Equal(t, types.PoCGeneratePhase, ec.GetCurrentPhase(i))
 	require.Equal(t, i, ec.PocStartBlockHeight)
@@ -63,7 +62,7 @@ func Test(t *testing.T) {
 
 	var i = startOfNexEpochPoc
 	for i < startOfNexEpochPoc+epochParams.PocStageDuration {
-		ec := chainphase.NewEpochContext(&epochGroup, epochParams, i)
+		ec := types.NewEpochContext(&epochGroup, epochParams, i)
 		require.Equal(t, epochGroup.EpochGroupId+1, ec.Epoch)
 
 		currentPhase := ec.GetCurrentPhase(i)

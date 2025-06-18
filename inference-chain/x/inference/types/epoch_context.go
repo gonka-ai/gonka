@@ -1,8 +1,7 @@
-package chainphase
+package types
 
 import (
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 )
 
 // EpochContext provides a stable context for an Epoch, anchored by its starting block height.
@@ -10,10 +9,10 @@ import (
 type EpochContext struct {
 	Epoch               uint64
 	PocStartBlockHeight int64
-	EpochParams         types.EpochParams
+	EpochParams         EpochParams
 }
 
-func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochParams, currentBlockHeight int64) *EpochContext {
+func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
 	if epochGroup == nil {
 		if currentBlockHeight < epochParams.EpochLength-epochParams.EpochShift {
 			return &EpochContext{
@@ -51,13 +50,13 @@ func NewEpochContext(epochGroup *types.EpochGroupData, epochParams types.EpochPa
 }
 
 // GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
-func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
+func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
 	epochStartHeight := ec.PocStartBlockHeight
 	if blockHeight < epochStartHeight {
 		// This can happen during the initial Epoch or if there's a state mismatch.
 		// InferencePhase is the safest default.
-		return types.InferencePhase
+		return InferencePhase
 	}
 
 	// Calculate height relative to the Epoch's true start.
@@ -69,25 +68,25 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) types.EpochPhase {
 	endOfPoCValidation := ec.EpochParams.GetEndOfPoCValidationStage()
 
 	pocGenerateDuration := endOfPoC - startOfPoC
-	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*types.PoCGenerateWindDownFactor)
+	pocGenerateWindDownStart := startOfPoC + int64(float64(pocGenerateDuration)*PoCGenerateWindDownFactor)
 
 	pocValidateDuration := endOfPoCValidation - startOfPoCValidation
-	pocValidateWindDownStart := startOfPoCValidation + int64(float64(pocValidateDuration)*types.PoCValidateWindDownFactor)
+	pocValidateWindDownStart := startOfPoCValidation + int64(float64(pocValidateDuration)*PoCValidateWindDownFactor)
 
 	if relativeBlockHeight >= startOfPoC && relativeBlockHeight < pocGenerateWindDownStart {
-		return types.PoCGeneratePhase
+		return PoCGeneratePhase
 	}
 	if relativeBlockHeight >= pocGenerateWindDownStart && relativeBlockHeight < startOfPoCValidation {
-		return types.PoCGenerateWindDownPhase
+		return PoCGenerateWindDownPhase
 	}
 	if relativeBlockHeight >= startOfPoCValidation && relativeBlockHeight < pocValidateWindDownStart {
-		return types.PoCValidatePhase
+		return PoCValidatePhase
 	}
 	if relativeBlockHeight >= pocValidateWindDownStart && relativeBlockHeight < endOfPoCValidation {
-		return types.PoCValidateWindDownPhase
+		return PoCValidateWindDownPhase
 	}
 
-	return types.InferencePhase
+	return InferencePhase
 }
 
 // isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the Epoch.

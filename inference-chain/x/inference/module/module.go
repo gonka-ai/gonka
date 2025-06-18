@@ -211,6 +211,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// FIXME: use EpochContext here instead!
 	if epochParams.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
