@@ -67,18 +67,7 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	}
 }
 
-// GetCurrentEpoch returns the current Epoch number based on the cached Epoch start height.
-func (t *ChainPhaseTracker) GetCurrentEpoch() uint64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	if t.effectiveEpochGroup == nil || t.currentEpochParams == nil || t.currentEpochParams.EpochLength == 0 {
-		return 0
-	}
-
-	return t.effectiveEpochGroup.EpochGroupId
-}
-
+// To de deleted once you refactor validation
 func (t *ChainPhaseTracker) GetEpochParams() *types.EpochParams {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -91,26 +80,4 @@ func (t *ChainPhaseTracker) UpdateEpochParams(params types.EpochParams) {
 	defer t.mu.Unlock()
 
 	t.currentEpochParams = &params
-}
-
-type EpochPhaseInfo struct {
-	Epoch                 uint64
-	EpochStartBlockHeight int64
-	BlockHeight           int64
-	Phase                 types.EpochPhase
-}
-
-func (t *ChainPhaseTracker) GetCurrentEpochPhaseInfo() EpochPhaseInfo {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	blockHeight := t.currentBlock.Height
-	phase := t.currentEpochParams.GetCurrentPhase(blockHeight)
-
-	return EpochPhaseInfo{
-		Epoch:                 t.effectiveEpochGroup.EpochGroupId,
-		EpochStartBlockHeight: int64(t.effectiveEpochGroup.PocStartBlockHeight),
-		BlockHeight:           blockHeight,
-		Phase:                 phase,
-	}
 }

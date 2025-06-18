@@ -383,7 +383,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 	// Get current epoch from phase tracker
 	var currentEpoch uint64
 	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
+		currentEpoch = b.phaseTracker.GetCurrentEpochState().CurrentEpoch.Epoch
 	}
 
 	nodeWithState := &NodeWithState{
@@ -443,9 +443,9 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var leastBusyNode *NodeWithState = nil
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
+	epochState := b.phaseTracker.GetCurrentEpochState()
 	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version, epochPhaseInfo.Epoch, epochPhaseInfo.Phase) {
+		if b.nodeAvailable(node, command.Model, command.Version, epochState.CurrentEpoch.Epoch, epochState.CurrentPhase) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
@@ -756,19 +756,29 @@ func (b *Broker) reconcilerLoop() {
 	for {
 		select {
 		case <-b.reconcileTrigger:
-			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-			logging.Info("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
-			b.reconcile(epochPhaseInfo)
+			epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+			if !epochPhaseInfo.IsSynced {
+				logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+				continue
+			}
+
+			logging.Info("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+			b.reconcile(*epochPhaseInfo)
 		case <-ticker.C:
-			epochPhaseInfo := b.phaseTracker.GetCurrentEpochPhaseInfo()
-			logging.Info("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.BlockHeight)
-			b.reconcile(epochPhaseInfo)
+			epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+			if !epochPhaseInfo.IsSynced {
+				logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+				continue
+			}
+
+			logging.Info("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+			b.reconcile(*epochPhaseInfo)
 		}
 	}
 }
 
-func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
-	blockHeight := epochPhaseInfo.BlockHeight
+func (b *Broker) reconcile(epochState chainphase.EpochState) {
+	blockHeight := epochState.CurrentBlock.Height
 
 	// Phase 1: Cancel outdated tasks
 	nodesToCancel := make(map[string]func())
@@ -811,7 +821,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	}
 	b.mu.RUnlock()
 
-	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochPhaseInfo, nodesToDispatch, blockHeight)
+	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochState, nodesToDispatch, blockHeight)
 
 	for id, node := range nodesToDispatch {
 		// Re-check conditions under write lock to prevent races
@@ -876,7 +886,7 @@ func (b *Broker) reconcile(epochPhaseInfo chainphase.EpochPhaseInfo) {
 	}
 }
 
-func (b *Broker) prefetchPocParams(epochPhaseInfo chainphase.EpochPhaseInfo, nodesToDispatch map[string]*NodeWithState, blockHeight int64) (*pocParams, error) {
+func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDispatch map[string]*NodeWithState, blockHeight int64) (*pocParams, error) {
 	needsPocParams := false
 	for _, node := range nodesToDispatch {
 		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
@@ -887,7 +897,7 @@ func (b *Broker) prefetchPocParams(epochPhaseInfo chainphase.EpochPhaseInfo, nod
 	}
 
 	if needsPocParams {
-		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(epochPhaseInfo)
+		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(int64(epochState.CurrentEpoch.PocStartBlockHeight))
 		if pocParamsErr != nil {
 			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
 		}
@@ -951,15 +961,14 @@ func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParam
 	}
 }
 
-func (b *Broker) queryCurrentPoCParams(info chainphase.EpochPhaseInfo) (*pocParams, error) {
-	startHeight := info.EpochStartBlockHeight // FIXME: is that true?
-	hash, err := b.chainBridge.GetBlockHash(startHeight)
+func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, error) {
+	hash, err := b.chainBridge.GetBlockHash(epochPoCStartHeight)
 	if err != nil {
-		logging.Error("Failed to query PoC start block hash", types.Nodes, "error", err)
+		logging.Error("Failed to query PoC start block hash", types.Nodes, "height", epochPoCStartHeight, "error", err)
 		return nil, err
 	}
 	return &pocParams{
-		startPoCBlockHeight: startHeight,
+		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
 	}, nil
 }
@@ -1098,6 +1107,9 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 		return
 	}
 
+	// For logging and debugging purposes
+	blockHeight := b.phaseTracker.GetCurrentEpochState().CurrentBlock.Height
+
 	// Critical safety check
 	if node.State.ReconcileInfo == nil ||
 		node.State.ReconcileInfo.Status != command.Result.OriginalTarget ||
@@ -1108,7 +1120,7 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 			"original_poc_target", command.Result.OriginalPocTarget,
 			"current_reconciling_target", node.State.ReconcileInfo.Status,
 			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
-			"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+			"blockHeight", blockHeight)
 		command.Response <- false
 		return
 	}
@@ -1121,7 +1133,7 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 		"from_poc_status", node.State.PocCurrentStatus,
 		"to_poc_status", command.Result.FinalPocStatus,
 		"succeeded", command.Result.Succeeded,
-		"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+		"blockHeight", blockHeight)
 
 	node.State.UpdateStatusWithPocStatusNow(command.Result.FinalStatus, command.Result.FinalPocStatus)
 	node.State.ReconcileInfo = nil

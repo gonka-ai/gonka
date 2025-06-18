@@ -21,7 +21,7 @@ func (c SetNodeAdminStateCommand) Execute(b *Broker) {
 	// Get current epoch
 	var currentEpoch uint64
 	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpoch()
+		currentEpoch = b.phaseTracker.GetCurrentEpochState().CurrentEpoch.Epoch
 	}
 
 	b.mu.Lock()

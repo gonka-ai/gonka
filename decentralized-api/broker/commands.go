@@ -174,6 +174,9 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 		return
 	}
 
+	// For logging and debugging purposes
+	blockHeight := b.phaseTracker.GetCurrentEpochState().CurrentBlock.Height
+
 	// Critical safety check
 	if node.State.ReconcileInfo == nil ||
 		node.State.ReconcileInfo.Status != c.Result.OriginalTarget ||
@@ -184,7 +187,7 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 			"original_poc_target", c.Result.OriginalPocTarget,
 			"current_reconciling_target", node.State.ReconcileInfo.Status,
 			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
-			"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+			"blockHeight", blockHeight)
 		c.Response <- false
 		return
 	}
@@ -197,7 +200,7 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 		"from_poc_status", node.State.PocCurrentStatus,
 		"to_poc_status", c.Result.FinalPocStatus,
 		"succeeded", c.Result.Succeeded,
-		"blockHeight", b.phaseTracker.GetCurrentEpochPhaseInfo().BlockHeight)
+		"blockHeight", blockHeight)
 
 	node.State.UpdateStatusWithPocStatusNow(c.Result.FinalStatus, c.Result.FinalPocStatus)
 	node.State.ReconcileInfo = nil
