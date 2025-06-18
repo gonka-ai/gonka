@@ -1,7 +1,9 @@
 package types_test
 
 import (
+	"fmt"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -67,6 +69,49 @@ func TestNilEpoch(t *testing.T) {
 	require.Equal(t, types.PoCValidatePhase, ec.GetCurrentPhase(i))
 	require.True(t, ec.IsStartOfPoCValidationStage(i))
 	i++
+
+	for i < startOfPoc+epochParams.GetPoCValidationWindownStage() {
+		ec = types.NewEpochContext(nil, epochParams, i)
+		require.Equal(t, uint64(1), ec.Epoch)
+		require.Equal(t, types.PoCValidatePhase, ec.GetCurrentPhase(i))
+
+		requireNotAStageBoundary(t, ec, i)
+
+		i++
+	}
+
+	for i < startOfPoc+epochParams.GetEndOfPoCValidationStage() {
+		ec = types.NewEpochContext(nil, epochParams, i)
+		require.Equal(t, uint64(1), ec.Epoch)
+		require.Equal(t, types.PoCValidateWindDownPhase, ec.GetCurrentPhase(i))
+
+		requireNotAStageBoundary(t, ec, i)
+
+		i++
+	}
+
+	ec = types.NewEpochContext(nil, epochParams, i)
+	require.Equal(t, uint64(1), ec.Epoch)
+	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
+	require.True(t, ec.IsEndOfPoCValidationStage(i))
+	i++
+
+	ec = types.NewEpochContext(nil, epochParams, i)
+	require.Equal(t, uint64(1), ec.Epoch)
+	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
+	require.True(t, ec.IsSetNewValidatorsStage(i))
+	i++
+
+	assert.Panics(t, func() {
+		fmt.Println("About to call NewEpochContext")
+		types.NewEpochContext(nil, epochParams, i)
+		fmt.Println("Returned from NewEpochContext (no panic?)")
+	})
+
+	ec = types.NewEpochContext(&types.EpochGroupData{EpochGroupId: 1, PocStartBlockHeight: uint64(startOfPoc)}, epochParams, i)
+	require.Equal(t, uint64(1), ec.Epoch)
+	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
+	require.True(t, ec.IsClaimMoneyStage(i))
 }
 
 func requireNotAStageBoundary(t *testing.T, ec *types.EpochContext, i int64) {

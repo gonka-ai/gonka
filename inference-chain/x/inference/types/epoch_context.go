@@ -21,7 +21,7 @@ func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, curren
 				PocStartBlockHeight: -epochParams.EpochShift,
 				EpochParams:         epochParams,
 			}
-		} else if currentBlockHeight < (epochParams.EpochLength-epochParams.EpochShift)+epochParams.GetSetNewValidatorsStage() {
+		} else if currentBlockHeight <= (epochParams.EpochLength-epochParams.EpochShift)+epochParams.GetSetNewValidatorsStage() {
 			return &EpochContext{
 				Epoch:               1,
 				PocStartBlockHeight: epochParams.EpochLength - epochParams.EpochShift,
