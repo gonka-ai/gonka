@@ -41,7 +41,7 @@ func (t *ChainPhaseTracker) Update(block BlockInfo, group *types.EpochGroupData,
 }
 
 type EpochState struct {
-	CurrentEpoch EpochContext
+	CurrentEpoch types.EpochContext
 	CurrentBlock BlockInfo
 	CurrentPhase types.EpochPhase
 	IsSynced     bool
@@ -56,7 +56,7 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	}
 
 	// Create a new context for this specific query to ensure consistency
-	ctx := NewEpochContext(t.effectiveEpochGroup, *t.currentEpochParams, t.currentBlock.Height)
+	ctx := types.NewEpochContext(t.effectiveEpochGroup, *t.currentEpochParams, t.currentBlock.Height)
 	phase := ctx.GetCurrentPhase(t.currentBlock.Height)
 
 	return &EpochState{
