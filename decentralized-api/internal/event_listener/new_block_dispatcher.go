@@ -157,6 +157,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 2. Update phase tracker and get phase info
 	// FIXME: It looks like a problem that queries are separate inside networkInfo, and blockInfo
 	// 	comes from a totally different source?
+	// TODO: log block that came from event vs block returned by query
+	// TODO: can we add the state to the block event? As a future optimization?
 	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
