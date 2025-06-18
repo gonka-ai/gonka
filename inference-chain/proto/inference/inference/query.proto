@@ -241,6 +241,11 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
   }
 
+  rpc CountParticipants(QueryCountAllParticipantsRequest)
+      returns (QueryCountAllParticipantsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants/count";
+  }
+
   rpc DebugStatsDeveloperStats(QueryDebugStatsRequest)
       returns (QueryDebugStatsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/debug/developer/all_stats";
@@ -649,6 +654,12 @@ message QueryInferencesAndTokensStatsByModelsResponse {
 message QueryInferencesAndTokensStatsResponse {
   int64 ai_tokens = 1;
   int32 inferences = 2;
+  int64 actual_inferences_cost = 3;
+}
+
+message QueryCountAllParticipantsRequest {}
+message QueryCountAllParticipantsResponse {
+  int64 total = 1;
 }
 
 message QueryDebugStatsRequest {}

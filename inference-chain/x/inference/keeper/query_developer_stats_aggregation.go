@@ -13,7 +13,7 @@ var (
 	ErrInvalidTimePeriod       = errors.New("invalid time period")
 )
 
-const defaultTimePeriod = time.Hour * 24
+const defaultTimePeriod = time.Hour * -24
 
 func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.QueryStatsByTimePeriodByDeveloperRequest) (*types.QueryStatsByTimePeriodByDeveloperResponse, error) {
 	if req.Developer == "" {
@@ -29,7 +29,7 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	k.LogInfo("StatsByTimePeriodByDeveloper", types.Stat, "developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo)
@@ -43,12 +43,18 @@ func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *typ
 	}
 
 	summary := k.CountTotalInferenceInLastNEpochsByDeveloper(ctx, req.Developer, int(req.EpochsN))
-	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: summary.TokensUsed, Inferences: int32(summary.InferenceCount)}, nil
+	return &types.QueryInferencesAndTokensStatsResponse{
+		AiTokens:             summary.TokensUsed,
+		Inferences:           int32(summary.InferenceCount),
+		ActualInferencesCost: summary.ActualCost}, nil
 }
 
 func (k Keeper) InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, req *types.QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
 	summary := k.CountTotalInferenceInLastNEpochs(ctx, int(req.EpochsN))
-	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: summary.TokensUsed, Inferences: int32(summary.InferenceCount)}, nil
+	return &types.QueryInferencesAndTokensStatsResponse{
+		AiTokens:             summary.TokensUsed,
+		Inferences:           int32(summary.InferenceCount),
+		ActualInferencesCost: summary.ActualCost}, nil
 }
 
 func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *types.QueryInferencesAndTokensStatsByTimePeriodRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
@@ -61,12 +67,16 @@ func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *t
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	k.LogInfo("InferencesAndTokensStatsByTimePeriod", types.Stat, "time_from", req.TimeFrom, "time_to", req.TimeTo)
 	summary := k.CountTotalInferenceInPeriod(ctx, req.TimeFrom, req.TimeTo)
-	return &types.QueryInferencesAndTokensStatsResponse{AiTokens: summary.TokensUsed, Inferences: int32(summary.InferenceCount)}, nil
+	return &types.QueryInferencesAndTokensStatsResponse{
+		AiTokens:             summary.TokensUsed,
+		Inferences:           int32(summary.InferenceCount),
+		ActualInferencesCost: summary.ActualCost,
+	}, nil
 }
 
 func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types.QueryInferencesAndTokensStatsByModelsRequest) (*types.QueryInferencesAndTokensStatsByModelsResponse, error) {
@@ -79,7 +89,7 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	stats := make([]*types.ModelStats, 0)

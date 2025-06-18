@@ -30,6 +30,7 @@ func TestDeveloperStats(t *testing.T) {
 		Status:               types.InferenceStatus_STARTED,
 		Model:                testModel,
 		StartBlockTimestamp:  time.Now().Add(-time.Second * 3).UnixMilli(),
+		ActualCost:           1000,
 	}
 
 	inference2Developer1 := types.Inference{
@@ -40,6 +41,7 @@ func TestDeveloperStats(t *testing.T) {
 		Model:                testModel2,
 		Status:               types.InferenceStatus_VALIDATED,
 		StartBlockTimestamp:  time.Now().UnixMilli(),
+		ActualCost:           1200,
 	}
 
 	inference1Developer2 := types.Inference{
@@ -51,6 +53,7 @@ func TestDeveloperStats(t *testing.T) {
 		Model:                testModel2,
 		StartBlockTimestamp:  time.Now().UnixMilli(),
 		EpochGroupId:         epochId2,
+		ActualCost:           5000,
 	}
 
 	inference2Developer2 := types.Inference{
@@ -61,6 +64,7 @@ func TestDeveloperStats(t *testing.T) {
 		Model:                testModel2,
 		Status:               types.InferenceStatus_EXPIRED,
 		StartBlockTimestamp:  time.Now().UnixMilli(),
+		ActualCost:           1000,
 	}
 
 	t.Parallel()
@@ -162,7 +166,7 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Empty(t, statsByTime)
 	})
 
-	t.Run("count ai tokens and inference requests by time", func(t *testing.T) {
+	t.Run("count ai tokens, inferences  and actual spent requests by time", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
 		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
@@ -174,6 +178,7 @@ func TestDeveloperStats(t *testing.T) {
 		summary := keeper.CountTotalInferenceInPeriod(ctx, now.Add(-time.Second*10).UnixMilli(), now.Add(-time.Second*2).UnixMilli())
 		assert.Equal(t, int64(inference1Developer1.CompletionTokenCount+inference1Developer1.PromptTokenCount), summary.TokensUsed)
 		assert.Equal(t, 1, summary.InferenceCount)
+		assert.Equal(t, inference1Developer1.ActualCost, summary.ActualCost)
 	})
 
 	t.Run("count ai tokens and inference requests by time and model", func(t *testing.T) {
@@ -201,7 +206,7 @@ func TestDeveloperStats(t *testing.T) {
 		assert.Equal(t, 2, stat.InferenceCount)
 	})
 
-	t.Run("count ai tokens and inference by epochs and developer", func(t *testing.T) {
+	t.Run("count ai tokens, inference and actual spent by epochs and developer", func(t *testing.T) {
 		const currentEpochId = uint64(4)
 
 		keeper, ctx := keepertest.InferenceKeeper(t)
@@ -219,21 +224,26 @@ func TestDeveloperStats(t *testing.T) {
 		summary := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
 		assert.Equal(t, int64(tokensExpectedForLast2Epochs), summary.TokensUsed)
 		assert.Equal(t, 1, summary.InferenceCount)
+		assert.Equal(t, inference1Developer2.ActualCost, summary.ActualCost)
 
 		summary = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
 		assert.Equal(t, int64(0), summary.TokensUsed)
 		assert.Equal(t, 0, summary.InferenceCount)
+		assert.Equal(t, int64(0), summary.ActualCost)
 
 		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 2)
 		assert.Equal(t, int64(inference1Developer2.PromptTokenCount+inference1Developer2.CompletionTokenCount), summary.TokensUsed)
 		assert.Equal(t, 1, summary.InferenceCount)
+		assert.Equal(t, inference1Developer2.ActualCost, summary.ActualCost)
 
 		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 3)
 		assert.Equal(t, int64(inference1Developer1.PromptTokenCount+inference1Developer1.CompletionTokenCount), summary.TokensUsed)
 		assert.Equal(t, 1, summary.InferenceCount)
+		assert.Equal(t, inference1Developer1.ActualCost, summary.ActualCost)
 
 		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer2, 1)
 		assert.Equal(t, int64(0), summary.TokensUsed)
 		assert.Equal(t, 0, summary.InferenceCount)
+		assert.Equal(t, int64(0), summary.ActualCost)
 	})
 }

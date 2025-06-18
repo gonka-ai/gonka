@@ -15,6 +15,7 @@ message InferenceStats {
   InferenceStatus status = 3;
   uint64 ai_tokens_used = 4;
   string model = 5;
+  int64 actual_const_in_coins = 6;
 }
 
 message DeveloperStatsByTime {

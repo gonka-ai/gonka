@@ -2,7 +2,7 @@ services:
   chain-node:
     container_name: ${KEY_NAME}-node
     command: [ "sh", "./init-docker-genesis.sh" ]
-    image: ghcr.io/product-science/inferenced
+    image: ghcr.io/product-science/inferenced:f30172c2
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -12,12 +12,14 @@ services:
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
+      - WITH_EXPLORER=true
       - DEBUG=true
     networks:
       - chain-public
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
+      - "1317:1317"
 
   api:
     container_name: ${KEY_NAME}-api

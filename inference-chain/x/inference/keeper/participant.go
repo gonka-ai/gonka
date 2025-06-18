@@ -135,3 +135,17 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 
 	return
 }
+
+func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
+
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	var count int64
+	for ; iterator.Valid(); iterator.Next() {
+		count++
+	}
+	return count
+}

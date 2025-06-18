@@ -14,7 +14,7 @@ services:
   chain-node:
     container_name: genesis-node
     command: [ "sh", "./init-docker-genesis.sh" ]
-    image: ghcr.io/product-science/inferenced
+    image: ghcr.io/product-science/inferenced:f30172c2
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:

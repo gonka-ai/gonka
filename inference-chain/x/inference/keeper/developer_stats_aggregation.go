@@ -18,6 +18,7 @@ const (
 type StatsSummary struct {
 	InferenceCount int
 	TokensUsed     int64
+	ActualCost     int64
 }
 
 func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inference) error {
@@ -36,6 +37,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 		Status:              inference.Status,
 		AiTokensUsed:        tokens,
 		Model:               inference.Model,
+		ActualConstInCoins:  inference.ActualCost,
 	}
 
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
@@ -72,6 +74,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 		statsByTime.Inference.Status = inference.Status
 		statsByTime.Inference.AiTokensUsed = tokens
 		statsByTime.Inference.EpochPocBlockHeight = inference.EpochGroupId
+		statsByTime.Inference.ActualConstInCoins = inference.ActualCost
 	} else {
 		k.LogInfo("stat set BY TIME: timekey exists, record DO NOT exist", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
 		statsByTime = types.DeveloperStatsByTime{
@@ -132,10 +135,11 @@ func (k Keeper) setStatByEpoch(
 		EpochPocBlockHeight: inference.EpochGroupId,
 		InferenceId:         inference.InferenceId,
 		Status:              inference.Status,
+		Model:               inference.Model,
 		AiTokensUsed:        tokens,
+		ActualConstInCoins:  inference.ActualCost,
 	}
 	epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
-
 	k.LogInfo("stat set BY EPOCH: inference successfully added to epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
 	return nil
 }
@@ -195,6 +199,7 @@ func (k Keeper) CountTotalInferenceInPeriod(ctx context.Context, from, to int64)
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
 		summary.TokensUsed += int64(stats.Inference.AiTokensUsed)
 		summary.InferenceCount++
+		summary.ActualCost += stats.Inference.ActualConstInCoins
 	}
 	return summary
 }
@@ -226,6 +231,7 @@ func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) Sta
 		for _, inf := range stats.Inferences {
 			summary.TokensUsed += int64(inf.AiTokensUsed)
 			summary.InferenceCount++
+			summary.ActualCost += inf.ActualConstInCoins
 		}
 	}
 	return summary
@@ -253,10 +259,6 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 	summary := StatsSummary{}
 	for ; iterator.Valid(); iterator.Next() {
 		key := iterator.Key()
-		if len(key) < 8 {
-			continue
-		}
-
 		keyDeveloper := string(key[8:])
 		if keyDeveloper != developerAddr {
 			continue
@@ -267,6 +269,7 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 		for _, inf := range stats.Inferences {
 			summary.TokensUsed += int64(inf.AiTokensUsed)
 			summary.InferenceCount++
+			summary.ActualCost += inf.ActualConstInCoins
 		}
 	}
 	return summary
@@ -295,6 +298,7 @@ func (k Keeper) GetStatsGroupedByModelAndTimePeriod(ctx context.Context, from, t
 		}
 		s.InferenceCount++
 		s.TokensUsed += int64(stat.Inference.AiTokensUsed)
+		s.ActualCost += stat.Inference.ActualConstInCoins
 		stats[model] = s
 	}
 	return stats
