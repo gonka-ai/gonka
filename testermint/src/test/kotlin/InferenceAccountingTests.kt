@@ -48,6 +48,52 @@ val DELAY_SEED = 8675309
 class InferenceAccountingTests : TestermintTest() {
 
     @Test
+    fun `test with maximum tokens`() {
+        val (cluster, genesis) = initCluster()
+        verifyEscrow(cluster, inferenceRequestObject.copy(maxCompletionTokens = 100), 100L * defaultTokenCost, 100)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(cluster, inferenceRequestObject.copy(maxTokens = 100), 100L * defaultTokenCost, 100)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(cluster, inferenceRequestObject, defaultTokens * defaultTokenCost, defaultTokens.toInt())
+    }
+
+    private fun verifyEscrow(
+        cluster: LocalCluster,
+        inference: InferenceRequestPayload,
+        expectedEscrow: Long,
+        expectedMaxTokens: Int,
+    ) {
+        val genesis = cluster.genesis
+        val startBalance = genesis.node.getSelfBalance()
+        cluster.allPairs.forEach {
+            it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(5))
+        }
+        val seed = Random.nextInt()
+        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        val lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+        assertThat(lastRequest).isNotNull
+        assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
+        assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
+        assertThat(lastRequest?.maxCompletionTokens).withFailMessage { "Max completion tokens was not set" }.isNotNull()
+        assertThat(lastRequest?.maxCompletionTokens).isEqualTo(expectedMaxTokens)
+        val difference = (0..100).asSequence().map {
+            Thread.sleep(100)
+            startBalance - genesis.node.getSelfBalance()
+        }.filter { it != 0L }.first()
+        assertThat(difference).isEqualTo(expectedEscrow)
+    }
+
+    @Test
+    fun `get nodes after inference`() {
+        val (cluster, genesis) = initCluster()
+        genesis.makeInferenceRequest(inferenceRequest)
+        Thread.sleep(100)
+        val nodes = genesis.api.getNodes()
+        println(nodes)
+
+    }
+
+    @Test
     @Tag("sanity")
     fun `test immediate pre settle amounts`() {
         val (cluster, genesis) = initCluster()
@@ -513,6 +559,11 @@ class InferenceAccountingTests : TestermintTest() {
             val changes = startBalance - balanceAfterSettle
             assertThat(changes).isEqualTo(expectedBalance)
         }
+    }
+
+    companion object {
+        val defaultTokens = 5_000L
+        val defaultTokenCost = 1_000L
     }
 }
 

@@ -6,8 +6,11 @@ import com.github.tomakehurst.wiremock.client.WireMock.aResponse
 import com.github.tomakehurst.wiremock.client.WireMock.equalToJson
 import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
+import com.github.tomakehurst.wiremock.http.RequestMethod
+import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder
 import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
+import kotlin.time.Duration
 
 interface IInferenceMock {
     fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): StubMapping?
@@ -21,13 +24,21 @@ interface IInferenceMock {
 
     fun setPocResponse(weight: Long, scenarioName: String = "ModelState")
     fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState")
+    fun getLastInferenceRequest(): InferenceRequestPayload?
 }
 
 class InferenceMock(port: Int, val name: String) : IInferenceMock {
     private val mockClient = WireMock(port)
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
-
+    override fun getLastInferenceRequest(): InferenceRequestPayload? {
+        val requests = mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("/v1/chat/completions")))
+        if (requests.isEmpty()) {
+            return null
+        }
+        val lastRequest = requests.last()
+        return openAiJson.fromJson(lastRequest.bodyAsString, InferenceRequestPayload::class.java)
+    }
     override fun setInferenceResponse(response: String, delay: Int, streamDelay: Long, segment: String, model: String?) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
@@ -38,7 +49,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
                 }
                 .willReturn(
                     aResponse()
-                        .withFixedDelay(delay.toInt())
+                        .withFixedDelay(delay.toMillis().toInt())
                         .withStatus(200)
                         .withBody(response)
                 )

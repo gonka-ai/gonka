@@ -10,9 +10,10 @@ After the user has selected the test, verify that it is a test,tag or class by l
 cd local-test-net
 ./stop-rebuild-launch.sh
 ```
+Do NOT include the output of this command in the context! If it fails, immediately stop and ask the user to fix it.
 
 # 4. Run the test(s)
-Use gradle for the testerming project. You can run by test names, class names or tags. For example:
+Use gradle for the testermint project. You can run by test names, class names or tags. For example:
 ```bash
 cd testermint && ./gradlew test --tests "TestClassName.*"
 ```

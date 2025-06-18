@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"encoding/json"
+	"github.com/productscience/inference/x/inference/keeper"
 	"log"
 )
 
@@ -27,6 +28,11 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		requestMap["top_logprobs"] = 5
 	}
 
+	maxTokens := getMaxTokens(requestMap)
+
+	requestMap["max_tokens"] = maxTokens
+	requestMap["max_completion_tokens"] = maxTokens
+
 	if doStream, ok := requestMap["stream"]; ok && doStream.(bool) {
 		if _, ok := requestMap["stream_options"]; !ok {
 			requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
@@ -45,6 +51,26 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 		OriginalLogprobsValue:    originalLogprobsValue,
 		OriginalTopLogprobsValue: originalTopLogprobsValue,
 	}, nil
+}
+
+func getMaxTokens(requestMap map[string]interface{}) int {
+	if maxTokensValue, ok := requestMap["max_tokens"]; ok {
+		if maxTokensFloat, ok := maxTokensValue.(float64); ok {
+			return int(maxTokensFloat)
+		}
+		if maxTokensInt, ok := maxTokensValue.(int); ok {
+			return maxTokensInt
+		}
+	}
+	if maxCompletionTokensValue, ok := requestMap["max_completion_tokens"]; ok {
+		if maxCompletionTokensFloat, ok := maxCompletionTokensValue.(float64); ok {
+			return int(maxCompletionTokensFloat)
+		}
+		if maxCompletionTokensInt, ok := maxCompletionTokensValue.(int); ok {
+			return maxCompletionTokensInt
+		}
+	}
+	return keeper.DefaultMaxTokens // Default value if not specified
 }
 
 func getOriginalLogprobs(requestMap map[string]interface{}) *bool {

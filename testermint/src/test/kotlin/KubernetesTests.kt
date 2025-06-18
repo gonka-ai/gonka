@@ -3,6 +3,11 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import com.productscience.getK8sInferencePairs
+import com.productscience.inferenceConfig
+import com.productscience.inferenceRequestObject
+import com.productscience.logSection
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -104,10 +109,18 @@ class KubernetesTests : TestermintTest() {
     }
 
     @Test
+    fun `record k8s activity`() {
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            Thread.sleep(Duration.ofHours(6))
+        }
+    }
+
+    @Test
     fun k8sBasicInference() {
         getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
             val genesis = k8sPairs.first { it.name == "genesis" }
-            val response = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = "Qwen/Qwen2.5-7B-Instruct").toJson())
+            val response =
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = "Qwen/Qwen2.5-7B-Instruct").toJson())
             println("INFERENCE:" + response.choices.first().message.content)
         }
     }
@@ -124,6 +137,22 @@ class KubernetesTests : TestermintTest() {
 //            }
         }
     }
+
+    @Test
+    fun k8sManyRequests() = runBlocking {
+        getK8sInferencePairs(inferenceConfig).use { k8sPairs ->
+            val genesis = k8sPairs.first { it.name == "genesis" }
+            val parameters = genesis.node.getInferenceParams()
+            Logger.info("Parameters: $parameters", "")
+            val response =
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = "Qwen/Qwen2.5-7B-Instruct").toJson())
+            Logger.info("INFERENCE:" + response.choices.first().message.content, "")
+            val inferences = runParallelInferences(genesis, 100, maxConcurrentRequests = 30, models = listOf("Qwen/Qwen2.5-7B-Instruct"))
+            inferences.forEach { Logger.info(it) }
+            Thread.sleep(Duration.ofMinutes(20))
+        }
+    }
+
 
     @Test
     fun k8sUpgrade() {
@@ -187,7 +216,6 @@ class KubernetesTests : TestermintTest() {
                 it.api.getNodes()
                 it.node.getAddress()
             }
-
         }
     }
 }
