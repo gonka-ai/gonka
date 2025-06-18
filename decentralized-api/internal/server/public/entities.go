@@ -19,9 +19,10 @@ type ChatRequest struct {
 }
 
 type OpenAiRequest struct {
-	Model     string `json:"model"`
-	Seed      int32  `json:"seed"`
-	MaxTokens int32  `json:"max_tokens"`
+	Model               string `json:"model"`
+	Seed                int32  `json:"seed"`
+	MaxTokens           int32  `json:"max_tokens"`
+	MaxCompletionTokens int32  `json:"max_completion_tokens"`
 }
 
 type ExecutorDestination struct {

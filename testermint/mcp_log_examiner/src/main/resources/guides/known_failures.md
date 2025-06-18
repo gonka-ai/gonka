@@ -10,3 +10,11 @@ What this means is that the upgrade went to an OLD version of the app instead of
 
 The fix is to run `make build-for-upgrade-tests` in the root folder, which will make sure up to date versions are available.
 
+## Docker issues
+Testermint uses docker to control the nodes. Older versions of docker might have issues when launching additional nodes:
+
+```
+"Couldn't connect to any seeds module=p2p" operation=base
+```
+will show up in the logs for a newly added node (join3). Advise the user to upgrade their version of Docker Desktop.
+

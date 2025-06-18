@@ -43,7 +43,11 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		inference.Model = msg.Model
 		inference.StartBlockHeight = ctx.BlockHeight()
 		inference.StartBlockTimestamp = ctx.BlockTime().UnixMilli()
-		inference.MaxTokens = DefaultMaxTokens
+		if msg.MaxTokens > 0 {
+			inference.MaxTokens = msg.MaxTokens
+		} else {
+			inference.MaxTokens = DefaultMaxTokens
+		}
 		inference.AssignedTo = msg.AssignedTo
 		inference.NodeVersion = msg.NodeVersion
 	} else {
@@ -58,8 +62,13 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 			Model:               msg.Model,
 			StartBlockHeight:    ctx.BlockHeight(),
 			StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
-			// For now, use the default tokens. Long term, we'll need to add MaxTokens to the message.
-			MaxTokens:   DefaultMaxTokens,
+			// Use the MaxTokens from the message if it's set, otherwise use the default
+			MaxTokens: func() uint64 {
+				if msg.MaxTokens > 0 {
+					return msg.MaxTokens
+				}
+				return DefaultMaxTokens
+			}(),
 			AssignedTo:  msg.AssignedTo,
 			NodeVersion: msg.NodeVersion,
 		}

@@ -273,6 +273,8 @@ data class InferenceRequestPayload(
     val temperature: Double,
     val messages: List<ChatMessage>,
     val seed: Int,
+    val maxCompletionTokens: Int? = null,
+    val maxTokens: Int? = null,
     val stream: Boolean = false
 ) {
     fun toJson() = cosmosJson.toJson(this)

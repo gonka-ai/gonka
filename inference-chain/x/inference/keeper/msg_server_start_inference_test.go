@@ -44,6 +44,7 @@ func TestMsgServer_StartInference(t *testing.T) {
 		PromptPayload: "promptPayload",
 		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
+		// MaxTokens is not set, should use default
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, "inferenceId")
@@ -60,6 +61,49 @@ func TestMsgServer_StartInference(t *testing.T) {
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
 		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
+	}, savedInference)
+}
+
+func TestMsgServer_StartInferenceWithMaxTokens(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Creator,
+		Url:     "url",
+	})
+	require.NoError(t, err)
+	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Requester,
+		Url:     "url",
+	})
+
+	// Custom max tokens value
+	customMaxTokens := uint64(2000)
+	mocks.BankKeeper.ExpectPay(sdkCtx, testutil.Requester, customMaxTokens*keeper.PerTokenCost)
+	require.NoError(t, err)
+	_, err = ms.StartInference(ctx, &types.MsgStartInference{
+		InferenceId:   "inferenceId",
+		PromptHash:    "promptHash",
+		PromptPayload: "promptPayload",
+		RequestedBy:   testutil.Requester,
+		Creator:       testutil.Creator,
+		MaxTokens:     customMaxTokens, // Set custom max tokens
+	})
+	require.NoError(t, err)
+	savedInference, found := k.GetInference(ctx, "inferenceId")
+	require.True(t, found)
+	ctx2 := sdk.UnwrapSDKContext(ctx)
+	require.Equal(t, types.Inference{
+		Index:               "inferenceId",
+		InferenceId:         "inferenceId",
+		PromptHash:          "promptHash",
+		PromptPayload:       "promptPayload",
+		RequestedBy:         testutil.Requester,
+		Status:              types.InferenceStatus_STARTED,
+		StartBlockHeight:    0,
+		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
+		MaxTokens:           customMaxTokens,                              // Should use custom max tokens
+		EscrowAmount:        int64(customMaxTokens * keeper.PerTokenCost), // Escrow should be based on custom max tokens
 	}, savedInference)
 }
 

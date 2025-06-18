@@ -17,7 +17,7 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 // Msg defines the Msg service.
 service Msg {
   option (cosmos.msg.v1.service) = true;
-  
+
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
   rpc UpdateParams                     (MsgUpdateParams                    ) returns (MsgUpdateParamsResponse                    );
@@ -50,12 +50,12 @@ service Msg {
 message MsgUpdateParams {
   option (cosmos.msg.v1.signer) =                             "authority";
   option           (amino.name) = "inference/x/inference/MsgUpdateParams";
-  
+
   // authority is the address that controls the module (defaults to x/gov unless overwritten).
   string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 
   // params defines the module parameters to update.
-  
+
   // NOTE: All parameters must be supplied.
   Params params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
@@ -74,6 +74,7 @@ message MsgStartInference {
   string requested_by   = 7;
   string assigned_to    = 8;
   string node_version   = 9;
+  uint64 max_tokens     = 10;
 }
 
 message MsgStartInferenceResponse {
