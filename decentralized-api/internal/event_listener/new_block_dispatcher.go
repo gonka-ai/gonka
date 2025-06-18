@@ -159,6 +159,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 	comes from a totally different source?
 	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
+	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
+		"blockHeight", epochState.CurrentBlock.Height,
+		"epoch", epochState.CurrentEpoch.Epoch,
+		"epoch.PocStartBlockHeight", epochState.CurrentEpoch.PocStartBlockHeight,
+		"currentPhase", epochState.CurrentPhase,
+		"isSynched", epochState.IsSynced,
+		"blockHase", epochState.CurrentBlock.Hash)
+	logging.Debug("[new-block-dispatcher]", types.Stages, "blockHeight", epochState.CurrentBlock.Height, "blochHash", epochState.CurrentBlock.Hash)
 	if !epochState.IsSynced {
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
 		return nil
