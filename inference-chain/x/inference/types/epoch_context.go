@@ -14,17 +14,16 @@ type EpochContext struct {
 
 func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
 	if epochGroup == nil {
-		if currentBlockHeight < epochParams.EpochLength-epochParams.EpochShift {
+		if currentBlockHeight < getNextPoCStart(nil, &epochParams) {
 			return &EpochContext{
-				Epoch: 0,
-				// FIXME: or maybe make it zero and return to uint64 type here to avoid confusion?
+				Epoch:               0,
 				PocStartBlockHeight: -epochParams.EpochShift,
 				EpochParams:         epochParams,
 			}
-		} else if currentBlockHeight <= (epochParams.EpochLength-epochParams.EpochShift)+epochParams.GetSetNewValidatorsStage() {
+		} else if currentBlockHeight <= getNextGroupBecomesEffective(nil, &epochParams) {
 			return &EpochContext{
 				Epoch:               1,
-				PocStartBlockHeight: epochParams.EpochLength - epochParams.EpochShift,
+				PocStartBlockHeight: getNextPoCStart(nil, &epochParams),
 				EpochParams:         epochParams,
 			}
 		} else {
@@ -33,34 +32,63 @@ func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, curren
 		}
 	}
 
-	// TODO: should probably check if currentBlockHeight is still in the boundaries of the next epoch!
-	if currentBlockHeight >= int64(epochGroup.PocStartBlockHeight)+epochParams.EpochLength {
-		return &EpochContext{
-			Epoch:               epochGroup.EpochGroupId + 1,
-			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight) + epochParams.EpochLength,
-			EpochParams:         epochParams,
-		}
-	} else if currentBlockHeight <= int64(epochGroup.PocStartBlockHeight)+epochParams.GetSetNewValidatorsStage() {
-		msg := fmt.Sprintf("Expected effective group to have an earlier poc start block height. "+
-			"currentBlockHeight = %d. "+
-			"epochGroup.PocStartBlockHeight = %d",
-			currentBlockHeight,
-			epochGroup.PocStartBlockHeight)
-		panic(msg)
-	} else if currentBlockHeight > int64(epochGroup.PocStartBlockHeight)+epochParams.EpochLength+epochParams.GetSetNewValidatorsStage() {
-		msg := fmt.Sprintf("Expecting effective group to change to the next one. "+
-			"currentBlockHeight = %d. "+
-			"epochGroup.PocStartBlockHeight = %d",
-			currentBlockHeight,
-			epochGroup.PocStartBlockHeight)
-		panic(msg)
-	} else {
+	if currentBlockHeight < getNextPoCStart(epochGroup, &epochParams) &&
+		currentBlockHeight > getGroupBecomesEffective(epochGroup, &epochParams) {
 		return &EpochContext{
 			Epoch:               epochGroup.EpochGroupId,
 			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight),
 			EpochParams:         epochParams,
 		}
+	} else if currentBlockHeight <= getNextGroupBecomesEffective(epochGroup, &epochParams) {
+		return &EpochContext{
+			Epoch:               epochGroup.EpochGroupId + 1,
+			PocStartBlockHeight: getNextPoCStart(epochGroup, &epochParams),
+			EpochParams:         epochParams,
+		}
+	} else {
+		// This is a special case where the current block height is beyond the expected range.
+		// It should not happen in normal operation, but we handle it gracefully.
+		msg := fmt.Sprintf("Unexpected currentBlockHeight = %d for epochGroup.PocStartBlockHeight = %d",
+			currentBlockHeight,
+			epochGroup.PocStartBlockHeight)
+		panic(msg)
 	}
+}
+
+func getNextPoCStart(epochGroup *EpochGroupData, params *EpochParams) int64 {
+	if params == nil {
+		panic("getNextPoCStart: params cannot be nil")
+	}
+
+	if epochGroup == nil {
+		return -params.EpochShift + params.EpochLength
+	}
+
+	return int64(epochGroup.PocStartBlockHeight) + params.EpochLength
+}
+
+func getGroupBecomesEffective(epochGroup *EpochGroupData, epochParams *EpochParams) int64 {
+	if epochParams == nil {
+		panic("getGroupBecomesEffective: epochParams cannot be nil")
+	}
+
+	if epochGroup == nil {
+		return 1
+	}
+
+	return int64(epochGroup.PocStartBlockHeight) + epochParams.GetSetNewValidatorsStage()
+}
+
+func getNextGroupBecomesEffective(epochGroup *EpochGroupData, params *EpochParams) int64 {
+	if params == nil {
+		panic("getNextGroupBecomesEffective: params cannot be nil")
+	}
+
+	if epochGroup == nil {
+		return -params.EpochShift + params.EpochLength + params.GetSetNewValidatorsStage()
+	}
+
+	return int64(epochGroup.PocStartBlockHeight) + params.EpochLength + params.GetSetNewValidatorsStage()
 }
 
 // GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
