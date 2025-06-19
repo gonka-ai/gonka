@@ -10,6 +10,10 @@ import (
 )
 
 const (
+	EffectiveEpochKey = "effective-epoch"
+	UpcomingEpochKey  = "upcoming-epoch"
+	PreviousEpochKey  = "previous-epoch"
+
 	EffectiveEpochGroupKey = "effective-epoch-group"
 	UpcomingEpochGroupKey  = "upcoming-epoch-group"
 	PreviousEpochGroupKey  = "previous-epoch-group"
