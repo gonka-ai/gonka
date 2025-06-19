@@ -600,10 +600,9 @@ message ParticipantFullStats {
   string account_address = 1;
   string validator_operator_addres = 2;
   int32  reputation = 3;
-  uint64 rewarded_coins_current_epoch = 4;
-  uint64 earned_coins_current_epoch = 5;
-  uint64 rewarded_coins_latest_epoch = 6;
-  uint32 epochs_completed = 7;
+  uint64 earned_coins_current_epoch = 4;
+  uint64 rewarded_coins_latest_epoch = 5;
+  uint32 epochs_completed = 6;
 }
 
 message QueryParticipantsFullStatsRequest {}
@@ -665,8 +664,13 @@ message QueryCountAllParticipantsResponse {
 message QueryDebugStatsRequest {}
 
 message QueryDebugStatsResponse {
-  repeated DeveloperStatsByTime stats_by_time = 1;
-  repeated DeveloperStatsByEpoch stats_by_epoch = 2;
+  message TemporaryTimeStat {
+    string developer = 1;
+    repeated DeveloperStatsByTime stats = 2;
+  }
+
+  repeated TemporaryTimeStat stats_by_time = 1;
+  map<string, DeveloperStatsByEpoch> stats_by_epoch = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}

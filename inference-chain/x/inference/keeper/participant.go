@@ -136,7 +136,7 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	return
 }
 
-func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
+func (k Keeper) CountAllParticipantsWithNotZeroBalance(ctx context.Context) int64 {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.ParticipantKeyPrefix))
 
@@ -144,7 +144,10 @@ func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
 	defer iterator.Close()
 
 	var count int64
+	var participant types.Participant
 	for ; iterator.Valid(); iterator.Next() {
+		k.cdc.MustUnmarshal(iterator.Value(), &participant)
+		// TODO check balance!
 		count++
 	}
 	return count

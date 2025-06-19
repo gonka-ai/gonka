@@ -116,8 +116,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		return err
 	}
 
-	k.LogInfo("participants amounts", types.Settle, "amounts", len(amounts))
-
 	err = k.MintRewardCoins(ctx, subsidyResult.Amount, "subsidy")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)

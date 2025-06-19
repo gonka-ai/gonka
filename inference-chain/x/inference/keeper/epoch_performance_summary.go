@@ -14,8 +14,6 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	b := k.cdc.MustMarshal(&epochPerformanceSummary)
 
-	k.LogInfo("SetEpochPerformanceSummary", types.EpochGroup, "epochPerformanceSummary.ParticipantId", epochPerformanceSummary.ParticipantId, "epochPerformanceSummary.EpochStartHeight", epochPerformanceSummary.EpochStartHeight)
-
 	store.Set(types.EpochPerformanceSummaryKey(
 		epochPerformanceSummary.ParticipantId,
 		epochPerformanceSummary.EpochStartHeight,
@@ -100,8 +98,6 @@ func (k Keeper) GetParticipantsEpochSummaries(
 ) []types.EpochPerformanceSummary {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
-
-	k.LogInfo("GetParticipantsEpochSummaries", types.EpochGroup, "participantIds", participantIds, "epochStartHeight", epochStartHeight)
 
 	var summaries []types.EpochPerformanceSummary
 	for _, participantId := range participantIds {

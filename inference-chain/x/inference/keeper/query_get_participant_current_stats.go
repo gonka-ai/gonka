@@ -55,12 +55,11 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 
 		accAddr, _ := sdk.AccAddressFromBech32(member.MemberAddress)
 		participants[member.MemberAddress] = &types.ParticipantFullStats{
-			AccountAddress:            member.MemberAddress,
-			ValidatorOperatorAddres:   sdk.ValAddress(accAddr).String(),
-			Reputation:                member.Reputation,
-			RewardedCoinsCurrentEpoch: participant.CurrentEpochStats.RewardedCoins,
-			EarnedCoinsCurrentEpoch:   participant.CurrentEpochStats.EarnedCoins,
-			EpochsCompleted:           participant.EpochsCompleted,
+			AccountAddress:          member.MemberAddress,
+			ValidatorOperatorAddres: sdk.ValAddress(accAddr).String(),
+			Reputation:              member.Reputation,
+			EarnedCoinsCurrentEpoch: participant.CurrentEpochStats.EarnedCoins,
+			EpochsCompleted:         participant.EpochsCompleted,
 		}
 	}
 

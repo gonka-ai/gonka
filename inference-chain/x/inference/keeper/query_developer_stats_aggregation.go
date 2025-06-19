@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"github.com/productscience/inference/x/inference/types"
-	"golang.org/x/exp/maps"
 	"time"
 )
 
@@ -93,7 +92,7 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	}
 
 	stats := make([]*types.ModelStats, 0)
-	statsPerModels := k.GetStatsGroupedByModelAndTimePeriod(ctx, req.TimeFrom, req.TimeTo)
+	statsPerModels := k.CountStatsGroupedByModelAndTimePeriod(ctx, req.TimeFrom, req.TimeTo)
 	for modelName, summary := range statsPerModels {
 		stats = append(stats, &types.ModelStats{
 			Model:      modelName,
@@ -104,10 +103,19 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	return &types.QueryInferencesAndTokensStatsByModelsResponse{StatsModels: stats}, nil
 }
 
-func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, req *types.QueryDebugStatsRequest) (*types.QueryDebugStatsResponse, error) {
+func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, _ *types.QueryDebugStatsRequest) (*types.QueryDebugStatsResponse, error) {
 	statByEpoch, statByTime := k.DumpAllDeveloperStats(ctx)
-	return &types.QueryDebugStatsResponse{
-		StatsByTime:  statByTime,
-		StatsByEpoch: maps.Values(statByEpoch),
-	}, nil
+
+	resp := &types.QueryDebugStatsResponse{
+		StatsByTime:  make([]*types.QueryDebugStatsResponse_TemporaryTimeStat, 0),
+		StatsByEpoch: statByEpoch,
+	}
+
+	for developer, stat := range statByTime {
+		resp.StatsByTime = append(resp.StatsByTime, &types.QueryDebugStatsResponse_TemporaryTimeStat{
+			Developer: developer,
+			Stats:     stat,
+		})
+	}
+	return resp, nil
 }
