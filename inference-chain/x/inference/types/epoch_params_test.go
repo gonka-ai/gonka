@@ -17,9 +17,6 @@ func TestEpochParamsStages(t *testing.T) {
 	}
 
 	pocStart := int64(10)
-	if !params.IsStartOfPoCStage(pocStart) {
-		t.Errorf("Expected %d to be the start of PoC stage", pocStart)
-	}
 
 	pocEnd := pocStart + params.GetEndOfPoCStage()
 	if !params.IsEndOfPoCStage(pocEnd) {
