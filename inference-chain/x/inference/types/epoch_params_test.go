@@ -26,20 +26,6 @@ func TestEpochParamsStages(t *testing.T) {
 		t.Errorf("Expected %d to be the end of PoC stage", pocEnd)
 	}
 
-	for i := pocStart + 1; i <= pocStart+params.GetPoCExchangeDeadline(); i++ {
-		if !params.IsPoCExchangeWindow(pocStart, i) {
-			t.Errorf("Expected block %d to be in PoC exchange window", i)
-		}
-	}
-
-	if params.IsPoCExchangeWindow(pocStart, pocStart) {
-		t.Errorf("Expected block %d not to be in PoC exchange window (zero elapsed epochs)", pocStart)
-	}
-
-	if params.IsPoCExchangeWindow(pocStart, pocStart+params.GetPoCExchangeDeadline()+1) {
-		t.Errorf("Expected block %d not to be in PoC exchange window (beyond deadline)", pocStart+params.GetPoCExchangeDeadline()+1)
-	}
-
 	pocValStart := pocStart + params.GetStartOfPoCValidationStage()
 	if pocValStart != pocEnd+(params.PocExchangeDuration*params.EpochMultiplier) {
 		t.Errorf("Expected %d to be the start of PoC Validation stage", pocValStart)

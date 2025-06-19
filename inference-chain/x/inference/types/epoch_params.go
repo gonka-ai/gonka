@@ -28,14 +28,6 @@ func (p *EpochParams) IsEndOfPoCStage(blockHeight int64) bool {
 	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCStage()
 }
 
-func (p *EpochParams) IsPoCExchangeWindow(startBlockHeight, currentBlockHeight int64) bool {
-	startBlockHeight = p.shift(startBlockHeight)
-	currentBlockHeight = p.shift(currentBlockHeight)
-	elapsedBlocks := currentBlockHeight - startBlockHeight
-
-	return p.isNotZeroEpoch(startBlockHeight) && elapsedBlocks > 0 && elapsedBlocks <= p.GetPoCExchangeDeadline()
-}
-
 func (p *EpochParams) IsStartOfPoCValidationStage(blockHeight int64) bool {
 	blockHeight = p.shift(blockHeight)
 	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetStartOfPoCValidationStage()
