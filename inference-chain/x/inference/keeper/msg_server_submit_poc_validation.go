@@ -16,14 +16,21 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 	epochParams := k.Keeper.GetParams(ctx).EpochParams
+	currentEpochGroup, err := k.Keeper.GetCurrentEpochGroupOrNil(ctx)
+	if err != nil {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get current epoch group", types.PoC, "error", err)
+		return nil, sdkerrors.Wrap(err, "Failed to get current epoch group")
+	}
+	epochContext := types.NewEpochContext(currentEpochGroup.GroupData, *epochParams, currentBlockHeight)
 
-	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
+	// TODO: fix log messages
+	if !epochContext.IsStartOfPocStage(startBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
 		errMsg := fmt.Sprintf("[SubmitPocValidation] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !epochParams.IsValidationExchangeWindow(startBlockHeight, currentBlockHeight) {
+	if !epochContext.IsValidationExchangeWindow(startBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC, "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)

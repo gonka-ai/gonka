@@ -159,6 +159,15 @@ func (ec *EpochContext) IsPoCExchangeWindow(blockHeight int64) bool {
 	return relativeHeight <= ec.EpochParams.GetPoCExchangeDeadline()
 }
 
+func (ec *EpochContext) IsValidationExchangeWindow(blockHeight int64) bool {
+	relativeHeight := blockHeight - ec.PocStartBlockHeight
+	if relativeHeight <= 0 {
+		return false
+	}
+
+	return relativeHeight < ec.EpochParams.GetPoCExchangeDeadline()
+}
+
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
 	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetEndOfPoCStage())
 }

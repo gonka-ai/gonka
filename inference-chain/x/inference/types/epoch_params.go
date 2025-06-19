@@ -17,12 +17,6 @@ const (
 	InferencePhase           EpochPhase = "Inference"
 )
 
-// PR TODO: validate epoch params and gather hardcoded params from the chain
-func (p *EpochParams) IsStartOfPoCStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.getStartOfPocStage()
-}
-
 func (p *EpochParams) IsEndOfPoCStage(blockHeight int64) bool {
 	blockHeight = p.shift(blockHeight)
 	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCStage()
@@ -50,36 +44,36 @@ func (p *EpochParams) getStartOfPocStage() int64 {
 }
 
 func (p *EpochParams) GetPoCWinddownStage() int64 {
-	return p.getStartOfPocStage() + (int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor) * p.EpochMultiplier)
+	return p.getStartOfPocStage() + int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor)
 }
 
 func (p *EpochParams) GetEndOfPoCStage() int64 {
-	return p.getStartOfPocStage() + (p.PocStageDuration * p.EpochMultiplier)
+	return p.getStartOfPocStage() + p.PocStageDuration
 }
 
 func (p *EpochParams) GetPoCExchangeDeadline() int64 {
-	return p.GetEndOfPoCStage() + (p.PocExchangeDuration * p.EpochMultiplier)
+	return p.GetEndOfPoCStage() + p.PocExchangeDuration
 }
 
 // TODO: may be longer period between
 func (p *EpochParams) GetStartOfPoCValidationStage() int64 {
-	return p.GetEndOfPoCStage() + (p.PocValidationDelay * p.EpochMultiplier)
+	return p.GetEndOfPoCStage() + p.PocValidationDelay
 }
 
 func (p *EpochParams) GetPoCValidationWindownStage() int64 {
-	return p.GetStartOfPoCValidationStage() + (int64(float64(p.PocValidationDuration)*PoCValidateWindDownFactor) * p.EpochMultiplier)
+	return p.GetStartOfPoCValidationStage() + int64(float64(p.PocValidationDuration)*PoCValidateWindDownFactor)
 }
 
 func (p *EpochParams) GetEndOfPoCValidationStage() int64 {
-	return p.GetStartOfPoCValidationStage() + (p.PocValidationDuration * p.EpochMultiplier)
+	return p.GetStartOfPoCValidationStage() + p.PocValidationDuration
 }
 
 func (p *EpochParams) GetSetNewValidatorsStage() int64 {
-	return p.GetEndOfPoCValidationStage() + (1 * p.EpochMultiplier)
+	return p.GetEndOfPoCValidationStage() + 1
 }
 
 func (p *EpochParams) GetClaimMoneyStage() int64 {
-	return p.GetSetNewValidatorsStage() + (1 * p.EpochMultiplier)
+	return p.GetSetNewValidatorsStage() + 1
 }
 
 func (p *EpochParams) isNotZeroEpoch(blockHeight int64) bool {
