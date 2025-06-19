@@ -113,7 +113,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, currentEpochGroup *
 			break
 		}
 	}
-	modelEpochGroup, err := k.GetEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
+	modelEpochGroup, err := k.GetOrCreateEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
 	if err != nil {
 		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
 		return err

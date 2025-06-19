@@ -14,15 +14,25 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 	epochParams := k.Keeper.GetParams(goCtx).EpochParams
+	currentEpochGroup, err := k.Keeper.GetCurrentEpochGroupOrNil(ctx)
+	if err != nil {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get current epoch group", types.PoC, "error", err)
+		return nil, sdkerrors.Wrap(err, "Failed to get current epoch group")
+	}
+	epochContext := types.NewEpochContext(currentEpochGroup.GroupData, *epochParams, currentBlockHeight)
 
-	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
+	if !epochContext.IsStartOfPocStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height doesn't match the upcoming epoch group", types.PoC,
+			"msg.PocStageStartBlockHeight", startBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height doesn't match the upcoming epoch group. msg.PocStageStartBlockHeight = %d", startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !epochParams.IsPoCExchangeWindow(startBlockHeight, currentBlockHeight) {
-		k.LogError(PocFailureTag+"PoC exchange window is closed.", types.PoC, "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
+	if !epochContext.IsPoCExchangeWindow(currentBlockHeight) {
+		k.LogError(PocFailureTag+"PoC exchange window is closed.", types.PoC,
+			"msg.PocStageStartBlockHeight", startBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext", epochContext)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}

@@ -132,12 +132,12 @@ func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 		return phaseOffset == ec.EpochParams.getStartOfPocStage()
 	}
 
-	relativeHeight := blockHeight - int64(ec.PocStartBlockHeight)
+	relativeHeight := blockHeight - ec.PocStartBlockHeight
 	if relativeHeight < 0 {
 		return false
 	}
 
-	return relativeHeight%ec.EpochParams.EpochLength == phaseOffset
+	return relativeHeight == phaseOffset
 }
 
 // TODO: inspect this function usage!!
@@ -148,6 +148,15 @@ func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
 
 func (ec *EpochContext) IsStartOfPocStage(blockHeight int64) bool {
 	return blockHeight == ec.PocStartBlockHeight
+}
+
+func (ec *EpochContext) IsPoCExchangeWindow(blockHeight int64) bool {
+	relativeHeight := blockHeight - ec.PocStartBlockHeight
+	if relativeHeight <= 0 {
+		return false
+	}
+
+	return relativeHeight <= ec.EpochParams.GetPoCExchangeDeadline()
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
