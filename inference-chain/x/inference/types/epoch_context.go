@@ -104,7 +104,7 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 	// Calculate height relative to the Epoch's true start.
 	relativeBlockHeight := blockHeight - epochStartHeight
 
-	startOfPoC := ec.EpochParams.GetStartOfPoCStage()
+	startOfPoC := ec.EpochParams.getStartOfPocStage()
 	pocGenerateWindDownStart := ec.EpochParams.GetPoCWinddownStage()
 	startOfPoCValidation := ec.EpochParams.GetStartOfPoCValidationStage()
 	pocValidateWindDownStart := ec.EpochParams.GetPoCValidationWindownStage()
@@ -129,7 +129,7 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 // isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the Epoch.
 func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 	if ec.IsStartOfNextPoC(blockHeight) {
-		return phaseOffset == ec.EpochParams.GetStartOfPoCStage()
+		return phaseOffset == ec.EpochParams.getStartOfPocStage()
 	}
 
 	relativeHeight := blockHeight - int64(ec.PocStartBlockHeight)

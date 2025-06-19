@@ -20,7 +20,7 @@ const (
 // PR TODO: validate epoch params and gather hardcoded params from the chain
 func (p *EpochParams) IsStartOfPoCStage(blockHeight int64) bool {
 	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetStartOfPoCStage()
+	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.getStartOfPocStage()
 }
 
 func (p *EpochParams) IsEndOfPoCStage(blockHeight int64) bool {
@@ -53,16 +53,16 @@ func (p *EpochParams) IsEndOfPoCValidationStage(blockHeight int64) bool {
 	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCValidationStage()
 }
 
-func (p *EpochParams) GetStartOfPoCStage() int64 {
+func (p *EpochParams) getStartOfPocStage() int64 {
 	return 0
 }
 
 func (p *EpochParams) GetPoCWinddownStage() int64 {
-	return p.GetStartOfPoCStage() + (int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor) * p.EpochMultiplier)
+	return p.getStartOfPocStage() + (int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor) * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetEndOfPoCStage() int64 {
-	return p.GetStartOfPoCStage() + (p.PocStageDuration * p.EpochMultiplier)
+	return p.getStartOfPocStage() + (p.PocStageDuration * p.EpochMultiplier)
 }
 
 func (p *EpochParams) GetPoCExchangeDeadline() int64 {
