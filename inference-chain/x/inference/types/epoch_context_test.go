@@ -67,7 +67,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpochGroup)+1, ec.Epoch)
 	require.Equal(t, types.PoCGeneratePhase, ec.GetCurrentPhase(i))
 	require.Equal(t, i, ec.PocStartBlockHeight)
-	require.True(t, ec.IsStartOfPoc(i))
+	require.True(t, ec.IsStartOfPocStage(i))
 
 	i++
 
@@ -148,7 +148,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 }
 
 func requireNotAStageBoundary(t *testing.T, ec *types.EpochContext, i int64) {
-	require.False(t, ec.IsStartOfPoc(i))
+	require.False(t, ec.IsStartOfPocStage(i))
 	require.False(t, ec.IsEndOfPoCStage(i))
 	require.False(t, ec.IsStartOfPoCValidationStage(i))
 	require.False(t, ec.IsEndOfPoCValidationStage(i))

@@ -79,8 +79,9 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 }
 
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
-	epochParams := o.phaseTracker.GetEpochParams()
-	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
+	epochState := o.phaseTracker.GetCurrentEpochState()
+	startOfPoCBlockHeight := epochState.CurrentEpoch.PocStartBlockHeight
+	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
 	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
 		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "error", err)

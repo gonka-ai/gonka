@@ -140,12 +140,13 @@ func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
 	return relativeHeight%ec.EpochParams.EpochLength == phaseOffset
 }
 
+// TODO: inspect this function usage!!
 // IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next Epoch.
 func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
 	return blockHeight == ec.PocStartBlockHeight+ec.EpochParams.EpochLength
 }
 
-func (ec *EpochContext) IsStartOfPoc(blockHeight int64) bool {
+func (ec *EpochContext) IsStartOfPocStage(blockHeight int64) bool {
 	return blockHeight == ec.PocStartBlockHeight
 }
 

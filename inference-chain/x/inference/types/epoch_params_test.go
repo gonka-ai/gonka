@@ -66,19 +66,4 @@ func TestEpochParamsStages(t *testing.T) {
 	if !params.IsEndOfPoCValidationStage(pocValEnd) {
 		t.Errorf("Expected %d to be the end of PoC Validation stage", pocValEnd)
 	}
-
-	setNewValidatorsBlock := pocStart + params.GetSetNewValidatorsStage()
-	if !params.IsSetNewValidatorsStage(setNewValidatorsBlock) {
-		t.Errorf("Expected %d to be the Set New Validators stage", setNewValidatorsBlock)
-	}
-
-	startFromPocEnd := params.GetStartBlockHeightFromEndOfPocStage(pocEnd)
-	if startFromPocEnd != pocStart {
-		t.Errorf("Expected start block height from end of PoC stage to be %d, got %d", pocStart, startFromPocEnd)
-	}
-
-	startFromPocValidation := params.GetStartBlockHeightFromStartOfPocValidationStage(pocValStart)
-	if startFromPocValidation != pocStart {
-		t.Errorf("Expected start block height from start of PoC validation stage to be %d, got %d", pocStart, startFromPocValidation)
-	}
 }

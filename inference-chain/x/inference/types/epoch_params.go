@@ -53,26 +53,6 @@ func (p *EpochParams) IsEndOfPoCValidationStage(blockHeight int64) bool {
 	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCValidationStage()
 }
 
-func (p *EpochParams) IsSetNewValidatorsStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetSetNewValidatorsStage()
-}
-
-func (p *EpochParams) IsClaimMoneyStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetClaimMoneyStage()
-
-}
-
-func (p *EpochParams) GetStartBlockHeightFromEndOfPocStage(blockHeight int64) int64 {
-	return p.unshift(p.shift(blockHeight) - p.GetEndOfPoCStage())
-}
-
-func (p *EpochParams) GetStartBlockHeightFromStartOfPocValidationStage(blockHeight int64) int64 {
-	return p.unshift(p.shift(blockHeight) - p.GetStartOfPoCValidationStage())
-}
-
 func (p *EpochParams) GetStartOfPoCStage() int64 {
 	return 0
 }

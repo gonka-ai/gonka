@@ -193,9 +193,16 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
+	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	// TODO: Why error here?
+	if err != nil {
+		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())
+		return nil
+	}
+	epochContext := types.NewEpochContext(currentEpochGroup.GroupData, *epochParams, blockHeight)
 
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
-	err := am.expireInferences(ctx, timeouts)
+	err = am.expireInferences(ctx, timeouts)
 	if err != nil {
 		am.LogError("Error expiring inferences", types.Inferences)
 	}
@@ -211,13 +218,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
-	// FIXME: use EpochContext here instead!
-	if epochParams.IsSetNewValidatorsStage(blockHeight) {
+	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
 	}
 
-	if epochParams.IsStartOfPoCStage(blockHeight) {
+	if epochContext.IsStartOfPocStage(blockHeight) {
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetEpochGroup(ctx, uint64(blockHeight), "")
 		if err != nil {
@@ -230,11 +236,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
-	}
-	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())
-		return nil
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
