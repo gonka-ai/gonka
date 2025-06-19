@@ -22,9 +22,9 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	epochContext := types.NewEpochContext(currentEpochGroup.GroupData, *epochParams, currentBlockHeight)
 
 	if !epochContext.IsStartOfPocStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height doesn't match the upcoming epoch group", types.PoC,
+		k.LogError(PocFailureTag+"[SubmitPocBatch] message start block height doesn't match the upcoming epoch group", types.PoC,
 			"msg.PocStageStartBlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height doesn't match the upcoming epoch group. msg.PocStageStartBlockHeight = %d", startBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocBatch] message start block height doesn't match the upcoming epoch group. msg.PocStageStartBlockHeight = %d", startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 

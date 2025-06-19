@@ -25,8 +25,9 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 
 	// TODO: fix log messages
 	if !epochContext.IsStartOfPocStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocValidation] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocValidation] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
+		k.LogError(PocFailureTag+"[SubmitPocValidation] message start block height doesn't match the upcoming epoch group", types.PoC,
+			"msg.PocStageStartBlockHeight", startBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocValidation] message start block height doesn't match the upcoming epoch group. msg.PocStageStartBlockHeight = %d", startBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
