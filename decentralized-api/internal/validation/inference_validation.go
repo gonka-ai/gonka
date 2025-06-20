@@ -17,6 +17,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 
 	"github.com/google/uuid"
@@ -24,6 +25,8 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+var validateFullTokens = os.Getenv("VALIDATE_FULL_TOKENS") != "false"
 
 type InferenceValidator struct {
 	recorder      cosmosclient.CosmosMessageClient
@@ -218,16 +221,22 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 		return nil, err
 	}
 
-	enforcedStr, err := originalResponse.GetEnforcedStr()
-	if err != nil {
-		return nil, err
+	if validateFullTokens {
+		enforcedTokens, err := originalResponse.GetEnforcedTokens()
+		if err != nil {
+			return nil, err
+		}
+		requestMap["enforced_tokens"] = enforcedTokens
+	} else {
+		enforcedStr, err := originalResponse.GetEnforcedStr()
+		if err != nil {
+			return nil, err
+		}
+		requestMap["enforced_str"] = enforcedStr
 	}
-	requestMap["enforced_str"] = enforcedStr
-	// A hack to simplify processing the response:
 	requestMap["stream"] = false
 	delete(requestMap, "stream_options")
 
-	// Serialize requestMap to JSON
 	requestBody, err := json.Marshal(requestMap)
 	if err != nil {
 		return nil, err
