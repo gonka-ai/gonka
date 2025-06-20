@@ -14,6 +14,7 @@ const (
 	UpcomingEpochKey  = "upcoming-epoch/"
 	PreviousEpochKey  = "previous-epoch/"
 
+	EpochGroupPrefix       = "Epoch/group/"
 	EffectiveEpochGroupKey = "effective-epoch-group"
 	UpcomingEpochGroupKey  = "upcoming-epoch-group"
 	PreviousEpochGroupKey  = "previous-epoch-group"
