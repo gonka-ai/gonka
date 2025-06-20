@@ -5,6 +5,7 @@ import (
 	"cosmossdk.io/store/prefix"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
 )
 
@@ -25,6 +26,24 @@ func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefi
 	store := prefix.NewStore(storeAdapter, keyPrefix)
 	b := k.cdc.MustMarshal(object)
 	store.Set(key, b)
+}
+
+func SetUint64Value(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte, value uint64) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+	b := sdk.Uint64ToBigEndian(value)
+	store.Set(key, b)
+}
+
+func GetUint64Value(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte) (uint64, bool) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+	bz := store.Get(key)
+	if bz == nil {
+		return 0, false
+	}
+
+	return sdk.BigEndianToUint64(bz), true
 }
 
 func GetValue[T proto.Message](k *Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) (T, bool) {

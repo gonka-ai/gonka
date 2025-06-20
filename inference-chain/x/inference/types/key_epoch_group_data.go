@@ -7,6 +7,7 @@ var _ binary.ByteOrder
 const (
 	// EpochGroupDataKeyPrefix is the prefix to retrieve all EpochGroupData
 	EpochKeyPrefix          = "Epoch/value/"
+	EpochPointersKeysPrefix = "Epoch/pointers/"
 	EpochGroupDataKeyPrefix = "EpochGroupData/value/"
 )
 

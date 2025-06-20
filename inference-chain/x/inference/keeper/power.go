@@ -10,14 +10,38 @@ import (
 )
 
 const (
-	EffectiveEpochKey = "effective-epoch"
-	UpcomingEpochKey  = "upcoming-epoch"
-	PreviousEpochKey  = "previous-epoch"
+	EffectiveEpochKey = "effective-epoch/"
+	UpcomingEpochKey  = "upcoming-epoch/"
+	PreviousEpochKey  = "previous-epoch/"
 
 	EffectiveEpochGroupKey = "effective-epoch-group"
 	UpcomingEpochGroupKey  = "upcoming-epoch-group"
 	PreviousEpochGroupKey  = "previous-epoch-group"
 )
+
+func (k Keeper) SetEffectiveEpoch(ctx context.Context, epoch uint64) {
+	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(EffectiveEpochKey), epoch)
+}
+
+func (k Keeper) GetEffectiveEpoch(ctx context.Context) (uint64, bool) {
+	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(EffectiveEpochKey))
+}
+
+func (k Keeper) SetUpcomingEpoch(ctx context.Context, epoch uint64) {
+	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(UpcomingEpochKey), epoch)
+}
+
+func (k Keeper) GetUpcomingEpoch(ctx context.Context) (uint64, bool) {
+	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(UpcomingEpochKey))
+}
+
+func (k Keeper) SetPreviousEpoch(ctx context.Context, epoch uint64) {
+	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(PreviousEpochKey), epoch)
+}
+
+func (k Keeper) GetPreviousEpoch(ctx context.Context) (uint64, bool) {
+	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(PreviousEpochKey))
+}
 
 func (k Keeper) SetEffectiveEpochGroupId(ctx context.Context, pocStartHeight uint64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
