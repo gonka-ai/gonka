@@ -56,20 +56,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
 	require.True(t, found)
-	/*	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId: epochId,
-		Inferences: map[string]*types.InferenceStats{
-			savedInference.InferenceId: {
-				InferenceId:         expectedInference.InferenceId,
-				EpochPocBlockHeight: savedInference.EpochGroupId,
-				Status:              expectedInference.Status,
-				AiTokensUsed:        savedInference.PromptTokenCount + savedInference.CompletionTokenCount,
-				Model:               expectedInference.Model,
-				ActualConstInCoins:  savedInference.ActualCost,
-			},
-		},
-	}, devStat)*/
-
 	require.Equal(t, types.DeveloperStatsByEpoch{
 		EpochId:      epochId,
 		InferenceIds: []string{expectedInference.InferenceId},
@@ -135,20 +121,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 	devStatUpdated, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
 	require.True(t, found)
-	/*	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId: epochId2,
-		Inferences: map[string]*types.InferenceStats{
-			savedInference.InferenceId: {
-				InferenceId:         expectedInference2.InferenceId,
-				EpochPocBlockHeight: expectedInference2.EpochGroupId,
-				Status:              savedInference.Status,
-				AiTokensUsed:        savedInference.PromptTokenCount + savedInference.CompletionTokenCount,
-				Model:               expectedInference2.Model,
-				ActualConstInCoins:  expectedInference2.ActualCost,
-			},
-		},
-	}, devStatUpdated)*/
-
 	require.Equal(t, types.DeveloperStatsByEpoch{
 		EpochId:      epochId2,
 		InferenceIds: []string{expectedInference2.InferenceId}}, devStatUpdated)

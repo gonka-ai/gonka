@@ -115,7 +115,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		k.LogError("Error getting settle amounts", types.Settle, "error", err)
 		return err
 	}
-
 	err = k.MintRewardCoins(ctx, subsidyResult.Amount, "subsidy")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
@@ -139,7 +138,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		}
 		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
 		if totalPayment == 0 {
-			k.LogInfo("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
+			k.LogDebug("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
 			continue
 		}
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
@@ -152,7 +151,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		k.LogBalance(participant.Address, 0-participant.CoinBalance, 0, "paid")
 		participant.CoinBalance = 0
 		participant.CurrentEpochStats.EarnedCoins = 0
-		// TODO do smth with rewarded coins for participant stat
 
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
 		k.SetEpochPerformanceSummary(ctx,

@@ -131,10 +131,6 @@ service Query {
 
   }
 
-  rpc PreviousEpochGroupData (QueryPreviousEpochGroupDataRequest) returns (QueryPreviousEpochGroupDataResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/previous_epoch_group_data";
-  }
-
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";

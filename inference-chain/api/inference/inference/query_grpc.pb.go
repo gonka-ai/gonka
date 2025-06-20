@@ -37,7 +37,6 @@ const (
 	Query_TokenomicsData_FullMethodName                            = "/inference.inference.Query/TokenomicsData"
 	Query_GetUnitOfComputePriceProposal_FullMethodName             = "/inference.inference.Query/GetUnitOfComputePriceProposal"
 	Query_CurrentEpochGroupData_FullMethodName                     = "/inference.inference.Query/CurrentEpochGroupData"
-	Query_PreviousEpochGroupData_FullMethodName                    = "/inference.inference.Query/PreviousEpochGroupData"
 	Query_ModelsAll_FullMethodName                                 = "/inference.inference.Query/ModelsAll"
 	Query_TopMiner_FullMethodName                                  = "/inference.inference.Query/TopMiner"
 	Query_TopMinerAll_FullMethodName                               = "/inference.inference.Query/TopMinerAll"
@@ -110,7 +109,6 @@ type QueryClient interface {
 	GetUnitOfComputePriceProposal(ctx context.Context, in *QueryGetUnitOfComputePriceProposalRequest, opts ...grpc.CallOption) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error)
-	PreviousEpochGroupData(ctx context.Context, in *QueryPreviousEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryPreviousEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(ctx context.Context, in *QueryModelsAllRequest, opts ...grpc.CallOption) (*QueryModelsAllResponse, error)
 	// Queries a list of TopMiner items.
@@ -334,15 +332,6 @@ func (c *queryClient) GetUnitOfComputePriceProposal(ctx context.Context, in *Que
 func (c *queryClient) CurrentEpochGroupData(ctx context.Context, in *QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryCurrentEpochGroupDataResponse, error) {
 	out := new(QueryCurrentEpochGroupDataResponse)
 	err := c.cc.Invoke(ctx, Query_CurrentEpochGroupData_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *queryClient) PreviousEpochGroupData(ctx context.Context, in *QueryPreviousEpochGroupDataRequest, opts ...grpc.CallOption) (*QueryPreviousEpochGroupDataResponse, error) {
-	out := new(QueryPreviousEpochGroupDataResponse)
-	err := c.cc.Invoke(ctx, Query_PreviousEpochGroupData_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -699,7 +688,6 @@ type QueryServer interface {
 	GetUnitOfComputePriceProposal(context.Context, *QueryGetUnitOfComputePriceProposalRequest) (*QueryGetUnitOfComputePriceProposalResponse, error)
 	// Queries a list of CurrentEpochGroupData items.
 	CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error)
-	PreviousEpochGroupData(context.Context, *QueryPreviousEpochGroupDataRequest) (*QueryPreviousEpochGroupDataResponse, error)
 	// Queries a list of ModelsAll items.
 	ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error)
 	// Queries a list of TopMiner items.
@@ -817,9 +805,6 @@ func (UnimplementedQueryServer) GetUnitOfComputePriceProposal(context.Context, *
 }
 func (UnimplementedQueryServer) CurrentEpochGroupData(context.Context, *QueryCurrentEpochGroupDataRequest) (*QueryCurrentEpochGroupDataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CurrentEpochGroupData not implemented")
-}
-func (UnimplementedQueryServer) PreviousEpochGroupData(context.Context, *QueryPreviousEpochGroupDataRequest) (*QueryPreviousEpochGroupDataResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PreviousEpochGroupData not implemented")
 }
 func (UnimplementedQueryServer) ModelsAll(context.Context, *QueryModelsAllRequest) (*QueryModelsAllResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ModelsAll not implemented")
@@ -1259,24 +1244,6 @@ func _Query_CurrentEpochGroupData_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).CurrentEpochGroupData(ctx, req.(*QueryCurrentEpochGroupDataRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Query_PreviousEpochGroupData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryPreviousEpochGroupDataRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).PreviousEpochGroupData(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_PreviousEpochGroupData_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).PreviousEpochGroupData(ctx, req.(*QueryPreviousEpochGroupDataRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1989,10 +1956,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CurrentEpochGroupData",
 			Handler:    _Query_CurrentEpochGroupData_Handler,
-		},
-		{
-			MethodName: "PreviousEpochGroupData",
-			Handler:    _Query_PreviousEpochGroupData_Handler,
 		},
 		{
 			MethodName: "ModelsAll",

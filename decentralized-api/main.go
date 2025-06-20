@@ -124,7 +124,7 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
+	publicServer := pserver.NewServer(config.GetApiConfig().ExplorerUrl, nodeBroker, config, recorder, trainingExecutor, blockQueue)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

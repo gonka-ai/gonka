@@ -12,6 +12,7 @@ api-build-docker:
 
 node-build-docker:
 	@make -C inference-chain build-docker SET_LATEST=1 GENESIS_OVERRIDES_FILE=$(GENESIS_OVERRIDES_FILE)
+
 release: decentralized-api-release inference-chain-release tmkms-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)

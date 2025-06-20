@@ -13,7 +13,6 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
 	b := k.cdc.MustMarshal(&epochPerformanceSummary)
-
 	store.Set(types.EpochPerformanceSummaryKey(
 		epochPerformanceSummary.ParticipantId,
 		epochPerformanceSummary.EpochStartHeight,
