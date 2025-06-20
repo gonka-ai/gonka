@@ -6,6 +6,7 @@ import (
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -51,12 +52,15 @@ func NewServer(
 
 	g.POST("models", s.registerModel)
 	g.POST("tx/send", s.sendTransaction)
+
+	g.POST("debug/create-dummy-training-task", s.postDummyTrainingTask)
+
 	return s
 }
 
 func getCodec() *codec.ProtoCodec {
 	interfaceRegistry := codectypes.NewInterfaceRegistry()
-	app.RegisterIBC(interfaceRegistry)
+	app.RegisterLegacyModules(interfaceRegistry)
 	types.RegisterInterfaces(interfaceRegistry)
 	banktypes.RegisterInterfaces(interfaceRegistry)
 	v1.RegisterInterfaces(interfaceRegistry)

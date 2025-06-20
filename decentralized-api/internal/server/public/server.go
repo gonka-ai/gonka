@@ -14,12 +14,13 @@ import (
 )
 
 type Server struct {
-	e                 *echo.Echo
+	e                *echo.Echo
+	nodeBroker       *broker.Broker
 	explorerTargetUrl *url.URL
-	nodeBroker        *broker.Broker
-	configManager     *apiconfig.ConfigManager
-	recorder          cosmosclient.CosmosMessageClient
-	trainingExecutor  *training.Executor
+	configManager    *apiconfig.ConfigManager
+	recorder         cosmosclient.CosmosMessageClient
+	trainingExecutor *training.Executor
+	blockQueue       *BridgeQueue
 }
 
 // TODO: think about rate limits
@@ -28,7 +29,8 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
-	trainingExecutor *training.Executor) *Server {
+	trainingExecutor *training.Executor,
+	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
 	s := &Server{
 		e:                e,
@@ -36,6 +38,7 @@ func NewServer(
 		configManager:    configManager,
 		recorder:         recorder,
 		trainingExecutor: trainingExecutor,
+		blockQueue:       blockQueue,
 	}
 
 	explorerUrlParsed, err := url.Parse(explorerUrl)
@@ -72,6 +75,12 @@ func NewServer(
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
 	g.GET("debug/verify/:height", s.debugVerify)
+
+	g.GET("versions", s.getVersions)
+
+	g.POST("bridge/block", s.postBlock)
+	g.GET("bridge/status", s.getBridgeStatus)
+
 
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	return s

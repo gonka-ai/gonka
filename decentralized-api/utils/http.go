@@ -2,7 +2,9 @@ package utils
 
 import (
 	"bytes"
+	"decentralized-api/logging"
 	"encoding/json"
+	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"time"
 )
@@ -30,6 +32,10 @@ func SendPostJsonRequest(client *http.Client, url string, payload any) (*http.Re
 	}
 
 	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
 	}
 

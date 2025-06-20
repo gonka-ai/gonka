@@ -4,11 +4,12 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/poc"
 	"decentralized-api/logging"
+	"net/http"
+
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) postGeneratedBatches(ctx echo.Context) error {
@@ -44,7 +45,8 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	logging.Info("ValidatedProofBatch received", types.PoC, "body", body)
+	logging.Info("ValidatedProofBatch received", types.PoC, "NInvalid", body.NInvalid, "ProbabilityHonest", body.ProbabilityHonest, "FraudDetected", body.FraudDetected)
+	logging.Debug("ValidatedProofBatch received", types.PoC, "body", body)
 
 	address, err := cosmos_client.PubKeyToAddress(body.PublicKey)
 	if err != nil {
@@ -65,10 +67,22 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 		FraudDetected:            body.FraudDetected,
 	}
 
+	// FIXME: We empty all arrays to avoid too large chain transactions
+	//  We can allow that, because we only use FraudDetected boolean
+	//  when making a decision about participant's PoC submissions
+	//  Will be fixed in future versions
+	emptyArrays(msg)
+
 	if err := s.recorder.SubmitPoCValidation(msg); err != nil {
 		logging.Error("Failed to submit MsgSubmitValidatedPocBatch", types.PoC, "error", err)
 		return err
 	}
 
 	return ctx.NoContent(http.StatusOK)
+}
+
+func emptyArrays(msg *inference.MsgSubmitPocValidation) {
+	msg.Dist = make([]float64, 0)
+	msg.ReceivedDist = make([]float64, 0)
+	msg.Nonces = make([]int64, 0)
 }

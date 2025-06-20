@@ -1,6 +1,22 @@
 #!/bin/sh
 set -e
 
+filter_cw20_code() {
+  input=$(cat)
+  # Remove cw20_code field and its value using sed
+  echo "$input" | sed -n -E '
+    # If we find cw20_code, skip until the next closing brace
+    /[[:space:]]*"cw20_code":[[:space:]]*"/ {
+      :skip
+      n
+      /^[[:space:]]*}[,}]?$/! b skip
+      n
+    }
+    # Print all other lines
+    p
+  '
+}
+
 if [ -z "$KEYRING_BACKEND" ]; then
   echo "KEYRING_BACKEND is not specified defaulting to test"
   KEYRING_BACKEND="test"
@@ -38,10 +54,11 @@ update_configs_for_explorer() {
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination
 #   and my-node as a node moniker (it doesn't have to be unique)
-$APP_NAME init \
+output=$($APP_NAME init \
   --chain-id "$CHAIN_ID" \
   --default-denom $COIN_DENOM \
-  my-node
+  my-node 2>&1)
+echo "$output" | filter_cw20_code
 
 echo "Setting the chain configuration"
 
@@ -96,7 +113,7 @@ modify_genesis_file() {
   jq ". * input" "$json_file" "$override_file" > "${json_file}.tmp"
   mv "${json_file}.tmp" "$json_file"
   echo "Modified $json_file with file: $override_file"
-  cat "$json_file"
+  cat "$json_file" | filter_cw20_code
 }
 
 # Usage
@@ -113,7 +130,8 @@ $APP_NAME genesis gentx "$KEY_NAME" "1$MILLION_BASE" --chain-id "$CHAIN_ID" || {
   echo "Failed to create gentx"
   tail -f /dev/null
 }
-$APP_NAME genesis collect-gentxs
+output=$($APP_NAME genesis collect-gentxs 2>&1)
+echo "$output" | filter_cw20_code
 
 # tgbot
 TG_ACC=gonka1va4hlpg929n6hhg4wc8hl0g9yp4nheqxm6k9wr

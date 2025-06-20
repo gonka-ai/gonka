@@ -16,7 +16,7 @@ func (k Keeper) GettUnitOfComputePriceProposal(ctx context.Context, participant 
 }
 
 func (k Keeper) AllUnitOfComputePriceProposals(ctx context.Context) ([]*types.UnitOfComputePriceProposal, error) {
-	return GetAllValues(ctx, k, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), func() *types.UnitOfComputePriceProposal { return &types.UnitOfComputePriceProposal{} })
+	return GetAllValues(ctx, &k, types.KeyPrefix(types.UnitOfComputeProposalKeyPrefix), func() *types.UnitOfComputePriceProposal { return &types.UnitOfComputePriceProposal{} })
 }
 
 func (k Keeper) GetCurrentUnitOfComputePrice(ctx context.Context) (*uint64, error) {

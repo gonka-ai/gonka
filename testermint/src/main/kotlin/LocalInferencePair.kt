@@ -3,6 +3,7 @@ package com.productscience
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
@@ -57,7 +58,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         )
 
         LocalInferencePair(
-            node = ApplicationCLI(configWithName, nodeLogs, executor),
+            node = ApplicationCLI(configWithName, nodeLogs, executor, listOf()),
             api = ApplicationAPI(apiUrls, configWithName, dapiLogs),
             mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
             name = name,
@@ -243,8 +244,24 @@ data class LocalInferencePair(
     }
 
     fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        val start = Instant.now()
         val json = this.node.getTransactionJson(args)
-        val submittedTransaction = this.api.submitTransaction(json)
+        val submittedTransaction = try {
+            this.api.submitTransaction(json)
+        } catch (e: FuelError) {
+            Logger.info("Checking for read timeout in " + e.toString())
+            // We are seeing in k8s (remote) connections this timesout, even though the submit worked. This should pick
+            // up the TXHash from the api logs instead.
+            if (e.toString().contains("Read timed out")) {
+                Logger.info("Found read timeout, checking node logs for TX hash in " +
+                        this.api.logOutput.mostRecentTxResp)
+                this.api.logOutput.mostRecentTxResp?.takeIf { it.time.isAfter(start) }?.let {
+                    TxResponse(0, it.hash, "", 0, "", "", "", 0, 0, null, null, listOf())
+                } ?: throw e
+            } else {
+                throw e
+            }
+        }
         return if (waitForProcessed) {
             this.node.waitForTxProcessed(submittedTransaction.txhash)
         } else {

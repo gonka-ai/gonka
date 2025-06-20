@@ -52,17 +52,20 @@ func (e Executor) PreassignTask(taskId uint64, nodeIds []string) error {
 }
 
 func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
+	logging.Info(logTagExecutor+"Processing task assigned event", types.Training, "taskId", taskId)
 	slog.Info(logTagExecutor+"Processing task assigned event", "taskId", taskId)
 	queryClient := e.cosmosClient.NewInferenceQueryClient()
 	req := types.QueryTrainingTaskRequest{Id: taskId}
 	resp, err := queryClient.TrainingTask(*e.cosmosClient.GetContext(), &req)
 
 	if err != nil {
+		logging.Error(logTagExecutor+"Error fetching task", types.Training, "taskId", taskId, "error", err)
 		slog.Error(logTagExecutor+"Error fetching task", "taskId", taskId, "error", err)
 		return
 	}
 
 	if resp.Task.Assignees == nil {
+		logging.Error(logTagExecutor+"No assignees found for task", types.Training, "taskId", taskId)
 		slog.Error(logTagExecutor+"No assignees found for task", "taskId", taskId)
 		return
 	}
@@ -72,6 +75,7 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 		if a.Participant != e.cosmosClient.GetAddress() {
 			continue
 		}
+		logging.Info(logTagExecutor+"Found task assigned to me", types.Training, "taskId", taskId)
 		slog.Info(logTagExecutor+"Found task assigned to me", "taskId", taskId)
 		for _, node := range a.NodeIds {
 			myNodes = append(myNodes, node)
@@ -79,20 +83,24 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 	}
 
 	if len(myNodes) == 0 {
+		logging.Info(logTagExecutor+"The task isn't assigned to me", types.Training, "taskId", taskId)
 		slog.Info(logTagExecutor+"The task isn't assigned to me", "taskId", taskId)
 		return
 	}
 
+	logging.Info(logTagExecutor+"The task is assigned to me", types.Training, "taskId", taskId, "nodes", myNodes)
 	slog.Info(logTagExecutor+"The task is assigned to me", "taskId", taskId, "nodes", myNodes)
 
 	rankedNodes, err := rankNodes(resp.Task)
 	if err != nil {
+		logging.Error(logTagExecutor+"Error ranking nodes", types.Training, "taskId", taskId, "error", err)
 		slog.Error(logTagExecutor+"Error ranking nodes", "taskId", taskId, "error", err)
 		return
 	}
 
 	masterNode, err := getMasterNode(e.ctx, rankedNodes, queryClient)
 	if err != nil {
+		logging.Error(logTagExecutor+"Error getting master node", types.Training, "taskId", taskId, "error", err)
 		slog.Error(logTagExecutor+"Error getting master node", "taskId", taskId, "error", err)
 		return
 	}
@@ -104,22 +112,28 @@ func (e *Executor) ProcessTaskAssignedEvent(taskId uint64) {
 		}
 	}
 
+	logging.Info(logTagExecutor+"Starting training", types.Training, "taskId", taskId, "masterNode", masterNode.Host, "nodeRanks", nodeRanks, "worldSize", len(rankedNodes))
 	slog.Info(logTagExecutor+"Starting training", "taskId", taskId, "masterNode", masterNode.Host, "nodeRanks", nodeRanks, "worldSize", len(rankedNodes))
 	command := broker.NewStartTrainingCommand(
+		taskId,
 		masterNode.Host,
 		len(rankedNodes),
 		nodeRanks,
 	)
 	err = e.broker.QueueMessage(command)
 	if err != nil {
+		logging.Error(logTagExecutor+"Error starting training", types.Training, "taskId", taskId, "error", err)
 		slog.Error(logTagExecutor+"Error starting training", "taskId", taskId, "error", err)
 		return
 	}
 
 	success := <-command.Response
 	if success {
+		e.tasks[taskId] = struct{}{}
+		logging.Info(logTagExecutor+"Training started", types.Training, "taskId", taskId)
 		slog.Info(logTagExecutor+"Training started", "taskId", taskId)
 	} else {
+		logging.Error(logTagExecutor+"Error starting training", types.Training, "taskId", taskId)
 		slog.Error(logTagExecutor+"Error starting training", "taskId", taskId)
 	}
 }
@@ -221,8 +235,11 @@ func (e *Executor) checkInProgressTasksOnChain() {
 	// 3. For each task, check if it's already in the map
 	for _, t := range tasks {
 		if _, ok := e.tasks[t.Id]; !ok {
+			logging.Info(logTagExecutor+"Task not found in the set", types.Training, "taskId", t.Id)
 			// TODO: add a task to the map
 			// e.tasks[t.Id] = struct{}{}
+		} else {
+			logging.Info(logTagExecutor+"Task found in the set", types.Training, "taskId", t.Id)
 		}
 	}
 

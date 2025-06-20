@@ -287,6 +287,12 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 	if err != nil {
 		return nil, err
 	}
+	maxTokens := 0
+	if request.OpenAiRequest.MaxCompletionTokens > 0 {
+		maxTokens = int(request.OpenAiRequest.MaxCompletionTokens)
+	} else if request.OpenAiRequest.MaxTokens > 0 {
+		maxTokens = int(request.OpenAiRequest.MaxTokens)
+	}
 	transaction := &inference.MsgStartInference{
 		InferenceId:   inferenceId,
 		PromptHash:    promptHash,
@@ -295,6 +301,7 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		Model:         request.OpenAiRequest.Model,
 		AssignedTo:    executor.Address,
 		NodeVersion:   nodeVersion,
+		MaxTokens:     uint64(maxTokens),
 	}
 	return transaction, nil
 }

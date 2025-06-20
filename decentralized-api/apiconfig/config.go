@@ -87,14 +87,16 @@ type SeedInfo struct {
 }
 
 type ApiConfig struct {
-	Port             int    `koanf:"port"`
-	PoCCallbackUrl   string `koanf:"poc_callback_url"`
-	PublicUrl        string `koanf:"public_url"`
-	PublicServerPort int    `koanf:"public_server_port"`
-	MLServerPort     int    `koanf:"ml_server_port"`
-	AdminServerPort  int    `koanf:"admin_server_port"`
+	Port                  int    `koanf:"port"`
+	PoCCallbackUrl        string `koanf:"poc_callback_url"`
+	MlGrpcCallbackAddress string `koanf:"ml_grpc_callback_address"`
+	PublicUrl             string `koanf:"public_url"`
+	PublicServerPort      int    `koanf:"public_server_port"`
+	MLServerPort          int    `koanf:"ml_server_port"`
+	AdminServerPort       int    `koanf:"admin_server_port"`
+	MlGrpcServerPort      int    `koanf:"ml_grpc_server_port"`
 	ExplorerUrl      string `koanf:"explorer_url"`
-	TestMode         bool   `koanf:"test_mode"`
+	TestMode              bool   `koanf:"test_mode"`
 }
 
 type ChainNodeConfig struct {
