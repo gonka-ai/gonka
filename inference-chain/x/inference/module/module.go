@@ -194,13 +194,18 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
 	currentEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
+	if !found {
+		am.LogError("Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
+		return nil
+	}
+	epochContext := types.NewEpochContext(currentEpoch, *epochParams, blockHeight)
+
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	// TODO: Why error here?
 	if err != nil {
 		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())
 		return nil
 	}
-	epochContext := types.NewEpochContext(currentEpochGroup.GroupData, *epochParams, blockHeight)
 
 	timeouts := am.keeper.GetAllInferenceTimeoutForHeight(ctx, uint64(blockHeight))
 	err = am.expireInferences(ctx, timeouts)
@@ -222,12 +227,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
+		am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(currentEpoch))
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		upcomingEpoch := createNewEpoch(currentEpoch, blockHeight)
 		am.keeper.SetEpoch(ctx, upcomingEpoch)
-		am.keeper.SetUpcomingEpochIndex(ctx, upcomingEpoch.Index)
 
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetOrCreateEpochGroup(ctx, uint64(blockHeight), "")
@@ -263,16 +268,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 }
 
 func createNewEpoch(prevEpoch *types.Epoch, blockHeight int64) *types.Epoch {
-	if prevEpoch == nil {
-		return &types.Epoch{
-			Index:               1,
-			PocStartBlockHeight: blockHeight,
-		}
-	}
 	return &types.Epoch{
-		Index:               prevEpoch.Index + 1,
-		PocStartBlockHeight: blockHeight,
+		Index:               getNextEpochIndex(prevEpoch),
+		PocStartBlockHeight: int64(blockHeight),
 	}
+}
+
+func getNextEpochIndex(prevEpoch *types.Epoch) uint64 {
+	if prevEpoch == nil {
+		return 1
+	}
+	return prevEpoch.Index + 1
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {

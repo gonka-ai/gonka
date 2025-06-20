@@ -10,6 +10,7 @@ const (
 	EpochKeyPrefix   = "Epoch/value/"
 
 	EpochPointersKeysPrefix = "Epoch/pointers/" // For effective, upcoming, previous epochs
+	EffectiveEpochKey       = "effective-epoch/value/"
 	EpochGroupDataKeyPrefix = "EpochGroupData/value/"
 )
 

@@ -30,17 +30,17 @@ func (k Keeper) GetEffectiveEpoch(ctx context.Context) (*types.Epoch, bool) {
 }
 
 func (k Keeper) GetUpcomingEpoch(ctx context.Context) (*types.Epoch, bool) {
-	epochIndex, found := k.GetUpcomingEpochIndex(ctx)
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
 		return nil, found
 	}
-	return k.GetEpoch(ctx, epochIndex)
+	return k.GetEpoch(ctx, epochIndex+1)
 }
 
 func (k Keeper) GetPreviousEpoch(ctx context.Context) (*types.Epoch, bool) {
-	epochIndex, found := k.GetPreviousEpochIndex(ctx)
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
 		return nil, found
 	}
-	return k.GetEpoch(ctx, epochIndex)
+	return k.GetEpoch(ctx, epochIndex-1)
 }

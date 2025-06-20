@@ -10,38 +10,17 @@ import (
 )
 
 const (
-	EffectiveEpochKey = "effective-epoch/"
-	UpcomingEpochKey  = "upcoming-epoch/"
-	PreviousEpochKey  = "previous-epoch/"
-
-	EpochGroupPrefix       = "Epoch/group/"
 	EffectiveEpochGroupKey = "effective-epoch-group"
 	UpcomingEpochGroupKey  = "upcoming-epoch-group"
 	PreviousEpochGroupKey  = "previous-epoch-group"
 )
 
 func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) {
-	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(EffectiveEpochKey), epoch)
+	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(types.EffectiveEpochKey), epoch)
 }
 
 func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {
-	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(EffectiveEpochKey))
-}
-
-func (k Keeper) SetUpcomingEpochIndex(ctx context.Context, epoch uint64) {
-	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(UpcomingEpochKey), epoch)
-}
-
-func (k Keeper) GetUpcomingEpochIndex(ctx context.Context) (uint64, bool) {
-	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(UpcomingEpochKey))
-}
-
-func (k Keeper) SetPreviousEpochIndex(ctx context.Context, epoch uint64) {
-	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(PreviousEpochKey), epoch)
-}
-
-func (k Keeper) GetPreviousEpochIndex(ctx context.Context) (uint64, bool) {
-	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(PreviousEpochKey))
+	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(types.EffectiveEpochKey))
 }
 
 func (k Keeper) SetEffectiveEpochGroupId(ctx context.Context, pocStartHeight uint64) {
