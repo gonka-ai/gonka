@@ -13,16 +13,18 @@ import (
 )
 
 var (
-	md_Epoch                    protoreflect.MessageDescriptor
-	fd_Epoch_index              protoreflect.FieldDescriptor
-	fd_Epoch_start_block_height protoreflect.FieldDescriptor
+	md_Epoch                        protoreflect.MessageDescriptor
+	fd_Epoch_index                  protoreflect.FieldDescriptor
+	fd_Epoch_poc_start_block_height protoreflect.FieldDescriptor
+	fd_Epoch_effective_block_height protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_epoch_proto_init()
 	md_Epoch = File_inference_inference_epoch_proto.Messages().ByName("Epoch")
 	fd_Epoch_index = md_Epoch.Fields().ByName("index")
-	fd_Epoch_start_block_height = md_Epoch.Fields().ByName("start_block_height")
+	fd_Epoch_poc_start_block_height = md_Epoch.Fields().ByName("poc_start_block_height")
+	fd_Epoch_effective_block_height = md_Epoch.Fields().ByName("effective_block_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_Epoch)(nil)
@@ -96,9 +98,15 @@ func (x *fastReflection_Epoch) Range(f func(protoreflect.FieldDescriptor, protor
 			return
 		}
 	}
-	if x.StartBlockHeight != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.StartBlockHeight)
-		if !f(fd_Epoch_start_block_height, value) {
+	if x.PocStartBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.PocStartBlockHeight)
+		if !f(fd_Epoch_poc_start_block_height, value) {
+			return
+		}
+	}
+	if x.EffectiveBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.EffectiveBlockHeight)
+		if !f(fd_Epoch_effective_block_height, value) {
 			return
 		}
 	}
@@ -119,8 +127,10 @@ func (x *fastReflection_Epoch) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	case "inference.inference.Epoch.index":
 		return x.Index != uint64(0)
-	case "inference.inference.Epoch.start_block_height":
-		return x.StartBlockHeight != uint64(0)
+	case "inference.inference.Epoch.poc_start_block_height":
+		return x.PocStartBlockHeight != int64(0)
+	case "inference.inference.Epoch.effective_block_height":
+		return x.EffectiveBlockHeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -139,8 +149,10 @@ func (x *fastReflection_Epoch) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	case "inference.inference.Epoch.index":
 		x.Index = uint64(0)
-	case "inference.inference.Epoch.start_block_height":
-		x.StartBlockHeight = uint64(0)
+	case "inference.inference.Epoch.poc_start_block_height":
+		x.PocStartBlockHeight = int64(0)
+	case "inference.inference.Epoch.effective_block_height":
+		x.EffectiveBlockHeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -160,9 +172,12 @@ func (x *fastReflection_Epoch) Get(descriptor protoreflect.FieldDescriptor) prot
 	case "inference.inference.Epoch.index":
 		value := x.Index
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Epoch.start_block_height":
-		value := x.StartBlockHeight
-		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Epoch.poc_start_block_height":
+		value := x.PocStartBlockHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Epoch.effective_block_height":
+		value := x.EffectiveBlockHeight
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -185,8 +200,10 @@ func (x *fastReflection_Epoch) Set(fd protoreflect.FieldDescriptor, value protor
 	switch fd.FullName() {
 	case "inference.inference.Epoch.index":
 		x.Index = value.Uint()
-	case "inference.inference.Epoch.start_block_height":
-		x.StartBlockHeight = value.Uint()
+	case "inference.inference.Epoch.poc_start_block_height":
+		x.PocStartBlockHeight = value.Int()
+	case "inference.inference.Epoch.effective_block_height":
+		x.EffectiveBlockHeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -209,8 +226,10 @@ func (x *fastReflection_Epoch) Mutable(fd protoreflect.FieldDescriptor) protoref
 	switch fd.FullName() {
 	case "inference.inference.Epoch.index":
 		panic(fmt.Errorf("field index of message inference.inference.Epoch is not mutable"))
-	case "inference.inference.Epoch.start_block_height":
-		panic(fmt.Errorf("field start_block_height of message inference.inference.Epoch is not mutable"))
+	case "inference.inference.Epoch.poc_start_block_height":
+		panic(fmt.Errorf("field poc_start_block_height of message inference.inference.Epoch is not mutable"))
+	case "inference.inference.Epoch.effective_block_height":
+		panic(fmt.Errorf("field effective_block_height of message inference.inference.Epoch is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -226,8 +245,10 @@ func (x *fastReflection_Epoch) NewField(fd protoreflect.FieldDescriptor) protore
 	switch fd.FullName() {
 	case "inference.inference.Epoch.index":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Epoch.start_block_height":
-		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Epoch.poc_start_block_height":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Epoch.effective_block_height":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Epoch"))
@@ -300,8 +321,11 @@ func (x *fastReflection_Epoch) ProtoMethods() *protoiface.Methods {
 		if x.Index != 0 {
 			n += 1 + runtime.Sov(uint64(x.Index))
 		}
-		if x.StartBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.StartBlockHeight))
+		if x.PocStartBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.PocStartBlockHeight))
+		}
+		if x.EffectiveBlockHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.EffectiveBlockHeight))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -332,8 +356,13 @@ func (x *fastReflection_Epoch) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.StartBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartBlockHeight))
+		if x.EffectiveBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EffectiveBlockHeight))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.PocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStartBlockHeight))
 			i--
 			dAtA[i] = 0x10
 		}
@@ -412,9 +441,9 @@ func (x *fastReflection_Epoch) ProtoMethods() *protoiface.Methods {
 				}
 			case 2:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartBlockHeight", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStartBlockHeight", wireType)
 				}
-				x.StartBlockHeight = 0
+				x.PocStartBlockHeight = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -424,7 +453,26 @@ func (x *fastReflection_Epoch) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.StartBlockHeight |= uint64(b&0x7F) << shift
+					x.PocStartBlockHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EffectiveBlockHeight", wireType)
+				}
+				x.EffectiveBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EffectiveBlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -482,8 +530,9 @@ type Epoch struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index            uint64 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
-	StartBlockHeight uint64 `protobuf:"varint,2,opt,name=start_block_height,json=startBlockHeight,proto3" json:"start_block_height,omitempty"`
+	Index                uint64 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	PocStartBlockHeight  int64  `protobuf:"varint,2,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
+	EffectiveBlockHeight int64  `protobuf:"varint,3,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
 }
 
 func (x *Epoch) Reset() {
@@ -513,9 +562,16 @@ func (x *Epoch) GetIndex() uint64 {
 	return 0
 }
 
-func (x *Epoch) GetStartBlockHeight() uint64 {
+func (x *Epoch) GetPocStartBlockHeight() int64 {
 	if x != nil {
-		return x.StartBlockHeight
+		return x.PocStartBlockHeight
+	}
+	return 0
+}
+
+func (x *Epoch) GetEffectiveBlockHeight() int64 {
+	if x != nil {
+		return x.EffectiveBlockHeight
 	}
 	return 0
 }
@@ -526,24 +582,28 @@ var file_inference_inference_epoch_proto_rawDesc = []byte{
 	0x0a, 0x1f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x4b, 0x0a, 0x05, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12,
-	0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x05,
-	0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x2c, 0x0a, 0x12, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62,
-	0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x10, 0x73, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
-	0x0a, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63,
-	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca,
-	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06,
-	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x88, 0x01, 0x0a, 0x05, 0x45, 0x70, 0x6f, 0x63, 0x68,
+	0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x33, 0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74,
+	0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x72, 0x74,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x65,
+	0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68,
+	0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x65, 0x66, 0x66,
+	0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
+	0x74, 0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x45,
+	0x70, 0x6f, 0x63, 0x68, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

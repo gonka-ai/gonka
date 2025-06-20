@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func EmptyPrefixStore(ctx context.Context, k *Keeper) *prefix.Store {
@@ -22,6 +23,11 @@ func PrefixStore(ctx context.Context, k *Keeper, keyPrefix []byte) *prefix.Store
 }
 
 func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) {
+	if object == nil {
+		k.LogError("SetValue called with nil object, returning", types.System)
+		return
+	}
+
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, keyPrefix)
 	b := k.cdc.MustMarshal(object)

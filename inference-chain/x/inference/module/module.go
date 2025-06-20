@@ -193,6 +193,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
+	currentEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	// TODO: Why error here?
 	if err != nil {
@@ -224,6 +225,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
+		upcomingEpoch := createNewEpoch(currentEpoch, blockHeight)
+		am.keeper.SetEpoch(ctx, upcomingEpoch)
+		am.keeper.SetUpcomingEpochIndex(ctx, upcomingEpoch.Index)
+
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
 		newGroup, err := am.keeper.GetOrCreateEpochGroup(ctx, uint64(blockHeight), "")
 		if err != nil {
@@ -255,6 +260,19 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func createNewEpoch(prevEpoch *types.Epoch, blockHeight int64) *types.Epoch {
+	if prevEpoch == nil {
+		return &types.Epoch{
+			Index:               1,
+			PocStartBlockHeight: blockHeight,
+		}
+	}
+	return &types.Epoch{
+		Index:               prevEpoch.Index + 1,
+		PocStartBlockHeight: blockHeight,
+	}
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
