@@ -119,7 +119,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
 	k.SetInference(ctx, inference)
-	err = k.DevelopersStatsSet(ctx, inference)
+	err = k.SetDeveloperStats(ctx, inference)
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, err)
 	} else {

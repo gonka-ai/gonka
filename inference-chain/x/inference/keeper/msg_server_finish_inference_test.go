@@ -54,7 +54,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}
 	require.Equal(t, expectedInference, savedInference)
 
-	devStat, found := k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId)
+	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
 	require.True(t, found)
 	/*	require.Equal(t, types.DeveloperStatsByEpoch{
 		EpochId: epochId,
@@ -129,11 +129,11 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		},
 	}, participantState)
 
-	devStat, found = k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId2)
+	devStat, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
 	require.True(t, found)
 	require.Equal(t, 1, len(devStat.InferenceIds))
 
-	devStatUpdated, found := k.DevelopersStatsGetByEpoch(ctx, testutil.Requester, epochId2)
+	devStatUpdated, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
 	require.True(t, found)
 	/*	require.Equal(t, types.DeveloperStatsByEpoch{
 		EpochId: epochId2,

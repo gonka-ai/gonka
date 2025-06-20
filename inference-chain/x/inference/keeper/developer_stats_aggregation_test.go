@@ -75,14 +75,14 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
-	assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer1)) // tagged to epoch 1
-	assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1Developer2)) // tagged to epoch 1
+	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer1)) // tagged to epoch 1
+	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer2)) // tagged to epoch 1
 
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
-	assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer1)) // tagged to epoch 2
+	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer1)) // tagged to epoch 2
 
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId3})
-	assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2Developer2)) // tagged to epoch 3
+	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer2)) // tagged to epoch 3
 
 	defaultExpectedStatsByTime := map[string]*types.DeveloperStatsByTime{
 		inference1Developer1.InferenceId: {
@@ -135,7 +135,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 
 	t.Run("get statistic by time and developer", func(t *testing.T) {
 		// get all stat by developer1
-		dev1Stats := keeper.DevelopersStatsGetByTime(ctx, developer1, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
+		dev1Stats := keeper.GetDeveloperStatsByTime(ctx, developer1, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
 		assert.Len(t, dev1Stats, 2)
 
 		expectedInferenceId := map[string]struct{}{inference1Developer1.InferenceId: {}, inference2Developer1.InferenceId: {}}
@@ -149,7 +149,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		}
 
 		// get all stat by developer2
-		dev2Stats := keeper.DevelopersStatsGetByTime(ctx, developer2, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
+		dev2Stats := keeper.GetDeveloperStatsByTime(ctx, developer2, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
 		assert.Len(t, dev1Stats, 2)
 
 		expectedInferenceId = map[string]struct{}{inference1Developer2.InferenceId: {}, inference2Developer2.InferenceId: {}}
@@ -163,7 +163,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		}
 
 		// get earliest stat by developer1
-		dev1StatsEarliest := keeper.DevelopersStatsGetByTime(ctx, developer1, inference1Developer1.StartBlockTimestamp-10, inference1Developer1.StartBlockTimestamp+10)
+		dev1StatsEarliest := keeper.GetDeveloperStatsByTime(ctx, developer1, inference1Developer1.StartBlockTimestamp-10, inference1Developer1.StartBlockTimestamp+10)
 		assert.Len(t, dev1StatsEarliest, 1)
 
 		val, ok := defaultExpectedStatsByTime[dev1StatsEarliest[0].Inference.InferenceId]
@@ -171,7 +171,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		assert.Equal(t, *val, *dev1StatsEarliest[0])
 
 		// get earliest stat by developer2
-		dev2StatsEarliest := keeper.DevelopersStatsGetByTime(ctx, developer2, inference1Developer2.EndBlockTimestamp-10, inference1Developer2.EndBlockTimestamp+10)
+		dev2StatsEarliest := keeper.GetDeveloperStatsByTime(ctx, developer2, inference1Developer2.EndBlockTimestamp-10, inference1Developer2.EndBlockTimestamp+10)
 		assert.Len(t, dev2StatsEarliest, 1)
 
 		val, ok = defaultExpectedStatsByTime[dev2StatsEarliest[0].Inference.InferenceId]
@@ -181,29 +181,29 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 
 	t.Run("inferences by time not found", func(t *testing.T) {
 		now := time.Now()
-		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, now.Add(-time.Minute*2).UnixMilli(), now.Add(-time.Minute).UnixMilli())
+		statsByTime := keeper.GetDeveloperStatsByTime(ctx, developer1, now.Add(-time.Minute*2).UnixMilli(), now.Add(-time.Minute).UnixMilli())
 		assert.Empty(t, statsByTime)
-		statsByTime = keeper.DevelopersStatsGetByTime(ctx, developer2, now.Add(-time.Minute*2).UnixMilli(), now.Add(-time.Minute).UnixMilli())
+		statsByTime = keeper.GetDeveloperStatsByTime(ctx, developer2, now.Add(-time.Minute*2).UnixMilli(), now.Add(-time.Minute).UnixMilli())
 		assert.Empty(t, statsByTime)
 	})
 
 	t.Run("count totals by n epochs and developer backwards not including current epoch", func(t *testing.T) {
 		// current epoch = 3
-		summary := keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 1)
+		summary := keeper.GetSummaryLastNEpochsByDeveloper(ctx, developer1, 1)
 		assert.Equal(t, keeper2.StatsSummary{
 			InferenceCount: 1,
 			TokensUsed:     int64(inference2Developer1.CompletionTokenCount + inference2Developer1.PromptTokenCount),
 			ActualCost:     inference2Developer1.ActualCost,
 		}, summary)
 
-		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 2)
+		summary = keeper.GetSummaryLastNEpochsByDeveloper(ctx, developer1, 2)
 		assert.Equal(t, keeper2.StatsSummary{
 			InferenceCount: 2,
 			TokensUsed:     int64(inference2Developer1.CompletionTokenCount + inference2Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount + inference1Developer1.PromptTokenCount),
 			ActualCost:     inference2Developer1.ActualCost + inference1Developer1.ActualCost,
 		}, summary)
 
-		summary = keeper.CountTotalInferenceInLastNEpochsByDeveloper(ctx, developer1, 3)
+		summary = keeper.GetSummaryLastNEpochsByDeveloper(ctx, developer1, 3)
 		assert.Equal(t, keeper2.StatsSummary{
 			InferenceCount: 2,
 			TokensUsed:     int64(inference2Developer1.CompletionTokenCount + inference2Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount + inference1Developer1.PromptTokenCount),
@@ -220,10 +220,10 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			expectedSum.TokensUsed += int64(inf.PromptTokenCount + inf.CompletionTokenCount)
 		}
 
-		summary := keeper.CountTotalInferenceInLastNEpochs(ctx, 2)
+		summary := keeper.GetSummaryLastNEpochs(ctx, 2)
 		assert.Equal(t, expectedSum, summary)
 
-		summary = keeper.CountTotalInferenceInLastNEpochs(ctx, 1)
+		summary = keeper.GetSummaryLastNEpochs(ctx, 1)
 		assert.Equal(t, keeper2.StatsSummary{
 			InferenceCount: 1,
 			TokensUsed:     int64(inference2Developer1.PromptTokenCount + inference2Developer1.CompletionTokenCount),
@@ -239,11 +239,11 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			expectedSum.ActualCost += inf.ActualCost
 			expectedSum.TokensUsed += int64(inf.PromptTokenCount + inf.CompletionTokenCount)
 		}
-		summary := keeper.CountTotalInferenceInPeriod(ctx, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
+		summary := keeper.GetSummaryByTime(ctx, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
 		assert.Equal(t, expectedSum, summary)
 
 		// get earliest inference
-		summary = keeper.CountTotalInferenceInPeriod(ctx, inference1Developer1.StartBlockTimestamp-10, inference1Developer1.StartBlockTimestamp+10)
+		summary = keeper.GetSummaryByTime(ctx, inference1Developer1.StartBlockTimestamp-10, inference1Developer1.StartBlockTimestamp+10)
 		assert.Equal(t, inference1Developer1.PromptTokenCount+inference1Developer1.CompletionTokenCount, uint64(summary.TokensUsed))
 		assert.Equal(t, inference1Developer1.ActualCost, summary.ActualCost)
 		assert.Equal(t, 1, summary.InferenceCount)
@@ -253,7 +253,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		expectedSum.ActualCost -= inference1Developer1.ActualCost
 		expectedSum.TokensUsed -= int64(inference1Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount)
 
-		summary = keeper.CountTotalInferenceInPeriod(ctx, inference1Developer1.StartBlockTimestamp+10, time.Now().UnixMilli())
+		summary = keeper.GetSummaryByTime(ctx, inference1Developer1.StartBlockTimestamp+10, time.Now().UnixMilli())
 		assert.Equal(t, expectedSum, summary)
 	})
 
@@ -271,7 +271,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			expectedStats[inf.Model] = stat
 		}
 
-		stat := keeper.CountStatsGroupedByModelAndTimePeriod(ctx, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
+		stat := keeper.GetSummaryByModelAndTime(ctx, inference1Developer1.StartBlockTimestamp-10, time.Now().UnixMilli())
 		assert.Equal(t, len(expectedStats), len(stat))
 		for model, expectedStat := range expectedStats {
 			actualStat := stat[model]
@@ -317,10 +317,10 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			ActualCost:           1200,
 		}
 
-		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference1))
-		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference2))
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1))
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2))
 
-		statsByTime := keeper.DevelopersStatsGetByTime(ctx, developer1, time.Now().Add(-time.Second*2).UnixMilli(), time.Now().UnixMilli())
+		statsByTime := keeper.GetDeveloperStatsByTime(ctx, developer1, time.Now().Add(-time.Second*2).UnixMilli(), time.Now().UnixMilli())
 		assert.Equal(t, 2, len(statsByTime))
 		assert.Equal(t, statsByTime[0].Inference, &types.InferenceStats{
 			InferenceId:        inference1.InferenceId,
@@ -359,9 +359,9 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			AiTokensUsed:        inference.PromptTokenCount + inference.CompletionTokenCount,
 			Model:               inference.Model,
 		}
-		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference))
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
-		stat := keeper.DevelopersStatsGetByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
+		stat := keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
 		assert.Equal(t, expectedStatsBeforeUpdate, *stat[0].Inference)
 		assert.Equal(t, inference.StartBlockTimestamp, stat[0].Timestamp)
 		assert.Equal(t, epochId1, stat[0].EpochId)
@@ -374,7 +374,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		inference.EndBlockTimestamp = time.Now().Add(5 * time.Second).UnixMilli()
 
 		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
-		assert.NoError(t, keeper.DevelopersStatsSet(ctx, inference))
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
 		expectedStatsAfterUpdate := types.InferenceStats{
 			InferenceId:         inference.InferenceId,
@@ -385,9 +385,57 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			ActualConstInCoins:  actualCost,
 		}
 
-		stat = keeper.DevelopersStatsGetByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
+		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
 		assert.Equal(t, expectedStatsAfterUpdate, *stat[0].Inference)
 		assert.Equal(t, inference.StartBlockTimestamp, stat[0].Timestamp)
 		assert.Equal(t, epochId2, stat[0].EpochId)
+	})
+
+	t.Run("inference without developer address", func(t *testing.T) {
+		keeper, ctx := keepertest.InferenceKeeper(t)
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+
+		inference := types.Inference{
+			InferenceId:          uuid.New().String(),
+			PromptTokenCount:     tokens,
+			CompletionTokenCount: tokens * 2,
+			EpochGroupId:         epochId2,
+			RequestedBy:          "",
+			Status:               types.InferenceStatus_FINISHED,
+			Model:                testModel,
+			StartBlockTimestamp:  time.Now().UnixMilli(),
+			EndBlockTimestamp:    time.Now().Add(5 * time.Second).UnixMilli(),
+			ActualCost:           5000,
+		}
+
+		inference2 := types.Inference{
+			InferenceId:          uuid.New().String(),
+			PromptTokenCount:     tokens * 2,
+			CompletionTokenCount: tokens * 2,
+			EpochGroupId:         epochId2,
+			RequestedBy:          developer1,
+			Status:               types.InferenceStatus_FINISHED,
+			Model:                testModel,
+			StartBlockTimestamp:  time.Now().UnixMilli(),
+			EndBlockTimestamp:    time.Now().Add(5 * time.Second).UnixMilli(),
+			ActualCost:           7000,
+		}
+
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
+		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2))
+
+		expectedSummary := keeper2.StatsSummary{
+			InferenceCount: 1,
+			TokensUsed:     int64(inference2.PromptTokenCount + inference2.CompletionTokenCount),
+			ActualCost:     inference2.ActualCost,
+		}
+
+		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
+
+		summary := keeper.GetSummaryLastNEpochs(ctx, 1)
+		assert.Equal(t, summary, expectedSummary)
+
+		summary2 := keeper.GetSummaryByTime(ctx, inference.StartBlockTimestamp-10, inference2.StartBlockTimestamp+20)
+		assert.Equal(t, summary2, expectedSummary)
 	})
 }

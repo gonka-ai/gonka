@@ -32,7 +32,7 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 	}
 
 	k.LogInfo("StatsByTimePeriodByDeveloper", types.Stat, "developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo)
-	stats := k.DevelopersStatsGetByTime(ctx, req.Developer, req.TimeFrom, req.TimeTo)
+	stats := k.GetDeveloperStatsByTime(ctx, req.Developer, req.TimeFrom, req.TimeTo)
 	return &types.QueryStatsByTimePeriodByDeveloperResponse{Stats: stats}, nil
 }
 
@@ -41,7 +41,7 @@ func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *typ
 		return nil, ErrInvalidDeveloperAddress
 	}
 
-	summary := k.CountTotalInferenceInLastNEpochsByDeveloper(ctx, req.Developer, int(req.EpochsN))
+	summary := k.GetSummaryLastNEpochsByDeveloper(ctx, req.Developer, int(req.EpochsN))
 	return &types.QueryInferencesAndTokensStatsResponse{
 		AiTokens:             summary.TokensUsed,
 		Inferences:           int32(summary.InferenceCount),
@@ -49,7 +49,7 @@ func (k Keeper) StatsByDeveloperAndEpochsBackwards(ctx context.Context, req *typ
 }
 
 func (k Keeper) InferencesAndTokensStatsByEpochsBackwards(ctx context.Context, req *types.QueryInferencesAndTokensStatsByEpochsBackwardsRequest) (*types.QueryInferencesAndTokensStatsResponse, error) {
-	summary := k.CountTotalInferenceInLastNEpochs(ctx, int(req.EpochsN))
+	summary := k.GetSummaryLastNEpochs(ctx, int(req.EpochsN))
 	return &types.QueryInferencesAndTokensStatsResponse{
 		AiTokens:             summary.TokensUsed,
 		Inferences:           int32(summary.InferenceCount),
@@ -70,7 +70,7 @@ func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *t
 	}
 
 	k.LogInfo("InferencesAndTokensStatsByTimePeriod", types.Stat, "time_from", req.TimeFrom, "time_to", req.TimeTo)
-	summary := k.CountTotalInferenceInPeriod(ctx, req.TimeFrom, req.TimeTo)
+	summary := k.GetSummaryByTime(ctx, req.TimeFrom, req.TimeTo)
 	return &types.QueryInferencesAndTokensStatsResponse{
 		AiTokens:             summary.TokensUsed,
 		Inferences:           int32(summary.InferenceCount),
@@ -92,7 +92,7 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	}
 
 	stats := make([]*types.ModelStats, 0)
-	statsPerModels := k.CountStatsGroupedByModelAndTimePeriod(ctx, req.TimeFrom, req.TimeTo)
+	statsPerModels := k.GetSummaryByModelAndTime(ctx, req.TimeFrom, req.TimeTo)
 	for modelName, summary := range statsPerModels {
 		stats = append(stats, &types.ModelStats{
 			Model:      modelName,
@@ -108,11 +108,18 @@ func (k Keeper) DebugStatsDeveloperStats(ctx context.Context, _ *types.QueryDebu
 
 	resp := &types.QueryDebugStatsResponse{
 		StatsByTime:  make([]*types.QueryDebugStatsResponse_TemporaryTimeStat, 0),
-		StatsByEpoch: statByEpoch,
+		StatsByEpoch: make([]*types.QueryDebugStatsResponse_TemporaryEpochStat, 0),
 	}
 
 	for developer, stat := range statByTime {
 		resp.StatsByTime = append(resp.StatsByTime, &types.QueryDebugStatsResponse_TemporaryTimeStat{
+			Developer: developer,
+			Stats:     stat,
+		})
+	}
+
+	for developer, stat := range statByEpoch {
+		resp.StatsByEpoch = append(resp.StatsByEpoch, &types.QueryDebugStatsResponse_TemporaryEpochStat{
 			Developer: developer,
 			Stats:     stat,
 		})

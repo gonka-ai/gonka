@@ -92,8 +92,8 @@ clean-state:
 	rm -rf "$(HOME)/.inference"
 
 docker-push:
-	#@echo "pushing to Google Cloud Artifact Registry"
-	#@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
+	@echo "pushing to Google Cloud Artifact Registry"
+	@docker push gcr.io/decentralized-ai/inferenced:$(VERSION)
 	@docker tag gcr.io/decentralized-ai/inferenced:$(VERSION) ghcr.io/product-science/inferenced:$(VERSION)
 	@echo "pushing to GitHub Container Registry"
 	@docker push ghcr.io/product-science/inferenced:$(VERSION)

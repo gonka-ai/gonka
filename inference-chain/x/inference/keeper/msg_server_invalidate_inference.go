@@ -39,7 +39,7 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
 
 	k.SetInference(ctx, inference)
-	err = k.DevelopersStatsSet(ctx, inference)
+	err = k.SetDeveloperStats(ctx, inference)
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, err)
 	} else {

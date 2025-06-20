@@ -66,7 +66,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	// Always save the inference, even if it's a placeholder
 	k.SetInference(ctx, existingInference)
-	err = k.DevelopersStatsSet(ctx, existingInference)
+	err = k.SetDeveloperStats(ctx, existingInference)
 	if err != nil {
 		k.LogError("error setting developer stat", types.Stat, err)
 	} else {

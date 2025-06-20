@@ -4,16 +4,10 @@ package inference.inference;
 import "inference/inference/inference.proto";
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-// message DeveloperStatsByEpoch {
-//   uint64 epoch_id = 1;
-//   map<string, InferenceStats> inferences = 2;
-// }
-
 message DeveloperStatsByEpoch {
   uint64 epoch_id = 1;
   repeated string inference_ids = 2;
 }
-
 
 message InferenceStats {
   string inference_id = 1;

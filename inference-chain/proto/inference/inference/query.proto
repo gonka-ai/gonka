@@ -669,8 +669,13 @@ message QueryDebugStatsResponse {
     repeated DeveloperStatsByTime stats = 2;
   }
 
+  message TemporaryEpochStat {
+    string developer = 1;
+    repeated DeveloperStatsByEpoch stats = 2;
+  }
+
   repeated TemporaryTimeStat stats_by_time = 1;
-  map<string, DeveloperStatsByEpoch> stats_by_epoch = 2;
+  repeated TemporaryEpochStat stats_by_epoch = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}

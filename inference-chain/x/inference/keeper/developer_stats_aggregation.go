@@ -22,8 +22,8 @@ type StatsSummary struct {
 	ActualCost     int64
 }
 
-func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inference) error {
-	k.LogInfo("stat set BY TIME: got stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy, "poc_block_height", inference.EpochGroupId)
+func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
+	k.LogInfo("SetDeveloperStats: got stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy, "poc_block_height", inference.EpochGroupId)
 	epoch, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 	timeKey := byInferenceStore.Get([]byte(inference.InferenceId))
 	if timeKey == nil {
 		// completely new record
-		k.LogInfo("stat set BY TIME: completely new record, create record by time", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
+		k.LogInfo("completely new record, create record by time", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
 		timeKey = developerByTimeAndInferenceKey(inference.RequestedBy, uint64(inferenceTime), inference.InferenceId)
 		byTimeStore.Set(timeKey, k.cdc.MustMarshal(&types.DeveloperStatsByTime{
 			EpochId:   currentEpochId,
@@ -63,7 +63,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 		byInferenceStore.Set([]byte(inference.InferenceId), timeKey)
 		modelKey := modelByTimeKey(inference.Model, inferenceTime, inference.InferenceId)
 		byModelsStore.Set(modelKey, timeKey)
-		return k.setStatByEpoch(ctx, inference, currentEpochId, 0, tokens)
+		return k.setStatByEpoch(ctx, inference, currentEpochId, 0)
 	}
 
 	var (
@@ -71,7 +71,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 		prevEpochId uint64
 	)
 	if val := byTimeStore.Get(timeKey); val != nil {
-		k.LogInfo("stat set BY TIME: record exists", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
+		k.LogInfo("record found by time key", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
 		k.cdc.MustUnmarshal(val, &statsByTime)
 		prevEpochId = statsByTime.EpochId
 
@@ -81,7 +81,7 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 		statsByTime.Inference.EpochPocBlockHeight = inference.EpochGroupId
 		statsByTime.Inference.ActualConstInCoins = inference.ActualCost
 	} else {
-		k.LogInfo("stat set BY TIME: timekey exists, record DO NOT exist", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
+		k.LogInfo("time key exists, record DO NOT exist", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
 		statsByTime = types.DeveloperStatsByTime{
 			EpochId:   currentEpochId,
 			Timestamp: inferenceTime,
@@ -93,77 +93,22 @@ func (k Keeper) DevelopersStatsSet(ctx context.Context, inference types.Inferenc
 
 	modelKey := modelByTimeKey(inference.Model, inferenceTime, inference.InferenceId)
 	byModelsStore.Set(modelKey, timeKey)
-	return k.setStatByEpoch(ctx, inference, currentEpochId, prevEpochId, tokens)
+	return k.setStatByEpoch(ctx, inference, currentEpochId, prevEpochId)
 }
-
-/*func (k Keeper) setStatByEpoch(
-	ctx context.Context,
-	inference types.Inference,
-	currentEpochId uint64,
-	previouslyKnownEpochId uint64,
-	tokens uint64,
-) error {
-	k.LogInfo("stat set BY EPOCH", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId, "previously_known_epoch_id", previouslyKnownEpochId)
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByEpoch))
-
-	// === CASE 1: inference already exists, but was tagged by different epoch ===
-	if previouslyKnownEpochId != 0 && previouslyKnownEpochId != currentEpochId {
-		k.LogInfo("stat set BY EPOCH: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-
-		oldKey := developerByEpochKey(inference.RequestedBy, previouslyKnownEpochId)
-		if bz := epochStore.Get(oldKey); bz != nil {
-			var oldStats types.DeveloperStatsByEpoch
-			k.cdc.MustUnmarshal(bz, &oldStats)
-
-			delete(oldStats.Inferences, inference.InferenceId)
-			epochStore.Set(oldKey, k.cdc.MustMarshal(&oldStats))
-		}
-	}
-
-	// === CASE 2: create new record or update existing with current_epoch_id ===
-	k.LogInfo("stat set BY EPOCH: new record or same epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-	newKey := developerByEpochKey(inference.RequestedBy, currentEpochId)
-	var newStats types.DeveloperStatsByEpoch
-	if bz := epochStore.Get(newKey); bz != nil {
-		k.cdc.MustUnmarshal(bz, &newStats)
-		if newStats.Inferences == nil {
-			newStats.Inferences = make(map[string]*types.InferenceStats)
-		}
-	} else {
-		newStats = types.DeveloperStatsByEpoch{
-			EpochId:    currentEpochId,
-			Inferences: make(map[string]*types.InferenceStats),
-		}
-	}
-	newStats.Inferences[inference.InferenceId] = &types.InferenceStats{
-		EpochPocBlockHeight: inference.EpochGroupId,
-		InferenceId:         inference.InferenceId,
-		Status:              inference.Status,
-		Model:               inference.Model,
-		AiTokensUsed:        tokens,
-		ActualConstInCoins:  inference.ActualCost,
-	}
-	epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
-	k.LogInfo("stat set BY EPOCH: inference successfully added to epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-	return nil
-}*/
 
 func (k Keeper) setStatByEpoch(
 	ctx context.Context,
 	inference types.Inference,
 	currentEpochId uint64,
 	previouslyKnownEpochId uint64,
-	tokens uint64,
 ) error {
-	k.LogInfo("stat set BY EPOCH", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId, "previously_known_epoch_id", previouslyKnownEpochId)
+	k.LogInfo("stat set by epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId, "previously_known_epoch_id", previouslyKnownEpochId)
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByEpoch))
 
 	// === CASE 1: inference already exists, but was tagged by different epoch ===
 	if previouslyKnownEpochId != 0 && previouslyKnownEpochId != currentEpochId {
-		k.LogInfo("stat set BY EPOCH: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-
+		k.LogInfo("stat set by epoch: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
 		oldKey := developerByEpochKey(inference.RequestedBy, previouslyKnownEpochId)
 		if bz := epochStore.Get(oldKey); bz != nil {
 			var oldStats types.DeveloperStatsByEpoch
@@ -175,7 +120,7 @@ func (k Keeper) setStatByEpoch(
 	}
 
 	// === CASE 2: create new record or update existing with current_epoch_id ===
-	k.LogInfo("stat set BY EPOCH: new record or same epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
+	k.LogInfo("stat set by epoch: new record or same epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
 	newKey := developerByEpochKey(inference.RequestedBy, currentEpochId)
 	var newStats types.DeveloperStatsByEpoch
 	if bz := epochStore.Get(newKey); bz != nil {
@@ -192,11 +137,11 @@ func (k Keeper) setStatByEpoch(
 
 	newStats.InferenceIds = append(newStats.InferenceIds, inference.InferenceId)
 	epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
-	k.LogInfo("stat set BY EPOCH: inference successfully added to epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
+	k.LogInfo("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
 	return nil
 }
 
-func (k Keeper) DevelopersStatsGetByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
+func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
 	epochKey := developerByEpochKey(developerAddr, epochId)
@@ -211,7 +156,7 @@ func (k Keeper) DevelopersStatsGetByEpoch(ctx context.Context, developerAddr str
 	return stats, true
 }
 
-func (k Keeper) DevelopersStatsGetByTime(
+func (k Keeper) GetDeveloperStatsByTime(
 	ctx context.Context,
 	developerAddr string,
 	timeFrom, timeTo int64,
@@ -239,7 +184,7 @@ func (k Keeper) DevelopersStatsGetByTime(
 	return results
 }
 
-func (k Keeper) CountTotalInferenceInPeriod(ctx context.Context, from, to int64) StatsSummary {
+func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSummary {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
 
@@ -251,6 +196,12 @@ func (k Keeper) CountTotalInferenceInPeriod(ctx context.Context, from, to int64)
 
 	summary := StatsSummary{}
 	for ; iterator.Valid(); iterator.Next() {
+		// covers corner case when we have inferences with empty requestedBy filed, because
+		// dev had insufficient funds for payment-on-escrow
+		if addr := extractDeveloperAddrFromKey(iterator.Key()); addr == "" {
+			continue
+		}
+
 		var stats types.DeveloperStatsByTime
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
 		summary.TokensUsed += int64(stats.Inference.AiTokensUsed)
@@ -260,7 +211,7 @@ func (k Keeper) CountTotalInferenceInPeriod(ctx context.Context, from, to int64)
 	return summary
 }
 
-func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) StatsSummary {
+func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 	if n <= 0 {
 		return StatsSummary{}
 	}
@@ -284,6 +235,12 @@ func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) Sta
 
 	summary := StatsSummary{}
 	for ; iter.Valid(); iter.Next() {
+		// covers corner case when we have inferences with empty requestedBy filed, because
+		// dev had insufficient funds for payment-on-escrow
+		if addr := extractDeveloperAddrFromKey(iter.Key()); addr == "" {
+			continue
+		}
+
 		var stats types.DeveloperStatsByEpoch
 		k.cdc.MustUnmarshal(iter.Value(), &stats)
 		for _, infId := range stats.InferenceIds {
@@ -308,7 +265,7 @@ func (k Keeper) CountTotalInferenceInLastNEpochs(ctx context.Context, n int) Sta
 	return summary
 }
 
-func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context, developerAddr string, n int) StatsSummary {
+func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerAddr string, n int) StatsSummary {
 	if n <= 0 {
 		return StatsSummary{}
 	}
@@ -344,7 +301,6 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 				continue
 			}
 
-			// TODO fix corner case with empty developer address
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
 				k.cdc.MustUnmarshal(val, &statsByTime)
@@ -360,7 +316,7 @@ func (k Keeper) CountTotalInferenceInLastNEpochsByDeveloper(ctx context.Context,
 	return summary
 }
 
-func (k Keeper) CountStatsGroupedByModelAndTimePeriod(ctx context.Context, from, to int64) map[string]StatsSummary {
+func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) map[string]StatsSummary {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
 
@@ -373,6 +329,12 @@ func (k Keeper) CountStatsGroupedByModelAndTimePeriod(ctx context.Context, from,
 	stats := make(map[string]StatsSummary)
 
 	for ; iter.Valid(); iter.Next() {
+		// covers corner case when we have inferences with empty requestedBy filed, because
+		// dev had insufficient funds for payment-on-escrow
+		if addr := extractDeveloperAddrFromKey(iter.Key()); addr == "" {
+			continue
+		}
+
 		var stat types.DeveloperStatsByTime
 		k.cdc.MustUnmarshal(iter.Value(), &stat)
 
@@ -389,7 +351,7 @@ func (k Keeper) CountStatsGroupedByModelAndTimePeriod(ctx context.Context, from,
 	return stats
 }
 
-func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string]*types.DeveloperStatsByEpoch, map[string][]*types.DeveloperStatsByTime) {
+func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.DeveloperStatsByEpoch, map[string][]*types.DeveloperStatsByTime) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 
 	// === DeveloperStatsByEpoch ===
@@ -397,13 +359,18 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string]*types.De
 	epochIter := epochStore.Iterator(nil, nil)
 	defer epochIter.Close()
 
-	epochStats := make(map[string]*types.DeveloperStatsByEpoch)
+	epochStats := make(map[string][]*types.DeveloperStatsByEpoch)
 	for ; epochIter.Valid(); epochIter.Next() {
 		var stats types.DeveloperStatsByEpoch
 		k.cdc.MustUnmarshal(epochIter.Value(), &stats)
 
 		developer := extractDeveloperAddrFromKey(epochIter.Key())
-		epochStats[developer] = &stats
+		stat := epochStats[developer]
+		if stat == nil {
+			stat = make([]*types.DeveloperStatsByEpoch, 0)
+		}
+		stat = append(stat, &stats)
+		epochStats[developer] = stat
 	}
 
 	// === DeveloperStatsByTime ===

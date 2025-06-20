@@ -70,19 +70,8 @@ func TestMsgServer_StartInference(t *testing.T) {
 		Model:               "model1",
 	}, savedInference)
 
-	devStat, found := k.DevelopersStatsGetByEpoch(ctx2, savedInference.RequestedBy, epochId)
+	devStat, found := k.GetDevelopersStatsByEpoch(ctx2, savedInference.RequestedBy, epochId)
 	require.True(t, found)
-	/*	require.Equal(t, types.DeveloperStatsByEpoch{
-		EpochId: epochId,
-		Inferences: map[string]*types.InferenceStats{
-			savedInference.InferenceId: {
-				InferenceId:        inferenceId,
-				Status:             savedInference.Status,
-				Model:              savedInference.Model,
-				ActualConstInCoins: savedInference.ActualCost,
-			},
-		},
-	}, devStat)*/
 	require.Equal(t, types.DeveloperStatsByEpoch{
 		EpochId:      epochId,
 		InferenceIds: []string{inferenceId},
