@@ -383,7 +383,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 	// Get current epoch from phase tracker
 	var currentEpoch uint64
 	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpochState().CurrentEpoch.Epoch
+		currentEpoch = b.phaseTracker.GetCurrentEpochState().CurrentEpoch.EpochIndex
 	}
 
 	nodeWithState := &NodeWithState{
@@ -445,7 +445,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	var leastBusyNode *NodeWithState = nil
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version, epochState.CurrentEpoch.Epoch, epochState.CurrentPhase) {
+		if b.nodeAvailable(node, command.Model, command.Version, epochState.CurrentEpoch.EpochIndex, epochState.CurrentPhase) {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}

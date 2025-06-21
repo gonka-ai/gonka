@@ -245,7 +245,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
 		}
-		am.keeper.SetUpcomingEpochGroupId(ctx, uint64(blockHeight))
 	}
 
 	if currentEpochGroup.IsChanged(ctx) {
@@ -282,8 +281,13 @@ func getNextEpochIndex(prevEpoch *types.Epoch) uint64 {
 }
 
 func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
-	pocHeight := am.keeper.GetEffectiveEpochGroupId(ctx)
-	err := am.keeper.SettleAccounts(ctx, pocHeight)
+	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
+	if !found {
+		am.LogError("onSetNewValidatorsStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
+		return
+	}
+
+	err := am.keeper.SettleAccounts(ctx, uint64(min(0, effectiveEpoch.PocStartBlockHeight)))
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
@@ -403,13 +407,19 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
-	newGroupId := am.keeper.GetUpcomingEpochGroupId(ctx)
-	previousGroupId := am.keeper.GetEffectiveEpochGroupId(ctx)
+	newGroupId, found := am.keeper.GetUpcomingEpochPocStartHeight(ctx)
+	if !found {
+		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
+		return
+	}
+
+	previousGroupId, found := am.keeper.GetEffectiveEpochPocStartHeight(ctx)
+	if !found {
+		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
+		return
+	}
 
 	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
-	am.keeper.SetEffectiveEpochGroupId(ctx, newGroupId)
-	am.keeper.SetPreviousEpochGroupId(ctx, previousGroupId)
-	am.keeper.SetUpcomingEpochGroupId(ctx, 0)
 	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId, "")
 	if !found {
 		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)

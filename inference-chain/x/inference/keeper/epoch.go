@@ -5,6 +5,14 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) {
+	SetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(types.EffectiveEpochKey), epoch)
+}
+
+func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {
+	return GetUint64Value(&k, ctx, types.KeyPrefix(types.EpochPointersKeysPrefix), []byte(types.EffectiveEpochKey))
+}
+
 func (k Keeper) SetEpoch(ctx context.Context, epoch *types.Epoch) {
 	if epoch == nil {
 		k.LogError("SetEpoch called with nil epoch, returning", types.System)
@@ -24,7 +32,8 @@ func (k Keeper) GetEpoch(ctx context.Context, epochIndex uint64) (*types.Epoch, 
 func (k Keeper) GetEffectiveEpoch(ctx context.Context) (*types.Epoch, bool) {
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
-		return nil, found
+		k.LogError("GetEffectiveEpochIndex returned false, no effective epoch found", types.EpochGroup)
+		return nil, false
 	}
 	return k.GetEpoch(ctx, epochIndex)
 }
@@ -32,15 +41,44 @@ func (k Keeper) GetEffectiveEpoch(ctx context.Context) (*types.Epoch, bool) {
 func (k Keeper) GetUpcomingEpoch(ctx context.Context) (*types.Epoch, bool) {
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
-		return nil, found
+		return nil, false
 	}
+
 	return k.GetEpoch(ctx, epochIndex+1)
 }
 
 func (k Keeper) GetPreviousEpoch(ctx context.Context) (*types.Epoch, bool) {
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if !found {
-		return nil, found
+	if !found || epochIndex == 0 {
+		return nil, false
 	}
+
 	return k.GetEpoch(ctx, epochIndex-1)
+}
+
+func (k Keeper) GetEffectiveEpochPocStartHeight(ctx context.Context) (uint64, bool) {
+	epoch, found := k.GetEffectiveEpoch(ctx)
+	if !found {
+		return 0, false
+	}
+
+	return uint64(epoch.PocStartBlockHeight), true
+}
+
+func (k Keeper) GetUpcomingEpochPocStartHeight(ctx context.Context) (uint64, bool) {
+	epoch, found := k.GetUpcomingEpoch(ctx)
+	if !found {
+		return 0, false
+	}
+
+	return uint64(epoch.PocStartBlockHeight), true
+}
+
+func (k Keeper) GetPreviousEpochPocStartHeight(ctx context.Context) (uint64, bool) {
+	epoch, found := k.GetPreviousEpoch(ctx)
+	if !found {
+		return 0, false
+	}
+
+	return uint64(epoch.PocStartBlockHeight), true
 }
