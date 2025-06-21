@@ -55,12 +55,22 @@ data class TxResp(
     val time: Instant,
 )
 
+object TestState {
+    var rebooting = false
+}
+
 class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Frame>() {
     var currentHeight = 0L
     var minimumHeight = Long.MAX_VALUE
     val currentMessage = StringBuilder()
     val currentTimestamp: Instant? = null
     var mostRecentTxResp: TxResp? = null
+    val rebootErrors = listOf(
+        "Failed to send stop request to node",
+        "Stopping peer for error err=EOF",
+        "Error dialing seed err=",
+        "Couldn't connect to any seeds module=p2p"
+    )
 
     override fun onNext(frame: Frame) = logContext(
         mapOf(
@@ -99,7 +109,12 @@ class LogOutput(val name: String, val type: String) : ResultCallback.Adapter<Fra
         if (level.startsWith("INF")) {
             Logger.info(message)
         } else if (level.startsWith("ERR")) {
-            Logger.error(message)
+            // Hide reboot errors, as they are expected
+            if (TestState.rebooting && rebootErrors.any { message.contains(it) }) {
+                Logger.info(message)
+            } else {
+                Logger.error(message)
+            }
         } else if (level.startsWith("D")) {
             Logger.debug(message)
         } else if (level.startsWith("W")) {

@@ -32,8 +32,10 @@ func proxyResponse(
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
+		logging.Debug("Proxying text/event-stream response", types.Inferences, "status_code", resp.StatusCode)
 		proxyTextStreamResponse(resp, w, responseProcessor)
 	} else {
+		logging.Debug("Proxying JSON response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType)
 		proxyJsonResponse(resp, w, responseProcessor)
 	}
 }
@@ -47,7 +49,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		line := scanner.Text()
 
 		// DEBUG LOG
-		logging.Info("Chunk", types.Inferences, "line", line)
+		logging.Debug("Chunk", types.Inferences, "line", line)
 
 		var lineToProxy = line
 		if responseProcessor != nil {

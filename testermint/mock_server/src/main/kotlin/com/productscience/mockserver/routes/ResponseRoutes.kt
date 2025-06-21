@@ -146,4 +146,38 @@ fun Route.responseRoutes(responseService: ResponseService) {
             )
         }
     }
+
+    // GET /api/v1/responses/last-inference-request - Gets the last inference request
+    get("/api/v1/responses/last-inference-request") {
+        try {
+            val lastRequest = responseService.getLastInferenceRequest()
+
+            if (lastRequest != null) {
+                call.respond(
+                    HttpStatusCode.OK,
+                    mapOf(
+                        "status" to "success",
+                        "message" to "Last inference request retrieved successfully",
+                        "request" to lastRequest
+                    )
+                )
+            } else {
+                call.respond(
+                    HttpStatusCode.NotFound,
+                    mapOf(
+                        "status" to "error",
+                        "message" to "No inference request has been made yet"
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                mapOf(
+                    "status" to "error",
+                    "message" to "Failed to get last inference request: ${e.message}"
+                )
+            )
+        }
+    }
 }

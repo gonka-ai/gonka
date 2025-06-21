@@ -231,25 +231,30 @@ fun getRepoRoot(): String {
 }
 
 fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentCluster: LocalCluster?): List<DockerGroup> {
-    val genesisGroup = createDockerGroup(0, 0, null, config, false)
-    val joinSize = currentCluster?.joinPairs?.size ?: 0
-    if (joinSize > joinCount) {
-        (joinCount until joinSize).mapIndexed { _, index ->
+    TestState.rebooting = true
+    try {
+        val genesisGroup = createDockerGroup(0, 0, null, config, false)
+        val joinSize = currentCluster?.joinPairs?.size ?: 0
+        if (joinSize > joinCount) {
+            (joinCount until joinSize).mapIndexed { _, index ->
+                val actualIndex = (index + 1) * 10
+                createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
+            }.forEach { it.tearDownExisting() }
+        }
+        val joinGroups = (1..joinCount).mapIndexed { index, _ ->
             val actualIndex = (index + 1) * 10
             createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
-        }.forEach { it.tearDownExisting() }
+        }
+        val allGroups = listOf(genesisGroup) + joinGroups
+        Logger.info("Initializing cluster with {} nodes", allGroups.size)
+        allGroups.forEach { it.tearDownExisting() }
+        genesisGroup.init()
+        Thread.sleep(Duration.ofSeconds(20L))
+        joinGroups.forEach { it.init() }
+        return allGroups
+    } finally {
+        TestState.rebooting = false
     }
-    val joinGroups = (1..joinCount).mapIndexed { index, _ ->
-        val actualIndex = (index + 1) * 10
-        createDockerGroup(index + 1, actualIndex, GenesisUrls(genesisGroup.keyName.trimStart('/')), config, false)
-    }
-    val allGroups = listOf(genesisGroup) + joinGroups
-    Logger.info("Initializing cluster with {} nodes", allGroups.size)
-    allGroups.forEach { it.tearDownExisting() }
-    genesisGroup.init()
-    Thread.sleep(Duration.ofSeconds(20L))
-    joinGroups.forEach { it.init() }
-    return allGroups
 }
 
 fun initCluster(
@@ -289,6 +294,9 @@ fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean
     } else {
         if (!reboot) {
             logSection("Cluster does not match config, rebooting")
+        }
+        if (reboot) {
+            logSection("Rebooting cluster by request")
         }
         initializeCluster(joinCount, config, currentCluster)
         return getLocalCluster(config) ?: error("Local cluster not initialized")

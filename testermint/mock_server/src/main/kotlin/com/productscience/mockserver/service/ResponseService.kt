@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.productscience.mockserver.model.OpenAIResponse
 import io.ktor.http.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Service for managing and modifying responses for various endpoints.
@@ -19,6 +20,9 @@ class ResponseService {
 
     // Store for POC responses
     private val pocResponses = ConcurrentHashMap<String, Long>()
+
+    // Store for the last inference request
+    private val lastInferenceRequest = AtomicReference<String?>(null)
 
     /**
      * Sets the response for the inference endpoint.
@@ -158,5 +162,23 @@ class ResponseService {
               "fraud_detected": false
             }
         """.trimIndent()
+    }
+
+    /**
+     * Sets the last inference request.
+     * 
+     * @param request The request body as a string
+     */
+    fun setLastInferenceRequest(request: String) {
+        lastInferenceRequest.set(request)
+    }
+
+    /**
+     * Gets the last inference request.
+     * 
+     * @return The last inference request as a string, or null if no request has been made
+     */
+    fun getLastInferenceRequest(): String? {
+        return lastInferenceRequest.get()
     }
 }

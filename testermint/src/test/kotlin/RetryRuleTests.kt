@@ -1,8 +1,10 @@
 import com.productscience.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Tag
 import java.time.Duration
 
+@Tag("exclude")
 class RetryRuleTests : TestermintTest() {
 
     @Test

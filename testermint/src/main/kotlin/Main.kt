@@ -71,12 +71,13 @@ fun getInterruptedStreamingInferenceResult(
     highestFunded: LocalInferencePair,
     modelName: String? = null,
     seed: Int? = null,
-    maxLinesToRead: Int = 2
+    maxLinesToRead: Int = 2,
+    baseObject: InferenceRequestPayload = inferenceRequestStreamObject
 ): InferenceResult {
     val beforeInferenceParticipants = highestFunded.api.getParticipants().also { Logger.info("Before inference: $it") }
-    val inferenceObject = inferenceRequestStreamObject
-        .copy(seed = seed ?: inferenceRequestStreamObject.seed)
-        .copy(model = modelName ?: inferenceRequestStreamObject.model)
+    val inferenceObject = baseObject
+        .copy(seed = seed ?: baseObject.seed)
+        .copy(model = modelName ?: baseObject.model)
     val payload = inferenceObject.toJson()
 
     val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead)
@@ -223,7 +224,7 @@ private fun makeStreamingInferenceRequest(highestFunded: LocalInferencePair, pay
 fun makeInterruptedStreamingInferenceRequest(
     highestFunded: LocalInferencePair, 
     payload: String,
-    maxLinesToRead: Int = 2,
+    maxLinesToRead: Int = 1,
     check: Boolean = true,
 ): InferencePayload {
     highestFunded.waitForFirstValidators()
@@ -265,6 +266,8 @@ fun makeInterruptedStreamingInferenceRequest(
         streamConnection.close()
     }
 
+    logSection("Waiting for stream to complete")
+    Thread.sleep(10000)
     if (!check) {
         return InferencePayload.empty()
     }
@@ -289,7 +292,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
         it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
-        it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = 500)
+        it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         it.getParams()
         it.node.getAddress()
     }
@@ -462,7 +465,8 @@ data class InferenceRequestPayload(
 ) {
     fun toJson() = cosmosJson.toJson(this)
 }
-
+// Hardcoded for now
+const val inferenceRequestPromptTokens = 19
 val inferenceRequestObject = InferenceRequestPayload(
     model = "unsloth/llama-3-8b-Instruct",
     temperature = 0.8,

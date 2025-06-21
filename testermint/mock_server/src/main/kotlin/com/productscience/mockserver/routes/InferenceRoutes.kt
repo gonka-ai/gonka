@@ -69,6 +69,10 @@ private suspend fun handleChatCompletions(call: ApplicationCall, responseService
     val requestBody = call.receiveText()
     logger.info("Received chat completion request for path: ${call.request.path()}")
 
+    // Store the last inference request
+    responseService.setLastInferenceRequest(requestBody)
+    logger.info("Stored last inference request")
+
     // Check if streaming is requested
     val isStreaming = sseService.isStreamingRequested(requestBody)
     logger.info("Streaming requested: $isStreaming")

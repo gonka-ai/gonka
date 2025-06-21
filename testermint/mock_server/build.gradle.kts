@@ -30,6 +30,9 @@ dependencies {
     // Jackson for JSON processing
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
 
+    // JTokkit for tokenization
+    implementation("com.knuddels:jtokkit:0.6.1")
+
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation("org.slf4j:slf4j-api:2.0.9")

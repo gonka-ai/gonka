@@ -10,14 +10,14 @@ import com.github.tomakehurst.wiremock.http.RequestMethod
 import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder
 import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
-import kotlin.time.Duration
+import java.time.Duration
 
 interface IInferenceMock {
-    fun setInferenceResponse(response: String, delay: Int = 0, streamDelay: Long = 0, segment: String = "", model: String? = null): StubMapping?
+    fun setInferenceResponse(response: String, delay: Duration = Duration.ZERO, streamDelay: Duration = Duration.ZERO, segment: String = "", model: String? = null): StubMapping?
     fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
-        delay: Int = 0,
-        streamDelay: Long = 0,
+        delay: Duration = Duration.ZERO,
+        streamDelay: Duration = Duration.ZERO,
         segment: String = "",
         model: String? = null
     ): StubMapping?
@@ -39,7 +39,7 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
         val lastRequest = requests.last()
         return openAiJson.fromJson(lastRequest.bodyAsString, InferenceRequestPayload::class.java)
     }
-    override fun setInferenceResponse(response: String, delay: Int, streamDelay: Long, segment: String, model: String?) =
+    override fun setInferenceResponse(response: String, delay: Duration, streamDelay: Duration, segment: String, model: String?) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
                 .apply {
@@ -57,11 +57,11 @@ class InferenceMock(port: Int, val name: String) : IInferenceMock {
 
     override fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
-        delay: Int,
-        streamDelay: Long,
+        delay: Duration,
+        streamDelay: Duration,
         segment: String,
         model: String?
-    ) =
+    ): StubMapping? =
         this.setInferenceResponse(
             openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model)
 
