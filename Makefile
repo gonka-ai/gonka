@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test run-tests run-sanity run-bls-tests
 
 VERSION ?= $(shell git describe --always)
 TAG_NAME := "release/v$(VERSION)"
@@ -40,6 +40,10 @@ run-tests:
 
 run-sanity:
 	@cd testermint && ./gradlew test --tests "*" -DincludeTags=sanity
+
+run-bls-tests: check-docker
+	@echo "Running BLS DKG integration tests (requires Docker)..."
+	@cd testermint && ./gradlew test --tests "BLSDKGSuccessTest"
 
 test-blockchain: check-docker run-blockchain-tests
 

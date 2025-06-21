@@ -17,6 +17,15 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "params",
 					Short:     "Shows the parameters of the module",
 				},
+				{
+					RpcMethod: "EpochBLSData",
+					Use:       "epoch-data [epoch_id]",
+					Short:     "Query BLS DKG data for a specific epoch",
+					Long:      "Query complete BLS distributed key generation data for a specific epoch including participants, phase, dealer parts, verification submissions, and group public key",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "epoch_id"},
+					},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

@@ -110,4 +110,9 @@ message EpochBLSData {
   // verification_submissions contains verification results from each participant
   // Each entry tracks which dealers that participant verified as valid
   repeated VerificationVectorSubmission verification_submissions = 10;
+  
+  // valid_dealers contains the validity of each dealer that was determined during DKG completion
+  // This is populated when the DKG transitions to COMPLETED phase
+  // Index i corresponds to whether dealer i (participants[i]) is valid
+  repeated bool valid_dealers = 11;
 } 

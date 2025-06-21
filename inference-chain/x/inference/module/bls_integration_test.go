@@ -335,3 +335,76 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 // Note: The actual implementation of initiateBLSKeyGeneration in the inference module (appModule.go or keeper/dkg_initiation.go)
 // needs to be updated to use the AccountKeeper to fetch the PubKey for each participant.
 // These tests are designed to verify that behavior once implemented.
+
+func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
+	k, ctx := setupTestKeeperWithBLS(t)
+	cdc := k.Cdc()
+
+	// Set up test accounts  
+	alicePrivKey := secp256k1.GenPrivKey()
+	bobPrivKey := secp256k1.GenPrivKey()
+	aliceAccAddr := sdk.AccAddress(alicePrivKey.PubKey().Address())
+	bobAccAddr := sdk.AccAddress(bobPrivKey.PubKey().Address())
+	aliceAccAddrStr := aliceAccAddr.String()
+	bobAccAddrStr := bobAccAddr.String()
+
+	// Create mock account keeper with test accounts
+	expectedPubKeysMap := map[string][]byte{
+		aliceAccAddrStr: alicePrivKey.PubKey().Bytes(),
+		bobAccAddrStr:   bobPrivKey.PubKey().Bytes(),
+	}
+	mockAccountKeeper := createMockAccountKeeperWithPubKeys(expectedPubKeysMap)
+
+	// Set up active participants for epoch 1
+	epoch1Participants := []*inferencetypes.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50},
+		{Index: bobAccAddrStr, Weight: 50},
+	}
+
+	// Set up active participants for epoch 2  
+	epoch2Participants := []*inferencetypes.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 60},
+		{Index: bobAccAddrStr, Weight: 40},
+	}
+
+	appModule := NewAppModule(cdc, k, mockAccountKeeper, nil, nil)
+
+	// Initiate DKG for epoch 1 - should succeed
+	epochID1 := uint64(1)
+	appModule.initiateBLSKeyGeneration(ctx, epochID1, epoch1Participants)
+
+	// Verify epoch 1 DKG was initiated
+	epochBLSData1, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID1)
+	require.True(t, found, "Epoch 1 DKG should be initiated")
+	require.Equal(t, epochID1, epochBLSData1.EpochId)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
+
+	// Verify epoch 1 is set as active
+	activeEpochID := k.BlsKeeper.GetActiveEpochID(ctx)
+	require.Equal(t, epochID1, activeEpochID, "Epoch 1 should be active")
+
+	// Initiate DKG for epoch 2 while epoch 1 is still running - should succeed (concurrent DKG allowed)
+	epochID2 := uint64(2)
+	appModule.initiateBLSKeyGeneration(ctx, epochID2, epoch2Participants)
+
+	// Verify epoch 2 DKG was also initiated (concurrent DKG rounds are allowed)
+	epochBLSData2, found := k.BlsKeeper.GetEpochBLSData(ctx, epochID2)
+	require.True(t, found, "Epoch 2 DKG should be initiated even when epoch 1 is still running")
+	require.Equal(t, epochID2, epochBLSData2.EpochId)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
+
+	// Verify both epochs have their own independent DKG data
+	require.NotEqual(t, epochBLSData1.EpochId, epochBLSData2.EpochId, "Epochs should have different IDs")
+	
+	// Both should be in DEALING phase
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData1.DkgPhase)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, epochBLSData2.DkgPhase)
+
+	// Active epoch tracking should reflect the most recent one (epoch 2)
+	activeEpochID = k.BlsKeeper.GetActiveEpochID(ctx)
+	require.Equal(t, epochID2, activeEpochID, "Active epoch should be updated to the most recent one")
+
+	// Both epochs should have valid participant data
+	require.Len(t, epochBLSData1.Participants, 2, "Epoch 1 should have 2 participants")
+	require.Len(t, epochBLSData2.Participants, 2, "Epoch 2 should have 2 participants")
+}
