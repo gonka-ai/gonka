@@ -25,13 +25,16 @@ import (
 )
 
 const (
-	finishInferenceAction       = "/inference.inference.MsgFinishInference"
-	startInferenceAction        = "/inference.inference.MsgStartInference"
-	validationAction            = "/inference.inference.MsgValidation"
-	trainingTaskAssignedAction  = "/inference.inference.MsgAssignTrainingTask"
-	submitGovProposalAction     = "/cosmos.gov.v1.MsgSubmitProposal"
-	keyGenerationInitiatedEvent = "key_generation_initiated"
-	verifyingPhaseStartedEvent  = "verifying_phase_started"
+	finishInferenceAction      = "/inference.inference.MsgFinishInference"
+	startInferenceAction       = "/inference.inference.MsgStartInference"
+	validationAction           = "/inference.inference.MsgValidation"
+	trainingTaskAssignedAction = "/inference.inference.MsgAssignTrainingTask"
+	submitGovProposalAction    = "/cosmos.gov.v1.MsgSubmitProposal"
+
+	// BLS Typed Event Types (from EmitTypedEvent)
+	blsKeyGenerationInitiatedEvent  = "inference.bls.EventKeyGenerationInitiated"
+	blsVerifyingPhaseStartedEvent   = "inference.bls.EventVerifyingPhaseStarted"
+	blsGroupPublicKeyGeneratedEvent = "inference.bls.EventGroupPublicKeyGenerated"
 
 	newBlockEventType = "tendermint/event/NewBlock"
 	txEventType       = "tendermint/event/Tx"
@@ -108,7 +111,6 @@ func (el *EventListener) openWsConnAndSubscribe() {
 	subscribeToEvents(el.ws, 3, "tm.event='NewBlock'")
 	subscribeToEvents(el.ws, 4, "tm.event='Tx' AND inference_validation.needs_revalidation='true'")
 	subscribeToEvents(el.ws, 6, "tm.event='Tx' AND message.action='"+trainingTaskAssignedAction+"'")
-	subscribeToEvents(el.ws, 7, "tm.event='Tx' AND "+keyGenerationInitiatedEvent+".epoch_id EXISTS")
 
 	logging.Info("All subscription calls in openWsConnAndSubscribe have been made with new combined queries.", types.EventProcessing)
 }
@@ -269,6 +271,11 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 
+		if el.isNodeSynced() {
+			// Check for BLS events in NewBlock events (emitted from EndBlocker)
+			el.handleBLSEvents(event, workerName)
+		}
+
 		// Parse the event into NewBlockInfo
 		blockInfo, err := parseNewBlockInfo(event)
 		if err != nil {
@@ -294,33 +301,37 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	}
 }
 
+func (el *EventListener) handleBLSEvents(event *chainevents.JSONRPCResponse, workerName string) {
+	// Check for BLS events in NewBlock events (emitted from EndBlocker)
+	if epochIdValues := event.Result.Events[blsKeyGenerationInitiatedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("Key generation initiated event received", types.EventProcessing, "worker", workerName)
+		err := el.blsDealer.ProcessKeyGenerationInitiated(event)
+		if err != nil {
+			logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsVerifyingPhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("Verifying phase started event received", types.EventProcessing, "worker", workerName)
+		err := el.blsVerifier.ProcessVerifyingPhaseStarted(event)
+		if err != nil {
+			logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+
+	if epochIdValues := event.Result.Events[blsGroupPublicKeyGeneratedEvent+".epoch_id"]; len(epochIdValues) > 0 {
+		logging.Info("Group public key generated event received", types.EventProcessing, "worker", workerName)
+		err := el.blsVerifier.ProcessGroupPublicKeyGenerated(event)
+		if err != nil {
+			logging.Error("Failed to process group public key generated event", types.EventProcessing, "error", err, "worker", workerName)
+		}
+	}
+}
+
 func (el *EventListener) handleMessage(event *chainevents.JSONRPCResponse, name string) {
 	if waitForEventHeight(event, el.configManager, name) {
 		logging.Warn("Event height not reached yet, skipping", types.EventProcessing, "event", event)
 		return
-	}
-
-	// Check for BLS events first (these might not have message.action)
-	if _, hasKeyGenEvent := event.Result.Events[keyGenerationInitiatedEvent+".epoch_id"]; hasKeyGenEvent {
-		if el.isNodeSynced() {
-			logging.Info("Key generation initiated event received", types.EventProcessing, "worker", name)
-			err := el.blsDealer.ProcessKeyGenerationInitiated(event)
-			if err != nil {
-				logging.Error("Failed to process key generation initiated event", types.EventProcessing, "error", err, "worker", name)
-			}
-		}
-		return
-	}
-
-	if epochIdValues := event.Result.Events[verifyingPhaseStartedEvent+".epoch_id"]; len(epochIdValues) > 0 {
-		if el.isNodeSynced() {
-			logging.Info("Verifying phase started event received", types.EventProcessing, "worker", name)
-			err := el.blsVerifier.ProcessVerifyingPhaseStarted(event)
-			if err != nil {
-				logging.Error("Failed to process verifying phase started event", types.EventProcessing, "error", err, "worker", name)
-			}
-		}
-		return // BLS events are processed independently
 	}
 
 	actions, ok := event.Result.Events["message.action"]
