@@ -38,4 +38,5 @@ var (
 	ErrEffectiveEpochNotFound                  = sdkerrors.Register(ModuleName, 1127, "current epoch not found")
 	ErrUpcomingEpochNotFound                   = sdkerrors.Register(ModuleName, 1128, "upcoming epoch group not found")
 	ErrPreviousEpochNotFound                   = sdkerrors.Register(ModuleName, 1129, "previous epoch group not found")
+	ErrEpochGroupDataAlreadyExists             = sdkerrors.Register(ModuleName, 1130, "epoch group data already exists for the given poc start block height and model id")
 )

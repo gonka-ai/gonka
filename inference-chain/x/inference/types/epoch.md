@@ -24,6 +24,7 @@ Each write also creates a corresponding epoch group.
 2. `module.go`, `EndBlock`: `onSetNewValidatorsStage` settling accounts: we need **current** for settling accounts
 3. `module.go`, `EndBlock`: `onSetNewValidatorsStage` computing new weights: we need both the **latest/upcoming** epoch and the **current** epoch, for computing new PoC weights
 4. `module.go`, `EndBlock`: `onSetNewValidatorsStage` move upcoming to effective by updating the effective epoch pointer: we need the **upcoming** epoch for this
+5. Pricing msg handler: `SubmitUnitOfComputePriceProposal`. We need the **current/effective** epoch, because new price will be computed at epoch transition
 
 ### Epoch group data
 
