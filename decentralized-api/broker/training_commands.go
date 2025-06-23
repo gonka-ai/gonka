@@ -47,12 +47,12 @@ func (c StartTrainingCommand) Execute(broker *Broker) {
 			continue
 		}
 
-		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.Epoch, epochState.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Error("Selected disabled node for training", types.Nodes,
 				"node_id", nodeId,
 				"AdminState.Epoch", node.State.AdminState.Epoch,
 				"AdminState.Enabled", node.State.AdminState.Enabled,
-				"current_epoch", epochState.CurrentEpoch.Epoch,
+				"current_epoch", epochState.CurrentEpoch.EpochIndex,
 				"current_phase", epochState.CurrentPhase)
 			continue
 		}

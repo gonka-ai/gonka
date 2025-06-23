@@ -480,7 +480,7 @@ func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *ml
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
 func TestNodeDisableScenario_Integration(t *testing.T) {
 	reconciliationConfig := testreconcilialtionConfig(5)
-	epochParans := &types.EpochParams{
+	epochParams := &types.EpochParams{
 		EpochLength:           100,
 		EpochShift:            0,
 		EpochMultiplier:       1,
@@ -489,7 +489,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
 	}
-	setup := createIntegrationTestSetup(&reconciliationConfig, epochParans)
+	setup := createIntegrationTestSetup(&reconciliationConfig, epochParams)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -512,9 +512,15 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
+	ec := types.EpochContext{
+		EpochIndex:          1,
+		PocStartBlockHeight: setup.EpochParams.EpochLength,
+		EpochParams:         *setup.EpochParams,
+	}
 	var i = setup.EpochParams.EpochLength
 	for i < 2*setup.EpochParams.EpochLength {
-		if setup.EpochParams.IsEndOfPoCStage(i) || setup.EpochParams.IsEndOfPoCValidationStage(i) {
+		if ec.IsStartOfPocStage(i) || ec.IsEndOfPoCValidationStage(i) {
+			println("Simulating block:", i, "ec.IsStartOfPocStage == ", ec.IsStartOfPocStage(i), "ec.IsEndOfPoCValidationStage == ", ec.IsEndOfPoCValidationStage(i))
 			// Wait for all commands to finish so we don't cancel them too soon
 			waitForAsync(500 * time.Millisecond)
 		}

@@ -12,10 +12,10 @@ import (
 type ChainPhaseTracker struct {
 	mu sync.RWMutex
 
-	currentBlock        BlockInfo
-	effectiveEpochGroup *types.EpochGroupData
-	currentEpochParams  *types.EpochParams
-	currentIsSynced     bool
+	currentBlock       BlockInfo
+	effectiveEpoch     *types.Epoch
+	currentEpochParams *types.EpochParams
+	currentIsSynced    bool
 }
 
 type BlockInfo struct {
@@ -30,12 +30,12 @@ func NewChainPhaseTracker() *ChainPhaseTracker {
 
 // Update caches the latest Epoch information from the network.
 // This method should be called by the OnNewBlockDispatcher on every new block.
-func (t *ChainPhaseTracker) Update(block BlockInfo, group *types.EpochGroupData, params *types.EpochParams, isSynced bool) {
+func (t *ChainPhaseTracker) Update(block BlockInfo, epoch *types.Epoch, params *types.EpochParams, isSynced bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	t.currentBlock = block
-	t.effectiveEpochGroup = group
+	t.effectiveEpoch = epoch
 	t.currentEpochParams = params
 	t.currentIsSynced = isSynced
 }
@@ -51,12 +51,12 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.effectiveEpochGroup == nil || t.currentEpochParams == nil {
+	if t.effectiveEpoch == nil || t.currentEpochParams == nil {
 		return nil
 	}
 
 	// Create a new context for this specific query to ensure consistency
-	ctx := types.NewEpochContextFromEffectiveEpoch(t.effectiveEpochGroup, *t.currentEpochParams, t.currentBlock.Height)
+	ctx := types.NewEpochContextFromEffectiveEpoch(t.effectiveEpoch, *t.currentEpochParams, t.currentBlock.Height)
 	phase := ctx.GetCurrentPhase(t.currentBlock.Height)
 
 	return &EpochState{
