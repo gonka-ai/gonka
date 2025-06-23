@@ -3,7 +3,7 @@
 1. `EndBlock` in `module.go`
     a. Create a new upcoming epoch when it's `IsStartOfPocStage`
     b. Set the effective epoch pointer to the upcoming epoch when it's `IsSetNewValidatorsStage`
-2. InitGenesis
+2. `InitGenesis`
 
 Each write also creates a corresponding epoch group.
 
@@ -11,7 +11,7 @@ Each write also creates a corresponding epoch group.
 
 ## Chain-node
 
-1. PoC message handlers. There we need the latest/upcoming epoch, for which we are doing PoC at the moment!
+1. PoC message handlers. There we need the **latest/upcoming** epoch, for which we are doing PoC at the moment!
    a. `msg_server_submit_poc_batch.go`
    b. `msg_server_submit_poc_validation.go`
 2. ...
