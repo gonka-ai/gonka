@@ -17,28 +17,6 @@ const (
 	InferencePhase           EpochPhase = "Inference"
 )
 
-func (p *EpochParams) IsEndOfPoCStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCStage()
-}
-
-func (p *EpochParams) IsStartOfPoCValidationStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetStartOfPoCValidationStage()
-}
-
-func (p *EpochParams) IsValidationExchangeWindow(startBlockHeight, currentBlockHeight int64) bool {
-	startBlockHeight = p.shift(startBlockHeight)
-	currentBlockHeight = p.shift(currentBlockHeight)
-	elapsedEpochs := currentBlockHeight - startBlockHeight
-	return p.isNotZeroEpoch(startBlockHeight) && elapsedEpochs > 0 && elapsedEpochs <= p.GetSetNewValidatorsStage()
-}
-
-func (p *EpochParams) IsEndOfPoCValidationStage(blockHeight int64) bool {
-	blockHeight = p.shift(blockHeight)
-	return p.isNotZeroEpoch(blockHeight) && blockHeight%p.EpochLength == p.GetEndOfPoCValidationStage()
-}
-
 func (p *EpochParams) getStartOfPocStage() int64 {
 	return 0
 }
@@ -82,12 +60,4 @@ func (p *EpochParams) isNotZeroEpoch(blockHeight int64) bool {
 
 func (p *EpochParams) isZeroEpoch(blockHeight int64) bool {
 	return blockHeight < p.EpochLength
-}
-
-func (p *EpochParams) shift(blockHeight int64) int64 {
-	return blockHeight + p.EpochShift
-}
-
-func (p *EpochParams) unshift(blockHeight int64) int64 {
-	return blockHeight - p.EpochShift
 }
