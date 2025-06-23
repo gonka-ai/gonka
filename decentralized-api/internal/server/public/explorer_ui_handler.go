@@ -9,7 +9,7 @@ import (
 // getExplorerUI is proxy to get UI of ping-pub explorer
 // if you change url path, change also base path in vite.config.ts on explorer side
 func (s *Server) getExplorerUI(c echo.Context) error {
-	if s.explorerTargetUrl == nil {
+	if s.explorerTargetUrl == nil || s.explorerTargetUrl.Scheme == "" {
 		return echo.NewHTTPError(http.StatusInternalServerError, "no explorer target url")
 	}
 

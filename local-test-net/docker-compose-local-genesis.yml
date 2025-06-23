@@ -45,6 +45,7 @@ services:
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__IS_GENESIS=true
+      - DAPI_API__EXPLORER_URL=http://explorer:5173
       - NODE_CONFIG_PATH=/root/node_config.json
       - DEBUG=true
     networks:

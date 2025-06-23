@@ -1,15 +1,15 @@
 services:
-  #explorer:
-  #  container_name: explorer
-  #  image: gcr.io/decentralized-ai/ping-pub-explorer
-  #  environment:
-  #    - API_ENDPOINT=http://genesis-node:1317
-  #    - RPC_ENDPOINT=http://genesis-node:26657
-  #  ports:
-  #    - "3000:3000"
-  #  networks:
-  #    - chain-public
-  #  restart: unless-stopped
+  explorer:
+    container_name: explorer
+    image: gcr.io/decentralized-ai/ping-pub-explorer
+    environment:
+      - API_ENDPOINT=http://genesis-node:1317
+      - RPC_ENDPOINT=http://genesis-node:26657
+    ports:
+      - "3000:3000"
+    networks:
+      - chain-public
+    restart: unless-stopped
 
   chain-node:
     container_name: genesis-node
