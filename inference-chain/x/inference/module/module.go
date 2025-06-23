@@ -194,7 +194,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockTime := sdkCtx.BlockTime().Unix()
 	epochParams := am.keeper.GetParams(ctx).EpochParams
 	currentEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
-	if !found {
+	if !found || currentEpoch == nil {
 		am.LogError("Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return nil
 	}
@@ -227,11 +227,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
-		am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(currentEpoch))
+		am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch))
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
-		upcomingEpoch := createNewEpoch(currentEpoch, blockHeight)
+		upcomingEpoch := createNewEpoch(*currentEpoch, blockHeight)
 		am.keeper.SetEpoch(ctx, upcomingEpoch)
 
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
@@ -266,17 +266,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	return nil
 }
 
-func createNewEpoch(prevEpoch *types.Epoch, blockHeight int64) *types.Epoch {
+func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	return &types.Epoch{
 		Index:               getNextEpochIndex(prevEpoch),
 		PocStartBlockHeight: int64(blockHeight),
 	}
 }
 
-func getNextEpochIndex(prevEpoch *types.Epoch) uint64 {
-	if prevEpoch == nil {
-		return 1
-	}
+func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
 
@@ -292,13 +289,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
 
-	upcomingEg, err := am.keeper.GetUpcomingEpochGroup(ctx)
-	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup, "error", err.Error())
+	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcomingEpoch == nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
 		return
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, upcomingEg.GroupData)
+	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
 	if activeParticipants == nil {
 		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
@@ -312,15 +309,38 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages, "PocStartBlockHeight", upcomingEg.GroupData.PocStartBlockHeight, "len(activeParticipants)", len(activeParticipants))
+	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages,
+		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:         activeParticipants,
-		EpochGroupId:         upcomingEg.GroupData.EpochGroupId,
-		PocStartBlockHeight:  int64(upcomingEg.GroupData.PocStartBlockHeight),
-		EffectiveBlockHeight: int64(upcomingEg.GroupData.EffectiveBlockHeight),
+		Participants:        activeParticipants,
+		EpochGroupId:        upcomingEpoch.Index,
+		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
+		// TODO: not sure EffectiveBlockHeight is set by now
+		EffectiveBlockHeight: upcomingEpoch.EffectiveBlockHeight,
 		CreatedAtBlockHeight: blockHeight,
 	})
+
+	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
+			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		return
+	}
+
+	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+
+	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
+	if err != nil {
+		return
+	}
+
+	// TODO: Move this so active participants are set 1 block before new validators
+	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, unitOfComputePrice)
+}
+
+func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.EpochGroup, activeParticipants []*types.ActiveParticipant) {
 	validationParams := am.keeper.GetParams(ctx).ValidationParams
 
 	for _, p := range activeParticipants {
@@ -344,13 +364,15 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 			continue
 		}
 	}
+}
 
+func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch, upcomingEg *epochgroup.EpochGroup) (uint64, error) {
 	var defaultPrice int64
-	if upcomingEg.GroupData.EpochGroupId != 1 {
+	if upcomingEpoch.Index > 1 {
 		currentEg, err := am.keeper.GetCurrentEpochGroup(ctx)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to get current epoch group", types.EpochGroup, "error", err.Error())
-			return
+			return 0, err
 		}
 		defaultPrice = currentEg.GroupData.UnitOfComputePrice
 	} else {
@@ -360,7 +382,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	proposals, err := am.keeper.AllUnitOfComputePriceProposals(ctx)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to get all unit of compute price proposals", types.Pricing, "error", err.Error())
-		return
+		return 0, err
 	}
 
 	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: retrieved proposals", types.Pricing, "len(proposals)", len(proposals))
@@ -369,15 +391,10 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	am.LogInfo("onSetNewValidatorsStage: unitOfCompute: ", types.Pricing, "medianProposal", medianProposal)
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: unitOfCompute: onSetNewValidatorsStage: Unable to compute unit of compute price", types.Pricing, "error", err.Error())
-		return
+		return 0, err
 	}
 
-	// TODO: Move this so active participants are set 1 block before new validators
-	am.moveUpcomingToEffectiveGroup(ctx, blockHeight, medianProposal)
-}
-
-func (am AppModule) computePrice(ctx context.Context) {
-
+	return medianProposal, nil
 }
 
 func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (int64, error) {

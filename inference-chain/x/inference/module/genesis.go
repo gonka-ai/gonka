@@ -35,6 +35,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	InitHoldingAccounts(ctx, k, genState)
 
+	InitGenesisEpoch(ctx, k)
+
 	// Set if defined
 	if genState.TokenomicsData != nil {
 		k.SetTokenomicsData(ctx, *genState.TokenomicsData)
@@ -75,6 +77,15 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetModel(ctx, &elem)
 	}
 
+}
+
+func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
+	genesisEpoch := &types.Epoch{
+		Index:                0,
+		PocStartBlockHeight:  0,
+		EffectiveBlockHeight: 0,
+	}
+	k.SetEpoch(ctx, genesisEpoch)
 }
 
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {

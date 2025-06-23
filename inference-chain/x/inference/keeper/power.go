@@ -33,6 +33,10 @@ func (k Keeper) GetPreviousEpochGroup(ctx context.Context) (*epochgroup.EpochGro
 	return k.GetEpochGroup(ctx, previousEpochPocStartHeight, "")
 }
 
+func (k Keeper) GetEpochGroupForEpoch(ctx context.Context, epoch types.Epoch) (*epochgroup.EpochGroup, error) {
+	return k.GetEpochGroup(ctx, uint64(epoch.PocStartBlockHeight), "")
+}
+
 func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
