@@ -1,0 +1,23 @@
+[
+  {
+    "id": "wiremock",
+    "host": "join1-mock-server",
+    "inference_port": 8080,
+    "poc_port": 8080,
+    "max_concurrent": 10,
+    "models": {
+      "unsloth/llama-3-8b-Instruct": {
+        "args": [
+          "--quantization",
+          "fp8"
+        ]
+      }
+    },
+    "hardware": [
+      {
+        "type": "v5e",
+        "count": 80
+      }
+    ]
+  }
+]
