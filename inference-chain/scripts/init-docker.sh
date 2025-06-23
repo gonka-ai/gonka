@@ -63,7 +63,7 @@ SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
 TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2}"
 
 update_configs_for_explorer() {
-  if [ "$WITH_EXPLORER" = true ]; then
+  if [ "${WITH_EXPLORER:-}" = true ]; then
     echo "Updating configs for enable explorer..."
     sed -i 's/^enable *= *false/enable = true/' "$STATE_DIR/config/app.toml"
 
