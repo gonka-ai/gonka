@@ -12,7 +12,16 @@ type EpochContext struct {
 	EpochParams         EpochParams
 }
 
-func NewEpochContext(epoch *Epoch, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
+func NewEpochContext(epoch Epoch, params EpochParams) EpochContext {
+	return EpochContext{
+		EpochIndex:          epoch.Index,
+		PocStartBlockHeight: epoch.PocStartBlockHeight,
+		EpochParams:         params,
+	}
+}
+
+// NewEpochContextFromEffectiveEpoch determines the most up-to-date Epoch context based on the current block height.
+func NewEpochContextFromEffectiveEpoch(epoch *Epoch, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
 	if epoch == nil {
 		if currentBlockHeight < getNextPoCStart(nil, &epochParams) {
 			return &EpochContext{
@@ -165,7 +174,8 @@ func (ec *EpochContext) IsValidationExchangeWindow(blockHeight int64) bool {
 		return false
 	}
 
-	return relativeHeight < ec.EpochParams.GetPoCExchangeDeadline()
+	return relativeHeight > ec.EpochParams.GetStartOfPoCValidationStage() &&
+		relativeHeight < ec.EpochParams.GetEndOfPoCValidationStage()
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {

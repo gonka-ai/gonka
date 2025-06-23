@@ -7,35 +7,39 @@ import (
 )
 
 func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
-	currentId, found := k.GetEffectiveEpochPocStartHeight(ctx)
-	return k.GetOrCreateEpochGroup(ctx, currentId, "")
-}
-
-func (k Keeper) GetCurrentEpochGroupOrNil(ctx context.Context) (*epochgroup.EpochGroup, error) {
-	currentId, found := k.GetEffectiveEpochPocStartHeight(ctx)
-	if currentId == 0 {
-		return nil, nil
-	} else {
-		return k.GetOrCreateEpochGroup(ctx, currentId, "")
+	effectiveEpochPocStartHeight, found := k.GetEffectiveEpochPocStartHeight(ctx)
+	if !found {
+		return nil, types.ErrEffectiveEpochNotFound
 	}
+
+	return k.GetEpochGroup(ctx, effectiveEpochPocStartHeight, "")
 }
 
 func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
-	currentId := k.GetUpcomingEpochPocStartHeight(ctx)
-	return k.GetOrCreateEpochGroup(ctx, currentId, "")
+	upcomingEpochPocStartHeight, found := k.GetUpcomingEpochPocStartHeight(ctx)
+	if !found {
+		return nil, types.ErrUpcomingEpochNotFound
+	}
+
+	return k.GetEpochGroup(ctx, upcomingEpochPocStartHeight, "")
 }
 
 func (k Keeper) GetPreviousEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
-	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if effectiveEpochIndex == 0 {
-		return nil, false
-	}
-	upcomingEpoch, found := k.GetEpoch(ctx, effectiveEpochIndex+1)
+	previousEpochPocStartHeight, found := k.GetPreviousEpochPocStartHeight(ctx)
 	if !found {
-		return nil, false
+		return nil, types.ErrPreviousEpochNotFound
 	}
 
-	return k.GetOrCreateEpochGroup(ctx, uint64(upcomingEpoch.PocStartBlockHeight), "")
+	return k.GetEpochGroup(ctx, previousEpochPocStartHeight, "")
+}
+
+func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
+	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
+	if !found {
+		return nil, types.ErrEpochGroupDataNotFound
+	}
+
+	return k.epochGroupFromData(data), nil
 }
 
 func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
@@ -48,6 +52,10 @@ func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64
 		k.SetEpochGroupData(ctx, data)
 	}
 
+	return k.epochGroupFromData(data), nil
+}
+
+func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
 	return epochgroup.NewEpochGroup(
 		k.group,
 		k,
@@ -55,5 +63,5 @@ func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64
 		k,
 		k,
 		&data,
-	), nil
+	)
 }

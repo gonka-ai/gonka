@@ -198,7 +198,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return nil
 	}
-	epochContext := types.NewEpochContext(currentEpoch, *epochParams, blockHeight)
+	epochContext := types.NewEpochContextFromEffectiveEpoch(currentEpoch, *epochParams, blockHeight)
 
 	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	// TODO: Why error here?
@@ -407,27 +407,27 @@ func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types
 }
 
 func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeight int64, unitOfComputePrice uint64) {
-	newGroupId, found := am.keeper.GetUpcomingEpochPocStartHeight(ctx)
+	newEpochPocStartHeight, found := am.keeper.GetUpcomingEpochPocStartHeight(ctx)
 	if !found {
 		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
-	previousGroupId, found := am.keeper.GetEffectiveEpochPocStartHeight(ctx)
+	previousEpochPocStartHeight, found := am.keeper.GetEffectiveEpochPocStartHeight(ctx)
 	if !found {
 		am.LogError("MoveUpcomingToEffectiveGroup: Unable to get upcoming epoch group id", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
-	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
-	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newGroupId, "")
+	am.LogInfo("NewEpochGroup", types.EpochGroup, "blockHeight", blockHeight, "newEpochPocStartHeight", newEpochPocStartHeight)
+	newGroupData, found := am.keeper.GetEpochGroupData(ctx, newEpochPocStartHeight, "")
 	if !found {
-		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newGroupId", newGroupId)
+		am.LogWarn("NewEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "newEpochPocStartHeight", newEpochPocStartHeight)
 		return
 	}
-	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousGroupId, "")
+	previousGroupData, found := am.keeper.GetEpochGroupData(ctx, previousEpochPocStartHeight, "")
 	if !found {
-		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousGroupId", previousGroupId)
+		am.LogWarn("PreviousEpochGroupDataNotFound", types.EpochGroup, "blockHeight", blockHeight, "previousEpochPocStartHeight", previousEpochPocStartHeight)
 		return
 	}
 	params := am.keeper.GetParams(ctx)
