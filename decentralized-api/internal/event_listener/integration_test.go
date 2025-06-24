@@ -530,11 +530,13 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
-	ec := types.EpochContext{
-		EpochIndex:          1,
-		PocStartBlockHeight: setup.EpochParams.EpochLength,
-		EpochParams:         *setup.EpochParams,
+	latestEpoch := types.Epoch{
+		Index:               1,
+		PocStartBlockHeight: epochParams.EpochLength,
 	}
+	setup.setLatestEpoch(latestEpoch)
+	ec := types.NewEpochContext(latestEpoch, *setup.EpochParams)
+
 	var i = setup.EpochParams.EpochLength
 	for i < 2*setup.EpochParams.EpochLength {
 		if ec.IsStartOfPocStage(i) || ec.IsEndOfPoCValidationStage(i) {

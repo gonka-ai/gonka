@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"time"
 
@@ -33,30 +32,12 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 	return cap(r.Response)
 }
 
-type RegisterNode struct {
-	Node     apiconfig.InferenceNodeConfig
-	Response chan *apiconfig.InferenceNodeConfig
-}
-
-func (r RegisterNode) GetResponseChannelCapacity() int {
-	return cap(r.Response)
-}
-
 type GetNodesCommand struct {
 	Response chan []NodeResponse
 }
 
 func (g GetNodesCommand) GetResponseChannelCapacity() int {
 	return cap(g.Response)
-}
-
-type RemoveNode struct {
-	NodeId   string
-	Response chan bool
-}
-
-func (r RemoveNode) GetResponseChannelCapacity() int {
-	return cap(r.Response)
 }
 
 type InferenceResult interface {

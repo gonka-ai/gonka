@@ -58,11 +58,11 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	}
 
 	// Create a new context for this specific query to ensure consistency
-	ctx := types.NewEpochContextFromEffectiveEpoch(*t.latestEpoch, *t.currentEpochParams, t.currentBlock.Height)
-	phase := ctx.GetCurrentPhase(t.currentBlock.Height)
+	ec := types.NewEpochContext(*t.latestEpoch, *t.currentEpochParams)
+	phase := ec.GetCurrentPhase(t.currentBlock.Height)
 
 	return &EpochState{
-		LatestEpoch:  *ctx,
+		LatestEpoch:  ec,
 		CurrentBlock: t.currentBlock,
 		CurrentPhase: phase,
 		IsSynced:     t.currentIsSynced,

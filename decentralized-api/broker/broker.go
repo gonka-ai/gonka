@@ -294,9 +294,9 @@ func (b *Broker) executeCommand(command Command) {
 	case ReleaseNode:
 		b.releaseNode(command)
 	case RegisterNode:
-		b.registerNode(command)
+		command.Execute(b)
 	case RemoveNode:
-		b.removeNode(command)
+		command.Execute(b)
 	case GetNodesCommand:
 		b.getNodes(command)
 	case SyncNodesCommand:
@@ -357,87 +357,8 @@ func (b *Broker) getNodes(command GetNodesCommand) {
 	command.Response <- nodeResponses
 }
 
-func (b *Broker) registerNode(command RegisterNode) {
-	b.curMaxNodesNum.Add(1)
-	curNum := b.curMaxNodesNum.Load()
-
-	models := make(map[string]ModelArgs)
-	for model, config := range command.Node.Models {
-		models[model] = ModelArgs{Args: config.Args}
-	}
-
-	node := Node{
-		Host:             command.Node.Host,
-		InferenceSegment: command.Node.InferenceSegment,
-		InferencePort:    command.Node.InferencePort,
-		PoCSegment:       command.Node.PoCSegment,
-		PoCPort:          command.Node.PoCPort,
-		Models:           models,
-		Id:               command.Node.Id,
-		MaxConcurrent:    command.Node.MaxConcurrent,
-		NodeNum:          curNum,
-		Hardware:         command.Node.Hardware,
-		Version:          command.Node.Version,
-	}
-
-	// Get current epoch from phase tracker
-	/*	var currentEpoch uint64
-		if b.phaseTracker != nil {
-			// TODO: fix NPE
-			currentEpoch = b.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex
-		}*/
-
-	nodeWithState := &NodeWithState{
-		Node: node,
-		State: NodeState{
-			IntendedStatus:    types.HardwareNodeStatus_UNKNOWN,
-			CurrentStatus:     types.HardwareNodeStatus_UNKNOWN,
-			ReconcileInfo:     nil,
-			PocIntendedStatus: PocStatusIdle,
-			PocCurrentStatus:  PocStatusIdle,
-			LockCount:         0,
-			FailureReason:     "",
-			StatusTimestamp:   time.Now(),
-			AdminState: AdminState{
-				Enabled: true,
-				Epoch:   0,
-			},
-		},
-	}
-
-	func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		b.nodes[command.Node.Id] = nodeWithState
-
-		// Create and register a worker for this node
-		client := b.NewNodeClient(&node)
-		worker := NewNodeWorkerWithClient(command.Node.Id, nodeWithState, client, b)
-		b.nodeWorkGroup.AddWorker(command.Node.Id, worker)
-	}()
-
-	logging.Debug("Registered node", types.Nodes, "node", command.Node)
-	command.Response <- &command.Node
-}
-
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(), node.InferenceUrl())
-}
-
-func (b *Broker) removeNode(command RemoveNode) {
-	// Remove the worker first (it will wait for pending jobs)
-	b.nodeWorkGroup.RemoveWorker(command.NodeId)
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if _, ok := b.nodes[command.NodeId]; !ok {
-		command.Response <- false
-		return
-	}
-	delete(b.nodes, command.NodeId)
-	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)
-	command.Response <- true
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
