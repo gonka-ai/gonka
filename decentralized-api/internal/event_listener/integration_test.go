@@ -253,7 +253,7 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 	_ = <-responseChan
 }
 
-func (setup *IntegrationTestSetup) setEpoch(epoch types.Epoch) {
+func (setup *IntegrationTestSetup) setLatestEpoch(epoch types.Epoch) {
 	setup.MockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: setup.EpochParams,

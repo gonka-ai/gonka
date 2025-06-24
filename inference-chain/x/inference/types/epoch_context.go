@@ -83,6 +83,11 @@ func getNextGroupBecomesEffective(epoch Epoch, params *EpochParams) int64 {
 
 // GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
 func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
+	// We don't do PoC for epoch 0, so we return InferencePhase.
+	if ec.EpochIndex == 0 {
+		return InferencePhase
+	}
+
 	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
 	epochStartHeight := ec.PocStartBlockHeight
 	if blockHeight < epochStartHeight {
@@ -130,6 +135,11 @@ func (ec *EpochContext) getRelativeBlockHeight(blockHeight int64) int64 {
 
 // isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the Epoch.
 func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
+	// We don't do PoC for epoch 0, so we return false.
+	if ec.EpochIndex == 0 {
+		return false
+	}
+
 	if ec.IsStartOfNextPoC(blockHeight) {
 		return phaseOffset == ec.EpochParams.getStartOfPocStage()
 	}
