@@ -317,7 +317,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		Participants:        activeParticipants,
 		EpochGroupId:        upcomingEpoch.Index,
 		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
-		// TODO: not sure EffectiveBlockHeight is set by now
+		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
 		EffectiveBlockHeight: upcomingEpoch.EffectiveBlockHeight,
 		CreatedAtBlockHeight: blockHeight,
 	})
