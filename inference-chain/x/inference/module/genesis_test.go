@@ -1,9 +1,10 @@
 package inference_test
 
 import (
+	"testing"
+
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"go.uber.org/mock/gomock"
-	"testing"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
@@ -13,9 +14,11 @@ import (
 )
 
 func TestGenesis(t *testing.T) {
+	baseGenesis := types.MockedGenesis()
 	genesisState := types.GenesisState{
 		Params:            types.DefaultParams(),
 		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+		CosmWasmParams:    baseGenesis.CosmWasmParams,
 
 		InferenceList: []types.Inference{
 			{

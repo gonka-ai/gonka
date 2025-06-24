@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	_ "cosmossdk.io/x/nft/module" // import for side-effects
 	_ "cosmossdk.io/x/upgrade"    // import for side-effects
 	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+
+	"github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -77,6 +80,11 @@ import (
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
+
+	// WASM
+
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
 	"github.com/productscience/inference/docs"
 )
@@ -140,6 +148,11 @@ type App struct {
 	ScopedICAControllerKeeper capabilitykeeper.ScopedKeeper
 	ScopedICAHostKeeper       capabilitykeeper.ScopedKeeper
 
+	// Wasm
+	WasmKeeper       wasmkeeper.Keeper
+	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
+	//ContractKeeper   *wasmkeeper.PermissionedKeeper
+
 	InferenceKeeper inferencemodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
 
@@ -193,6 +206,7 @@ func New(
 	traceStore io.Writer,
 	loadLatest bool,
 	appOpts servertypes.AppOptions,
+	wasmOpts []wasmkeeper.Option,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) (*App, error) {
 	var (
@@ -212,6 +226,7 @@ func New(
 				app.GetIBCKeeper,
 				app.GetCapabilityScopedKeeper,
 				// Supply the logger
+				app.GetWasmKeeper,
 				logger,
 
 				// ADVANCED CONFIGURATION
@@ -319,10 +334,8 @@ func New(
 
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
-	// Register legacy modules
-	if err := app.registerIBCModules(appOpts); err != nil {
-		return nil, err
-	}
+	// register legacy modules
+	wasmConfig := app.registerLegacyModules(appOpts, wasmOpts)
 
 	// register streaming services
 	if err := app.RegisterStreamingServices(appOpts, app.kvStoreKeys()); err != nil {
@@ -330,6 +343,17 @@ func New(
 	}
 
 	/****  Module Options ****/
+	// must be before Loading version
+	// requires the snapshot store to be created and registered as a BaseAppOption
+	// see cmd/wasmd/root.go: 206 - 214 approx
+	if manager := app.SnapshotManager(); manager != nil {
+		err := manager.RegisterExtensions(
+			wasmkeeper.NewWasmSnapshotter(app.CommitMultiStore(), &app.WasmKeeper),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register snapshot extension: %w", err)
+		}
+	}
 
 	app.ModuleManager.RegisterInvariants(app.CrisisKeeper)
 
@@ -342,6 +366,9 @@ func New(
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
 
+	app.setAnteHandler(app.txConfig, wasmConfig, app.GetKey(wasmtypes.StoreKey))
+
+	// Setup upgrade handlers if needed
 	app.setupUpgradeHandlers()
 	// A custom InitChainer can be set if extra pre-init-genesis logic is required.
 	// By default, when using app wiring enabled module, this is not required.
@@ -356,6 +383,15 @@ func New(
 
 	if err := app.Load(loadLatest); err != nil {
 		return nil, err
+	}
+
+	if loadLatest {
+		ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
+
+		if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
+		}
+		ctx.Logger().Info("WASM keeper check: pinned codes enumerated successfully. Keeper is functional.")
 	}
 
 	return app, nil
@@ -417,6 +453,11 @@ func (app *App) GetSubspace(moduleName string) paramstypes.Subspace {
 // GetIBCKeeper returns the IBC keeper.
 func (app *App) GetIBCKeeper() *ibckeeper.Keeper {
 	return app.IBCKeeper
+}
+
+// GetWasmKeeper returns the Wasm keeper.
+func (app *App) GetWasmKeeper() wasmkeeper.Keeper {
+	return app.WasmKeeper
 }
 
 // GetCapabilityScopedKeeper returns the capability scoped keeper.

@@ -12,9 +12,24 @@ ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
     CGO_ENABLED=1 \
     GO111MODULE=on \
-    GOCACHE=/root/.cache/go-build
+    GOCACHE=/root/.cache/go-build \
+    CGO_CFLAGS="-I/lib" \
+    CGO_LDFLAGS="-L/lib" \
+    # Override the wasmvm library path to use our musl version
+    LD_LIBRARY_PATH=/lib
 
 RUN apk add --no-cache make gcc musl-dev git
+
+# Use the musl libc version of wasmvm and create a symlink for the linker
+RUN wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.x86_64.a \
+    && echo "e660a38efb2930b34ee6f6b0bb12730adccb040b6ab701b8f82f34453a426ae7 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
+    && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
+    # Remove the glibc version from the Go module cache
+    && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.x86_64.so
+
+RUN wget -O /root/cw20_base.wasm \
+    https://github.com/CosmWasm/cw-plus/releases/download/v2.0.0/cw20_base.wasm \
+    && echo "4d8e90dd340993033f1b9e8e3a3ee7f8673c582ca9bcdd8c8cf3c7470d6537d5 /root/cw20_base.wasm" | sha256sum -c
 
 WORKDIR /app/inference-chain
 
@@ -29,7 +44,7 @@ ARG LDFLAGS
 ARG TAGS=""
 RUN --mount=type=cache,id=go-build-cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
-    go build -mod=readonly -ldflags "${LDFLAGS}" -tags="${TAGS}"\
+    go build -mod=readonly -tags="muslc ${TAGS}" -ldflags "${LDFLAGS}" \
     -o ./build/inferenced \
     ./cmd/inferenced/main.go
 
@@ -49,7 +64,7 @@ ARG GOOS
 ARG GOARCH
 
 RUN apk update && \
-    apk add --no-cache sed ca-certificates && \
+    apk add --no-cache sed ca-certificates gcc musl-dev && \
     rm -rf /var/cache/apk/*
 RUN apk update && apk add --no-cache jq
 
@@ -71,6 +86,8 @@ COPY inference-chain/tgbot_private_key.json /root/tgbot_private_key.json
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
 COPY inference-chain/denom.json /root/denom.json
 COPY $GENESIS_OVERRIDES_FILE /root/genesis_overrides.json
+COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.x86_64.a
+COPY --from=builder /root/cw20_base.wasm /root/cw20_base.wasm
 
 RUN chmod +x /root/init-docker.sh /root/init-docker-genesis.sh
 

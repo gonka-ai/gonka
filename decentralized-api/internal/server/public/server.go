@@ -6,8 +6,9 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/training"
-	"github.com/labstack/echo/v4"
 	"net/http"
+
+	"github.com/labstack/echo/v4"
 )
 
 type Server struct {
@@ -16,6 +17,7 @@ type Server struct {
 	configManager    *apiconfig.ConfigManager
 	recorder         cosmosclient.CosmosMessageClient
 	trainingExecutor *training.Executor
+	blockQueue       *BridgeQueue
 }
 
 // TODO: think about rate limits
@@ -23,7 +25,8 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
-	trainingExecutor *training.Executor) *Server {
+	trainingExecutor *training.Executor,
+	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
 	s := &Server{
 		e:                e,
@@ -31,6 +34,7 @@ func NewServer(
 		configManager:    configManager,
 		recorder:         recorder,
 		trainingExecutor: trainingExecutor,
+		blockQueue:       blockQueue,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -62,6 +66,9 @@ func NewServer(
 	g.GET("debug/verify/:height", s.debugVerify)
 
 	g.GET("versions", s.getVersions)
+
+	g.POST("bridge/block", s.postBlock)
+	g.GET("bridge/status", s.getBridgeStatus)
 
 	return s
 }
