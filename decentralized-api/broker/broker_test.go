@@ -2,6 +2,7 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"github.com/productscience/inference/x/inference/types"
@@ -16,7 +17,15 @@ func NewTestBroker() *Broker {
 		Address: "cosmos1dummyaddress",
 		PubKey:  "dummyPubKey",
 	}
-	return NewBroker(nil, nil, participantInfo, "", mlnodeclient.NewMockClientFactory())
+	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 0, PocStartBlockHeight: 0},
+		&types.EpochParams{},
+		true,
+	)
+
+	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
 
 func TestSingleNode(t *testing.T) {
