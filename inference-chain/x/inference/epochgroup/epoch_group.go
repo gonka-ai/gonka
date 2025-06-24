@@ -9,6 +9,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 	"strconv"
 	"time"
 )
@@ -37,10 +38,11 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 func NewEpochMemberFromStakingValidator(
 	validator stakingtypes.Validator,
 ) (*EpochMember, error) {
-	valAddr, err := sdk.ValAddressFromBech32(validator.OperatorAddress)
+	valAddr, err := utils.OperatorAddressToAccAddress(validator.OperatorAddress)
 	if err != nil {
 		return nil, err
 	}
+	println("Val Address for genesis.", "opAddr", validator.OperatorAddress, "accAddr", valAddr)
 
 	accAddr := sdk.AccAddress(valAddr)
 
