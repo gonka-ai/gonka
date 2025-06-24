@@ -26,7 +26,7 @@ func (c StartPocCommand) Execute(b *Broker) {
 	b.mu.Lock()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.EpochIndex, epochState.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
@@ -66,7 +66,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	b.mu.Lock()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(epochPhaseInfo.CurrentEpoch.EpochIndex, epochPhaseInfo.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochPhaseInfo.LatestEpoch.EpochIndex, epochPhaseInfo.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
@@ -105,7 +105,7 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if !node.State.ShouldBeOperational(epochState.CurrentEpoch.EpochIndex, epochState.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Info("Skipping inference up for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,

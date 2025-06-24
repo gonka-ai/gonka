@@ -164,8 +164,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
 		"blockHeight", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.EpochIndex,
-		"epoch.PocStartBlockHeight", epochState.CurrentEpoch.PocStartBlockHeight,
+		"epoch", epochState.LatestEpoch.EpochIndex,
+		"epoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
 		"currentPhase", epochState.CurrentPhase,
 		"isSynched", epochState.IsSynced,
 		"blockHase", epochState.CurrentBlock.Hash)
@@ -223,7 +223,7 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
-	epochContext := epochState.CurrentEpoch
+	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
 
@@ -310,7 +310,7 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
 	logging.Info("Triggering reconciliation", types.Nodes,
 		"height", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.EpochIndex,
+		"epoch", epochState.LatestEpoch.EpochIndex,
 		"phase", epochState.CurrentPhase)
 
 	cmd, response := getCommandForPhase(epochState)

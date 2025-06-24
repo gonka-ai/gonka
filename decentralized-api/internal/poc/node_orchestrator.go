@@ -80,7 +80,7 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	epochState := o.phaseTracker.GetCurrentEpochState()
-	startOfPoCBlockHeight := epochState.CurrentEpoch.PocStartBlockHeight
+	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
 	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
 	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
