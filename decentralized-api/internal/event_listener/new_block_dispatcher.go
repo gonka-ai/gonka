@@ -23,6 +23,7 @@ import (
 type ChainStateClient interface {
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 	CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error)
+	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -159,7 +160,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 	comes from a totally different source?
 	// TODO: log block that came from event vs block returned by query
 	// TODO: can we add the state to the block event? As a future optimization?
-	d.phaseTracker.Update(blockInfo, networkInfo.EffectiveEpoch, networkInfo.EpochParams, networkInfo.IsSynced)
+	d.phaseTracker.Update(blockInfo, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
 		"blockHeight", epochState.CurrentBlock.Height,
@@ -193,9 +194,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {
-	EpochParams    *types.EpochParams
-	IsSynced       bool
-	EffectiveEpoch *types.Epoch
+	EpochParams types.EpochParams
+	IsSynced    bool
+	LatestEpoch types.Epoch
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -207,22 +208,16 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 	}
 	isSynced := !status.SyncInfo.CatchingUp
 
-	// Query epoch parameters using our minimal interface
-	params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Query for the current epoch group data, which is our new source of truth
-	epochGroupData, err := d.queryClient.CurrentEpochGroupData(ctx, &types.QueryCurrentEpochGroupDataRequest{})
-	if err != nil {
+	epochInfo, err := d.queryClient.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
+	if err != nil || epochInfo == nil {
+		logging.Error("Failed to query epoch info", types.Stages, "error", err)
 		return nil, err
 	}
 
 	return &NetworkInfo{
-		EpochParams:    params.Params.EpochParams,
-		IsSynced:       isSynced,
-		EffectiveEpoch: &epochGroupData.EpochGroupData,
+		EpochParams: *epochInfo.Params.EpochParams,
+		IsSynced:    isSynced,
+		LatestEpoch: epochInfo.LatestEpoch,
 	}, nil
 }
 
@@ -315,7 +310,7 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
 	logging.Info("Triggering reconciliation", types.Nodes,
 		"height", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.Epoch,
+		"epoch", epochState.CurrentEpoch.EpochIndex,
 		"phase", epochState.CurrentPhase)
 
 	cmd, response := getCommandForPhase(epochState)

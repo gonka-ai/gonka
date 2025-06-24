@@ -12,8 +12,10 @@ import (
 type ChainPhaseTracker struct {
 	mu sync.RWMutex
 
-	currentBlock       BlockInfo
-	effectiveEpoch     *types.Epoch
+	currentBlock BlockInfo
+	// currentEpoch is not the effective epoch, but the latest epoch that has been set
+	// so if PoC has just started it will be effectiveEpoch + 1
+	currentEpoch       *types.Epoch
 	currentEpochParams *types.EpochParams
 	currentIsSynced    bool
 }
@@ -35,7 +37,7 @@ func (t *ChainPhaseTracker) Update(block BlockInfo, epoch *types.Epoch, params *
 	defer t.mu.Unlock()
 
 	t.currentBlock = block
-	t.effectiveEpoch = epoch
+	t.currentEpoch = epoch
 	t.currentEpochParams = params
 	t.currentIsSynced = isSynced
 }
@@ -51,12 +53,12 @@ func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.effectiveEpoch == nil || t.currentEpochParams == nil {
+	if t.currentEpoch == nil || t.currentEpochParams == nil {
 		return nil
 	}
 
 	// Create a new context for this specific query to ensure consistency
-	ctx := types.NewEpochContextFromEffectiveEpoch(t.effectiveEpoch, *t.currentEpochParams, t.currentBlock.Height)
+	ctx := types.NewEpochContextFromEffectiveEpoch(*t.currentEpoch, *t.currentEpochParams, t.currentBlock.Height)
 	phase := ctx.GetCurrentPhase(t.currentBlock.Height)
 
 	return &EpochState{

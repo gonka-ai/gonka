@@ -198,7 +198,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return nil
 	}
-	epochContext := types.NewEpochContextFromEffectiveEpoch(currentEpoch, *epochParams, blockHeight)
+	epochContext := types.NewEpochContextFromEffectiveEpoch(*currentEpoch, *epochParams, blockHeight)
 
 	currentEpochGroup, err := am.keeper.GetEpochGroupForEpoch(ctx, *currentEpoch)
 	// TODO: Why error here?

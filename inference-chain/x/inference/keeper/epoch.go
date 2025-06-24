@@ -47,6 +47,23 @@ func (k Keeper) GetUpcomingEpoch(ctx context.Context) (*types.Epoch, bool) {
 	return k.GetEpoch(ctx, epochIndex+1)
 }
 
+// GetLatestEpoch return upcoming epoch if it exists (PoC stage already started),
+//
+//	otherwise return effective epoch (next PoC stage not started yet).
+func (k Keeper) GetLatestEpoch(ctx context.Context) (*types.Epoch, bool) {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return nil, false
+	}
+
+	upcomingEpoch, found := k.GetEpoch(ctx, epochIndex+1)
+	if found && upcomingEpoch != nil {
+		return upcomingEpoch, true
+	}
+
+	return k.GetEpoch(ctx, epochIndex)
+}
+
 func (k Keeper) GetPreviousEpoch(ctx context.Context) (*types.Epoch, bool) {
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found || epochIndex == 0 {
