@@ -1,6 +1,6 @@
-# Stealth-mode blockchain project
+# Gonka
 
-Our stealth blockchain project is a decentralized AI infrastructure designed to optimize computational power for AI model training and inference, offering an alternative to monopolistic, high-cost, centralized cloud providers. As AI models become increasingly complex, their computational demands surge, presenting significant challenges for developers and businesses that rely on costly, centralized resources.
+Gonka is a decentralized AI infrastructure designed to optimize computational power for AI model training and inference, offering an alternative to monopolistic, high-cost, centralized cloud providers. As AI models become increasingly complex, their computational demands surge, presenting significant challenges for developers and businesses that rely on costly, centralized resources.
 ## Introduction
 
 We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures nearly 100% of computational resources are allocated to AI workloads, rather than being wasted on securing the blockchain.
@@ -10,7 +10,7 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 - **Participants (Hardware Providers or Nodes)**  — Contribute computational resources and earn rewards based on their input.
 ## Key Features
 
-1. A novel **Proof of Work 2.0** mechanism, where participants compete in time-bound computational Races to solve AI-relevant tasks. Instead of traditional Proof of Work (e.g., compute hashes), these Races use **transformer-based models**, aligning the computation with AI model workloads. The number of successful computations a node generates during the Race determines its **voting weight**, directly linking computational contribution to governance and task validation rights. This voting weight not only determines consensus power but also controls task allocation: nodes with higher weight are assigned a larger share of AI inferences and training workloads, and are proportionally responsible for validating others’ results. This ensures that system resources are used efficiently, with real-world tasks assigned in proportion to each node’s proven compute capacity, enabling a “one-computational-power-one-vote” principle rather than capital-based influence (see diagram 1).
+1. A novel **“Sprint”** mechanism, where participants compete in time-bound computational Races to solve AI-relevant tasks. Instead of traditional Proof of Work (e.g., compute hashes), these Races use **transformer-based models**, aligning the computation with AI model workloads. The number of successful computations a node generates during the Race determines its **voting weight**, directly linking computational contribution to governance and task validation rights. This voting weight not only determines consensus power but also controls task allocation: nodes with higher weight are assigned a larger share of AI inferences and training workloads, and are proportionally responsible for validating others’ results. This ensures that system resources are used efficiently, with real-world tasks assigned in proportion to each node’s proven compute capacity, enabling a “one-computational-power-one-vote” principle rather than capital-based influence (see diagram 1).
 2. The platform uses **Randomized Task Verification**. Instead of verifying every inference task redundantly, the system selects a subset of tasks for verification based on cryptographically secure randomization. Nodes with higher voting weight have greater responsibility for validation. This approach drastically reduces overhead to just 1–10% of tasks, while maintaining trust through probabilistic guarantees and the threat of losing rewards if caught cheating.
 3. **Validation during model training** follows a similar protocol as inference. Nodes are required to complete training workloads and are subject to majority-weighted peer verification. The system handles the non-deterministic nature of AI training by applying statistical validation, allowing for slight output variances while penalizing repeated or malicious inconsistencies. Rewards are withheld until a node’s training contributions are verified as honest and complete.
 4. The infrastructure leverages **DiLoCo**'s periodic synchronization approach to enable **Geo-Distributed Training** by efficiently distributing AI training tasks across a network of independent hardware providers, creating a **decentralized training environment** with minimal communication overhead. Nodes contribute compute power and receive tasks in proportion to their capabilities. Developers can initiate and fund training projects, and the system ensures workload distribution and result validation through its Proof of Work 2.0 protocol and validation layers. The platform is designed to maintain **fault tolerance and decentralized coordination**, enabling scalable training without centralized oversight.
@@ -20,16 +20,16 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 
 *[Work in progress] Diagram 1. The Task flow [Source](docs/papers/InferenceFlow.png)**
 
-For a deeper technical and conceptual explanation, check out [the White Paper](https://github.com/product-science/inference-ignite/blob/31856bb939657d1746c5a34eb211ade450d0cab8/docs/papers/Decentralized%20AI%20Whitepaper.pdf).
+For a deeper technical and conceptual explanation, check out [the White Paper](https://gonka.ai/whitepaper.pdf).
 ## Getting started
 
 For the most up-to-date documentation, please visit [https://testnet.productscience.ai/](https://testnet.productscience.ai/introduction/)
 
 To join Testnet:
-- **As Developer**: Explore the [Quickstart Guide](https://testnet.productscience.ai/quickstart/developer/quickstart/) to understand how to create a user account and submit an inference request using the `inferenced` CLI tool.
+- **As Developer**: Explore the [Quickstart Guide](https://testnet.productscience.ai/developer/quickstart/) to understand how to create a user account and submit an inference request using the `inferenced` CLI tool.
 - **As Participant (Hardware Providers or Nodes)**:
-    - Review the [Hardware Specifications](https://testnet.productscience.ai/hardware-specifications/) to ensure your equipment meets the requirements.
-    - Follow the [Participant Quickstart Guide](https://testnet.productscience.ai/quickstart/participant/quickstart/) to set up your node and start contributing computational resources.
+    - Review the [Hardware Specifications](https://testnet.productscience.ai/participant/hardware-specifications/) to ensure your equipment meets the requirements.
+    - Follow the [Participant Quickstart Guide](https://testnet.productscience.ai/participant/quickstart/) to set up your node and start contributing computational resources.
 ### Local Quickstart
 
 This section walks you through setting up a local development environment to build and test the core components, without joining the real network or running a full MLNode.
