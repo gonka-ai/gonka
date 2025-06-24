@@ -195,6 +195,7 @@ type NetworkInfo struct {
 	EpochParams types.EpochParams
 	IsSynced    bool
 	LatestEpoch types.Epoch
+	BlockHeight int64
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -216,6 +217,7 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 		EpochParams: *epochInfo.Params.EpochParams,
 		IsSynced:    isSynced,
 		LatestEpoch: epochInfo.LatestEpoch,
+		BlockHeight: epochInfo.BlockHeight,
 	}, nil
 }
 

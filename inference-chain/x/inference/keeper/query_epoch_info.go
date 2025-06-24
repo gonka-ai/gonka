@@ -28,6 +28,7 @@ func (k Keeper) EpochInfo(goCtx context.Context, req *types.QueryEpochInfoReques
 	}
 
 	return &types.QueryEpochInfoResponse{
+		BlockHeight: ctx.BlockHeight(),
 		Params:      params,
 		LatestEpoch: *latestEpoch,
 	}, nil

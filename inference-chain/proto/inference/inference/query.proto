@@ -647,6 +647,7 @@ message QueryTrainingAliveNodesResponse {
 message QueryEpochInfoRequest {}
 
 message QueryEpochInfoResponse {
-  Params params = 1 [(gogoproto.nullable) = false];
-  Epoch latest_epoch = 2 [(gogoproto.nullable) = false];
+  int64 block_height = 1;
+  Params params = 2 [(gogoproto.nullable) = false];
+  Epoch latest_epoch = 3 [(gogoproto.nullable) = false];
 }
