@@ -35,7 +35,7 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !epochContext.IsValidationExchangeWindow(startBlockHeight) {
+	if !epochContext.IsValidationExchangeWindow(currentBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC,
 			"msg.BlockHeight", startBlockHeight,
 			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
