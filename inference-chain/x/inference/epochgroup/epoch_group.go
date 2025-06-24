@@ -45,11 +45,14 @@ func NewEpochMemberFromStakingValidator(
 
 	accAddr := sdk.AccAddress(valAddr)
 
+	pubKey := validator.ConsensusPubkey.String()
+	println("PUBKEY for genesis validator is", pubKey)
+
 	return &EpochMember{
 		Address:       accAddr.String(),
 		Weight:        validator.Tokens.Int64(),
-		Pubkey:        validator.ConsensusPubkey, // TODO: provide pubkey!
-		SeedSignature: "",                        // TODO: do we need this for genesis epoch?
+		Pubkey:        pubKey,
+		SeedSignature: "", // TODO: do we need this for genesis epoch?
 		Reputation:    1,
 		Models:        []string{}, // FIXME: populate with genesis models? Create model sub-groups?
 	}, nil

@@ -43,21 +43,21 @@ func NewWeightCalculator(
 
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
 func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochIndex uint64) (map[string]int64, error) {
-	if epochIndex <= 1 {
-		return nil, nil
-	}
-	if epochIndex <= 1 {
-		currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
-		if err != nil {
-			am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
-			return nil, err
+	/*	if epochIndex <= 1 {
+			return nil, nil
 		}
-		weights := make(map[string]int64)
-		for _, validator := range currentValidators {
-			weights[validator.OperatorAddress] = validator.Tokens.Int64()
-		}
-		return weights, nil
-	}
+		if epochIndex <= 1 {
+			currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
+			if err != nil {
+				am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
+				return nil, err
+			}
+			weights := make(map[string]int64)
+			for _, validator := range currentValidators {
+				weights[validator.OperatorAddress] = validator.Tokens.Int64()
+			}
+			return weights, nil
+		}*/
 
 	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
