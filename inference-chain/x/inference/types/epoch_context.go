@@ -178,7 +178,7 @@ func (ec *EpochContext) IsValidationExchangeWindow(blockHeight int64) bool {
 	}
 
 	return relativeBlockHeight > ec.EpochParams.GetStartOfPoCValidationStage() &&
-		relativeBlockHeight < ec.EpochParams.GetEndOfPoCValidationStage()
+		relativeBlockHeight <= ec.EpochParams.GetSetNewValidatorsStage()
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
