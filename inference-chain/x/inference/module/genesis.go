@@ -90,9 +90,17 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 	k.SetEpoch(ctx, genesisEpoch)
 	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
 
-	epochGroup, err := k.CreateEpochGroup(ctx, uint64(genesisEpoch.PocStartBlockHeight))
+	InitGenesisEpochGroup(ctx, k, uint64(genesisEpoch.PocStartBlockHeight))
+}
+
+func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight uint64) {
+	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight)
 	if err != nil {
 		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
+	}
+	err = epochGroup.CreateGroup(ctx)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] epochGroup.CreateGroup failed. err = %v", err)
 	}
 
 	stakingValidators, err := k.Staking.GetAllValidators(ctx)
@@ -110,6 +118,11 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 		if err != nil {
 			log.Panicf("[InitGenesisEpoch] epochGroup.AddMember failed. err = %v", err)
 		}
+	}
+
+	err = epochGroup.MarkUnchanged(ctx)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] epochGroup.MarkUnchanged failed. err = %v", err)
 	}
 }
 
