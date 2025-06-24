@@ -205,8 +205,3 @@ func (ec *EpochContext) String() string {
 	return fmt.Sprintf("EpochContext{EpochIndex:%d PocStartBlockHeight:%d EpochParams:%s}",
 		ec.EpochIndex, ec.PocStartBlockHeight, &ec.EpochParams)
 }
-
-func (p *EpochParams) String() string {
-	return fmt.Sprintf("EpochParams{EpochLength:%d EpochMultiplier:%d EpochShift:%d DefaultUnitOfComputePrice:%d PocStageDuration:%d PocExchangeDuration:%d PocValidationDelay:%d PocValidationDuration:%d}",
-		p.EpochLength, p.EpochMultiplier, p.EpochShift, p.DefaultUnitOfComputePrice, p.PocStageDuration, p.PocExchangeDuration, p.PocValidationDelay, p.PocValidationDuration)
-}
