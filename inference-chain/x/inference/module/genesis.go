@@ -86,6 +86,7 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 		EffectiveBlockHeight: 0,
 	}
 	k.SetEpoch(ctx, genesisEpoch)
+	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		PocStartBlockHeight:  0,
 		EffectiveBlockHeight: 0,
