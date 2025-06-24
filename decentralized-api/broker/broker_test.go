@@ -16,7 +16,7 @@ func NewTestBroker() *Broker {
 		Address: "cosmos1dummyaddress",
 		PubKey:  "dummyPubKey",
 	}
-	return NewBroker(nil, nil, participantInfo, "", &mlnodeclient.MockClientFactory{})
+	return NewBroker(nil, nil, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
 
 func TestSingleNode(t *testing.T) {
