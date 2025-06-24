@@ -100,8 +100,12 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 	}
 
 	for _, validator := range stakingValidators {
-		member := epochgroup.NewEpochMemberFromStakingValidator(validator)
-		err = epochGroup.AddMember(ctx, member)
+		member, err := epochgroup.NewEpochMemberFromStakingValidator(validator)
+		if err != nil || member == nil {
+			panic(err)
+		}
+
+		err = epochGroup.AddMember(ctx, *member)
 		if err != nil {
 			panic(err)
 		}
