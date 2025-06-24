@@ -131,6 +131,11 @@ func (m *MockQueryClient) CurrentEpochGroupData(ctx context.Context, req *types.
 	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
+}
+
 // Test setup helpers
 
 type IntegrationTestSetup struct {
@@ -196,6 +201,13 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			EpochParams: paramsToReturn,
 		},
 	}, nil)
+	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
+		Params: types.Params{
+			EpochParams: paramsToReturn,
+		},
+		// Empty epoch for now
+		LatestEpoch: types.Epoch{},
+	})
 
 	// Setup mock expectations for RandomSeedManager
 	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
@@ -254,6 +266,15 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 
 	// Wait for the node to be loaded
 	_ = <-responseChan
+}
+
+func (setup *IntegrationTestSetup) setEpoch(epoch types.Epoch) {
+	setup.MockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
+		Params: types.Params{
+			EpochParams: setup.EpochParams,
+		},
+		LatestEpoch: epoch,
+	})
 }
 
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
