@@ -381,10 +381,11 @@ func (b *Broker) registerNode(command RegisterNode) {
 	}
 
 	// Get current epoch from phase tracker
-	var currentEpoch uint64
-	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex
-	}
+	/*	var currentEpoch uint64
+		if b.phaseTracker != nil {
+			// TODO: fix NPE
+			currentEpoch = b.phaseTracker.GetCurrentEpochState().LatestEpoch.EpochIndex
+		}*/
 
 	nodeWithState := &NodeWithState{
 		Node: node,
@@ -399,7 +400,7 @@ func (b *Broker) registerNode(command RegisterNode) {
 			StatusTimestamp:   time.Now(),
 			AdminState: AdminState{
 				Enabled: true,
-				Epoch:   currentEpoch,
+				Epoch:   0,
 			},
 		},
 	}

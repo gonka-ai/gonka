@@ -330,15 +330,7 @@ func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 }
 
 func TestInferenceReconciliation(t *testing.T) {
-	epochParams := types.EpochParams{
-		EpochLength:           100,
-		EpochShift:            0,
-		EpochMultiplier:       1,
-		PocStageDuration:      20,
-		PocExchangeDuration:   2,
-		PocValidationDelay:    2,
-		PocValidationDuration: 10,
-	}
+	epochParams := defaultEpochParams
 	reconciliationConfig := testreconcilialtionConfig(5)
 	setup := createIntegrationTestSetup(&reconciliationConfig, &epochParams)
 
@@ -386,7 +378,8 @@ func TestInferenceReconciliation(t *testing.T) {
 }
 
 func TestRegularPocScenario(t *testing.T) {
-	setup := createIntegrationTestSetup(nil, nil)
+	epochParams := defaultEpochParams
+	setup := createIntegrationTestSetup(nil, &epochParams)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
@@ -404,7 +397,13 @@ func TestRegularPocScenario(t *testing.T) {
 	for i <= setup.EpochParams.EpochLength {
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
 		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
-		err := setup.simulateBlock(int64(i))
+		if i == setup.EpochParams.EpochLength {
+			setup.setLatestEpoch(types.Epoch{
+				Index:               1,
+				PocStartBlockHeight: i,
+			})
+		}
+		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
@@ -443,7 +442,7 @@ func TestRegularPocScenario(t *testing.T) {
 		require.NoError(t, err)
 
 		if i == pocValStart {
-			waitForAsync(100 * time.Millisecond)
+			waitForAsync(300 * time.Millisecond)
 		}
 
 		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
@@ -469,6 +468,10 @@ func TestRegularPocScenario(t *testing.T) {
 	expected = NodeClientAssertion{StopCalled: 3, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 2}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.IntendedStatus)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.CurrentStatus)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.IntendedStatus)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.CurrentStatus)
 }
 
 type NodeClientAssertion struct {

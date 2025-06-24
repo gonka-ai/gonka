@@ -280,10 +280,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase.EpochState) bool {
 	switch epochState.CurrentPhase {
-	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase, types.PoCValidatePhase, types.PoCValidateWindDownPhase:
+	case types.PoCGeneratePhase, types.PoCValidatePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
 	case types.InferencePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.Inference)
+	case types.PoCGenerateWindDownPhase, types.PoCValidateWindDownPhase:
+		return false
 	}
 	return false
 }
