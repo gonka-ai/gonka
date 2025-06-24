@@ -554,7 +554,7 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 
-		if ec.IsStartOfPocStage(i) || ec.IsEndOfPoCValidationStage(i) {
+		if ec.IsStartOfPocStage(i) || ec.IsStartOfPoCValidationStage(i) || ec.IsEndOfPoCValidationStage(i) {
 			println("Simulating block:", i, "ec.IsStartOfPocStage == ", ec.IsStartOfPocStage(i), "ec.IsEndOfPoCValidationStage == ", ec.IsEndOfPoCValidationStage(i))
 			// Wait for all commands to finish so we don't cancel them too soon
 			waitForAsync(500 * time.Millisecond)

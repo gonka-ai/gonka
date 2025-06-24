@@ -86,6 +86,11 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 		EffectiveBlockHeight: 0,
 	}
 	k.SetEpoch(ctx, genesisEpoch)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		PocStartBlockHeight:  0,
+		EffectiveBlockHeight: 0,
+	})
+	// TODO: [PRTODO] should we create an actual group alongside it?
 }
 
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {

@@ -114,8 +114,20 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		} else if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
+			logging.Info("Skipping inference up for node in training state", types.PoC,
+				"node_id", node.Node.Id,
+				"current_epoch", epochState,
+				"current_phase", epochState.CurrentPhase)
 			continue
 		} else {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+				logging.Info("Setting node status to Inference", types.PoC,
+					"node_id", node.Node.Id,
+					"current_epoch", epochState,
+					"current_phase", epochState.CurrentPhase,
+					"current_intended_status", node.State.IntendedStatus)
+			}
+
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 		}
 	}

@@ -78,13 +78,13 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	k.SetRandomSeed(ctx, seed)
 
 	// Create EpochGroupData with epochGroupId <= 1
-	upcomingGroupData := &types.EpochGroupData{
-		EpochGroupId:        1,
+	upcomingEpoch := types.Epoch{
+		Index:               1,
 		PocStartBlockHeight: 100,
 	}
 
 	// Call the function
-	result := am.ComputeNewWeights(ctx, upcomingGroupData)
+	result := am.ComputeNewWeights(ctx, upcomingEpoch)
 
 	// Verify the result
 	require.Equal(t, 1, len(result))
@@ -155,7 +155,8 @@ func TestComputeNewWeights(t *testing.T) {
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				// Set previous epoch group ID
-				k.SetPreviousEpochGroupId(ctx, 50)
+				// TODO: [PRTODO] fix
+				// k.SetPreviousEpochGroupId(ctx, 50)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -214,7 +215,8 @@ func TestComputeNewWeights(t *testing.T) {
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				// Set previous epoch group ID
-				k.SetPreviousEpochGroupId(ctx, 50)
+				// TODO: [PRTODO] fix
+				// k.SetPreviousEpochGroupId(ctx, 50)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -273,7 +275,7 @@ func TestComputeNewWeights(t *testing.T) {
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				// Set previous epoch group ID
-				k.SetPreviousEpochGroupId(ctx, 50)
+				// TODO: [PRTODO] fix k.SetPreviousEpochGroupId(ctx, 50)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -361,13 +363,13 @@ func TestComputeNewWeights(t *testing.T) {
 			tt.setupState(t, &k, ctx)
 
 			// Create EpochGroupData
-			upcomingGroupData := &types.EpochGroupData{
-				EpochGroupId:        tt.epochGroupId,
+			upcomingEpoch := types.Epoch{
+				Index:               tt.epochGroupId,
 				PocStartBlockHeight: 100,
 			}
 
 			// Call the function
-			result := am.ComputeNewWeights(ctx, upcomingGroupData)
+			result := am.ComputeNewWeights(ctx, upcomingEpoch)
 
 			// Verify the result
 			require.Equal(t, tt.expectedParticipants, len(result))
