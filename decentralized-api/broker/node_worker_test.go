@@ -35,8 +35,15 @@ func createTestNode(id string) *NodeWithState {
 	}
 }
 
+func NewTestBroker2(cap int) *Broker {
+	return &Broker{
+		highPriorityCommands: make(chan Command, cap),
+		lowPriorityCommands:  make(chan Command, cap),
+	}
+}
+
 func TestNodeWorker_BasicOperation(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 1)}
+	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -53,7 +60,7 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 
 	// Wait for command execution and result submission
 	select {
-	case receivedCmd := <-broker.commands:
+	case receivedCmd := <-broker.highPriorityCommands:
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		assert.True(t, ok, "Broker should receive an UpdateNodeResultCommand")
 		assert.Equal(t, "test-node-1", updateCmd.NodeId)
@@ -65,7 +72,7 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 }
 
 func TestNodeWorker_ErrorHandling(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 1)}
+	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -83,7 +90,7 @@ func TestNodeWorker_ErrorHandling(t *testing.T) {
 
 	// Wait for command execution and result submission
 	select {
-	case receivedCmd := <-broker.commands:
+	case receivedCmd := <-broker.highPriorityCommands:
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		assert.True(t, ok, "Broker should receive an UpdateNodeResultCommand")
 		assert.Equal(t, "test-node-1", updateCmd.NodeId)
@@ -95,7 +102,7 @@ func TestNodeWorker_ErrorHandling(t *testing.T) {
 }
 
 func TestNodeWorker_QueueFull(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 20)} // Make it larger to handle results
+	broker := NewTestBroker2(20) // Make it larger to handle results
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -126,7 +133,7 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 }
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 10)}
+	broker := NewTestBroker2(10)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -153,11 +160,11 @@ func TestNodeWorker_GracefulShutdown(t *testing.T) {
 	assert.Equal(t, int32(5), atomic.LoadInt32(&executedCount),
 		"All queued commands should execute before shutdown completes")
 
-	assert.Len(t, broker.commands, 5, "Should have 5 results in broker channel")
+	assert.Len(t, broker.lowPriorityCommands, 5, "Should have 5 results in broker channel")
 }
 
 func TestNodeWorker_Cancellation(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 1)}
+	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -184,7 +191,7 @@ func TestNodeWorker_Cancellation(t *testing.T) {
 	cancel()     // Cancel it
 
 	select {
-	case receivedCmd := <-broker.commands:
+	case receivedCmd := <-broker.highPriorityCommands:
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		assert.True(t, ok)
 		assert.False(t, updateCmd.Result.Succeeded)
@@ -195,7 +202,7 @@ func TestNodeWorker_Cancellation(t *testing.T) {
 }
 
 func TestNodeWorker_MLClientInteraction(t *testing.T) {
-	broker := &Broker{commands: make(chan Command, 5)}
+	broker := NewTestBroker2(5)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
@@ -206,7 +213,7 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 	worker.Submit(context.Background(), &stopCmd)
 
 	select {
-	case receivedCmd := <-broker.commands:
+	case receivedCmd := <-broker.highPriorityCommands:
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		assert.True(t, ok)
 		assert.True(t, updateCmd.Result.Succeeded)
@@ -224,7 +231,7 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 	worker.Submit(context.Background(), &inferenceCmd)
 
 	select {
-	case receivedCmd := <-broker.commands:
+	case receivedCmd := <-broker.highPriorityCommands:
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		assert.True(t, ok)
 		assert.True(t, updateCmd.Result.Succeeded)
@@ -240,7 +247,7 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 
 func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 	group := NewNodeWorkGroup()
-	broker := &Broker{commands: make(chan Command, 1)}
+	broker := NewTestBroker2(1)
 
 	// Add workers
 	node1 := createTestNode("node-1")

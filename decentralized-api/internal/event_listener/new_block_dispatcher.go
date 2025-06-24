@@ -3,6 +3,7 @@ package event_listener
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -165,8 +166,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		"epoch", epochState.LatestEpoch.EpochIndex,
 		"epoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
 		"currentPhase", epochState.CurrentPhase,
-		"isSynched", epochState.IsSynced,
-		"blockHase", epochState.CurrentBlock.Hash)
+		"isSynced", epochState.IsSynced,
+		"blockHash", epochState.CurrentBlock.Hash)
 	logging.Debug("[new-block-dispatcher]", types.Stages, "blockHeight", epochState.CurrentBlock.Height, "blochHash", epochState.CurrentBlock.Hash)
 	if !epochState.IsSynced {
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
@@ -310,21 +311,22 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 
 // triggerReconciliation starts node reconciliation with current phase info
 func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
-	logging.Info("Triggering reconciliation", types.Nodes,
-		"height", epochState.CurrentBlock.Height,
-		"epoch", epochState.LatestEpoch.EpochIndex,
-		"phase", epochState.CurrentPhase)
-
 	cmd, response := getCommandForPhase(epochState)
 	if cmd == nil || response == nil {
-		logging.Info("No command required for phase", types.Nodes,
+		logging.Info("[triggerReconciliation] No command required for phase", types.Nodes,
 			"phase", epochState.CurrentPhase, "height", epochState.CurrentBlock.Height)
 		return
 	}
 
+	logging.Info("[triggerReconciliation] Created command for reconciliation", types.Nodes,
+		"command_type", fmt.Sprintf("%T", cmd),
+		"height", epochState.CurrentBlock.Height,
+		"epoch", epochState.LatestEpoch.EpochIndex,
+		"phase", epochState.CurrentPhase)
+
 	err := d.nodeBroker.QueueMessage(cmd)
 	if err != nil {
-		logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
+		logging.Error("[triggerReconciliation] Failed to queue reconciliation command", types.Nodes, "error", err)
 		return
 	}
 

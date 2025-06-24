@@ -254,12 +254,27 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 }
 
 func (setup *IntegrationTestSetup) setLatestEpoch(epoch types.Epoch) {
+	setup.MockQueryClient.ExpectedCalls = nil
 	setup.MockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: setup.EpochParams,
 		},
 		LatestEpoch: epoch,
 	}, nil)
+}
+
+func (setup *IntegrationTestSetup) transitionChainStateToNextEpoch(blockHeight int64) {
+	epochInfo, err := setup.MockQueryClient.EpochInfo(context.Background(), &types.QueryEpochInfoRequest{})
+	if err != nil || epochInfo == nil {
+		panic(fmt.Sprintf("Failed to get epoch info: %v", err))
+	}
+
+	newEpoch := types.Epoch{
+		Index:               epochInfo.LatestEpoch.Index + 1,
+		PocStartBlockHeight: blockHeight,
+	}
+
+	setup.setLatestEpoch(newEpoch)
 }
 
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
@@ -398,10 +413,7 @@ func TestRegularPocScenario(t *testing.T) {
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
 		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
 		if i == setup.EpochParams.EpochLength {
-			setup.setLatestEpoch(types.Epoch{
-				Index:               1,
-				PocStartBlockHeight: i,
-			})
+			setup.transitionChainStateToNextEpoch(i)
 		}
 		err := setup.simulateBlock(i)
 		require.NoError(t, err)
@@ -539,14 +551,15 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	var i = setup.EpochParams.EpochLength
 	for i < 2*setup.EpochParams.EpochLength {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+
 		if ec.IsStartOfPocStage(i) || ec.IsEndOfPoCValidationStage(i) {
 			println("Simulating block:", i, "ec.IsStartOfPocStage == ", ec.IsStartOfPocStage(i), "ec.IsEndOfPoCValidationStage == ", ec.IsEndOfPoCValidationStage(i))
 			// Wait for all commands to finish so we don't cancel them too soon
 			waitForAsync(500 * time.Millisecond)
 		}
 
-		err = setup.simulateBlock(i)
-		require.NoError(t, err)
 		i++
 	}
 
@@ -596,6 +609,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	require.Equal(t, uint64(0), node2State.AdminState.Epoch)
 
 	// Simulate first PoC (block 100) - only node-2 should participate
+	setup.transitionChainStateToNextEpoch(100)
 	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
@@ -626,6 +640,7 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
 
 	// Simulate next epoch PoC (block 200) - both nodes should participate
+	setup.transitionChainStateToNextEpoch(200)
 	err = setup.simulateBlock(200)
 	require.NoError(t, err)
 
@@ -657,6 +672,7 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	// Simulate PoC start (block 0)
+	setup.transitionChainStateToNextEpoch(100)
 	err := setup.simulateBlock(100)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
@@ -731,6 +747,7 @@ func TestPoCRetry(t *testing.T) {
 	node1Client.InitGenerateError = errors.New("test error")
 
 	var i = params.EpochLength
+	setup.transitionChainStateToNextEpoch(i)
 	err := setup.simulateBlock(i)
 	i++
 	require.NoError(t, err)

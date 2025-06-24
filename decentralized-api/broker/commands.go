@@ -159,8 +159,17 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	blockHeight := b.phaseTracker.GetCurrentEpochState().CurrentBlock.Height
 
 	// Critical safety check
-	if node.State.ReconcileInfo == nil ||
-		node.State.ReconcileInfo.Status != c.Result.OriginalTarget ||
+	if node.State.ReconcileInfo == nil {
+		logging.Info("Ignoring stale result for node. node.State.ReconcileInfo is already nil", types.Nodes,
+			"node_id", c.NodeId,
+			"original_target", c.Result.OriginalTarget,
+			"original_poc_target", c.Result.OriginalPocTarget,
+			"blockHeight", blockHeight)
+		c.Response <- false
+		return
+	}
+
+	if node.State.ReconcileInfo.Status != c.Result.OriginalTarget ||
 		(node.State.ReconcileInfo.Status == types.HardwareNodeStatus_POC && node.State.ReconcileInfo.PocStatus != c.Result.OriginalPocTarget) {
 		logging.Info("Ignoring stale result for node", types.Nodes,
 			"node_id", c.NodeId,

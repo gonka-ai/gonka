@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"github.com/productscience/inference/x/inference/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -272,4 +273,32 @@ func TestCapacityCheck(t *testing.T) {
 	if err := broker.QueueMessage(RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 0)}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
+}
+
+func TestNodeShouldBeOperationalTest(t *testing.T) {
+	adminState := AdminState{
+		Enabled: true,
+		Epoch:   10,
+	}
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCGeneratePhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCGenerateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCValidatePhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCValidateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 10, types.InferencePhase))
+
+	adminState = AdminState{
+		Enabled: false,
+		Epoch:   11,
+	}
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCGeneratePhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCGenerateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCValidatePhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCValidateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.InferencePhase))
+
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCGeneratePhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCGenerateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidatePhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.InferencePhase))
 }

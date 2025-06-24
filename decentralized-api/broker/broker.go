@@ -197,18 +197,20 @@ func (s *NodeState) IsOperational() bool {
 }
 
 // ShouldBeOperational checks if node should be operational based on admin state and current epoch
-func (s *NodeState) ShouldBeOperational(currentEpoch uint64, currentPhase types.EpochPhase) bool {
-	if !s.AdminState.Enabled {
-		// Disabled nodes stop after their epoch ends
-		return s.AdminState.Epoch >= currentEpoch
-	}
+func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.EpochPhase) bool {
+	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
+}
 
-	// Enabled nodes wait for inference phase if enabled during PoC
-	if s.AdminState.Epoch == currentEpoch && currentPhase != types.InferencePhase {
-		return false
+func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
+	if adminState.Enabled {
+		if latestEpoch > adminState.Epoch {
+			return true
+		} else { // latestEpoch == adminState.Epoch
+			return currentPhase == types.InferencePhase
+		}
+	} else {
+		return adminState.Epoch >= latestEpoch
 	}
-
-	return true
 }
 
 type NodeResponse struct {
