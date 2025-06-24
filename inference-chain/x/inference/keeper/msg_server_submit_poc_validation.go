@@ -27,7 +27,8 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 		k.LogError(PocFailureTag+"[SubmitPocValidation] message start block height doesn't match the upcoming epoch", types.PoC,
 			"msg.PocStageStartBlockHeight", startBlockHeight,
 			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
-			"currentBlockHeight", currentBlockHeight)
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext", epochContext)
 		errMsg := fmt.Sprintf("[SubmitPocValidation] message start block height doesn't match the upcoming epoch. "+
 			"msg.PocStageStartBlockHeight = %d. epochContext.PocStartBlockHeight = %d. currentBlockHeight = %d",
 			startBlockHeight, epochContext.PocStartBlockHeight, currentBlockHeight)
@@ -36,7 +37,10 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 
 	if !epochContext.IsValidationExchangeWindow(startBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC,
-			"msg.BlockHeight", startBlockHeight, "epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight, "currentBlockHeight", currentBlockHeight)
+			"msg.BlockHeight", startBlockHeight,
+			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext", epochContext)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}

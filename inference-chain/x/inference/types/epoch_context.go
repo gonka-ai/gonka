@@ -201,12 +201,12 @@ func (ec *EpochContext) IsClaimMoneyStage(blockHeight int64) bool {
 	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetClaimMoneyStage())
 }
 
-func (ec *EpochContext) DescribeForLogs() string {
-	return fmt.Sprintf("EpochContext{EpochIndex: %d, PocStartBlockHeight: %d, EpochParams: %s}",
-		ec.EpochIndex, ec.PocStartBlockHeight, DescribeEpochParamsForLogs(&ec.EpochParams))
+func (ec *EpochContext) String() string {
+	return fmt.Sprintf("EpochContext{EpochIndex:%d PocStartBlockHeight:%d EpochParams:%s}",
+		ec.EpochIndex, ec.PocStartBlockHeight, &ec.EpochParams)
 }
 
-func DescribeEpochParamsForLogs(params *EpochParams) string {
-	return fmt.Sprintf("EpochParams{EpochLength: %d, PocStartBlockHeight: %d, EpochParams: %s}",
-		params.EpochLength)
+func (p *EpochParams) String() string {
+	return fmt.Sprintf("EpochParams{EpochLength:%d EpochMultiplier:%d EpochShift:%d DefaultUnitOfComputePrice:%d PocStageDuration:%d PocExchangeDuration:%d PocValidationDelay:%d PocValidationDuration:%d}",
+		p.EpochLength, p.EpochMultiplier, p.EpochShift, p.DefaultUnitOfComputePrice, p.PocStageDuration, p.PocExchangeDuration, p.PocValidationDelay, p.PocValidationDuration)
 }
