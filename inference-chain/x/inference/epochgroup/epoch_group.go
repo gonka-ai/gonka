@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -38,19 +37,17 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 func NewEpochMemberFromStakingValidator(
 	validator stakingtypes.Validator,
 ) (*EpochMember, error) {
-	valAddr, err := utils.OperatorAddressToAccAddress(validator.OperatorAddress)
+	accAddr, err := utils.OperatorAddressToAccAddress(validator.OperatorAddress)
 	if err != nil {
 		return nil, err
 	}
-	println("Val Address for genesis.", "opAddr", validator.OperatorAddress, "accAddr", valAddr)
-
-	accAddr := sdk.AccAddress(valAddr)
+	println("Val Address for genesis.", "opAddr", validator.OperatorAddress, "accAddr", accAddr)
 
 	pubKey := validator.ConsensusPubkey.String()
 	println("PUBKEY for genesis validator is", pubKey)
 
 	return &EpochMember{
-		Address:       accAddr.String(),
+		Address:       accAddr,
 		Weight:        validator.Tokens.Int64(),
 		Pubkey:        pubKey,
 		SeedSignature: "", // TODO: do we need this for genesis epoch?
