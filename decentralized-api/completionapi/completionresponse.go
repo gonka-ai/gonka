@@ -118,7 +118,6 @@ func (r *StreamedCompletionResponse) GetUsage() (*Usage, error) {
 		usage := &Usage{
 			PromptTokens:     0,
 			CompletionTokens: uint64(backupLength),
-			TotalTokens:      uint64(backupLength),
 		}
 		return usage, nil
 	} else {

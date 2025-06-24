@@ -71,7 +71,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	logging.Info("Prompt token count", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
 
-	if err := validateClient(request, participant, promptTokenCount); err != nil {
+	if err := validateRequester(request, participant, promptTokenCount); err != nil {
 		return err
 	}
 
@@ -421,13 +421,14 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func validateClient(request *ChatRequest, client *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
-	if client == nil {
+// Check signature and available balance.
+func validateRequester(request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+	if requester == nil {
 		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
 		return ErrInferenceParticipantNotFound
 	}
 
-	err := validateRequestAgainstPubKey(request, client.Pubkey)
+	err := validateRequestAgainstPubKey(request, requester.Pubkey)
 	if err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
@@ -444,8 +445,8 @@ func validateClient(request *ChatRequest, client *types.QueryInferenceParticipan
 
 	escrowNeeded := maxTokensCost + promptTokensCost
 	logging.Debug("Escrow needed", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
-	logging.Debug("Client balance", types.Inferences, "balance", client.Balance)
-	if client.Balance < int64(escrowNeeded) {
+	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
+	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance
 	}
 	return nil

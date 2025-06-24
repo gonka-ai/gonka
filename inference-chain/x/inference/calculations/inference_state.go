@@ -59,7 +59,9 @@ func ProcessStartInference(
 	// Works if FinishInference came before
 	currentInference.PromptHash = startMessage.PromptHash
 	currentInference.PromptPayload = startMessage.PromptPayload
-	currentInference.PromptTokenCount = startMessage.PromptTokenCount
+	if currentInference.PromptTokenCount == 0 {
+		currentInference.PromptTokenCount = startMessage.PromptTokenCount
+	}
 	currentInference.RequestedBy = startMessage.RequestedBy
 	currentInference.Model = startMessage.Model
 	currentInference.StartBlockHeight = blockContext.BlockHeight
@@ -84,16 +86,12 @@ func ProcessStartInference(
 
 func setEscrowForFinished(currentInference *types.Inference, escrowAmount int64, payments *Payments) {
 	actualCost := CalculateCost(currentInference)
-	if actualCost > escrowAmount {
-		// PRTODO: Check where ActualCost is used. Should it be set to escrowAmount or actualCost?
-		currentInference.ActualCost = actualCost
-		payments.EscrowAmount = escrowAmount
-		payments.ExecutorPayment = escrowAmount
-	} else {
-		currentInference.ActualCost = actualCost
-		payments.EscrowAmount = actualCost
-		payments.ExecutorPayment = actualCost
-	}
+	amountToPay := min(actualCost, escrowAmount)
+	// ActualCost is used for refunds of invalid inferences and for sharing the cost with validators. It needs
+	// to be the same as the amount actually paid, not the cost of the inference by itself.
+	currentInference.ActualCost = amountToPay
+	payments.EscrowAmount = amountToPay
+	payments.ExecutorPayment = amountToPay
 }
 
 func ProcessFinishInference(
@@ -121,7 +119,7 @@ func ProcessFinishInference(
 	currentInference.ResponsePayload = finishMessage.ResponsePayload
 	// PromptTokenCount for Finish can be set to 0 if the inference was streamed and interrupted
 	// before the end of the response. Then we should default to the value set in StartInference.
-	logger.LogInfo("FinishInference with prompt token count", types.Inferences, "inference_id", finishMessage.InferenceId, "prompt_token_count", finishMessage.PromptTokenCount)
+	logger.LogDebug("FinishInference with prompt token count", types.Inferences, "inference_id", finishMessage.InferenceId, "prompt_token_count", finishMessage.PromptTokenCount)
 	if finishMessage.PromptTokenCount != 0 {
 		currentInference.PromptTokenCount = finishMessage.PromptTokenCount
 	}
