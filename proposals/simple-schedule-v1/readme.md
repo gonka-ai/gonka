@@ -14,8 +14,7 @@ This document describes the implementation of a comprehensive multi-model suppor
 ### 1. Enhanced Model Parameters
 Each model includes comprehensive metadata:
 - Unique identifier and creator information
-- Model name, version, and Hugging Face repository link
-- Cryptographic hash for integrity verification
+- Model name, version, and Hugging Face repository link and commit hash
 - Technical parameters (quantization, context size, KV cache quantization)
 - **Throughput per PoC nonce** - performance metric for economic calculations
 
@@ -26,7 +25,7 @@ Model changes through existing governance become effective only when epoch subgr
 Participants assign specific models to individual MLNodes (through model id) for upcoming epochs, enabling granular resource management and specialized node optimization.
 
 ### 4. Per-MLNode Proof-of-Compute
-PoC nonces are tracked per MLNode rather than per participant, enabling precise performance measurement and fair reward distribution across different model types.
+PoC nonces are tracked per MLNode rather than per participant, enabling precise performance measurement and network balancing between models. PoC nonce validation remain per participants.
 
 ### 5. Per Model Sybil Resistance Incentives
 Participants running at least one MLNode per supported model receive 10% additional mining rewards, encouraging comprehensive model coverage.
@@ -50,7 +49,7 @@ The current Model structure in `inference-chain/x/inference/types/model.pb.go` c
 #### After: Enhanced Model Registry with Comprehensive Metadata
 
 **New Implementation:**
-- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds HuggingFaceLink, Hash, Quantization, ContextSize, KvCacheQuantization, VRAM, and ThroughputPerNonce (performance metric for economic calculations).
+- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds HuggingFaceLink, HuggingFaceCommitHash, Quantization, ContextSize, KvCacheQuantization, VRAM, and ThroughputPerNonce (performance metric for economic calculations).
 
 **Enhanced Functions in `inference-chain/x/inference/keeper/model.go`:**
 - `GetGovernanceModels` - Enhanced version of existing `GetAllModels` (or semantic naming for clarity)
@@ -136,17 +135,20 @@ The current HardwareNode structure contains Id, Status, and Models array with mo
 - Ensures consistent participant-model mappings throughout an epoch
 
 **New Fields in `inference-chain/x/inference/types/epoch_group_data.pb.go`:**
-- `ml_nodes` (repeated MLNodeInfo) - Detailed MLNode information array
+- `ml_nodes` (repeated MLNodeInfo) - Detailed MLNode information array, it should be organized per participant (`member_address`), e.g. in ValidationWeight or a new structure
 
 **New Message Structures:**
-- `MLNodeInfo` containing member_address, node_id, throughput, poc_weight, and gpu_mode
+- `MLNodeInfo` containing node_id (will add throughput, and poc_weight in next section)
+
+**Note**:
+- Check if MLNodes should be added to ActiveParticipants as well, as currently Weights are set ActiveParticipants in `ComputeNewWeights` and Models in `setModelsForParticipants`, and only then them both to Epoch Group from ActiveParticipants
 
 **New Functions in `inference-chain/x/inference/epochgroup/epoch_group.go`:**
 - `StoreMLNodeInfo` - Record MLNode details during epoch group formation
 use `GetNodesForModel` from `inference-chain/x/inference/keeper/hardware_node.go`
 
-**Modified Functions in `inference-chain/x/inference/module/chainvalidation.go`:**
-- `setModelsForParticipants` enhanced to snapshot current hardware node configurations to epoch storage
+**Modified Functions in `inference-chain/x/inference/module/module.go`:**
+- `setModelsForParticipants` or `updateEpochGroupWithNewMember` enhanced to snapshot current hardware node configurations to epoch storage
 - Epoch group formation uses snapshotted hardware configurations for consistent subgroup creation
 
 ### Per-MLNode PoC Tracking System
@@ -154,8 +156,8 @@ use `GetNodesForModel` from `inference-chain/x/inference/keeper/hardware_node.go
 #### Before: Participant-Level PoC Aggregation
 **Current Implementation:**
 - PoC batches tracked per participant in `inference-chain/x/inference/types/poc_batch.pb.go`
-- Weight calculation in `inference-chain/x/inference/module/chainvalidation.go` via `getParticipantWeight` function
-- Single weight per participant in epoch groups `inference-chain/x/inference/epochgroup/epoch_group.go`
+- Weight calculation in `inference-chain/x/inference/module/chainvalidation.go` via `ComputeNewWeights` function
+- Single weight per participant in epoch groups `inference-chain/x/inference/epochgroup/epoch_group.go` in `ValidationWeight`
 
 The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces, and BlockHeight.
 
@@ -164,6 +166,7 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces, and
 **New Implementation:**
 - Enhanced PoCBatch structure adds NodeId (specific MLNode identifier) to track which node generated the batch.
 - Per-MLNode tracking with individual weights and throughput in epoch groups
+- PoC nonce validation remain per participants.
 
 **New Functions in `inference-chain/x/inference/keeper/poc_batch.go`:**
 - `GetPoCBatchesForNode` - Query batches by node
@@ -174,34 +177,25 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces, and
 **Enhanced EpochGroupData Structure for MLNode Tracking:**
 
 **New Fields in `inference-chain/x/inference/types/epoch_group_data.pb.go`:**
-- `ml_nodes` (repeated MLNodeInfo) - Detailed MLNode information array
 - `total_throughput` (int64) - Aggregate model throughput across all supporting nodes
 
 **New Fields in `MLNodeInfo:**
-- throughput and poc_weight 
-
-**New Functions in `inference-chain/x/inference/epochgroup/epoch_group.go`:**
-- `GetModelThroughputCapacity` - Sum throughput across all MLNodes
+- `throughput` and `poc_weight`
 
 **Per-MLNode Power Distribution:**
 - Individual MLNode weights tracked in `poc_weight` field
-- Participant total weight calculated by summing their MLNode weights
+- Participant total weight is the sum of their MLNode weights (keep it in `ValidationWeight`)
 - Model-specific throughput aggregated from individual node capacities
 
-**Modified Functions in `inference-chain/x/inference/module/chainvalidation.go`:**
-- `getParticipantWeight` becomes `getParticipantWeightByModel` returning per-model weights
-- `ComputeNewWeights` enhanced to handle per-model weight distribution and:
-  - Use epoch-frozen model parameters for weight calculations
-  - Distribute weights across MLNodes rather than just participants
-  - Apply 10% bonus for participants supporting all models
-- `setModelsForParticipants` enhanced to:
-  - Record throughput data
-  - Calculate total_parent_weight for coverage tracking
+**Note**:
+- Check if MLNodes should be added to ActiveParticipants as well, as currently Weights are set ActiveParticipants in `ComputeNewWeights`, and only then added to Epoch Group from ActiveParticipants
 
-**Throughput Calculation:**
-- Model throughput calculated during PoC from nonce generation rates per MLNode
-- No additional storage needed in PoCBatch structure
-- ModelId determined from epoch-snapshotted MLNode configurations
+**Modified Functions in `inference-chain/x/inference/module/chainvalidation.go`:**
+- `ComputeNewWeights` enhanced to record per-mlnode poc_weight
+
+**Modified Funcions in `inference-chain/x/inference/epochgroup/epoch_group.go`:**
+- `updateEpochGroupWithNewMember` - When Member and its MLNodes are added, add `poc_weight` and calcualate `throughput`, and `total_throughput`
+- Use epoch-frozen model parameters for throughput calculations (use model's `ThroughputPerNonce`)
 
 ### Per Model Sybil Resistance Incentives
 
@@ -315,7 +309,7 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces, and
 - After PoC completes, final participant weights calculated by combining:
   - PoC mining weights from MLNodes that participated in PoC (calculated from nonces)
   - Preserved weights from MLNodes that continued inference service (copied from previous epoch)
-  - System uses real throughput vector from `POC_SLOT` to validate performance and adjust weight calculations for MLNodes that continued inference service (`ValidateThroughputPerformance`)
+  - (By default disabled) Miners can vote, that system should use real throughput vector from `POC_SLOT` to validate performance and adjust weight calculations for MLNodes that continued inference service (`ValidateThroughputPerformance`)
 - Weight aggregation handled by enhanced `ComputeNewWeights` function in `inference-chain/x/inference/keeper/poc_batch.go`
 
 **Integration with Existing Weight Systems:**
