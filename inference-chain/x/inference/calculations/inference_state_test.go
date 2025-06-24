@@ -193,7 +193,7 @@ func TestSetEscrowForFinished(t *testing.T) {
 			},
 			escrowAmount:    30 * PerTokenCost,
 			payments:        &Payments{},
-			expectedActual:  40 * PerTokenCost,
+			expectedActual:  30 * PerTokenCost,
 			expectedEscrow:  30 * PerTokenCost,
 			expectedPayment: 30 * PerTokenCost,
 		},

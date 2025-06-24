@@ -109,7 +109,9 @@ func (r *StreamedCompletionResponse) GetUsage() (*Usage, error) {
 	backupLength := 0
 	if len(r.Resp.Data) > 0 {
 		for _, d := range r.Resp.Data {
-			backupLength += len(d.Choices[0].Logprobs.Content)
+			if len(d.Choices) != 0 {
+				backupLength += len(d.Choices[0].Logprobs.Content)
+			}
 			if d.Usage.IsEmpty() {
 				continue
 			}
