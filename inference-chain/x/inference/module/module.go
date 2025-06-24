@@ -284,7 +284,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
-	err := am.keeper.SettleAccounts(ctx, uint64(min(0, effectiveEpoch.PocStartBlockHeight)))
+	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
 	if err != nil {
 		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
@@ -350,14 +350,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 			am.LogError("onSetNewValidatorsStage: Unable to calculate participant reputation", types.EpochGroup, "error", err.Error())
 			reputation = 0
 		}
-		member := epochgroup.EpochMember{
-			Address:       p.Index,
-			Weight:        p.Weight,
-			Pubkey:        p.ValidatorKey,
-			SeedSignature: p.Seed.Signature,
-			Reputation:    reputation,
-			Models:        p.Models,
-		}
+		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation)
 		err = upcomingEg.AddMember(ctx, member)
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())

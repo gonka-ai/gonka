@@ -4,6 +4,7 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/productscience/inference/x/inference/epochgroup"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -87,11 +88,24 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 	}
 	k.SetEpoch(ctx, genesisEpoch)
 	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		PocStartBlockHeight:  0,
-		EffectiveBlockHeight: 0,
-	})
-	// TODO: [PRTODO] should we create an actual group alongside it?
+
+	epochGroup, err := k.CreateEpochGroup(ctx, uint64(genesisEpoch.PocStartBlockHeight))
+	if err != nil {
+		panic(err)
+	}
+
+	stakingValidators, err := k.Staking.GetAllValidators(ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, validator := range stakingValidators {
+		member := epochgroup.NewEpochMemberFromStakingValidator(validator)
+		err = epochGroup.AddMember(ctx, member)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {

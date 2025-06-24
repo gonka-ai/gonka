@@ -3,9 +3,12 @@ package epochgroup
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
 	"strconv"
 	"time"
@@ -19,6 +22,37 @@ type EpochMember struct {
 	SeedSignature string
 	Reputation    int64
 	Models        []string
+}
+
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
+	return EpochMember{
+		Address:       p.Index,
+		Weight:        p.Weight,
+		Pubkey:        p.ValidatorKey,
+		SeedSignature: p.Seed.Signature,
+		Reputation:    reputation,
+		Models:        p.Models,
+	}
+}
+
+func NewEpochMemberFromStakingValidator(
+	validator stakingtypes.Validator,
+) (*EpochMember, error) {
+	valAddr, err := sdk.ValAddressFromBech32(validator.OperatorAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	accAddr := sdk.AccAddress(valAddr)
+
+	return &EpochMember{
+		Address:       accAddr.String(),
+		Weight:        validator.Tokens.Int64(),
+		Pubkey:        validator.ConsensusPubkey, // TODO: provide pubkey!
+		SeedSignature: "",                        // TODO: do we need this for genesis epoch?
+		Reputation:    1,
+		Models:        []string{}, // FIXME: populate with genesis models? Create model sub-groups?
+	}, nil
 }
 
 type EpochGroup struct {
