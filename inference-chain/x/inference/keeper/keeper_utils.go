@@ -7,7 +7,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
-	"github.com/productscience/inference/x/inference/types"
 )
 
 func EmptyPrefixStore(ctx context.Context, k *Keeper) *prefix.Store {
@@ -23,10 +22,13 @@ func PrefixStore(ctx context.Context, k *Keeper, keyPrefix []byte) *prefix.Store
 }
 
 func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) {
-	if object == nil {
+	// For some reason IDE syntax highlighting shows it's OK,
+	// but I get a compiler error:
+	//   "invalid operation: object == nil (mismatched types T and untyped nil)"
+	/*	if object == nil {
 		k.LogError("SetValue called with nil object, returning", types.System)
 		return
-	}
+	}*/
 
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, keyPrefix)

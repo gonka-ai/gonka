@@ -121,16 +121,6 @@ type MockQueryClient struct {
 	mock.Mock
 }
 
-func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
-	args := m.Called(ctx, req)
-	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
-}
-
-func (m *MockQueryClient) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error) {
-	args := m.Called(ctx, req)
-	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
-}
-
 func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
 	args := m.Called(ctx, req)
 	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
@@ -196,18 +186,13 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
-	mockQueryClient.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
-		Params: types.Params{
-			EpochParams: paramsToReturn,
-		},
-	}, nil)
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,
 		},
 		// Empty epoch for now
 		LatestEpoch: types.Epoch{},
-	})
+	}, nil)
 
 	// Setup mock expectations for RandomSeedManager
 	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
@@ -274,7 +259,7 @@ func (setup *IntegrationTestSetup) setEpoch(epoch types.Epoch) {
 			EpochParams: setup.EpochParams,
 		},
 		LatestEpoch: epoch,
-	})
+	}, nil)
 }
 
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
@@ -345,8 +330,17 @@ func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 }
 
 func TestInferenceReconciliation(t *testing.T) {
+	epochParams := types.EpochParams{
+		EpochLength:           100,
+		EpochShift:            0,
+		EpochMultiplier:       1,
+		PocStageDuration:      20,
+		PocExchangeDuration:   2,
+		PocValidationDelay:    2,
+		PocValidationDuration: 10,
+	}
 	reconciliationConfig := testreconcilialtionConfig(5)
-	setup := createIntegrationTestSetup(&reconciliationConfig, nil)
+	setup := createIntegrationTestSetup(&reconciliationConfig, &epochParams)
 
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
@@ -366,7 +360,7 @@ func TestInferenceReconciliation(t *testing.T) {
 
 	var i = int64(1)
 	for i <= int64(reconciliationConfig.Inference.BlockInterval) {
-		err := setup.simulateBlock(int64(i))
+		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
