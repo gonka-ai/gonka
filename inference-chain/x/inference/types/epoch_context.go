@@ -200,3 +200,13 @@ func (ec *EpochContext) IsSetNewValidatorsStage(blockHeight int64) bool {
 func (ec *EpochContext) IsClaimMoneyStage(blockHeight int64) bool {
 	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetClaimMoneyStage())
 }
+
+func (ec *EpochContext) DescribeForLogs() string {
+	return fmt.Sprintf("EpochContext{EpochIndex: %d, PocStartBlockHeight: %d, EpochParams: %s}",
+		ec.EpochIndex, ec.PocStartBlockHeight, DescribeEpochParamsForLogs(&ec.EpochParams))
+}
+
+func DescribeEpochParamsForLogs(params *EpochParams) string {
+	return fmt.Sprintf("EpochParams{EpochLength: %d, PocStartBlockHeight: %d, EpochParams: %s}",
+		params.EpochLength)
+}

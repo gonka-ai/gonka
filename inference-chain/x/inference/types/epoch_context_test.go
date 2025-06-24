@@ -208,3 +208,32 @@ func TestPlain(t *testing.T) {
 	require.False(t, ec.IsPoCExchangeWindow(startOfVal+1))
 	require.True(t, ec.IsValidationExchangeWindow(startOfVal+1))
 }
+
+func TestProdBug(t *testing.T) {
+	/*
+		"epoch_params": {
+		          "epoch_length": "50",
+		          "epoch_multiplier": "1",
+		          "epoch_shift": "0",
+		          "default_unit_of_compute_price": "100",
+		          "poc_stage_duration": "4",
+		          "poc_exchange_duration": "1",
+		          "poc_validation_delay": "1",
+		          "poc_validation_duration": "4"
+		        }
+	*/
+	epochParams := types.EpochParams{
+		EpochLength:           50,
+		EpochMultiplier:       1,
+		EpochShift:            0,
+		PocStageDuration:      4,
+		PocExchangeDuration:   1,
+		PocValidationDelay:    1,
+		PocValidationDuration: 4,
+	}
+
+	epoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}
+	ec := types.NewEpochContext(epoch, epochParams)
+
+	require.True(t, ec.IsValidationExchangeWindow(57))
+}
