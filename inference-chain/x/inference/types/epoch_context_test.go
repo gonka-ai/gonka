@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestNilEpoch(t *testing.T) {
+func TestZeroEpoch(t *testing.T) {
 	epochParams := types.EpochParams{
 		EpochLength:           100,
 		EpochMultiplier:       1,
@@ -19,7 +19,7 @@ func TestNilEpoch(t *testing.T) {
 	}
 	initialBlockHeight := int64(1)
 	startOfPoc := int64(10)
-	var initialEpoch *types.Epoch = nil
+	var initialEpoch = types.Epoch{Index: 0, PocStartBlockHeight: 0, EffectiveBlockHeight: 0}
 
 	test(t, epochParams, initialBlockHeight, startOfPoc, initialEpoch)
 }
@@ -40,18 +40,14 @@ func Test(t *testing.T) {
 	}
 
 	startOfNexEpochPoc := epoch.PocStartBlockHeight + epochParams.EpochLength
-	test(t, epochParams, startOfNexEpochPoc-15, startOfNexEpochPoc, &epoch)
+	test(t, epochParams, startOfNexEpochPoc-15, startOfNexEpochPoc, epoch)
 }
 
-func getEpochId(initialEpoch *types.Epoch) uint64 {
-	if initialEpoch == nil {
-		return 0
-	} else {
-		return initialEpoch.Index
-	}
+func getEpochId(initialEpoch types.Epoch) uint64 {
+	return initialEpoch.Index
 }
 
-func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64, startOfPoc int64, initialEpoch *types.Epoch) {
+func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64, startOfPoc int64, initialEpoch types.Epoch) {
 	var i = initialBlockHeight
 	for i < startOfPoc {
 		ec := types.NewEpochContextFromEffectiveEpoch(initialEpoch, epochParams, i)
@@ -160,7 +156,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 		fmt.Println("Returned from NewEpochContextFromEffectiveEpoch (no panic?)")
 	})
 
-	nextEpochGroup := &types.Epoch{Index: getEpochId(initialEpoch) + 1, PocStartBlockHeight: startOfPoc}
+	nextEpochGroup := types.Epoch{Index: getEpochId(initialEpoch) + 1, PocStartBlockHeight: startOfPoc}
 	ec = types.NewEpochContextFromEffectiveEpoch(nextEpochGroup, epochParams, i)
 	require.Equal(t, getEpochId(nextEpochGroup), ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))

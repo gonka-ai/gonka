@@ -200,7 +200,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	}
 	epochContext := types.NewEpochContextFromEffectiveEpoch(currentEpoch, *epochParams, blockHeight)
 
-	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	currentEpochGroup, err := am.keeper.GetEpochGroupForEpoch(ctx, *currentEpoch)
 	// TODO: Why error here?
 	if err != nil {
 		am.LogError("Unable to get current epoch group", types.EpochGroup, "error", err.Error())

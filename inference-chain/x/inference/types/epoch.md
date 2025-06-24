@@ -12,6 +12,8 @@ Each write also creates a corresponding epoch group.
 
 ### Epoch group data
 
+1. Root epoch group data is created only in `EndBlock` `IsStartOfPocStage`
+
 # Where epoch info is read:
 
 ## Chain-node

@@ -159,11 +159,11 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 	comes from a totally different source?
 	// TODO: log block that came from event vs block returned by query
 	// TODO: can we add the state to the block event? As a future optimization?
-	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
+	d.phaseTracker.Update(blockInfo, networkInfo.EffectiveEpoch, networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
 		"blockHeight", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.Epoch,
+		"epoch", epochState.CurrentEpoch.EpochIndex,
 		"epoch.PocStartBlockHeight", epochState.CurrentEpoch.PocStartBlockHeight,
 		"currentPhase", epochState.CurrentPhase,
 		"isSynched", epochState.IsSynced,
@@ -193,9 +193,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {
-	EpochParams       *types.EpochParams
-	IsSynced          bool
-	CurrentEpochGroup *types.EpochGroupData
+	EpochParams    *types.EpochParams
+	IsSynced       bool
+	EffectiveEpoch *types.Epoch
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -220,9 +220,9 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 	}
 
 	return &NetworkInfo{
-		EpochParams:       params.Params.EpochParams,
-		IsSynced:          isSynced,
-		CurrentEpochGroup: &epochGroupData.EpochGroupData,
+		EpochParams:    params.Params.EpochParams,
+		IsSynced:       isSynced,
+		EffectiveEpoch: &epochGroupData.EpochGroupData,
 	}, nil
 }
 
