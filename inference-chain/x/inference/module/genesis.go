@@ -5,6 +5,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/productscience/inference/x/inference/epochgroup"
+	"log"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -91,23 +92,23 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 
 	epochGroup, err := k.CreateEpochGroup(ctx, uint64(genesisEpoch.PocStartBlockHeight))
 	if err != nil {
-		panic(err)
+		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
 	}
 
 	stakingValidators, err := k.Staking.GetAllValidators(ctx)
 	if err != nil {
-		panic(err)
+		log.Panicf("[InitGenesisEpoch] Staking.GetAllValidators failed. err = %v", err)
 	}
 
 	for _, validator := range stakingValidators {
 		member, err := epochgroup.NewEpochMemberFromStakingValidator(validator)
 		if err != nil || member == nil {
-			panic(err)
+			log.Panicf("[InitGenesisEpoch] NewEpochMemberFromStakingValidator failed. err = %v", err)
 		}
 
 		err = epochGroup.AddMember(ctx, *member)
 		if err != nil {
-			panic(err)
+			log.Panicf("[InitGenesisEpoch] epochGroup.AddMember failed. err = %v", err)
 		}
 	}
 }
