@@ -105,7 +105,12 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 func (c InitValidateCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
 
-	if epochPhaseInfo.CurrentPhase != types.PoCValidatePhase {
+	if epochPhaseInfo.CurrentPhase != types.PoCValidatePhase &&
+		// FIXME: A bit too wide, it should be PoCGenerateWindDownPhase AND after poc end,
+		//  but we rely on node dispatcher to not send it too early
+		//  if we want to be 100% sure we should check based on block height
+		//  by adding some additional methods for getting block height stage cutoffs for current epoch
+		epochPhaseInfo.CurrentPhase != types.PoCGenerateWindDownPhase {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. current phase isn't PoCValidatePhase", types.PoC,
 			"current_phase", epochPhaseInfo.CurrentPhase,
 			"current_block_height", epochPhaseInfo.CurrentBlock.Height,
@@ -181,7 +186,9 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
 
-	if epochState.CurrentPhase != types.InferencePhase {
+	if epochState.CurrentPhase != types.InferencePhase &&
+		// FIXME: same as in InitValidateCommand, ideally we should check based on block height
+		epochState.CurrentPhase != types.PoCValidateWindDownPhase {
 		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. current phase isn't InferencePhase", types.Nodes,
 			"current_phase", epochState.CurrentPhase,
 			"current_block_height", epochState.CurrentBlock.Height,

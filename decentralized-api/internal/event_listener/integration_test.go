@@ -554,7 +554,12 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 
-		if ec.IsStartOfPocStage(i) || ec.IsStartOfPoCValidationStage(i) || ec.IsEndOfPoCValidationStage(i) {
+		// TODO: overall feels like a hack, should we just unconditionally wait after each block?
+		//  or maybe add some explicit sync mechanism that would notify subscribers when all commands are processed?
+		if ec.IsStartOfPocStage(i) ||
+			ec.IsEndOfPoCStage(i) ||
+			ec.IsStartOfPoCValidationStage(i) ||
+			ec.IsEndOfPoCValidationStage(i) {
 			println("Simulating block:", i, "ec.IsStartOfPocStage == ", ec.IsStartOfPocStage(i), "ec.IsEndOfPoCValidationStage == ", ec.IsEndOfPoCValidationStage(i))
 			// Wait for all commands to finish so we don't cancel them too soon
 			waitForAsync(500 * time.Millisecond)
