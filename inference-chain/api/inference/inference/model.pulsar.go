@@ -17,10 +17,10 @@ var (
 	fd_Model_proposed_by                protoreflect.FieldDescriptor
 	fd_Model_id                         protoreflect.FieldDescriptor
 	fd_Model_units_of_compute_per_token protoreflect.FieldDescriptor
-	fd_Model_context_in_ai_tokens       protoreflect.FieldDescriptor
+	fd_Model_context_window             protoreflect.FieldDescriptor
 	fd_Model_quantization               protoreflect.FieldDescriptor
-	fd_Model_input_price_in_ai_tokens   protoreflect.FieldDescriptor
-	fd_Model_output_price_in_ai_tokens  protoreflect.FieldDescriptor
+	fd_Model_coins_per_input_token      protoreflect.FieldDescriptor
+	fd_Model_coins_per_output_token     protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -29,10 +29,10 @@ func init() {
 	fd_Model_proposed_by = md_Model.Fields().ByName("proposed_by")
 	fd_Model_id = md_Model.Fields().ByName("id")
 	fd_Model_units_of_compute_per_token = md_Model.Fields().ByName("units_of_compute_per_token")
-	fd_Model_context_in_ai_tokens = md_Model.Fields().ByName("context_in_ai_tokens")
+	fd_Model_context_window = md_Model.Fields().ByName("context_window")
 	fd_Model_quantization = md_Model.Fields().ByName("quantization")
-	fd_Model_input_price_in_ai_tokens = md_Model.Fields().ByName("input_price_in_ai_tokens")
-	fd_Model_output_price_in_ai_tokens = md_Model.Fields().ByName("output_price_in_ai_tokens")
+	fd_Model_coins_per_input_token = md_Model.Fields().ByName("coins_per_input_token")
+	fd_Model_coins_per_output_token = md_Model.Fields().ByName("coins_per_output_token")
 }
 
 var _ protoreflect.Message = (*fastReflection_Model)(nil)
@@ -118,9 +118,9 @@ func (x *fastReflection_Model) Range(f func(protoreflect.FieldDescriptor, protor
 			return
 		}
 	}
-	if x.ContextInAiTokens != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.ContextInAiTokens)
-		if !f(fd_Model_context_in_ai_tokens, value) {
+	if x.ContextWindow != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.ContextWindow)
+		if !f(fd_Model_context_window, value) {
 			return
 		}
 	}
@@ -130,15 +130,15 @@ func (x *fastReflection_Model) Range(f func(protoreflect.FieldDescriptor, protor
 			return
 		}
 	}
-	if x.InputPriceInAiTokens != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.InputPriceInAiTokens)
-		if !f(fd_Model_input_price_in_ai_tokens, value) {
+	if x.CoinsPerInputToken != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CoinsPerInputToken)
+		if !f(fd_Model_coins_per_input_token, value) {
 			return
 		}
 	}
-	if x.OutputPriceInAiTokens != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.OutputPriceInAiTokens)
-		if !f(fd_Model_output_price_in_ai_tokens, value) {
+	if x.CoinsPerOutputToken != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.CoinsPerOutputToken)
+		if !f(fd_Model_coins_per_output_token, value) {
 			return
 		}
 	}
@@ -163,14 +163,14 @@ func (x *fastReflection_Model) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.Id != ""
 	case "inference.inference.Model.units_of_compute_per_token":
 		return x.UnitsOfComputePerToken != uint64(0)
-	case "inference.inference.Model.context_in_ai_tokens":
-		return x.ContextInAiTokens != uint64(0)
+	case "inference.inference.Model.context_window":
+		return x.ContextWindow != uint64(0)
 	case "inference.inference.Model.quantization":
 		return x.Quantization != ""
-	case "inference.inference.Model.input_price_in_ai_tokens":
-		return x.InputPriceInAiTokens != uint64(0)
-	case "inference.inference.Model.output_price_in_ai_tokens":
-		return x.OutputPriceInAiTokens != uint64(0)
+	case "inference.inference.Model.coins_per_input_token":
+		return x.CoinsPerInputToken != uint64(0)
+	case "inference.inference.Model.coins_per_output_token":
+		return x.CoinsPerOutputToken != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -193,14 +193,14 @@ func (x *fastReflection_Model) Clear(fd protoreflect.FieldDescriptor) {
 		x.Id = ""
 	case "inference.inference.Model.units_of_compute_per_token":
 		x.UnitsOfComputePerToken = uint64(0)
-	case "inference.inference.Model.context_in_ai_tokens":
-		x.ContextInAiTokens = uint64(0)
+	case "inference.inference.Model.context_window":
+		x.ContextWindow = uint64(0)
 	case "inference.inference.Model.quantization":
 		x.Quantization = ""
-	case "inference.inference.Model.input_price_in_ai_tokens":
-		x.InputPriceInAiTokens = uint64(0)
-	case "inference.inference.Model.output_price_in_ai_tokens":
-		x.OutputPriceInAiTokens = uint64(0)
+	case "inference.inference.Model.coins_per_input_token":
+		x.CoinsPerInputToken = uint64(0)
+	case "inference.inference.Model.coins_per_output_token":
+		x.CoinsPerOutputToken = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -226,17 +226,17 @@ func (x *fastReflection_Model) Get(descriptor protoreflect.FieldDescriptor) prot
 	case "inference.inference.Model.units_of_compute_per_token":
 		value := x.UnitsOfComputePerToken
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Model.context_in_ai_tokens":
-		value := x.ContextInAiTokens
+	case "inference.inference.Model.context_window":
+		value := x.ContextWindow
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.Model.quantization":
 		value := x.Quantization
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.Model.input_price_in_ai_tokens":
-		value := x.InputPriceInAiTokens
+	case "inference.inference.Model.coins_per_input_token":
+		value := x.CoinsPerInputToken
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.Model.output_price_in_ai_tokens":
-		value := x.OutputPriceInAiTokens
+	case "inference.inference.Model.coins_per_output_token":
+		value := x.CoinsPerOutputToken
 		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
@@ -264,14 +264,14 @@ func (x *fastReflection_Model) Set(fd protoreflect.FieldDescriptor, value protor
 		x.Id = value.Interface().(string)
 	case "inference.inference.Model.units_of_compute_per_token":
 		x.UnitsOfComputePerToken = value.Uint()
-	case "inference.inference.Model.context_in_ai_tokens":
-		x.ContextInAiTokens = value.Uint()
+	case "inference.inference.Model.context_window":
+		x.ContextWindow = value.Uint()
 	case "inference.inference.Model.quantization":
 		x.Quantization = value.Interface().(string)
-	case "inference.inference.Model.input_price_in_ai_tokens":
-		x.InputPriceInAiTokens = value.Uint()
-	case "inference.inference.Model.output_price_in_ai_tokens":
-		x.OutputPriceInAiTokens = value.Uint()
+	case "inference.inference.Model.coins_per_input_token":
+		x.CoinsPerInputToken = value.Uint()
+	case "inference.inference.Model.coins_per_output_token":
+		x.CoinsPerOutputToken = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -298,14 +298,14 @@ func (x *fastReflection_Model) Mutable(fd protoreflect.FieldDescriptor) protoref
 		panic(fmt.Errorf("field id of message inference.inference.Model is not mutable"))
 	case "inference.inference.Model.units_of_compute_per_token":
 		panic(fmt.Errorf("field units_of_compute_per_token of message inference.inference.Model is not mutable"))
-	case "inference.inference.Model.context_in_ai_tokens":
-		panic(fmt.Errorf("field context_in_ai_tokens of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.context_window":
+		panic(fmt.Errorf("field context_window of message inference.inference.Model is not mutable"))
 	case "inference.inference.Model.quantization":
 		panic(fmt.Errorf("field quantization of message inference.inference.Model is not mutable"))
-	case "inference.inference.Model.input_price_in_ai_tokens":
-		panic(fmt.Errorf("field input_price_in_ai_tokens of message inference.inference.Model is not mutable"))
-	case "inference.inference.Model.output_price_in_ai_tokens":
-		panic(fmt.Errorf("field output_price_in_ai_tokens of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.coins_per_input_token":
+		panic(fmt.Errorf("field coins_per_input_token of message inference.inference.Model is not mutable"))
+	case "inference.inference.Model.coins_per_output_token":
+		panic(fmt.Errorf("field coins_per_output_token of message inference.inference.Model is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Model"))
@@ -325,13 +325,13 @@ func (x *fastReflection_Model) NewField(fd protoreflect.FieldDescriptor) protore
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Model.units_of_compute_per_token":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Model.context_in_ai_tokens":
+	case "inference.inference.Model.context_window":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.Model.quantization":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.Model.input_price_in_ai_tokens":
+	case "inference.inference.Model.coins_per_input_token":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.Model.output_price_in_ai_tokens":
+	case "inference.inference.Model.coins_per_output_token":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
@@ -413,18 +413,18 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 		if x.UnitsOfComputePerToken != 0 {
 			n += 1 + runtime.Sov(uint64(x.UnitsOfComputePerToken))
 		}
-		if x.ContextInAiTokens != 0 {
-			n += 1 + runtime.Sov(uint64(x.ContextInAiTokens))
+		if x.ContextWindow != 0 {
+			n += 1 + runtime.Sov(uint64(x.ContextWindow))
 		}
 		l = len(x.Quantization)
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.InputPriceInAiTokens != 0 {
-			n += 1 + runtime.Sov(uint64(x.InputPriceInAiTokens))
+		if x.CoinsPerInputToken != 0 {
+			n += 1 + runtime.Sov(uint64(x.CoinsPerInputToken))
 		}
-		if x.OutputPriceInAiTokens != 0 {
-			n += 1 + runtime.Sov(uint64(x.OutputPriceInAiTokens))
+		if x.CoinsPerOutputToken != 0 {
+			n += 1 + runtime.Sov(uint64(x.CoinsPerOutputToken))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -455,13 +455,13 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.OutputPriceInAiTokens != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.OutputPriceInAiTokens))
+		if x.CoinsPerOutputToken != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinsPerOutputToken))
 			i--
 			dAtA[i] = 0x38
 		}
-		if x.InputPriceInAiTokens != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.InputPriceInAiTokens))
+		if x.CoinsPerInputToken != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CoinsPerInputToken))
 			i--
 			dAtA[i] = 0x30
 		}
@@ -472,8 +472,8 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x2a
 		}
-		if x.ContextInAiTokens != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ContextInAiTokens))
+		if x.ContextWindow != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ContextWindow))
 			i--
 			dAtA[i] = 0x20
 		}
@@ -630,9 +630,9 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 				}
 			case 4:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContextInAiTokens", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ContextWindow", wireType)
 				}
-				x.ContextInAiTokens = 0
+				x.ContextWindow = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -642,7 +642,7 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.ContextInAiTokens |= uint64(b&0x7F) << shift
+					x.ContextWindow |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -681,9 +681,9 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 6:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field InputPriceInAiTokens", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CoinsPerInputToken", wireType)
 				}
-				x.InputPriceInAiTokens = 0
+				x.CoinsPerInputToken = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -693,16 +693,16 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.InputPriceInAiTokens |= uint64(b&0x7F) << shift
+					x.CoinsPerInputToken |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
 			case 7:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field OutputPriceInAiTokens", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CoinsPerOutputToken", wireType)
 				}
-				x.OutputPriceInAiTokens = 0
+				x.CoinsPerOutputToken = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -712,7 +712,7 @@ func (x *fastReflection_Model) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.OutputPriceInAiTokens |= uint64(b&0x7F) << shift
+					x.CoinsPerOutputToken |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -773,10 +773,10 @@ type Model struct {
 	ProposedBy             string `protobuf:"bytes,1,opt,name=proposed_by,json=proposedBy,proto3" json:"proposed_by,omitempty"`
 	Id                     string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	UnitsOfComputePerToken uint64 `protobuf:"varint,3,opt,name=units_of_compute_per_token,json=unitsOfComputePerToken,proto3" json:"units_of_compute_per_token,omitempty"`
-	ContextInAiTokens      uint64 `protobuf:"varint,4,opt,name=context_in_ai_tokens,json=contextInAiTokens,proto3" json:"context_in_ai_tokens,omitempty"`
+	ContextWindow          uint64 `protobuf:"varint,4,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
 	Quantization           string `protobuf:"bytes,5,opt,name=quantization,proto3" json:"quantization,omitempty"`
-	InputPriceInAiTokens   uint64 `protobuf:"varint,6,opt,name=input_price_in_ai_tokens,json=inputPriceInAiTokens,proto3" json:"input_price_in_ai_tokens,omitempty"`
-	OutputPriceInAiTokens  uint64 `protobuf:"varint,7,opt,name=output_price_in_ai_tokens,json=outputPriceInAiTokens,proto3" json:"output_price_in_ai_tokens,omitempty"`
+	CoinsPerInputToken     uint64 `protobuf:"varint,6,opt,name=coins_per_input_token,json=coinsPerInputToken,proto3" json:"coins_per_input_token,omitempty"`
+	CoinsPerOutputToken    uint64 `protobuf:"varint,7,opt,name=coins_per_output_token,json=coinsPerOutputToken,proto3" json:"coins_per_output_token,omitempty"`
 }
 
 func (x *Model) Reset() {
@@ -820,9 +820,9 @@ func (x *Model) GetUnitsOfComputePerToken() uint64 {
 	return 0
 }
 
-func (x *Model) GetContextInAiTokens() uint64 {
+func (x *Model) GetContextWindow() uint64 {
 	if x != nil {
-		return x.ContextInAiTokens
+		return x.ContextWindow
 	}
 	return 0
 }
@@ -834,16 +834,16 @@ func (x *Model) GetQuantization() string {
 	return ""
 }
 
-func (x *Model) GetInputPriceInAiTokens() uint64 {
+func (x *Model) GetCoinsPerInputToken() uint64 {
 	if x != nil {
-		return x.InputPriceInAiTokens
+		return x.CoinsPerInputToken
 	}
 	return 0
 }
 
-func (x *Model) GetOutputPriceInAiTokens() uint64 {
+func (x *Model) GetCoinsPerOutputToken() uint64 {
 	if x != nil {
-		return x.OutputPriceInAiTokens
+		return x.CoinsPerOutputToken
 	}
 	return 0
 }
@@ -854,39 +854,38 @@ var file_inference_inference_model_proto_rawDesc = []byte{
 	0x0a, 0x1f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74,
 	0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xbb, 0x02, 0x0a, 0x05, 0x4d, 0x6f, 0x64, 0x65, 0x6c,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0xa7, 0x02, 0x0a, 0x05, 0x4d, 0x6f, 0x64, 0x65, 0x6c,
 	0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18,
 	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x72, 0x6f, 0x70, 0x6f, 0x73, 0x65, 0x64, 0x42,
 	0x79, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x02, 0x69,
 	0x64, 0x12, 0x3a, 0x0a, 0x1a, 0x75, 0x6e, 0x69, 0x74, 0x73, 0x5f, 0x6f, 0x66, 0x5f, 0x63, 0x6f,
 	0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18,
 	0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x16, 0x75, 0x6e, 0x69, 0x74, 0x73, 0x4f, 0x66, 0x43, 0x6f,
-	0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x65, 0x72, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x2f, 0x0a,
-	0x14, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x78, 0x74, 0x5f, 0x69, 0x6e, 0x5f, 0x61, 0x69, 0x5f, 0x74,
-	0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x63, 0x6f, 0x6e,
-	0x74, 0x65, 0x78, 0x74, 0x49, 0x6e, 0x41, 0x69, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x22,
-	0x0a, 0x0c, 0x71, 0x75, 0x61, 0x6e, 0x74, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x05,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x71, 0x75, 0x61, 0x6e, 0x74, 0x69, 0x7a, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x12, 0x36, 0x0a, 0x18, 0x69, 0x6e, 0x70, 0x75, 0x74, 0x5f, 0x70, 0x72, 0x69, 0x63,
-	0x65, 0x5f, 0x69, 0x6e, 0x5f, 0x61, 0x69, 0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x06,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x14, 0x69, 0x6e, 0x70, 0x75, 0x74, 0x50, 0x72, 0x69, 0x63, 0x65,
-	0x49, 0x6e, 0x41, 0x69, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x12, 0x38, 0x0a, 0x19, 0x6f, 0x75,
-	0x74, 0x70, 0x75, 0x74, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x5f, 0x69, 0x6e, 0x5f, 0x61, 0x69,
-	0x5f, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x73, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x15, 0x6f,
-	0x75, 0x74, 0x70, 0x75, 0x74, 0x50, 0x72, 0x69, 0x63, 0x65, 0x49, 0x6e, 0x41, 0x69, 0x54, 0x6f,
-	0x6b, 0x65, 0x6e, 0x73, 0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x42, 0x0a, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24,
-	0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42,
-	0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62,
-	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6d, 0x70, 0x75, 0x74, 0x65, 0x50, 0x65, 0x72, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x25, 0x0a,
+	0x0e, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x78, 0x74, 0x5f, 0x77, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x18,
+	0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x63, 0x6f, 0x6e, 0x74, 0x65, 0x78, 0x74, 0x57, 0x69,
+	0x6e, 0x64, 0x6f, 0x77, 0x12, 0x22, 0x0a, 0x0c, 0x71, 0x75, 0x61, 0x6e, 0x74, 0x69, 0x7a, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x71, 0x75, 0x61, 0x6e,
+	0x74, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x31, 0x0a, 0x15, 0x63, 0x6f, 0x69, 0x6e,
+	0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x69, 0x6e, 0x70, 0x75, 0x74, 0x5f, 0x74, 0x6f, 0x6b, 0x65,
+	0x6e, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x63, 0x6f, 0x69, 0x6e, 0x73, 0x50, 0x65,
+	0x72, 0x49, 0x6e, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e, 0x12, 0x33, 0x0a, 0x16, 0x63,
+	0x6f, 0x69, 0x6e, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x5f,
+	0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x63, 0x6f, 0x69,
+	0x6e, 0x73, 0x50, 0x65, 0x72, 0x4f, 0x75, 0x74, 0x70, 0x75, 0x74, 0x54, 0x6f, 0x6b, 0x65, 0x6e,
+	0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x4d, 0x6f,
+	0x64, 0x65, 0x6c, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
+	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
+	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x33,
 }
 
 var (

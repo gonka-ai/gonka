@@ -32,13 +32,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, err
 	}
 	k.SetInference(ctx, *finalInference)
-	err = k.SetDeveloperStats(ctx, *finalInference)
-	if err != nil {
-		k.LogError("error setting developer stat", types.Stat, err)
-	} else {
-		k.LogInfo("updated developer stat", types.Stat, "inference_id", existingInference.InferenceId, "inference_status", existingInference.Status.String(), "developer", existingInference.RequestedBy)
-	}
-
 	if existingInference.IsCompleted() {
 		err := k.handleInferenceCompleted(ctx, &existingInference)
 		if err != nil {

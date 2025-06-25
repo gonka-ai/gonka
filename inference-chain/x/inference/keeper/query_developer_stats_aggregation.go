@@ -24,11 +24,11 @@ func (k Keeper) StatsByTimePeriodByDeveloper(ctx context.Context, req *types.Que
 	}
 
 	if req.TimeTo == 0 {
-		req.TimeTo = time.Now().UTC().UnixMilli()
+		req.TimeTo = time.Now().UnixMilli()
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	k.LogInfo("StatsByTimePeriodByDeveloper", types.Stat, "developer", req.Developer, "time_from", req.TimeFrom, "time_to", req.TimeTo)
@@ -62,11 +62,11 @@ func (k Keeper) InferencesAndTokensStatsByTimePeriod(ctx context.Context, req *t
 	}
 
 	if req.TimeTo == 0 {
-		req.TimeTo = time.Now().UTC().UnixMilli()
+		req.TimeTo = time.Now().UnixMilli()
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	k.LogInfo("InferencesAndTokensStatsByTimePeriod", types.Stat, "time_from", req.TimeFrom, "time_to", req.TimeTo)
@@ -84,11 +84,11 @@ func (k Keeper) InferencesAndTokensStatsByModels(ctx context.Context, req *types
 	}
 
 	if req.TimeTo == 0 {
-		req.TimeTo = time.Now().UTC().UnixMilli()
+		req.TimeTo = time.Now().UnixMilli()
 	}
 
 	if req.TimeFrom == 0 {
-		req.TimeFrom = time.Now().UTC().Add(defaultTimePeriod).UnixMilli()
+		req.TimeFrom = time.Now().Add(defaultTimePeriod).UnixMilli()
 	}
 
 	stats := make([]*types.ModelStats, 0)

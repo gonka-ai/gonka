@@ -89,11 +89,11 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			EpochId:   epochId1,
 			Timestamp: inference1Developer1.StartBlockTimestamp,
 			Inference: &types.InferenceStats{
-				InferenceId:        inference1Developer1.InferenceId,
-				Status:             inference1Developer1.Status,
-				AiTokensUsed:       inference1Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount,
-				Model:              inference1Developer1.Model,
-				ActualConstInCoins: inference1Developer1.ActualCost,
+				InferenceId:       inference1Developer1.InferenceId,
+				Status:            inference1Developer1.Status,
+				TotalTokenCount:   inference1Developer1.PromptTokenCount + inference1Developer1.CompletionTokenCount,
+				Model:             inference1Developer1.Model,
+				ActualCostInCoins: inference1Developer1.ActualCost,
 			},
 		},
 		inference2Developer1.InferenceId: {
@@ -103,9 +103,9 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 				InferenceId:         inference2Developer1.InferenceId,
 				EpochPocBlockHeight: inference2Developer1.EpochGroupId,
 				Status:              inference2Developer1.Status,
-				AiTokensUsed:        inference2Developer1.PromptTokenCount + inference2Developer1.CompletionTokenCount,
+				TotalTokenCount:     inference2Developer1.PromptTokenCount + inference2Developer1.CompletionTokenCount,
 				Model:               inference2Developer1.Model,
-				ActualConstInCoins:  inference2Developer1.ActualCost,
+				ActualCostInCoins:   inference2Developer1.ActualCost,
 			},
 		},
 		inference1Developer2.InferenceId: {
@@ -115,20 +115,20 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 				InferenceId:         inference1Developer2.InferenceId,
 				EpochPocBlockHeight: inference2Developer1.EpochGroupId,
 				Status:              inference1Developer2.Status,
-				AiTokensUsed:        inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount,
+				TotalTokenCount:     inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount,
 				Model:               inference1Developer2.Model,
-				ActualConstInCoins:  inference1Developer2.ActualCost,
+				ActualCostInCoins:   inference1Developer2.ActualCost,
 			},
 		},
 		inference2Developer2.InferenceId: {
 			EpochId:   epochId3,
 			Timestamp: inference2Developer2.StartBlockTimestamp,
 			Inference: &types.InferenceStats{
-				InferenceId:        inference2Developer2.InferenceId,
-				Status:             inference2Developer2.Status,
-				AiTokensUsed:       inference2Developer2.PromptTokenCount + inference2Developer2.CompletionTokenCount,
-				Model:              inference2Developer2.Model,
-				ActualConstInCoins: inference2Developer2.ActualCost,
+				InferenceId:       inference2Developer2.InferenceId,
+				Status:            inference2Developer2.Status,
+				TotalTokenCount:   inference2Developer2.PromptTokenCount + inference2Developer2.CompletionTokenCount,
+				Model:             inference2Developer2.Model,
+				ActualCostInCoins: inference2Developer2.ActualCost,
 			},
 		},
 	}
@@ -323,18 +323,18 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		statsByTime := keeper.GetDeveloperStatsByTime(ctx, developer1, time.Now().Add(-time.Second*2).UnixMilli(), time.Now().UnixMilli())
 		assert.Equal(t, 2, len(statsByTime))
 		assert.Equal(t, statsByTime[0].Inference, &types.InferenceStats{
-			InferenceId:        inference1.InferenceId,
-			Status:             inference1.Status,
-			AiTokensUsed:       inference1.PromptTokenCount + inference1.CompletionTokenCount,
-			Model:              inference1.Model,
-			ActualConstInCoins: inference1.ActualCost,
+			InferenceId:       inference1.InferenceId,
+			Status:            inference1.Status,
+			TotalTokenCount:   inference1.PromptTokenCount + inference1.CompletionTokenCount,
+			Model:             inference1.Model,
+			ActualCostInCoins: inference1.ActualCost,
 		})
 		assert.Equal(t, statsByTime[1].Inference, &types.InferenceStats{
-			InferenceId:        inference2.InferenceId,
-			Status:             inference2.Status,
-			AiTokensUsed:       inference2.PromptTokenCount + inference2.CompletionTokenCount,
-			Model:              inference2.Model,
-			ActualConstInCoins: inference2.ActualCost,
+			InferenceId:       inference2.InferenceId,
+			Status:            inference2.Status,
+			TotalTokenCount:   inference2.PromptTokenCount + inference2.CompletionTokenCount,
+			Model:             inference2.Model,
+			ActualCostInCoins: inference2.ActualCost,
 		})
 	})
 
@@ -356,7 +356,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			InferenceId:         inference.InferenceId,
 			EpochPocBlockHeight: inference.EpochGroupId,
 			Status:              inference.Status,
-			AiTokensUsed:        inference.PromptTokenCount + inference.CompletionTokenCount,
+			TotalTokenCount:     inference.PromptTokenCount + inference.CompletionTokenCount,
 			Model:               inference.Model,
 		}
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
@@ -380,9 +380,9 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			InferenceId:         inference.InferenceId,
 			EpochPocBlockHeight: epochId2,
 			Status:              types.InferenceStatus_FINISHED,
-			AiTokensUsed:        inference.PromptTokenCount + inference.CompletionTokenCount,
+			TotalTokenCount:     inference.PromptTokenCount + inference.CompletionTokenCount,
 			Model:               inference.Model,
-			ActualConstInCoins:  actualCost,
+			ActualCostInCoins:   actualCost,
 		}
 
 		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)

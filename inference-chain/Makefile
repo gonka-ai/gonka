@@ -123,6 +123,11 @@ build-for-upgrade:
 	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
+	$(eval PLATFORM=linux/arm64)
+	$(eval GOOS=linux)
+	$(eval GOARCH=arm64)
+	$(eval DOCKER_FILE=Dockerfile)
+	$(DOCKER_BUILD_UPGRADE)
 	@mkdir -p build
 	@echo "--> building inferenced for ARM64 using direct Go cross-compilation"
 	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(ldflags)" -o ./build/inferenced-arm64 ./cmd/inferenced/main.go

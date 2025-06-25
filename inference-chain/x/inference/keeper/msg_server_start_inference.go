@@ -40,13 +40,6 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 		return nil, err
 	}
 	k.SetInference(ctx, *finalInference)
-	err = k.SetDeveloperStats(ctx, *finalInference)
-	if err != nil {
-		k.LogError("error setting developer stat", types.Stat, err)
-	} else {
-		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
-	}
-
 	k.addTimeout(ctx, inference)
 
 	if inference.IsCompleted() {

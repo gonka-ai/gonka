@@ -9,13 +9,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const (
-	DevelopersByEpoch             = "developers/epoch"
-	DevelopersByTime              = "developers/time"
-	DevelopersByInference         = "developers/inference"
-	DevelopersByInferenceAndModel = "developers/inference/model"
-)
-
 type StatsSummary struct {
 	InferenceCount int
 	TokensUsed     int64
@@ -36,111 +29,25 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		inferenceTime = inference.EndBlockTimestamp
 	}
 
-	inferenceStats := &types.InferenceStats{
+	inferenceStats := types.InferenceStats{
 		EpochPocBlockHeight: inference.EpochGroupId,
 		InferenceId:         inference.InferenceId,
 		Status:              inference.Status,
-		AiTokensUsed:        tokens,
+		TotalTokenCount:     tokens,
 		Model:               inference.Model,
-		ActualConstInCoins:  inference.ActualCost,
+		ActualCostInCoins:   inference.ActualCost,
 	}
 
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	byInferenceStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByInference))
-	byTimeStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByTime))
-	byModelsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByInferenceAndModel))
-
-	timeKey := byInferenceStore.Get([]byte(inference.InferenceId))
-	if timeKey == nil {
-		// completely new record
-		k.LogInfo("completely new record, create record by time", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
-		timeKey = developerByTimeAndInferenceKey(inference.RequestedBy, uint64(inferenceTime), inference.InferenceId)
-		byTimeStore.Set(timeKey, k.cdc.MustMarshal(&types.DeveloperStatsByTime{
-			EpochId:   currentEpochId,
-			Timestamp: inferenceTime,
-			Inference: inferenceStats,
-		}))
-		byInferenceStore.Set([]byte(inference.InferenceId), timeKey)
-		modelKey := modelByTimeKey(inference.Model, inferenceTime, inference.InferenceId)
-		byModelsStore.Set(modelKey, timeKey)
-		return k.setStatByEpoch(ctx, inference, currentEpochId, 0)
+	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, currentEpochId)
+	if err != nil {
+		return err
 	}
-
-	var (
-		statsByTime types.DeveloperStatsByTime
-		prevEpochId uint64
-	)
-	if val := byTimeStore.Get(timeKey); val != nil {
-		k.LogInfo("record found by time key", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
-		k.cdc.MustUnmarshal(val, &statsByTime)
-		prevEpochId = statsByTime.EpochId
-
-		statsByTime.EpochId = currentEpochId
-		statsByTime.Inference.Status = inference.Status
-		statsByTime.Inference.AiTokensUsed = tokens
-		statsByTime.Inference.EpochPocBlockHeight = inference.EpochGroupId
-		statsByTime.Inference.ActualConstInCoins = inference.ActualCost
-	} else {
-		k.LogInfo("time key exists, record DO NOT exist", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy)
-		statsByTime = types.DeveloperStatsByTime{
-			EpochId:   currentEpochId,
-			Timestamp: inferenceTime,
-			Inference: inferenceStats,
-		}
-	}
-	byTimeStore.Set(timeKey, k.cdc.MustMarshal(&statsByTime))
-	byInferenceStore.Set([]byte(inference.InferenceId), timeKey)
-
-	modelKey := modelByTimeKey(inference.Model, inferenceTime, inference.InferenceId)
-	byModelsStore.Set(modelKey, timeKey)
-	return k.setStatByEpoch(ctx, inference, currentEpochId, prevEpochId)
-}
-
-func (k Keeper) setStatByEpoch(
-	ctx context.Context,
-	inference types.Inference,
-	currentEpochId uint64,
-	previouslyKnownEpochId uint64,
-) error {
-	k.LogInfo("stat set by epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId, "previously_known_epoch_id", previouslyKnownEpochId)
-	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByEpoch))
-
-	// === CASE 1: inference already exists, but was tagged by different epoch ===
-	if previouslyKnownEpochId != 0 && previouslyKnownEpochId != currentEpochId {
-		k.LogInfo("stat set by epoch: inference already exists, but was tagged by different epoch, clean up", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-		oldKey := developerByEpochKey(inference.RequestedBy, previouslyKnownEpochId)
-		if bz := epochStore.Get(oldKey); bz != nil {
-			var oldStats types.DeveloperStatsByEpoch
-			k.cdc.MustUnmarshal(bz, &oldStats)
-
-			oldStats.InferenceIds = removeInferenceId(oldStats.InferenceIds, inference.InferenceId)
-			epochStore.Set(oldKey, k.cdc.MustMarshal(&oldStats))
-		}
-	}
-
-	// === CASE 2: create new record or update existing with current_epoch_id ===
-	k.LogInfo("stat set by epoch: new record or same epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
-	newKey := developerByEpochKey(inference.RequestedBy, currentEpochId)
-	var newStats types.DeveloperStatsByEpoch
-	if bz := epochStore.Get(newKey); bz != nil {
-		k.cdc.MustUnmarshal(bz, &newStats)
-		if newStats.InferenceIds == nil {
-			newStats.InferenceIds = make([]string, 0)
-		}
-	} else {
-		newStats = types.DeveloperStatsByEpoch{
-			EpochId:      currentEpochId,
-			InferenceIds: make([]string, 0),
-		}
-	}
-
-	newStats.InferenceIds = append(newStats.InferenceIds, inference.InferenceId)
-	epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
-	k.LogInfo("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", inference.InferenceId, "developer", inference.RequestedBy, "epoch_id", currentEpochId)
+	k.setInferenceStatsByModel(ctx, inference.RequestedBy, inferenceStats, inferenceTime)
+	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, currentEpochId, inferencePrevEpochId)
 	return nil
 }
 
+// PRTODO: refactor it later (move ”getter' logic to store level)
 func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
@@ -204,9 +111,9 @@ func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSumma
 
 		var stats types.DeveloperStatsByTime
 		k.cdc.MustUnmarshal(iterator.Value(), &stats)
-		summary.TokensUsed += int64(stats.Inference.AiTokensUsed)
+		summary.TokensUsed += int64(stats.Inference.TotalTokenCount)
 		summary.InferenceCount++
-		summary.ActualCost += stats.Inference.ActualConstInCoins
+		summary.ActualCost += stats.Inference.ActualCostInCoins
 	}
 	return summary
 }
@@ -253,9 +160,9 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
 				k.cdc.MustUnmarshal(val, &statsByTime)
-				summary.TokensUsed += int64(statsByTime.Inference.AiTokensUsed)
+				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
-				summary.ActualCost += statsByTime.Inference.ActualConstInCoins
+				summary.ActualCost += statsByTime.Inference.ActualCostInCoins
 			} else {
 				k.LogError("inconsistent statistic: time key exists without inference object", types.Stat, "inference", infId)
 				continue
@@ -304,9 +211,9 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 			var statsByTime types.DeveloperStatsByTime
 			if val := byTimeStore.Get(timeKey); val != nil {
 				k.cdc.MustUnmarshal(val, &statsByTime)
-				summary.TokensUsed += int64(statsByTime.Inference.AiTokensUsed)
+				summary.TokensUsed += int64(statsByTime.Inference.TotalTokenCount)
 				summary.InferenceCount++
-				summary.ActualCost += statsByTime.Inference.ActualConstInCoins
+				summary.ActualCost += statsByTime.Inference.ActualCostInCoins
 			} else {
 				k.LogError("inconsistent statistic: time key exists without inference object", types.Stat, "inference", infId)
 				continue
@@ -344,8 +251,8 @@ func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) ma
 			s = StatsSummary{}
 		}
 		s.InferenceCount++
-		s.TokensUsed += int64(stat.Inference.AiTokensUsed)
-		s.ActualCost += stat.Inference.ActualConstInCoins
+		s.TokensUsed += int64(stat.Inference.TotalTokenCount)
+		s.ActualCost += stat.Inference.ActualCostInCoins
 		stats[model] = s
 	}
 	return stats
