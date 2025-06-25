@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"decentralized-api/chainphase"
 	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -22,6 +23,11 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 
 func (c StartPocCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
+
+	if !c.shouldExecute(b, epochState) {
+		logging.Info("Skipping StartPocCommand execution, all nodes already have the desired intended status", types.PoC)
+		return
+	}
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
@@ -46,6 +52,25 @@ func (c StartPocCommand) Execute(b *Broker) {
 	c.Response <- true
 }
 
+func (c StartPocCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, node := range b.nodes {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
+			node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
+			return true
+		}
+
+		if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+			node.State.PocIntendedStatus != PocStatusGenerating {
+			return true
+		}
+	}
+
+	return false
+}
+
 type InitValidateCommand struct {
 	Response chan bool
 }
@@ -62,6 +87,11 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 
 func (c InitValidateCommand) Execute(b *Broker) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+
+	if !c.shouldExecute(b, epochPhaseInfo) {
+		logging.Info("Skipping InitValidateCommand execution, all nodes already have the desired intended status", types.PoC)
+		return
+	}
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
@@ -86,6 +116,25 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	c.Response <- true
 }
 
+func (c InitValidateCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, node := range b.nodes {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
+			node.State.IntendedStatus != types.HardwareNodeStatus_POC {
+			return true
+		}
+
+		if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+			node.State.PocIntendedStatus != PocStatusValidating {
+			return true
+		}
+	}
+
+	return false
+}
+
 type InferenceUpAllCommand struct {
 	Response chan bool
 }
@@ -102,6 +151,11 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
+
+	if !c.shouldExecute(b, epochState) {
+		logging.Info("Skipping InferenceUpAllCommand execution, all nodes already have the desired intended status", types.Nodes)
+		return
+	}
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
@@ -136,4 +190,26 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	b.TriggerReconciliation()
 	logging.Info("InferenceUpAllCommand completed, reconciliation triggered", types.Nodes)
 	c.Response <- true
+}
+
+func (c InferenceUpAllCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, node := range b.nodes {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
+			node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
+			continue
+		}
+
+		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
+			continue
+		}
+
+		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+			return true
+		}
+	}
+
+	return false
 }
