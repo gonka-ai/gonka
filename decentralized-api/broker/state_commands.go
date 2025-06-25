@@ -30,6 +30,15 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 	epochState := b.phaseTracker.GetCurrentEpochState()
 
+	if epochState.CurrentPhase != types.PoCGeneratePhase {
+		logging.Warn("StartPocCommand: skipping outdated command execution. current phase isn't PoCGeneratePhase", types.PoC,
+			"current_phase", epochState.CurrentPhase,
+			"current_block_height", epochState.CurrentBlock.Height,
+			"epoch_index", epochState.LatestEpoch.EpochIndex,
+			"epoch_start_block_height", epochState.LatestEpoch.PocStartBlockHeight)
+		return
+	}
+
 	if !c.shouldMutateState(b, epochState) {
 		logging.Info("StartPocCommand: all nodes already have the desired intended status", types.PoC)
 		return
@@ -96,6 +105,14 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	}()
 
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+	if epochPhaseInfo.CurrentPhase != types.PoCValidatePhase {
+		logging.Warn("InitValidateCommand: skipping outdated command execution. current phase isn't PoCValidatePhase", types.PoC,
+			"current_phase", epochPhaseInfo.CurrentPhase,
+			"current_block_height", epochPhaseInfo.CurrentBlock.Height,
+			"epoch_index", epochPhaseInfo.LatestEpoch.EpochIndex,
+			"epoch_start_block_height", epochPhaseInfo.LatestEpoch.PocStartBlockHeight)
+		return
+	}
 
 	if !c.shouldMutateState(b, epochPhaseInfo) {
 		logging.Info("InitValidateCommand: all nodes already have the desired intended status", types.PoC)
@@ -163,6 +180,14 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	}()
 
 	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.CurrentPhase != types.InferencePhase {
+		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. current phase isn't InferencePhase", types.Nodes,
+			"current_phase", epochState.CurrentPhase,
+			"current_block_height", epochState.CurrentBlock.Height,
+			"epoch_index", epochState.LatestEpoch.EpochIndex,
+			"epoch_start_block_height", epochState.LatestEpoch.PocStartBlockHeight)
+		return
+	}
 
 	if !c.shouldMutateState(b, epochState) {
 		logging.Info("InferenceUpAllCommand: all nodes already have the desired intended status", types.Nodes)
