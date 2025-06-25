@@ -395,40 +395,51 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 
 	var leastBusyNode *NodeWithState = nil
 	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+		// TODO: log some kind of a reason as to why the node is not available
+		if available, reason := b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
 			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
 				leastBusyNode = node
 			}
+		} else {
+			logging.Info("Node not available", types.Nodes, "node_id", node.Node.Id, "reason", reason)
 		}
 	}
 
 	return leastBusyNode
 }
 
-func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) bool {
-	available := node.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
-		node.State.ReconcileInfo == nil &&
-		node.State.LockCount < node.Node.MaxConcurrent
-	if !available {
-		return false
+type NodeNotAvailableReason = string
+
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
+		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
+	}
+
+	if node.State.ReconcileInfo != nil {
+		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
+	}
+
+	if node.State.LockCount > node.Node.MaxConcurrent {
+		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
 	}
 
 	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
-		return false
+		return false, fmt.Sprintf("Node is administratively disabled: currentEpoch=%v, currentPhase=%s, adminState = %v", currentEpoch, currentPhase, node.State.AdminState)
 	}
 
 	if version != "" && node.Node.Version != version {
-		return false
+		return false, fmt.Sprintf("Node version mismatch: expected %s, got %s", version, node.Node.Version)
 	}
 
 	_, found := node.Node.Models[neededModel]
 	if !found {
 		logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
+		return false, fmt.Sprintf("Node does not have model %s", neededModel)
 	} else {
 		logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
+		return true, ""
 	}
-	return found
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
