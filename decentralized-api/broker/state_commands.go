@@ -23,10 +23,15 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartPocCommand) Execute(b *Broker) {
+	defer func() {
+		logging.Info("StartPocCommand: completed, reconciliation triggered", types.PoC)
+		b.TriggerReconciliation()
+	}()
+
 	epochState := b.phaseTracker.GetCurrentEpochState()
 
-	if !c.shouldExecute(b, epochState) {
-		logging.Info("Skipping StartPocCommand execution, all nodes already have the desired intended status", types.PoC)
+	if !c.shouldMutateState(b, epochState) {
+		logging.Info("StartPocCommand: all nodes already have the desired intended status", types.PoC)
 		return
 	}
 
@@ -48,12 +53,10 @@ func (c StartPocCommand) Execute(b *Broker) {
 	}
 	b.mu.Unlock()
 
-	b.TriggerReconciliation()
-	logging.Info("StartPocCommand completed, reconciliation triggered", types.PoC)
 	c.Response <- true
 }
 
-func (c StartPocCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.EpochState) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -87,10 +90,15 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InitValidateCommand) Execute(b *Broker) {
+	defer func() {
+		logging.Info("InitValidateCommand: completed, reconciliation triggered for PoC validation", types.PoC)
+		b.TriggerReconciliation()
+	}()
+
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
 
-	if !c.shouldExecute(b, epochPhaseInfo) {
-		logging.Info("Skipping InitValidateCommand execution, all nodes already have the desired intended status", types.PoC)
+	if !c.shouldMutateState(b, epochPhaseInfo) {
+		logging.Info("InitValidateCommand: all nodes already have the desired intended status", types.PoC)
 		return
 	}
 
@@ -112,12 +120,10 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	}
 	b.mu.Unlock()
 
-	b.TriggerReconciliation()
-	logging.Info("InitValidateCommand completed, reconciliation triggered for PoC validation", types.PoC)
 	c.Response <- true
 }
 
-func (c InitValidateCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase.EpochState) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -151,10 +157,15 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
+	defer func() {
+		logging.Info("InferenceUpAllCommand: completed, reconciliation triggered", types.Nodes)
+		b.TriggerReconciliation()
+	}()
+
 	epochState := b.phaseTracker.GetCurrentEpochState()
 
-	if !c.shouldExecute(b, epochState) {
-		logging.Info("Skipping InferenceUpAllCommand execution, all nodes already have the desired intended status", types.Nodes)
+	if !c.shouldMutateState(b, epochState) {
+		logging.Info("InferenceUpAllCommand: all nodes already have the desired intended status", types.Nodes)
 		return
 	}
 
@@ -188,12 +199,11 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	}
 	b.mu.Unlock()
 
-	b.TriggerReconciliation()
 	logging.Info("InferenceUpAllCommand completed, reconciliation triggered", types.Nodes)
 	c.Response <- true
 }
 
-func (c InferenceUpAllCommand) shouldExecute(b *Broker, epochState *chainphase.EpochState) bool {
+func (c InferenceUpAllCommand) shouldMutateState(b *Broker, epochState *chainphase.EpochState) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
