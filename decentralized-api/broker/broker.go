@@ -432,16 +432,20 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version 
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if node, ok := b.nodes[command.NodeId]; !ok {
+	b.mu.RLock()
+	node, ok := b.nodes[command.NodeId]
+	b.mu.RUnlock()
+
+	if !ok {
 		command.Response <- false
 		return
 	} else {
 		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
 			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			node.State.Failure("Inference failed")
+			// FIXME: need a write lock here?
+			//  not sure if we should update the state, we have health checks for that
+			// node.State.Failure("Inference failed")
 		}
 	}
 	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
