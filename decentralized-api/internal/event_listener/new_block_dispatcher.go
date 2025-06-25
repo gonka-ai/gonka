@@ -154,6 +154,13 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return err // Skip processing this block
 	}
 
+	// Let's check in prod how often this happens
+	if networkInfo.BlockHeight != blockInfo.Height {
+		logging.Warn("Block height mismatch between event and network query", types.Stages,
+			"event_height", blockInfo.Height,
+			"network_height", networkInfo.BlockHeight)
+	}
+
 	// 2. Update phase tracker and get phase info
 	// FIXME: It looks like a problem that queries are separate inside networkInfo, and blockInfo
 	// 	comes from a totally different source?
