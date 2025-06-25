@@ -419,7 +419,7 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version 
 		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
 	}
 
-	if node.State.LockCount > node.Node.MaxConcurrent {
+	if node.State.LockCount >= node.Node.MaxConcurrent {
 		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
 	}
 
@@ -703,25 +703,22 @@ func (b *Broker) reconcilerLoop() {
 	for {
 		select {
 		case <-b.reconcileTrigger:
-			epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
-			if !epochPhaseInfo.IsSynced {
-				logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
-				continue
-			}
-
-			logging.Info("Reconciliation triggered manually", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
-			b.reconcile(*epochPhaseInfo)
+			b.reconcileIfSynced("Reconciliation triggered manually")
 		case <-ticker.C:
-			epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
-			if !epochPhaseInfo.IsSynced {
-				logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
-				continue
-			}
-
-			logging.Info("Periodic reconciliation triggered", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
-			b.reconcile(*epochPhaseInfo)
+			b.reconcileIfSynced("Reconciliation triggered by timer")
 		}
 	}
+}
+
+func (b *Broker) reconcileIfSynced(triggerMsg string) {
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+	if !epochPhaseInfo.IsSynced {
+		logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+		return
+	}
+
+	logging.Info(triggerMsg, types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+	b.reconcile(*epochPhaseInfo)
 }
 
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
