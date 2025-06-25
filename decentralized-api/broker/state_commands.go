@@ -27,11 +27,6 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 // 	for now we keep them separate for clarity and future extensibility
 
 func (c StartPocCommand) Execute(b *Broker) {
-	defer func() {
-		logging.Info("StartPocCommand: completed, reconciliation triggered", types.PoC)
-		b.TriggerReconciliation()
-	}()
-
 	epochState := b.phaseTracker.GetCurrentEpochState()
 
 	if epochState.CurrentPhase != types.PoCGeneratePhase {
@@ -42,6 +37,11 @@ func (c StartPocCommand) Execute(b *Broker) {
 			"epoch_start_block_height", epochState.LatestEpoch.PocStartBlockHeight)
 		return
 	}
+
+	defer func() {
+		logging.Info("StartPocCommand: completed, reconciliation triggered", types.PoC)
+		b.TriggerReconciliation()
+	}()
 
 	if !c.shouldMutateState(b, epochState) {
 		logging.Info("StartPocCommand: all nodes already have the desired intended status", types.PoC)
@@ -103,12 +103,8 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InitValidateCommand) Execute(b *Broker) {
-	defer func() {
-		logging.Info("InitValidateCommand: completed, reconciliation triggered for PoC validation", types.PoC)
-		b.TriggerReconciliation()
-	}()
-
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+
 	if epochPhaseInfo.CurrentPhase != types.PoCValidatePhase {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. current phase isn't PoCValidatePhase", types.PoC,
 			"current_phase", epochPhaseInfo.CurrentPhase,
@@ -117,6 +113,11 @@ func (c InitValidateCommand) Execute(b *Broker) {
 			"epoch_start_block_height", epochPhaseInfo.LatestEpoch.PocStartBlockHeight)
 		return
 	}
+
+	defer func() {
+		logging.Info("InitValidateCommand: completed, reconciliation triggered for PoC validation", types.PoC)
+		b.TriggerReconciliation()
+	}()
 
 	if !c.shouldMutateState(b, epochPhaseInfo) {
 		logging.Info("InitValidateCommand: all nodes already have the desired intended status", types.PoC)
@@ -178,12 +179,8 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
-	defer func() {
-		logging.Info("InferenceUpAllCommand: completed, reconciliation triggered", types.Nodes)
-		b.TriggerReconciliation()
-	}()
-
 	epochState := b.phaseTracker.GetCurrentEpochState()
+
 	if epochState.CurrentPhase != types.InferencePhase {
 		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. current phase isn't InferencePhase", types.Nodes,
 			"current_phase", epochState.CurrentPhase,
@@ -192,6 +189,11 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 			"epoch_start_block_height", epochState.LatestEpoch.PocStartBlockHeight)
 		return
 	}
+
+	defer func() {
+		logging.Info("InferenceUpAllCommand: completed, reconciliation triggered", types.Nodes)
+		b.TriggerReconciliation()
+	}()
 
 	if !c.shouldMutateState(b, epochState) {
 		logging.Info("InferenceUpAllCommand: all nodes already have the desired intended status", types.Nodes)
@@ -228,7 +230,6 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	}
 	b.mu.Unlock()
 
-	logging.Info("InferenceUpAllCommand completed, reconciliation triggered", types.Nodes)
 	c.Response <- true
 }
 
