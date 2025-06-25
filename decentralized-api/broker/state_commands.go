@@ -22,6 +22,10 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
+// TODO: technically all 3 commands (StartPocCommand, InitValidateCommand, InferenceUpAllCommand)
+// 	could be merged into a single command with a phase parameter
+// 	for now we keep them separate for clarity and future extensibility
+
 func (c StartPocCommand) Execute(b *Broker) {
 	defer func() {
 		logging.Info("StartPocCommand: completed, reconciliation triggered", types.PoC)
