@@ -164,7 +164,7 @@ func TestNodeWorker_GracefulShutdown(t *testing.T) {
 	assert.Equal(t, int32(5), atomic.LoadInt32(&executedCount),
 		"All queued commands should execute before shutdown completes")
 
-	assert.Len(t, broker.lowPriorityCommands, 5, "Should have 5 results in broker channel")
+	assert.Len(t, broker.highPriorityCommands, 5, "Should have 5 results in broker channel")
 }
 
 func TestNodeWorker_Cancellation(t *testing.T) {
