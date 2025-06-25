@@ -95,6 +95,7 @@ func (k msgServer) processInferencePayments(
 			return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, executedBy)
 		}
 		executor.CoinBalance += payments.ExecutorPayment
+		executor.CurrentEpochStats.EarnedCoins += uint64(payments.ExecutorPayment)
 		executor.CurrentEpochStats.InferenceCount++
 		executor.LastInferenceTime = inference.EndBlockTimestamp
 		k.LogBalance(executor.Address, payments.ExecutorPayment, executor.CoinBalance, "inference_finished:"+inference.InferenceId)

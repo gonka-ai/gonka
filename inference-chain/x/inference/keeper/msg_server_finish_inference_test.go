@@ -116,7 +116,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		CoinBalance:       30 * calculations.PerTokenCost,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 1,
-			EarnedCoins:    30 * keeper.PerTokenCost,
+			EarnedCoins:    30 * keeper.TokenCost,
 		},
 	}, participantState)
 
