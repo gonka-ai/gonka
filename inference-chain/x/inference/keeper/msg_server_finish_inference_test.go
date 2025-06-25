@@ -3,7 +3,9 @@ package keeper_test
 import (
 	"context"
 	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -20,13 +22,15 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 		inferenceId = "inferenceId"
 	)
-	k, ms, ctx := setupMsgServer(t)
+
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId})
 
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
-
+	mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   inferenceId,
 		PromptHash:    "promptHash",
@@ -50,10 +54,9 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		Model:               "model1",
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
-		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
+		EscrowAmount:        keeper.DefaultMaxTokens * calculations.PerTokenCost,
 	}
 	require.Equal(t, expectedInference, savedInference)
-
 	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
 	require.True(t, found)
 	require.Equal(t, types.DeveloperStatsByEpoch{
@@ -63,6 +66,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	k.SetEffectiveEpochGroupId(ctx, epochId2)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
 
+	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
@@ -92,9 +96,10 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
 		EndBlockTimestamp:    ctx2.BlockTime().UnixMilli(),
 		MaxTokens:            keeper.DefaultMaxTokens,
-		EscrowAmount:         keeper.DefaultMaxTokens * keeper.PerTokenCost,
-		ActualCost:           30 * keeper.PerTokenCost,
+		EscrowAmount:         keeper.DefaultMaxTokens * calculations.PerTokenCost,
+		ActualCost:           30 * calculations.PerTokenCost,
 	}
+
 	require.Equal(t, expectedInference2, savedInference)
 
 	participantState, found := k.GetParticipant(ctx, testutil.Executor)
@@ -108,7 +113,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
 		Status:            types.ParticipantStatus_ACTIVE,
-		CoinBalance:       30 * keeper.PerTokenCost,
+		CoinBalance:       30 * calculations.PerTokenCost,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 1,
 			EarnedCoins:    30 * keeper.PerTokenCost,

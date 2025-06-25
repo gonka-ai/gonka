@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -31,8 +32,10 @@ func proxyResponse(
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
+		logging.Debug("Proxying text/event-stream response", types.Inferences, "status_code", resp.StatusCode)
 		proxyTextStreamResponse(resp, w, responseProcessor)
 	} else {
+		logging.Debug("Proxying JSON response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType)
 		proxyJsonResponse(resp, w, responseProcessor)
 	}
 }
@@ -63,6 +66,12 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 		// Forward the line to the client
 		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
+			if opErr, ok := err.(*net.OpError); ok {
+				logging.Warn("Stream cancelled during streaming", types.Inferences, "error", opErr)
+				resp.Body.Close()
+				return
+			}
+
 			logging.Error("Error while streaming response", types.Inferences, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -70,7 +79,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 	}
 
 	if err := scanner.Err(); err != nil {
-		logging.Error("Error while streaming response", types.Inferences, "error", err)
+		logging.Error("Error after streaming response", types.Inferences, "error", err)
 	}
 }
 

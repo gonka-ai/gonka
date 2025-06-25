@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"io"
@@ -56,7 +57,21 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		return err
 	}
 
-	if err := validateClient(request, participant); err != nil {
+	promptText := ""
+	for _, message := range request.OpenAiRequest.Messages {
+		promptText += message.Content + "\n"
+	}
+
+	promptTokenCount, err := s.getPromptTokenCount(promptText, request.OpenAiRequest.Model)
+
+	if err != nil {
+		logging.Error("Failed to get prompt token count", types.Inferences, "error", err)
+		return err
+	}
+
+	logging.Info("Prompt token count", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
+
+	if err := validateRequester(request, participant, promptTokenCount); err != nil {
 		return err
 	}
 
@@ -68,7 +83,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 
 	seed := rand.Int31()
 	inferenceUUID := uuid.New().String()
-	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetCurrentNodeVersion())
+	inferenceRequest, err := createInferenceStartRequest(request, seed, inferenceUUID, executor, s.configManager.GetCurrentNodeVersion(), promptTokenCount)
 	if err != nil {
 		logging.Error("Failed to create inference start request", types.Inferences, "error", err)
 		return err
@@ -121,8 +136,57 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 	defer resp.Body.Close()
 
+	logging.Info("Proxying response from executor", types.Inferences, "inferenceId", inferenceUUID)
 	proxyResponse(resp, ctx.Response().Writer, false, nil)
 	return nil
+}
+
+func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
+	type tokenizeRequest struct {
+		Model  string `json:"model"`
+		Prompt string `json:"prompt"`
+	}
+	type tokenizeResponse struct {
+		TokenCount int `json:"count"`
+	}
+
+	response, err := broker.LockNode(s.nodeBroker, model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+		tokenizeUrl, err := url.JoinPath(node.InferenceUrl(), "/tokenize")
+		if err != nil {
+			return nil, err
+		}
+
+		reqBody := tokenizeRequest{
+			Model:  model,
+			Prompt: text,
+		}
+		jsonData, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, err
+		}
+
+		return http.Post(
+			tokenizeUrl,
+			"application/json",
+			bytes.NewReader(jsonData),
+		)
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("tokenize request failed with status: %d", response.StatusCode)
+	}
+
+	var result tokenizeResponse
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	return result.TokenCount, nil
 }
 
 func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWriter) error {
@@ -166,9 +230,12 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 	}
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
+	logging.Debug("Proxying response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	proxyResponse(resp, w, true, responseProcessor)
 
+	logging.Debug("Processing response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	completionResponse, err := responseProcessor.GetResponse()
+
 	if err != nil || completionResponse == nil {
 		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
 		return err
@@ -222,9 +289,10 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	}
 	usage, err := response.GetUsage()
 	if err != nil {
-		logging.Error("Failed to get usage from response", types.Inferences, "error", err)
+		logging.Warn("Failed to get usage from response", types.Inferences, "error", err)
 		return err
 	}
+	logging.Debug("Usage from response", types.Inferences, "usage", usage)
 	bodyBytes, err := response.GetBodyBytes()
 	if err != nil || bodyBytes == nil {
 		logging.Error("Failed to get body bytes from response", types.Inferences, "error", err)
@@ -243,7 +311,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 	}
 
 	if s.recorder != nil {
-		s.createInferenceFinishedTransaction(inferenceId, transaction, accountName)
+		s.submitInferenceFinishedTransaction(inferenceId, transaction, accountName)
 	}
 	return nil
 }
@@ -258,7 +326,7 @@ func getPromptHash(requestBytes []byte) (string, string, error) {
 	return promptHash, canonicalJSON, nil
 }
 
-func (s *Server) createInferenceFinishedTransaction(id string, transaction InferenceTransaction, accountName string) {
+func (s *Server) submitInferenceFinishedTransaction(id string, transaction InferenceTransaction, accountName string) {
 	message := &inference.MsgFinishInference{
 		Creator:              accountName,
 		InferenceId:          id,
@@ -269,7 +337,7 @@ func (s *Server) createInferenceFinishedTransaction(id string, transaction Infer
 		ExecutedBy:           accountName,
 	}
 
-	logging.Debug("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
+	logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", id)
 	err := s.recorder.FinishInference(message)
 	if err != nil {
 		logging.Error("Failed to submit MsgFinishInference", types.Inferences, "inferenceId", id, "error", err)
@@ -278,7 +346,7 @@ func (s *Server) createInferenceFinishedTransaction(id string, transaction Infer
 	}
 }
 
-func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string) (*inference.MsgStartInference, error) {
+func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId string, executor *ExecutorDestination, nodeVersion string, promptTokenCount int) (*inference.MsgStartInference, error) {
 	finalRequest, err := completionapi.ModifyRequestBody(request.Body, seed)
 	if err != nil {
 		return nil, err
@@ -294,15 +362,18 @@ func createInferenceStartRequest(request *ChatRequest, seed int32, inferenceId s
 		maxTokens = int(request.OpenAiRequest.MaxTokens)
 	}
 	transaction := &inference.MsgStartInference{
-		InferenceId:   inferenceId,
-		PromptHash:    promptHash,
-		PromptPayload: promptPayload,
-		RequestedBy:   request.RequesterAddress,
-		Model:         request.OpenAiRequest.Model,
-		AssignedTo:    executor.Address,
-		NodeVersion:   nodeVersion,
-		MaxTokens:     uint64(maxTokens),
+		InferenceId:      inferenceId,
+		PromptHash:       promptHash,
+		PromptPayload:    promptPayload,
+		RequestedBy:      request.RequesterAddress,
+		Model:            request.OpenAiRequest.Model,
+		AssignedTo:       executor.Address,
+		NodeVersion:      nodeVersion,
+		MaxTokens:        uint64(maxTokens),
+		PromptTokenCount: uint64(promptTokenCount),
 	}
+
+	logging.Debug("Prompt token count for inference", types.Inferences, "inferenceId", inferenceId, "count", promptTokenCount)
 	return transaction, nil
 }
 
@@ -350,13 +421,14 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func validateClient(request *ChatRequest, client *types.QueryInferenceParticipantResponse) error {
-	if client == nil {
+// Check signature and available balance.
+func validateRequester(request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+	if requester == nil {
 		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
 		return ErrInferenceParticipantNotFound
 	}
 
-	err := validateRequestAgainstPubKey(request, client.Pubkey)
+	err := validateRequestAgainstPubKey(request, requester.Pubkey)
 	if err != nil {
 		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
@@ -364,10 +436,17 @@ func validateClient(request *ChatRequest, client *types.QueryInferenceParticipan
 	if request.OpenAiRequest.MaxTokens == 0 {
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
-	escrowNeeded := request.OpenAiRequest.MaxTokens * keeper.PerTokenCost
-	logging.Debug("Escrow needed", types.Inferences, "escrowNeeded", escrowNeeded)
-	logging.Debug("Client balance", types.Inferences, "balance", client.Balance)
-	if client.Balance < int64(escrowNeeded) {
+
+	// Calculate escrow needed based on both max tokens and prompt token count
+	maxTokensCost := uint64(request.OpenAiRequest.MaxTokens) * uint64(calculations.PerTokenCost)
+
+	// Use the promptTokenCount parameter that was passed in
+	promptTokensCost := uint64(promptTokenCount) * uint64(calculations.PerTokenCost)
+
+	escrowNeeded := maxTokensCost + promptTokensCost
+	logging.Debug("Escrow needed", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
+	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
+	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance
 	}
 	return nil

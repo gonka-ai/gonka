@@ -27,16 +27,61 @@ fun main() {
 fun getInferenceResult(
     highestFunded: LocalInferencePair,
     modelName: String? = null,
-    seed: Int? = null
+    seed: Int? = null,
+    baseRequest:InferenceRequestPayload  = inferenceRequestObject
 ): InferenceResult {
     val beforeInferenceParticipants = highestFunded.api.getParticipants()
-    val inferenceObject = inferenceRequestObject
-        .copy(seed = seed ?: inferenceRequestObject.seed)
-        .copy(model = modelName ?: inferenceRequestObject.model)
+    val inferenceObject = baseRequest
+        .copy(seed = seed ?: baseRequest.seed)
+        .copy(model = modelName ?: baseRequest.model)
     val payload = inferenceObject.toJson()
 
     val inference = makeInferenceRequest(highestFunded, payload)
     val afterInference = highestFunded.api.getParticipants()
+    return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
+}
+
+fun getStreamingInferenceResult(
+    highestFunded: LocalInferencePair,
+    modelName: String? = null,
+    seed: Int? = null
+): InferenceResult {
+    val beforeInferenceParticipants = highestFunded.api.getParticipants()
+    val inferenceObject = inferenceRequestStreamObject
+        .copy(seed = seed ?: inferenceRequestStreamObject.seed)
+        .copy(model = modelName ?: inferenceRequestStreamObject.model)
+    val payload = inferenceObject.toJson()
+
+    val inference = makeStreamingInferenceRequest(highestFunded, payload)
+    val afterInference = highestFunded.api.getParticipants()
+    return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
+}
+
+/**
+ * Gets an inference result from an interrupted streaming request.
+ * This is used to test billing and validation when a stream is interrupted.
+ *
+ * @param highestFunded The LocalInferencePair to use for the request
+ * @param modelName Optional model name to use
+ * @param seed Optional seed to use
+ * @param maxLinesToRead The maximum number of lines to read before interrupting (default: 2)
+ * @return The inference result
+ */
+fun getInterruptedStreamingInferenceResult(
+    highestFunded: LocalInferencePair,
+    modelName: String? = null,
+    seed: Int? = null,
+    maxLinesToRead: Int = 2,
+    baseObject: InferenceRequestPayload = inferenceRequestStreamObject
+): InferenceResult {
+    val beforeInferenceParticipants = highestFunded.api.getParticipants().also { Logger.info("Before inference: $it") }
+    val inferenceObject = baseObject
+        .copy(seed = seed ?: baseObject.seed)
+        .copy(model = modelName ?: baseObject.model)
+    val payload = inferenceObject.toJson()
+
+    val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead)
+    val afterInference = highestFunded.api.getParticipants().also { Logger.info("After inference: $it") }
     return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
 }
 
@@ -47,6 +92,8 @@ fun createInferenceResult(
 ): InferenceResult {
     val requester = inference.requestedBy
     val executor = inference.executedBy
+    check(requester != null) { "Requester not found in participants after inference" }
+    check(executor != null) { "Executor not found in inference" }
     val requesterParticipantAfter = afterInference.find { it.id == requester }
     val executorParticipantAfter = afterInference.find { it.id == executor }
     val requesterParticipantBefore = beforeInferenceParticipants.find { it.id == requester }
@@ -83,7 +130,7 @@ data class InferenceResult(
     val executorBalanceChange = executorAfter.balance - executorBefore.balance
 }
 
-private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
+fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
     highestFunded.waitForFirstValidators()
     val response = highestFunded.makeInferenceRequest(payload)
     Logger.info("Inference response: ${response.choices.first().message.content}")
@@ -101,12 +148,151 @@ private fun makeInferenceRequest(highestFunded: LocalInferencePair, payload: Str
     return inference
 }
 
+private fun makeStreamingInferenceRequest(highestFunded: LocalInferencePair, payload: String): InferencePayload {
+    highestFunded.waitForFirstValidators()
+
+    // Create a stream connection
+    val streamConnection = highestFunded.streamInferenceRequest(payload)
+
+    // Read all lines from the stream to get the inference ID and complete the request
+    var inferenceId: String? = null
+    var lineCount = 0
+    var done = false
+
+    try {
+        // Read lines until we find the [DONE] event
+        while (!done) {
+            val line = streamConnection.readLine() ?: break
+            lineCount++
+
+            // Check if this is the [DONE] event
+            if (line.contains("[DONE]")) {
+                done = true
+                Logger.info("Received [DONE] event after reading $lineCount lines")
+                continue
+            }
+
+            Logger.info("Read line: $line")
+            // Parse the line to extract the inference ID if we haven't found it yet
+            if (inferenceId == null && line.startsWith("data: ") && !line.contains("[DONE]")) {
+                val jsonData = line.substring(6) // Remove "data: " prefix
+                try {
+                    val jsonNode = cosmosJson.fromJson(jsonData, Map::class.java)
+                    inferenceId = jsonNode["id"] as? String
+                    if (inferenceId != null) {
+                        Logger.info("Found inference ID: $inferenceId")
+                    }
+                } catch (e: Exception) {
+                    Logger.warn("Failed to parse JSON from stream: $e")
+                }
+            }
+        }
+
+        // Close the stream after reading all lines
+        streamConnection.close()
+        Logger.info("Completed stream request, read $lineCount lines total")
+    } catch (e: Exception) {
+        Logger.error(e, "Error reading from stream")
+        streamConnection.close()
+    }
+
+    check(inferenceId != null) { "Failed to get inference ID from stream" }
+
+    // Wait for the inference to be logged in the chain
+    val inference = generateSequence {
+        highestFunded.node.waitForNextBlock()
+        try {
+            highestFunded.api.getInference(inferenceId)
+        } catch (_: FuelError) {
+            InferencePayload.empty()
+        }
+    }.take(5).firstOrNull { it.checkComplete() }
+
+    check(inference != null) { "Inference never logged in chain" }
+    return inference
+}
+
+/**
+ * Makes a streaming inference request and interrupts it after reading a few lines.
+ * This is used to test billing and validation when a stream is interrupted.
+ *
+ * @param highestFunded The LocalInferencePair to use for the request
+ * @param payload The request payload
+ * @param maxLinesToRead The maximum number of lines to read before interrupting (default: 2)
+ * @return The inference payload
+ */
+fun makeInterruptedStreamingInferenceRequest(
+    highestFunded: LocalInferencePair, 
+    payload: String,
+    maxLinesToRead: Int = 1,
+    check: Boolean = true,
+): InferencePayload {
+    highestFunded.waitForFirstValidators()
+
+    // Create a stream connection
+    val streamConnection = highestFunded.streamInferenceRequest(payload)
+
+    // Read only a few lines from the stream to get the inference ID and then interrupt
+    var inferenceId: String? = null
+    var lineCount = 0
+
+    try {
+        // Read only a limited number of lines
+        while (lineCount < maxLinesToRead) {
+            val line = streamConnection.readLine() ?: break
+            lineCount++
+
+            Logger.info("Read line: $line")
+            // Parse the line to extract the inference ID if we haven't found it yet
+            if (inferenceId == null && line.startsWith("data: ") && !line.contains("[DONE]")) {
+                val jsonData = line.substring(6) // Remove "data: " prefix
+                try {
+                    val jsonNode = cosmosJson.fromJson(jsonData, Map::class.java)
+                    inferenceId = jsonNode["id"] as? String
+                    if (inferenceId != null) {
+                        Logger.info("Found inference ID: $inferenceId")
+                    }
+                } catch (e: Exception) {
+                    Logger.warn("Failed to parse JSON from stream: $e")
+                }
+            }
+        }
+
+        // Deliberately interrupt the stream by closing the connection
+        Logger.info("Deliberately interrupting stream after reading $lineCount lines")
+        streamConnection.close()
+    } catch (e: Exception) {
+        Logger.error(e, "Error reading from stream")
+        streamConnection.close()
+    }
+
+    logSection("Waiting for stream to complete")
+    Thread.sleep(10000)
+    if (!check) {
+        return InferencePayload.empty()
+    }
+    check(inferenceId != null) { "Failed to get inference ID from stream before interruption" }
+
+    // Wait for the inference to be logged in the chain
+    val inference = generateSequence {
+        highestFunded.node.waitForNextBlock()
+        try {
+            highestFunded.api.getInference(inferenceId)
+        } catch (_: FuelError) {
+            InferencePayload.empty()
+        }
+    }.take(5).firstOrNull { it != null }
+
+    // Note: We don't check if the inference is complete, as it may not be due to interruption
+    return inference ?: InferencePayload.empty()
+}
+
 fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
-        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080))
-        it.mock?.setInferenceResponse(defaultInferenceResponseObject)
+        it.api.setNodesTo(validNode.copy(host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080))
+        it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         it.getParams()
         it.node.getAddress()
     }
@@ -132,7 +318,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
 
     highestFunded.node.waitForNextBlock()
     pairs.forEach { pair ->
-        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt()) {
+        pair.waitForBlock((highestFunded.getParams().epochParams.epochLength * 2).toInt() + 2) {
             val address = pair.node.getAddress()
             val stats = pair.node.getParticipantCurrentStats()
             val weight = stats.participantCurrentStats.find { it.participantId == address }?.weight ?: 0
@@ -221,7 +407,7 @@ val inferenceConfig = ApplicationConfig(
     chainId = "prod-sim",
     nodeImageName = "ghcr.io/product-science/inferenced",
     genesisNodeImage = "ghcr.io/product-science/inferenced",
-    wireMockImageName = "wiremock/wiremock:latest",
+    mockImageName = "inference-mock-server",
     apiImageName = "ghcr.io/product-science/api",
     denom = "nicoin",
     stateDirName = ".inference",
@@ -279,7 +465,8 @@ data class InferenceRequestPayload(
 ) {
     fun toJson() = cosmosJson.toJson(this)
 }
-
+// Hardcoded for now
+const val inferenceRequestPromptTokens = 19
 val inferenceRequestObject = InferenceRequestPayload(
     model = "unsloth/llama-3-8b-Instruct",
     temperature = 0.8,

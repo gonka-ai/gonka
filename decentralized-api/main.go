@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -51,6 +52,10 @@ func main() {
 	config, err := apiconfig.LoadDefaultConfigManager()
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
+	}
+
+	if config.GetApiConfig().TestMode {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(

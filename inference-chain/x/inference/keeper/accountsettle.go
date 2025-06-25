@@ -10,11 +10,11 @@ import (
 )
 
 type SettleParameters struct {
-	CurrentSubsidyPercentage float32
-	TotalSubsidyPaid         int64
-	StageCutoff              float64
-	StageDecrease            float32
-	TotalSubsidySupply       int64
+	CurrentSubsidyPercentage float32 `json:"current_subsidy_percentage"`
+	TotalSubsidyPaid         int64   `json:"total_subsidy_paid"`
+	StageCutoff              float64 `json:"stage_cutoff"`
+	StageDecrease            float32 `json:"stage_decrease"`
+	TotalSubsidySupply       int64   `json:"total_subsidy_supply"`
 }
 
 type SubsidyResult struct {
@@ -110,7 +110,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
-	amounts, subsidyResult, err := GetSettleAmounts(participants.Participant, k.GetSettleParameters(ctx))
+	settleParameters := k.GetSettleParameters(ctx)
+	k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
+	amounts, subsidyResult, err := GetSettleAmounts(participants.Participant, settleParameters)
 	if err != nil {
 		k.LogError("Error getting settle amounts", types.Settle, "error", err)
 		return err

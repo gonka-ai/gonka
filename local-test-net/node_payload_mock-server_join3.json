@@ -1,7 +1,7 @@
 [
   {
     "id": "wiremock",
-    "host": "join1-wiremock",
+    "host": "join2-mock-server",
     "inference_port": 8080,
     "poc_port": 8080,
     "max_concurrent": 10,
@@ -12,12 +12,6 @@
           "fp8"
         ]
       }
-    },
-    "hardware": [
-      {
-        "type": "v5e",
-        "count": 80
-      }
-    ]
+    }
   }
 ]
