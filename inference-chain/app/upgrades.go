@@ -5,6 +5,7 @@ package app
 import (
 	v0_1_4 "github.com/productscience/inference/app/upgrades/v0.1.4"
 	v1_1 "github.com/productscience/inference/app/upgrades/v1_1"
+	"github.com/productscience/inference/app/upgrades/v1_10test"
 	"github.com/productscience/inference/app/upgrades/v1_8"
 	v1_9 "github.com/productscience/inference/app/upgrades/v1_9"
 	v2 "github.com/productscience/inference/app/upgrades/v2"
@@ -17,4 +18,5 @@ func (app *App) setupUpgradeHandlers() {
 	app.UpgradeKeeper.SetUpgradeHandler(v1_8.UpgradeName, v1_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
 	app.UpgradeKeeper.SetUpgradeHandler(v1_8.UpgradeNameRestart, v1_8.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
 	app.UpgradeKeeper.SetUpgradeHandler(v1_9.UpgradeName, v1_9.CreateUpgradeHandler(app.ModuleManager, app.Configurator()))
+	app.UpgradeKeeper.SetUpgradeHandler(v1_10test.UpgradeName, v1_10test.CreateUpgradeHandler(app.InferenceKeeper))
 }
