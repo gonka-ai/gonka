@@ -195,11 +195,19 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		return nil
 	}
 
+	validators := make([]string, len(vals))
+	for i, v := range vals {
+		validators[i] = v.ValidatorParticipantAddress
+	}
+	wc.Logger.LogInfo("Calculate: Found validations for participant", types.PoC,
+		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
+
 	claimedWeight := calculateParticipantWeight(wc.OriginalBatches[participantAddress])
 	if claimedWeight < 1 {
 		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 		return nil
 	}
+	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 
 	if participant.ValidatorKey == "" {
 		wc.Logger.LogError("Calculate: Participant hasn't provided their validator key.", types.PoC, "participant", participantAddress)
