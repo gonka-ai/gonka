@@ -138,7 +138,8 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	require.False(t, ec.IsValidationExchangeWindow(i))
+	// We exchange until the isSetNewValidatorsStage, not sure if it's the right way though
+	require.True(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsEndOfPoCValidationStage(i))
 	i++
 
@@ -146,7 +147,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	require.False(t, ec.IsValidationExchangeWindow(i))
+	require.True(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsSetNewValidatorsStage(i))
 	i++
 
@@ -160,8 +161,10 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	ec = types.NewEpochContextFromEffectiveEpoch(nextEpochGroup, epochParams, i)
 	require.Equal(t, getEpochId(nextEpochGroup), ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
+	require.False(t, ec.IsSetNewValidatorsStage(i))
 	require.True(t, ec.IsClaimMoneyStage(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
+	require.False(t, ec.IsValidationExchangeWindow(i))
 }
 
 func requireNotAStageBoundary(t *testing.T, ec *types.EpochContext, i int64) {
