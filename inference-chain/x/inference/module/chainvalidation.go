@@ -269,7 +269,9 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 		}
 	} else {
 		shouldContinue = true
-		wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
+		if wc.EpochStartBlockHeight > 0 {
+			wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
+		}
 	}
 
 	return shouldContinue

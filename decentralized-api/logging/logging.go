@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"context"
 	"github.com/productscience/inference/x/inference/types"
 	"log/slog"
 	"os"
@@ -35,6 +36,7 @@ func Info(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
 	slog.Info(msg, withSubsystem...)
 }
+
 func Error(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
 
@@ -53,4 +55,11 @@ func Error(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 func Debug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
 	slog.Debug(msg, withSubsystem...)
+}
+
+const TraceLevel = -8
+
+func Trace(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
+	withSubsystem := append([]interface{}{"subsystem", subSystem}, keyvals...)
+	slog.Log(context.Background(), TraceLevel, msg, withSubsystem...)
 }

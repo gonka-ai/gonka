@@ -49,14 +49,16 @@ services:
     networks:
       - chain-public
 
-  wiremock:
-    container_name: ${KEY_NAME}-wiremock
-    image: "wiremock/wiremock:latest"
+  mock-server:
+    container_name: ${KEY_NAME}-mock-server
+    image: inference-mock-server
+    build:
+      context: ../testermint
+      dockerfile: Dockerfile
+    environment:
+      - KEY_NAME=${KEY_NAME}
     ports:
       - "${WIREMOCK_PORT}:8080"
-    volumes:
-      - ./prod-local/wiremock/${KEY_NAME}:/home/wiremock
-    entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
     networks:
       - chain-public
 
