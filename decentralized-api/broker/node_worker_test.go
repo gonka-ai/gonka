@@ -13,6 +13,10 @@ import (
 )
 
 func createTestNode(id string) *NodeWithState {
+	return createTestNodeWithStatus(id, types.HardwareNodeStatus_UNKNOWN)
+}
+
+func createTestNodeWithStatus(id string, status types.HardwareNodeStatus) *NodeWithState {
 	return &NodeWithState{
 		Node: Node{
 			Id:               id,
@@ -25,8 +29,8 @@ func createTestNode(id string) *NodeWithState {
 			NodeNum:          1,
 		},
 		State: NodeState{
-			CurrentStatus:  types.HardwareNodeStatus_UNKNOWN,
-			IntendedStatus: types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:  status,
+			IntendedStatus: status,
 			AdminState: AdminState{
 				Enabled: true,
 				Epoch:   0,
