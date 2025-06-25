@@ -239,6 +239,7 @@ class InferenceAccountingTests : TestermintTest() {
         genesis.waitForStage(EpochStage.END_OF_POC)
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
+        val timeoutsAtStart = genesis.node.getInferenceTimeouts()
         localCluster.allPairs.forEach { it.mock?.setInferenceResponse("This is invalid json!!!") }
         var failure: Exception? = null
         try {
@@ -251,14 +252,15 @@ class InferenceAccountingTests : TestermintTest() {
         logSection("Waiting for inference to expire")
         val balanceBeforeSettle = genesis.node.getSelfBalance()
         val timeouts = genesis.node.getInferenceTimeouts()
-        assertThat(timeouts.inferenceTimeout).hasSize(1)
+        val newTimeouts = timeouts.inferenceTimeout.filterNot { timeoutsAtStart.inferenceTimeout.contains(it) }
+        assertThat(newTimeouts).hasSize(1)
         val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
         val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
         genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
         genesis.waitForStage(EpochStage.START_OF_POC)
         logSection("Verifying inference was expired and refunded")
         val canceledInference =
-            localCluster.joinPairs.first().api.getInference(timeouts.inferenceTimeout.first().inferenceId)
+            localCluster.joinPairs.first().api.getInference(newTimeouts.first().inferenceId)
         assertThat(canceledInference.status).isEqualTo(InferenceStatus.EXPIRED.value)
         assertThat(canceledInference.executedBy).isNull()
         val afterTimeouts = genesis.node.getInferenceTimeouts()
