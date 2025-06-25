@@ -308,7 +308,7 @@ func (b *Broker) executeCommand(command Command) {
 	case StartTrainingCommand:
 		command.Execute(b)
 	case SetNodesActualStatusCommand:
-		b.setNodesActualStatus(command)
+		command.Execute(b)
 	case SetNodeAdminStateCommand:
 		command.Execute(b)
 	case InferenceUpAllCommand:
@@ -920,30 +920,6 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 	}, nil
 }
 
-func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, update := range command.StatusUpdates {
-		nodeId := update.NodeId
-		node, exists := b.nodes[nodeId]
-		if !exists {
-			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
-			continue
-		}
-
-		if node.State.StatusTimestamp.After(update.Timestamp) {
-			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
-			continue
-		}
-
-		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
-		logging.Info("Set actual status for node", types.Nodes,
-			"node_id", nodeId, "status", update.NewStatus.String())
-	}
-
-	command.Response <- true
-}
-
 func nodeStatusQueryWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -981,10 +957,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 		}
 
-		err = broker.QueueMessage(SetNodesActualStatusCommand{
-			StatusUpdates: statusUpdates,
-			Response:      make(chan bool, 2),
-		})
+		err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
 		if err != nil {
 			logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
 			continue

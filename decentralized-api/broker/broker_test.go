@@ -7,6 +7,7 @@ import (
 	"decentralized-api/participant"
 	"github.com/productscience/inference/x/inference/types"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
@@ -28,6 +29,7 @@ func NewTestBroker() *Broker {
 	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
 
+// TODO [PRTODO]: FIX ME!
 func TestSingleNode(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
@@ -38,7 +40,20 @@ func TestSingleNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
+
 	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	queueMessage(t, broker, NewInferenceUpAllCommand())
+	queueMessage(t, broker, NewSetNodesActualStatusCommand(
+		[]StatusUpdate{
+			{
+				NodeId:     node.Id,
+				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+				NewStatus:  types.HardwareNodeStatus_INFERENCE,
+				Timestamp:  time.Now(),
+			},
+		},
+	))
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode

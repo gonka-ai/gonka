@@ -3,6 +3,7 @@ package broker
 import (
 	"decentralized-api/chainphase"
 	"decentralized-api/logging"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -212,4 +213,52 @@ func (c InferenceUpAllCommand) shouldExecute(b *Broker, epochState *chainphase.E
 	}
 
 	return false
+}
+
+type SetNodesActualStatusCommand struct {
+	StatusUpdates []StatusUpdate
+	Response      chan bool
+}
+
+func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActualStatusCommand {
+	return SetNodesActualStatusCommand{
+		StatusUpdates: statusUpdates,
+		Response:      make(chan bool, 2),
+	}
+}
+
+type StatusUpdate struct {
+	NodeId     string
+	PrevStatus types.HardwareNodeStatus
+	NewStatus  types.HardwareNodeStatus
+	Timestamp  time.Time
+}
+
+func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+func (c SetNodesActualStatusCommand) Execute(b *Broker) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, update := range c.StatusUpdates {
+		nodeId := update.NodeId
+		node, exists := b.nodes[nodeId]
+		if !exists {
+			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		if node.State.StatusTimestamp.After(update.Timestamp) {
+			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
+		logging.Info("Set actual status for node", types.Nodes,
+			"node_id", nodeId, "status", update.NewStatus.String())
+	}
+
+	c.Response <- true
 }

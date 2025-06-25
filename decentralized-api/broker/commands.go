@@ -2,8 +2,6 @@ package broker
 
 import (
 	"decentralized-api/logging"
-	"time"
-
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -98,22 +96,6 @@ func NewLockNodesForTrainingCommand(nodeIds []string) LockNodesForTrainingComman
 }
 
 func (c LockNodesForTrainingCommand) GetResponseChannelCapacity() int {
-	return cap(c.Response)
-}
-
-type SetNodesActualStatusCommand struct {
-	StatusUpdates []StatusUpdate
-	Response      chan bool
-}
-
-type StatusUpdate struct {
-	NodeId     string
-	PrevStatus types.HardwareNodeStatus
-	NewStatus  types.HardwareNodeStatus
-	Timestamp  time.Time
-}
-
-func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
 	return cap(c.Response)
 }
 
