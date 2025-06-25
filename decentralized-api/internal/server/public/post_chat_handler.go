@@ -126,6 +126,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 }
 
 func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWriter) error {
+	inferenceId := request.InferenceId
 	if err := validateRequestAgainstPubKey(request, request.PubKey); err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
@@ -142,7 +143,12 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		return err
 	}
 
+	logging.Info("Attempting to lock node for inference", types.Inferences,
+		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
 	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+		logging.Info("Successfully acquired node lock for inference", types.Inferences,
+			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrl())
+
 		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
 		if err != nil {
 			return nil, err
@@ -154,10 +160,13 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		)
 	})
 	if err != nil {
-		logging.Error("Failed to get response from inference node", types.Inferences, "error", err)
+		logging.Error("Failed to get response from inference node", types.Inferences,
+			"inferenceId", inferenceId, "error", err)
 		return err
 	}
 	defer resp.Body.Close()
+
+	logging.Info("Node lock released for inference", types.Inferences, "inferenceId", inferenceId)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := getInferenceErrorMessage(resp)

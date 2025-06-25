@@ -364,17 +364,7 @@ func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var leastBusyNode *NodeWithState = nil
-	epochState := b.phaseTracker.GetCurrentEpochState()
-	for _, node := range b.nodes {
-		if b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
-			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
-				leastBusyNode = node
-			}
-		}
-	}
+	leastBusyNode := b.getLeastBusyNode(command)
 
 	if leastBusyNode != nil {
 		leastBusyNode.State.LockCount++
@@ -395,6 +385,24 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	} else {
 		command.Response <- &leastBusyNode.Node
 	}
+}
+
+func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
+	epochState := b.phaseTracker.GetCurrentEpochState()
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var leastBusyNode *NodeWithState = nil
+	for _, node := range b.nodes {
+		if b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
+				leastBusyNode = node
+			}
+		}
+	}
+
+	return leastBusyNode
 }
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) bool {

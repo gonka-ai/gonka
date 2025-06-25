@@ -122,7 +122,7 @@ func (c InitValidateCommand) shouldExecute(b *Broker, epochState *chainphase.Epo
 
 	for _, node := range b.nodes {
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
-			node.State.IntendedStatus != types.HardwareNodeStatus_POC {
+			node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
 			return true
 		}
 
@@ -199,7 +199,7 @@ func (c InferenceUpAllCommand) shouldExecute(b *Broker, epochState *chainphase.E
 	for _, node := range b.nodes {
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
 			node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
-			continue
+			return true
 		}
 
 		if node.State.IntendedStatus == types.HardwareNodeStatus_TRAINING {
