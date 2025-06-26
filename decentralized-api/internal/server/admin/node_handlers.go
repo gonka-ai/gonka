@@ -11,13 +11,26 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+type GetNodesResponse struct {
+	Legend GetNodesResponseLegend `json:"legend"`
+	Nodes  []broker.NodeResponse  `json:"nodes"`
+}
+
+type GetNodesResponseLegend struct {
+}
+
 func (s *Server) getNodes(ctx echo.Context) error {
 	nodes, err := s.nodeBroker.GetNodes()
 	if err != nil {
 		logging.Error("Error getting nodes", types.Nodes, "error", err)
 		return err
 	}
-	return ctx.JSON(http.StatusOK, nodes)
+
+	response := GetNodesResponse{
+		Legend: GetNodesResponseLegend{},
+		Nodes:  nodes,
+	}
+	return ctx.JSON(http.StatusOK, response)
 }
 
 func (s *Server) deleteNode(ctx echo.Context) error {

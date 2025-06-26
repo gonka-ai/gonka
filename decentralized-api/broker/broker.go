@@ -149,7 +149,7 @@ type NodeState struct {
 	PocIntendedStatus PocStatus `json:"poc_intended_status"`
 	PocCurrentStatus  PocStatus `json:"poc_current_status"`
 
-	TrainingTask *TrainingTaskPayload
+	TrainingTask *TrainingTaskPayload `json:"training_task,omitempty"`
 
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
@@ -166,9 +166,9 @@ type TrainingTaskPayload struct {
 }
 
 type ReconcileInfo struct {
-	Status         types.HardwareNodeStatus
-	PocStatus      PocStatus
-	TrainingTaskId uint64
+	Status         types.HardwareNodeStatus `json:"status"`
+	PocStatus      PocStatus                `json:"poc_status"`
+	TrainingTaskId uint64                   `json:"training_task_id"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
