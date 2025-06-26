@@ -44,12 +44,12 @@ During PoC periods, the system intelligently allocates MLNodes between inference
 - Genesis initialization in `inference-chain/x/inference/module/genesis.go`
 - Governance registration via `inference-chain/x/inference/keeper/msg_server_register_model.go`
 
-The current Model structure in `inference-chain/x/inference/types/model.pb.go` contains basic fields: Id, Creator, Name, Version, and CostPerToken.
+The current Model structure in `inference-chain/x/inference/types/model.pb.go` contains only 3 basic fields: ProposedBy, Id, and UnitsOfComputePerToken.
 
 #### After: Enhanced Model Registry with Comprehensive Metadata
 
 **New Implementation:**
-- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds HuggingFaceLink, HuggingFaceCommitHash, Quantization, ContextSize, KvCacheQuantization, VRAM, and ThroughputPerNonce (performance metric for economic calculations).
+- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds Name, Version, HuggingFaceLink, HuggingFaceCommitHash, Quantization, ContextSize, KvCacheQuantization, VRAM, and ThroughputPerNonce (performance metric for economic calculations).
 
 **Enhanced Functions in `inference-chain/x/inference/keeper/model.go`:**
 - `GetGovernanceModels` - Enhanced version of existing `GetAllModels` (or semantic naming for clarity)
@@ -59,6 +59,61 @@ The current Model structure in `inference-chain/x/inference/types/model.pb.go` c
 - `inference-chain/x/inference/keeper/msg_server_register_model.go` updated to handle all model parameter changes including throughput updates through governance proposals
 
 **Important:** All model parameter changes (including throughput updates) must go through Cosmos SDK governance. No direct parameter updates are allowed.
+
+### MLNode Model Assignment
+
+#### Before: Participant-Level Model Support
+**Current Implementation:**
+- Models tracked at participant level in `inference-chain/x/inference/types/hardware_node.pb.go`
+- HardwareNodes structure contains models descriptions per node
+- Assignment via `decentralized-api/participant_registration/participant_registration.go`
+- Hardware nodes stored per participant via `SetHardwareNodes` in `inference-chain/x/inference/keeper/hardware_node.go`
+
+The current HardwareNode structure contains LocalId, Status, Models (array of model name strings), Hardware, Host, and Port.
+
+#### After: MLNode-Level Model Support
+
+**New Implementation:**
+- Update HardwareNode structure to use model IDs instead of model descriptions for cleaner references
+- Participants can update hardware node model assignments anytime via existing mechanisms
+
+**Enhanced Functions in `inference-chain/x/inference/keeper/hardware_node.go`:**
+- `GetNodesForModel` - Find nodes supporting a specific model (enhanced from existing `GetHardwareNodesForParticipants`)
+
+**Rename Hardware Nodes to MLNodes**
+
+**Modified Functions in `inference-chain/x/inference/module/module.go`:**
+- `setModelsForParticipants` - Enhanced to validate model IDs against governance registry before adding to `ActiveParticipant.Models`
+- `getAllModels` - Enhanced to filter model IDs against supported governance models using `GetAllModels` from `inference-chain/x/inference/keeper/model.go`
+
+**Model ID Validation:**
+- When adding `EpochMember` to model subgroups in `inference-chain/x/inference/epochgroup/epoch_group.go`, ensure model IDs (already validated during `setModelsForParticipants`) are stored correctly in epoch group structures
+- `AddMember` function uses validated model IDs from `EpochMember.Models` to create model-specific subgroups
+
+**Hardware Node Registration Validation:**
+- `MsgSubmitHardwareDiff` in `inference-chain/x/inference/keeper/msg_server_submit_hardware_diff.go` enhanced to validate model IDs against governance registry
+- Reject hardware node updates containing invalid model IDs
+
+**Decentralized API Changes:**
+
+**Modified Functions in `decentralized-api/broker/broker.go`:**
+- `registerNode` - Add model ID validation when registering ML nodes
+- `convertInferenceNodeToHardwareNode` - Enhanced to validate model IDs before including in `HardwareNode.Models`
+- `calculateNodesDiff` - Enhanced to validate model IDs in diff calculation
+
+**Modified Functions in `decentralized-api/participant_registration/participant_registration.go`:**
+- `getUniqueModels` - Enhanced to query governance models and filter supported model IDs
+- `registerJoiningParticipant` - Enhanced to validate model IDs before participant registration
+
+**Modified Functions in `decentralized-api/internal/server/admin/node_handlers.go`:**
+- `createNewNode` - Add model ID validation when creating new ML nodes via admin API
+- `addNode` - Enhanced to check model IDs against governance registry before node registration
+
+**Model Validation Flow:**
+1. Query governance models using `GetGovernanceModels` (renamed `GetAllModels` in previous section) from `inference-chain/x/inference/keeper/model.go`
+2. Validate ML node model IDs against governance model registry
+3. Filter and store only valid model IDs in `HardwareNode.Models`
+4. Reject invalid model IDs with clear error messages
 
 ### Model Parameter Snapshots in Epoch Model Subgroups
 
@@ -95,29 +150,38 @@ The current Model structure in `inference-chain/x/inference/types/model.pb.go` c
 - `createNewEpochSubGroup` - Enhanced to store full Model object instead of just modelId
 - `CreateSubGroup` - Updated to accept Model parameter and store complete model data
 
-### MLNode Model Assignment
+**Updated Decentralized API Endpoints:**
 
-#### Before: Participant-Level Model Support
-**Current Implementation:**
-- Models tracked at participant level in `inference-chain/x/inference/types/hardware_node.pb.go`
-- HardwareNodes structure contains models descriptions per node
-- Assignment via `decentralized-api/participant_registration/participant_registration.go`
-- Hardware nodes stored per participant via `SetHardwareNodes` in `inference-chain/x/inference/keeper/hardware_node.go`
+**Modified Functions in `decentralized-api/internal/server/public/get_models_handler.go`:**
+- `getModels` - Updated to query epoch model snapshots from `CurrentEpochGroupData` and extract models from epoch subgroups instead of using governance models
+- Returns models currently active in the epoch with frozen parameters
 
-The current HardwareNode structure contains Id, Status, and Models array with model descriptions.
+**Modified Functions in `decentralized-api/internal/server/public/get_pricing_handler.go`:**
+- `getPricing` - Updated to use epoch model snapshots from `CurrentEpochGroupData` for price calculations instead of governance models
+- Ensures pricing consistency using frozen model parameters throughout the epoch
 
-#### After: MLNode-Level Model Support
+**New Governance API Endpoints:**
 
-**New Implementation:**
-- Update HardwareNode structure to use model IDs instead of model descriptions for cleaner references
-- Participants can update hardware node model assignments anytime via existing mechanisms
+**New Functions in `decentralized-api/internal/server/public/get_governance_models_handler.go`:**
+- `getGovernanceModels` - New endpoint to query latest governance-approved models via existing `ModelsAll` query
+- Returns models with latest governance parameters (may differ from current epoch)
 
-**Enhanced Functions in `inference-chain/x/inference/keeper/hardware_node.go`:**
-- `GetNodesForModel` - Find nodes supporting a specific model (enhanced from existing `GetHardwareNodesForParticipants`)
+**New Functions in `decentralized-api/internal/server/public/get_governance_pricing_handler.go`:**
+- `getGovernancePricing` - New endpoint showing upcoming pricing based on latest governance models
+- Provides preview of pricing changes that will take effect in next epoch
 
-**Rename Hardware Nodes to MLNodes**
+**New and Updated API Routes:**
+- `GET /v1/models` - Current epoch active models (existing, modified behavior)
+- `GET /v1/pricing` - Current epoch pricing (existing, modified behavior)  
+- `GET /v1/governance/models` - Latest governance models (new)
+- `GET /v1/governance/pricing` - Upcoming governance pricing (new)
 
-### MLNode Snapshots in Epoch Model Subgroups 
+**Implementation Notes:**
+- Use existing `CurrentEpochGroupData` query to retrieve epoch model snapshots instead of creating new queries
+- Add EpochGroup data caching in decentralized API for efficiency (cache epoch group data to avoid repeated blockchain queries)
+- Cache invalidation occurs only during epoch transitions to ensure data consistency
+
+### MLNode Snapshots in Epoch Model Subgroups
 
 #### Before:
 - Hardware nodes stored per participant via `SetHardwareNodes` in `inference-chain/x/inference/keeper/hardware_node.go`
@@ -159,7 +223,7 @@ use `GetNodesForModel` from `inference-chain/x/inference/keeper/hardware_node.go
 - Weight calculation in `inference-chain/x/inference/module/chainvalidation.go` via `ComputeNewWeights` function
 - Single weight per participant in epoch groups `inference-chain/x/inference/epochgroup/epoch_group.go` in `ValidationWeight`
 
-The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces, and BlockHeight.
+The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces (array of nonce values), and BlockHeight.
 
 #### After: MLNode-Specific PoC Tracking
 
