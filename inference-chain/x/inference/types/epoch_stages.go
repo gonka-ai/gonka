@@ -36,39 +36,18 @@ type EpochStages struct {
 // EpochParams, so changes to the underlying maths automatically flow
 // through.
 func (ec *EpochContext) GetEpochStages() EpochStages {
-	// Absolute anchors – reused multiple times for readability.
-	base := ec.PocStartBlockHeight
-	params := &ec.EpochParams
-
-	// Helper to avoid repeating conversions.
-	rel := func(offset int64) int64 { return base + offset }
-
-	stages := EpochStages{
+	return EpochStages{
 		EpochIndex:            ec.EpochIndex,
-		PocStart:              base,
-		PocGenerationWinddown: rel(params.GetPoCWinddownStage()),
-		PocGenerationEnd:      rel(params.GetEndOfPoCStage()),
-		PocValidationStart:    rel(params.GetStartOfPoCValidationStage()),
-		PocValidationWinddown: rel(params.GetPoCValidationWindownStage()),
-		PocValidationEnd:      rel(params.GetEndOfPoCValidationStage()),
-		SetNewValidators:      rel(params.GetSetNewValidatorsStage()),
-		ClaimMoney:            rel(params.GetClaimMoneyStage()),
-		NextPocStart:          base + params.EpochLength,
+		PocStart:              ec.StartOfPoC(),
+		PocGenerationWinddown: ec.PoCGenerationWinddown(),
+		PocGenerationEnd:      ec.EndOfPoC(),
+		PocValidationStart:    ec.StartOfPoCValidation(),
+		PocValidationWinddown: ec.PoCValidationWinddown(),
+		PocValidationEnd:      ec.EndOfPoCValidation(),
+		SetNewValidators:      ec.SetNewValidators(),
+		ClaimMoney:            ec.ClaimMoney(),
+		NextPocStart:          ec.NextPoCStart(),
+		PocExchangeWindow:     ec.PoCExchangeWindow(),
+		PocValExchangeWindow:  ec.ValidationExchangeWindow(),
 	}
-
-	// PoC exchange window: (PocStart, PocExchangeDeadline] – note the
-	// window opens one block **after** PocStart to match
-	// IsPoCExchangeWindow logic (>0).
-	stages.PocExchangeWindow = EpochExchangeWindow{
-		Start: base + 1,
-		End:   rel(params.GetPoCExchangeDeadline()),
-	}
-
-	// Validation exchange window: (PoCValidationStart, SetNewValidators]
-	stages.PocValExchangeWindow = EpochExchangeWindow{
-		Start: rel(params.GetStartOfPoCValidationStage()) + 1,
-		End:   rel(params.GetSetNewValidatorsStage()),
-	}
-
-	return stages
 }

@@ -22,7 +22,8 @@ func NewEpochContext(epoch Epoch, params EpochParams) EpochContext {
 
 // NewEpochContextFromEffectiveEpoch determines the most up-to-date Epoch context based on the current block height.
 func NewEpochContextFromEffectiveEpoch(epoch Epoch, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
-	if currentBlockHeight < getNextPoCStart(epoch, &epochParams) &&
+	ec := NewEpochContext(epoch, epochParams)
+	if currentBlockHeight < ec.NextPoCStart() &&
 		currentBlockHeight > getGroupBecomesEffective(epoch, &epochParams) {
 		return &EpochContext{
 			EpochIndex:          epoch.Index,
@@ -32,7 +33,7 @@ func NewEpochContextFromEffectiveEpoch(epoch Epoch, epochParams EpochParams, cur
 	} else if currentBlockHeight <= getNextGroupBecomesEffective(epoch, &epochParams) {
 		return &EpochContext{
 			EpochIndex:          epoch.Index + 1,
-			PocStartBlockHeight: getNextPoCStart(epoch, &epochParams),
+			PocStartBlockHeight: ec.NextPoCStart(),
 			EpochParams:         epochParams,
 		}
 	} else {
@@ -190,6 +191,10 @@ func (ec *EpochContext) ClaimMoney() int64 {
 }
 
 func (ec *EpochContext) NextPoCStart() int64 {
+	if ec.EpochIndex == 0 {
+		// For epoch 0 we return the PoC start height as defined in EpochParams.
+		return -ec.EpochParams.EpochShift + ec.EpochParams.EpochLength
+	}
 	return ec.PocStartBlockHeight + ec.EpochParams.EpochLength
 }
 
@@ -264,4 +269,8 @@ func (ec *EpochContext) IsClaimMoneyStage(blockHeight int64) bool {
 		return false
 	}
 	return blockHeight == ec.ClaimMoney()
+}
+
+func (ec *EpochContext) IsNextPoCStart(blockHeight int64) bool {
+	return blockHeight == ec.NextPoCStart()
 }
