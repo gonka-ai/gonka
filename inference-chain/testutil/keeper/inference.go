@@ -47,6 +47,10 @@ type InferenceMocks struct {
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
+	mocks.StubForInitGenesisWithValidators(ctx, []stakingtypes.Validator{})
+}
+
+func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Context, validators []stakingtypes.Validator) {
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
 	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
 	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
@@ -73,7 +77,7 @@ func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
 	// Actually can just return any as well
 	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil)
 
-	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return([]stakingtypes.Validator{}, nil)
+	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return(validators, nil).Times(1)
 }
 
 func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {

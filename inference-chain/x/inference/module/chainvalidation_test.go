@@ -2,6 +2,9 @@ package inference_test
 
 import (
 	"context"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/utils"
+	"strconv"
 	"testing"
 
 	"cosmossdk.io/math"
@@ -16,30 +19,59 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
-	t.Skip("For now we disabled PoC validation for the very first PoC. " +
-		"There's a problem with address mismatch between the statking validators and the group members.")
+var validatorOperatorAddress1 = "gonkavaloper1gcrlrhvw8kd7zr6pl92rxnc6j20chatkcx6w4t"
+var validatorOperatorAddress2 = "gonkavaloper1xk89s4ymj9y20aym3xa0mz4jhdx40hewckhw0u"
 
-	// Setup with mocks
-	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+
+	validatorAccAddress1, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress1)
+	require.NoError(t, err, "Failed to convert operator address to account address")
+	println(validatorAccAddress1)
+
+	validatorAccAddress2, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress2)
+	require.NoError(t, err, "Failed to convert operator address to account address")
+	println(validatorAccAddress2)
 
 	// Create validators to be returned by the staking keeper
 	validators := []stakingtypes.Validator{
 		{
-			OperatorAddress: "validator1",
+			OperatorAddress: validatorOperatorAddress1,
 			Tokens:          math.NewInt(100),
 		},
 		{
-			OperatorAddress: "validator2",
+			OperatorAddress: validatorOperatorAddress2,
 			Tokens:          math.NewInt(200),
 		},
 	}
 
-	// Set up the mock expectation for GetAllValidators
-	mocks.StakingKeeper.EXPECT().
-		GetAllValidators(gomock.Any()).
-		Return(validators, nil).
-		Times(1)
+	// Setup with mocks
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesisWithValidators(ctx, validators)
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	members := make([]*group.GroupMember, len(validators))
+	for i, v := range validators {
+		address, err := utils.OperatorAddressToAccAddress(v.OperatorAddress)
+		require.NoError(t, err, "Failed to convert operator address to account address")
+		members[i] = &group.GroupMember{
+			Member: &group.Member{
+				Address:  address,
+				Weight:   strconv.FormatInt(v.Tokens.Int64(), 10),
+				Metadata: "metadata1",
+			},
+		}
+	}
+	response := &group.QueryGroupMembersResponse{
+		Members: members,
+	}
+
+	// Set up the mock expectation
+	mocks.GroupKeeper.EXPECT().
+		GroupMembers(gomock.Any(), gomock.Any()).
+		Return(response, nil).
+		AnyTimes()
 
 	// Create AppModule with the keeper
 	am := inference.NewAppModule(nil, k, nil, nil, nil)
@@ -55,7 +87,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Set up validations
 	validation := types.PoCValidation{
 		ParticipantAddress:          "participant1",
-		ValidatorParticipantAddress: "validator1",
+		ValidatorParticipantAddress: validatorAccAddress1,
 		PocStageStartBlockHeight:    100,
 		FraudDetected:               false,
 	}
@@ -77,7 +109,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	}
 	k.SetRandomSeed(ctx, seed)
 
-	// Create EpochGroupData with epochGroupId <= 1
+	// Create EpochGroupData with epochIndex <= 1
 	upcomingEpoch := types.Epoch{
 		Index:               1,
 		PocStartBlockHeight: 100,
@@ -91,16 +123,24 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 }
 
 func TestComputeNewWeights(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+
+	validatorOperatorAddress := validatorOperatorAddress1
+	validatorAccAddress, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress)
+	require.NoError(t, err, "Failed to convert operator address to account address")
+	println(validatorAccAddress)
+
 	// Test cases
 	tests := []struct {
 		name                 string
-		epochGroupId         uint64
+		epochIndex           uint64
 		setupState           func(t *testing.T, k *keeper.Keeper, ctx context.Context)
 		expectedParticipants int
 	}{
 		{
-			name:         "First epoch - no active participants",
-			epochGroupId: 1,
+			name:       "First epoch - no active participants",
+			epochIndex: 1,
 			setupState: func(t *testing.T, k *keeper.Keeper, ctx context.Context) {
 				// Set up batches
 				batch := types.PoCBatch{
@@ -113,7 +153,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up validations
 				validation := types.PoCValidation{
 					ParticipantAddress:          "participant1",
-					ValidatorParticipantAddress: "validator1",
+					ValidatorParticipantAddress: validatorAccAddress,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
 				}
@@ -138,8 +178,8 @@ func TestComputeNewWeights(t *testing.T) {
 			expectedParticipants: 1,
 		},
 		{
-			name:         "Subsequent epoch with active participants",
-			epochGroupId: 2,
+			name:       "Subsequent epoch with active participants",
+			epochIndex: 2,
 			setupState: func(t *testing.T, k *keeper.Keeper, ctx context.Context) {
 				// Set up previous epoch group data
 				previousEpochGroupData := types.EpochGroupData{
@@ -147,16 +187,15 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: validatorAccAddress,
 							Weight:        10,
 						},
 					},
 				}
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
-				// Set previous epoch group ID
-				// TODO: [PRTODO] fix
-				// k.SetPreviousEpochGroupId(ctx, 50)
+				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
+				k.SetEffectiveEpochIndex(ctx, 1)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -169,7 +208,7 @@ func TestComputeNewWeights(t *testing.T) {
 				// Set up validations
 				validation := types.PoCValidation{
 					ParticipantAddress:          "participant1",
-					ValidatorParticipantAddress: "validator1",
+					ValidatorParticipantAddress: validatorAccAddress,
 					PocStageStartBlockHeight:    100,
 					FraudDetected:               false,
 				}
@@ -194,8 +233,8 @@ func TestComputeNewWeights(t *testing.T) {
 			expectedParticipants: 1,
 		},
 		{
-			name:         "Participant didn't receive enough validations (total voted weight < required) - should default to accepting",
-			epochGroupId: 2,
+			name:       "Participant didn't receive enough validations (total voted weight < required) - should default to accepting",
+			epochIndex: 2,
 			setupState: func(t *testing.T, k *keeper.Keeper, ctx context.Context) {
 				// Set up previous epoch group data with high weight validators
 				previousEpochGroupData := types.EpochGroupData{
@@ -254,8 +293,8 @@ func TestComputeNewWeights(t *testing.T) {
 			expectedParticipants: 1, // Should be accepted despite not enough validations
 		},
 		{
-			name:         "Participant didn't receive enough valid validations (valid weight < required) - should be rejected",
-			epochGroupId: 2,
+			name:       "Participant didn't receive enough valid validations (valid weight < required) - should be rejected",
+			epochIndex: 2,
 			setupState: func(t *testing.T, k *keeper.Keeper, ctx context.Context) {
 				// Set up previous epoch group data with high weight validators
 				previousEpochGroupData := types.EpochGroupData{
@@ -263,10 +302,11 @@ func TestComputeNewWeights(t *testing.T) {
 					PocStartBlockHeight: 50,
 					ValidationWeights: []*types.ValidationWeight{
 						{
-							MemberAddress: "validator1",
+							MemberAddress: validatorAccAddress,
 							Weight:        5,
 						},
 						{
+							// Intentionally using a different address to simulate low weight
 							MemberAddress: "validator2",
 							Weight:        20,
 						},
@@ -274,8 +314,8 @@ func TestComputeNewWeights(t *testing.T) {
 				}
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
-				// Set previous epoch group ID
-				// TODO: [PRTODO] fix k.SetPreviousEpochGroupId(ctx, 50)
+				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
+				k.SetEffectiveEpochIndex(ctx, 1)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -320,41 +360,44 @@ func TestComputeNewWeights(t *testing.T) {
 			k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 			// Set up mock for GroupMembers if needed
-			if tt.epochGroupId > 1 {
-				// Create a mock response for GroupMembers
-				members := []*group.GroupMember{
-					{
-						Member: &group.Member{
-							Address:  "validator1",
-							Weight:   "10",
-							Metadata: "metadata1",
-						},
-					},
-				}
-				response := &group.QueryGroupMembersResponse{
-					Members: members,
-				}
-
-				// Set up the mock expectation
-				mocks.GroupKeeper.EXPECT().
-					GroupMembers(gomock.Any(), gomock.Any()).
-					Return(response, nil).
-					AnyTimes()
-			} else {
-				// For epochGroupId <= 1, set up mock for GetAllValidators
+			if tt.epochIndex == 1 {
 				validators := []stakingtypes.Validator{
 					{
-						OperatorAddress: "validator1",
+						OperatorAddress: validatorOperatorAddress,
 						Tokens:          math.NewInt(100),
 					},
 				}
+
+				mocks.StubForInitGenesis(ctx)
 
 				// Set up the mock expectation for GetAllValidators
 				mocks.StakingKeeper.EXPECT().
 					GetAllValidators(gomock.Any()).
 					Return(validators, nil).
 					AnyTimes()
+
+				inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 			}
+
+			// Create a mock response for GroupMembers
+			members := []*group.GroupMember{
+				{
+					Member: &group.Member{
+						Address:  validatorAccAddress,
+						Weight:   "10",
+						Metadata: "metadata1",
+					},
+				},
+			}
+			response := &group.QueryGroupMembersResponse{
+				Members: members,
+			}
+
+			// Set up the mock expectation
+			mocks.GroupKeeper.EXPECT().
+				GroupMembers(gomock.Any(), gomock.Any()).
+				Return(response, nil).
+				AnyTimes()
 
 			// Create AppModule with the keeper
 			am := inference.NewAppModule(nil, k, nil, nil, nil)
@@ -364,9 +407,15 @@ func TestComputeNewWeights(t *testing.T) {
 
 			// Create EpochGroupData
 			upcomingEpoch := types.Epoch{
-				Index:               tt.epochGroupId,
+				Index:               tt.epochIndex,
 				PocStartBlockHeight: 100,
 			}
+			k.SetEpoch(ctx, &upcomingEpoch)
+			k.SetEffectiveEpochIndex(ctx, tt.epochIndex-1)
+			k.SetEpochGroupData(ctx, types.EpochGroupData{
+				EpochGroupId:        2,
+				PocStartBlockHeight: 100,
+			})
 
 			// Call the function
 			result := am.ComputeNewWeights(ctx, upcomingEpoch)
