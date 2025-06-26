@@ -505,6 +505,7 @@ func LockNode[T any](
 	return action(node)
 }
 
+// FIXME: Should return a copy! To avoid modifying state outside of the broker
 func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 	response := make(chan []NodeResponse, 2)
 	err := nodeBroker.QueueMessage(GetNodesCommand{
