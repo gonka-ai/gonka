@@ -75,9 +75,14 @@ func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Contex
 		GroupPolicyAddress: "group-policy-address",
 	}, nil)
 	// Actually can just return any as well
-	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil)
+	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil).
+		AnyTimes()
+	mocks.GroupKeeper.EXPECT().UpdateGroupMembers(ctx, gomock.Any()).
+		Return(&group.MsgUpdateGroupMembersResponse{}, nil).
+		AnyTimes()
 
-	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return(validators, nil).Times(1)
+	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return(validators, nil).
+		Times(1)
 }
 
 func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {

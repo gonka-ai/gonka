@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
@@ -38,10 +39,12 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress1,
+			ConsensusPubkey: &codectypes.Any{},
 			Tokens:          math.NewInt(100),
 		},
 		{
 			OperatorAddress: validatorOperatorAddress2,
+			ConsensusPubkey: &codectypes.Any{},
 			Tokens:          math.NewInt(200),
 		},
 	}
@@ -87,7 +90,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Set up validations
 	validation := types.PoCValidation{
 		ParticipantAddress:          "participant1",
-		ValidatorParticipantAddress: validatorAccAddress1,
+		ValidatorParticipantAddress: validatorAccAddress2, // Set validation only for participant with large weight
 		PocStageStartBlockHeight:    100,
 		FraudDetected:               false,
 	}
