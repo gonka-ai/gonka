@@ -139,6 +139,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("Failed to create worker key: %w", err)
 	}
 
+	// TODO: check if this is deprecated
 	uniqueModelsList, err := getUniqueModels(nodeBroker)
 	if err != nil {
 		return fmt.Errorf("Failed to get unique models: %w", err)
