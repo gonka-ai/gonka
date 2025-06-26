@@ -256,9 +256,8 @@ func TestComputeNewWeights(t *testing.T) {
 				}
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
-				// Set previous epoch group ID
-				// TODO: [PRTODO] fix
-				// k.SetPreviousEpochGroupId(ctx, 50)
+				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
+				k.SetEffectiveEpochIndex(ctx, 1)
 
 				// Set up batches
 				batch := types.PoCBatch{
@@ -293,7 +292,7 @@ func TestComputeNewWeights(t *testing.T) {
 				}
 				k.SetRandomSeed(ctx, seed)
 			},
-			expectedParticipants: 1, // Should be accepted despite not enough validations
+			expectedParticipants: 0,
 		},
 		{
 			name:       "Participant didn't receive enough valid validations (valid weight < required) - should be rejected",
@@ -367,6 +366,7 @@ func TestComputeNewWeights(t *testing.T) {
 				validators := []stakingtypes.Validator{
 					{
 						OperatorAddress: validatorOperatorAddress,
+						ConsensusPubkey: &codectypes.Any{},
 						Tokens:          math.NewInt(100),
 					},
 				}
@@ -379,28 +379,49 @@ func TestComputeNewWeights(t *testing.T) {
 					Return(validators, nil).
 					AnyTimes()
 
+				members := make([]*group.GroupMember, len(validators))
+				for i, v := range validators {
+					address, err := utils.OperatorAddressToAccAddress(v.OperatorAddress)
+					require.NoError(t, err, "Failed to convert operator address to account address")
+					members[i] = &group.GroupMember{
+						Member: &group.Member{
+							Address:  address,
+							Weight:   strconv.FormatInt(v.Tokens.Int64(), 10),
+							Metadata: "metadata1",
+						},
+					}
+				}
+				response := &group.QueryGroupMembersResponse{
+					Members: members,
+				}
+
+				mocks.GroupKeeper.EXPECT().
+					GroupMembers(gomock.Any(), gomock.Any()).
+					Return(response, nil).
+					AnyTimes()
+
 				inference.InitGenesis(ctx, k, mocks.StubGenesisState())
-			}
-
-			// Create a mock response for GroupMembers
-			members := []*group.GroupMember{
-				{
-					Member: &group.Member{
-						Address:  validatorAccAddress,
-						Weight:   "10",
-						Metadata: "metadata1",
+			} else {
+				// Create a mock response for GroupMembers
+				members := []*group.GroupMember{
+					{
+						Member: &group.Member{
+							Address:  validatorAccAddress,
+							Weight:   "10",
+							Metadata: "metadata1",
+						},
 					},
-				},
-			}
-			response := &group.QueryGroupMembersResponse{
-				Members: members,
-			}
+				}
+				response := &group.QueryGroupMembersResponse{
+					Members: members,
+				}
 
-			// Set up the mock expectation
-			mocks.GroupKeeper.EXPECT().
-				GroupMembers(gomock.Any(), gomock.Any()).
-				Return(response, nil).
-				AnyTimes()
+				// Set up the mock expectation
+				mocks.GroupKeeper.EXPECT().
+					GroupMembers(gomock.Any(), gomock.Any()).
+					Return(response, nil).
+					AnyTimes()
+			}
 
 			// Create AppModule with the keeper
 			am := inference.NewAppModule(nil, k, nil, nil, nil)
