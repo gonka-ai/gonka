@@ -17,14 +17,14 @@ type EpochResponse struct {
 
 func (s *Server) getEpochById(ctx echo.Context) error {
 	epochParam := ctx.Param("epoch")
-	if epochParam != "current" {
+	if epochParam != "latest" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Only getting info for current epoch is supported at the moment")
 	}
 
 	queryClient := s.recorder.NewInferenceQueryClient()
 	epochInfo, err := queryClient.EpochInfo(ctx.Request().Context(), &types.QueryEpochInfoRequest{})
 	if err != nil {
-		logging.Error("Failed to get current epoch info", types.EpochGroup, "error", err)
+		logging.Error("Failed to get latest epoch info", types.EpochGroup, "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 

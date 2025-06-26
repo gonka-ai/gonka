@@ -40,7 +40,7 @@ func (ec *EpochContext) GetEpochStages() EpochStages {
 		EpochIndex:            ec.EpochIndex,
 		PocStart:              ec.StartOfPoC(),
 		PocGenerationWinddown: ec.PoCGenerationWinddown(),
-		PocGenerationEnd:      ec.EndOfPoC(),
+		PocGenerationEnd:      ec.EndOfPoCGeneration(),
 		PocValidationStart:    ec.StartOfPoCValidation(),
 		PocValidationWinddown: ec.PoCValidationWinddown(),
 		PocValidationEnd:      ec.EndOfPoCValidation(),
