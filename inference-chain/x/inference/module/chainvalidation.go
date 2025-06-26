@@ -85,28 +85,45 @@ func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochIndex u
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
 	epochStartBlockHeight := upcomingEpoch.PocStartBlockHeight
-	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight)
+	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
 	// Get current active participants weights
 	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingEpoch.Index)
-	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "weights", currentValidatorWeights)
+	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"weights", currentValidatorWeights)
 
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting current validator weights", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
 		return nil
 	}
 
 	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
 		return nil
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved original batches", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(batches)", len(originalBatches))
+	am.LogInfo("ComputeNewWeights: Retrieved original batches", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(batches)", len(originalBatches))
 
 	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "error", err)
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
 	}
 
 	validators := make([]string, len(validations))
@@ -115,7 +132,11 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		validators[i] = address
 		i += 1
 	}
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC, "epochStartBlockHeight", epochStartBlockHeight, "len(validations)", len(validations), "validators", validators)
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(validations)", len(validations),
+		"validators", validators)
 
 	// Collect all participants and seeds
 	participants := make(map[string]types.Participant)
@@ -130,14 +151,20 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	for _, participantAddress := range sortedBatchKeys {
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
-			am.LogError("ComputeNewWeights: Error getting participant", types.PoC, "address", participantAddress)
+			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
+				"address", participantAddress,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 			continue
 		}
 		participants[participantAddress] = participant
 
 		seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress)
 		if !found {
-			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC, "blockHeight", epochStartBlockHeight, "participant", participantAddress)
+			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+				"participant", participantAddress)
 			continue
 		}
 		seeds[participantAddress] = seed
