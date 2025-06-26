@@ -9,10 +9,17 @@ import (
 
 type EpochResponse struct {
 	BlockHeight int64             `json:"block_height"`
-	LatestEpoch types.Epoch       `json:"latest_epoch"`
+	LatestEpoch LatestEpochDto    `json:"latest_epoch"`
 	Phase       types.EpochPhase  `json:"phase"`
 	EpochStages types.EpochStages `json:"epoch_stages"`
 	EpochParams types.EpochParams `json:"epoch_params"`
+}
+
+// LatestEpochDto, had to indroduced it, because types.Epoch doesn't serialize when
+// Index and PocStartBlockHeight are 0
+type LatestEpochDto struct {
+	Index               uint64 `json:"index"`
+	PocStartBlockHeight int64  `json:"poc_start_block_height"`
 }
 
 func (s *Server) getEpochById(ctx echo.Context) error {
@@ -34,7 +41,10 @@ func (s *Server) getEpochById(ctx echo.Context) error {
 
 	response := EpochResponse{
 		BlockHeight: epochInfo.BlockHeight,
-		LatestEpoch: epochInfo.LatestEpoch,
+		LatestEpoch: LatestEpochDto{
+			Index:               epochInfo.LatestEpoch.Index,
+			PocStartBlockHeight: epochInfo.LatestEpoch.PocStartBlockHeight,
+		},
 		Phase:       epochContext.GetCurrentPhase(epochInfo.BlockHeight),
 		EpochStages: epochContext.GetEpochStages(),
 		EpochParams: *epochInfo.Params.EpochParams,
