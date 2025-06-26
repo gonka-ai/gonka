@@ -174,7 +174,6 @@ func requireNotAStageBoundary(t *testing.T, ec *types.EpochContext, i int64) {
 	require.False(t, ec.IsEndOfPoCValidationStage(i))
 	require.False(t, ec.IsSetNewValidatorsStage(i))
 	require.False(t, ec.IsClaimMoneyStage(i))
-	require.False(t, ec.IsStartOfNextPoC(i))
 }
 
 func TestPlain(t *testing.T) {
