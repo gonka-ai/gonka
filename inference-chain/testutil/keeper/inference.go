@@ -1,6 +1,9 @@
 package keeper
 
 import (
+	"context"
+	"github.com/cosmos/cosmos-sdk/x/group"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/slog"
 	"testing"
@@ -40,6 +43,24 @@ type InferenceMocks struct {
 	AccountKeeper *MockAccountKeeper
 	GroupKeeper   *MockGroupMessageKeeper
 	StakingKeeper *MockStakingKeeper
+}
+
+func (mocks *InferenceMocks) StubForGenesisEpochCreation(ctx context.Context) {
+	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            1,
+		GroupPolicyAddress: "group-policy-address",
+	}, nil)
+	// Actually can just return any as well
+	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil)
+
+	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return([]stakingtypes.Validator{}, nil)
+}
+
+func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {
+	return types.GenesisState{
+		Params:            types.DefaultParams(),
+		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+	}
 }
 
 func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {

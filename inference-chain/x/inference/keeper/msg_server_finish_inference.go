@@ -50,7 +50,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, "err", err)
 		return nil, err
 	}
 	existingInference.Status = types.InferenceStatus_FINISHED

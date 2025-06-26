@@ -102,7 +102,8 @@ func (k msgServer) StartInference(goCtx context.Context, msg *types.MsgStartInfe
 
 	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
+		// NEEDREVIEW: shouldn't we just fail here?
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, "err", err)
 	} else {
 		currentEpochGroup.GroupData.NumberOfRequests++
 		k.SetEpochGroupData(ctx, *currentEpochGroup.GroupData)

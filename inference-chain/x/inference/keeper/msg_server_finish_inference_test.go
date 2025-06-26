@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
+	inference "github.com/productscience/inference/x/inference/module"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -14,7 +15,12 @@ import (
 )
 
 func TestMsgServer_FinishInference(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	mocks.StubForGenesisEpochCreation(ctx)
+
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
