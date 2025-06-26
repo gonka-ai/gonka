@@ -303,6 +303,8 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 			)
 		}
 	} else {
+		// NEEDREVIEW: what are we doing here now? This is an illegal state after my recent changes!
+		// Probably just forbid creating weightCalculator with nil values??
 		shouldContinue = true
 		wc.Logger.LogError("Calculate: No current validator weights found. Accepting the participant.", types.PoC, "participant", participantAddress)
 	}
