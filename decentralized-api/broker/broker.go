@@ -154,7 +154,6 @@ type NodeState struct {
 	LockCount       int        `json:"lock_count"`
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
-	LastStateChange time.Time  `json:"last_state_change"`
 	AdminState      AdminState `json:"admin_state"`
 }
 
