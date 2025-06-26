@@ -1,15 +1,25 @@
 package inference
 
 import (
+	"log"
+	"strings"
+
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/productscience/inference/x/inference/epochgroup"
-	"log"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// IgnoreDuplicateDenomRegistration can be toggled by tests to suppress the
+// "denom already registered" error that arises from the Cosmos-SDK's global
+// denom registry when multiple tests within the same process call InitGenesis.
+//
+// In production code this flag MUST remain false so that duplicate
+// registrations still panic.
+var IgnoreDuplicateDenomRegistration bool
 
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
@@ -156,14 +166,28 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 }
 
 func LoadMetadataToSdk(metadata banktypes.Metadata) error {
+	// NOTE: sdk.RegisterDenom stores the mapping in a process-global registry.
+	// When several tests initialise the app within the same "go test" process
+	// the same denom (nicoin/icoin/…) can be registered more than once and the
+	// second attempt returns an error.  In production this situation should be
+	// considered fatal, therefore we gate the duplicate-tolerant behaviour
+	// behind a flag that tests can enable explicitly.
+
 	for _, denom := range metadata.DenomUnits {
 		err := sdk.RegisterDenom(denom.Denom, math.LegacyNewDec(10).Power(uint64(denom.Exponent)))
 		if err != nil {
+			if IgnoreDuplicateDenomRegistration && strings.Contains(err.Error(), "already registered") {
+				// Skip duplicate error in test runs.
+				continue
+			}
 			return err
 		}
 	}
-	err := sdk.SetBaseDenom(metadata.Base)
-	if err != nil {
+
+	if err := sdk.SetBaseDenom(metadata.Base); err != nil {
+		if IgnoreDuplicateDenomRegistration && strings.Contains(err.Error(), "already registered") {
+			return nil
+		}
 		return err
 	}
 	return nil

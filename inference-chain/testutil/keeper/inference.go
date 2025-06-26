@@ -2,12 +2,13 @@ package keeper
 
 import (
 	"context"
+	"testing"
+
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/slog"
-	"testing"
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/inference/keeper"
+	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -47,6 +49,8 @@ type InferenceMocks struct {
 }
 
 func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
+	// Enable duplicate denom registration tolerance for tests that call InitGenesis
+	inference.IgnoreDuplicateDenomRegistration = true
 	mocks.StubForInitGenesisWithValidators(ctx, []stakingtypes.Validator{})
 }
 
