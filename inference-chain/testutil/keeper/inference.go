@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"go.uber.org/mock/gomock"
@@ -45,7 +46,26 @@ type InferenceMocks struct {
 	StakingKeeper *MockStakingKeeper
 }
 
-func (mocks *InferenceMocks) StubForGenesisEpochCreation(ctx context.Context) {
+func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+		Base: types.BaseCoin,
+		DenomUnits: []*banktypes.DenomUnit{
+			{
+				Denom:    types.BaseCoin,
+				Exponent: 0,
+			},
+			{
+				Denom:    types.NativeCoin,
+				Exponent: 9,
+			},
+		},
+	}, true)
+
 	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
 		GroupId:            1,
 		GroupPolicyAddress: "group-policy-address",

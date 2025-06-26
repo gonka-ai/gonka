@@ -17,7 +17,10 @@ import (
 func TestMsgServer_FinishInference(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
-	mocks.StubForGenesisEpochCreation(ctx)
+	mocks.StubForInitGenesis(ctx)
+
+	// For escrow calls
+	mocks.BankKeeper.ExpectAny(ctx)
 
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 

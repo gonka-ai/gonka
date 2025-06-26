@@ -1,8 +1,6 @@
 package inference_test
 
 import (
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"go.uber.org/mock/gomock"
 	"testing"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -107,26 +105,8 @@ func TestGenesis(t *testing.T) {
 	}
 
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
-	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
-	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
-	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
-		Base: types.BaseCoin,
-		DenomUnits: []*banktypes.DenomUnit{
-			{
-				Denom:    types.BaseCoin,
-				Exponent: 0,
-			},
-			{
-				Denom:    types.NativeCoin,
-				Exponent: 9,
-			},
-		},
-	}, true)
 
-	mocks.StubForGenesisEpochCreation(ctx)
+	mocks.StubForInitGenesis(ctx)
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
