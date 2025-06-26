@@ -13,6 +13,14 @@ import (
 
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
+	// PRTODO: set active participants here, but how?
+	// Set all the epochGroupData
+	// Add explicit InitGenesis method for setting epoch data
+	/*	for _, elem := range genState.EpochGroupDataList {
+		k.SetEpochGroupData(ctx, elem)
+	}*/
+	InitGenesisEpoch(ctx, k)
+
 	// Set all the inference
 	for _, elem := range genState.InferenceList {
 		k.SetInference(ctx, elem)
@@ -20,11 +28,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	// Set all the participant
 	for _, elem := range genState.ParticipantList {
 		k.SetParticipant(ctx, elem)
-	}
-	// PRTODO: set active participants here, but how?
-	// Set all the epochGroupData
-	for _, elem := range genState.EpochGroupDataList {
-		k.SetEpochGroupData(ctx, elem)
 	}
 	// Set all the settleAmount
 	for _, elem := range genState.SettleAmountList {
@@ -36,8 +39,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	InitHoldingAccounts(ctx, k, genState)
-
-	InitGenesisEpoch(ctx, k)
 
 	// Set if defined
 	if genState.TokenomicsData != nil {

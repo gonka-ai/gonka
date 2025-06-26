@@ -2,9 +2,11 @@ package inference_test
 
 import (
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"go.uber.org/mock/gomock"
 	"testing"
 
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	inference "github.com/productscience/inference/x/inference/module"
@@ -31,14 +33,6 @@ func TestGenesis(t *testing.T) {
 			},
 			{
 				Index: "1",
-			},
-		},
-		EpochGroupDataList: []types.EpochGroupData{
-			{
-				PocStartBlockHeight: 0,
-			},
-			{
-				PocStartBlockHeight: 1,
 			},
 		},
 		SettleAmountList: []types.SettleAmount{
@@ -133,6 +127,15 @@ func TestGenesis(t *testing.T) {
 			},
 		},
 	}, true)
+
+	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            1,
+		GroupPolicyAddress: "group-policy-address",
+	}, nil)
+	// Actually can just return any as well
+	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil)
+
+	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return([]stakingtypes.Validator{}, nil)
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
