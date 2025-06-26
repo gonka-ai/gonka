@@ -7,6 +7,7 @@ FROM golang:alpine AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
+ARG WASMVM_VERSION=v1.5.2
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
@@ -21,9 +22,14 @@ ENV GOOS=${GOOS} \
 RUN apk add --no-cache make gcc musl-dev git
 
 # Use the musl libc version of wasmvm and create a symlink for the linker
-RUN wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.x86_64.a \
-    && echo "e660a38efb2930b34ee6f6b0bb12730adccb040b6ab701b8f82f34453a426ae7 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
-    && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
+RUN if [ "$GOARCH" = "arm64" ]; then \
+        LIB=libwasmvm_muslc.aarch64.a ; \
+    else \
+        LIB=libwasmvm_muslc.x86_64.a ; \
+    fi && \
+    wget -q -O "/lib/${LIB}" \
+        "https://github.com/CosmWasm/wasmvm/releases/download/${WASMVM_VERSION}/${LIB}" && \
+    ln -sf "/lib/${LIB}" /lib/libwasmvm_muslc.a \
     # Remove the glibc version from the Go module cache
     && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.x86_64.so
 

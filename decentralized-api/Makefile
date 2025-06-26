@@ -36,6 +36,8 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	OUTPUT_DIR: $(OUTPUT_DIR)"
+	
 	@DOCKER_BUILDKIT=1 docker buildx build \
 		--platform $(PLATFORM) \
 		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \

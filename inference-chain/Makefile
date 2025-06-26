@@ -59,9 +59,9 @@ define DOCKER_BUILD_UPGRADE
 	@echo "LDFLAGS:   $(ldflags)"
 	@echo "GOOS:      $(GOOS)"
 	@echo "TAGS:      $(if $(filter 1,$(TESTS)),upgraded,not set)"
+	@echo "OUTPUT_DIR: $(OUTPUT_DIR)"
 
-	@DOCKER_BUILDKIT=1 \
-	docker build \
+	@DOCKER_BUILDKIT=1 docker buildx build \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
@@ -69,7 +69,7 @@ define DOCKER_BUILD_UPGRADE
 		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
 		--target binary-exporter \
 		-f $(DOCKER_FILE) \
-		--output type=local,dest=./output \
+		--output type=local,dest=$(OUTPUT_DIR) \
 		..
 endef
 
@@ -107,12 +107,13 @@ build-for-upgrade:
 	$(eval GOOS=linux)
 	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
+	$(eval OUTPUT_DIR = ./output-amd64)
 	$(DOCKER_BUILD_UPGRADE)
 	@echo "--> clearing out ../public-html/v2/inferenced"
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/inferenced ../public-html/v2/inferenced/inferenced-amd64
+	@cp $(OUTPUT_DIR)/inferenced ../public-html/v2/inferenced/inferenced-amd64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
@@ -120,15 +121,21 @@ build-for-upgrade:
 	@echo "--> generating shasum for inferenced-amd64.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
 	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
+	@echo "inferenced-amd64.zip $$(shasum -a 256 \
+		../public-html/v2/inferenced/inferenced-amd64.zip | cut -d' ' -f1)" \
+		>> ../public-html/v2/checksums.txt
 
 build-for-upgrade-arm:
-	@mkdir -p build
-	@echo "--> building inferenced for ARM64 using direct Go cross-compilation"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(ldflags)" -o ./build/inferenced-arm64 ./cmd/inferenced/main.go
+	$(eval PLATFORM  = linux/arm64)
+	$(eval GOOS      = linux)
+	$(eval GOARCH    = arm64)
+	$(eval DOCKER_FILE = Dockerfile)
+	$(eval OUTPUT_DIR  = ./output-arm64)
+	@rm -rf $(OUTPUT_DIR)
+	$(DOCKER_BUILD_UPGRADE)
 	@mkdir -p ../public-html/v2/inferenced
 	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./build/inferenced-arm64 ../public-html/v2/inferenced/inferenced-arm64
+	@cp $(OUTPUT_DIR)/inferenced ../public-html/v2/inferenced/inferenced-arm64
 	@echo "--> zipping inferenced binary"
 # We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
 	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64
@@ -136,7 +143,9 @@ build-for-upgrade-arm:
 	@echo "--> generating shasum for inferenced-arm64.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip
 	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-arm64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip)" >> ../public-html/v2/checksums.txt
+	@echo "inferenced-arm64.zip $$(shasum -a 256 \
+		../public-html/v2/inferenced/inferenced-arm64.zip | cut -d' ' -f1)" \
+		>> ../public-html/v2/checksums.txt
 
 #################################################
 # CROSS-COMPILATION SECTION
