@@ -18,25 +18,33 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 	epochParams := k.Keeper.GetParams(ctx).EpochParams
 	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 	if !found {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get upcoming epoch", types.PoC, "currentBlockHeight", currentBlockHeight)
+		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get upcoming epoch", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
+			"currentBlockHeight", currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "[SubmitPocBatch] Failed to get upcoming epoch")
 	}
 	epochContext := types.NewEpochContext(*upcomingEpoch, *epochParams)
 
 	if !epochContext.IsStartOfPocStage(startBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] message start block height doesn't match the upcoming epoch", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
 			"msg.PocStageStartBlockHeight", startBlockHeight,
 			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
 			"currentBlockHeight", currentBlockHeight,
 			"epochContext", epochContext)
 		errMsg := fmt.Sprintf("[SubmitPocValidation] message start block height doesn't match the upcoming epoch. "+
+			"participant = %s. validatorParticipant = %s"+
 			"msg.PocStageStartBlockHeight = %d. epochContext.PocStartBlockHeight = %d. currentBlockHeight = %d",
-			startBlockHeight, epochContext.PocStartBlockHeight, currentBlockHeight)
+			msg.ParticipantAddress, msg.Creator, startBlockHeight, epochContext.PocStartBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
 	if !epochContext.IsValidationExchangeWindow(currentBlockHeight) {
 		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
 			"msg.BlockHeight", startBlockHeight,
 			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
 			"currentBlockHeight", currentBlockHeight,
