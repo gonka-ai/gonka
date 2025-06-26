@@ -233,6 +233,7 @@ func TestComputeNewWeights(t *testing.T) {
 						},
 					},
 				}
+				initMockGroupMembers(mocks, previousEpochGroupData.ValidationWeights)
 				k.SetEpochGroupData(ctx, previousEpochGroupData)
 
 				k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 50})
