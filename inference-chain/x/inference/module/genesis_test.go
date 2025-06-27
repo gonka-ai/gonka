@@ -3,9 +3,6 @@ package inference_test
 import (
 	"testing"
 
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"go.uber.org/mock/gomock"
-
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	inference "github.com/productscience/inference/x/inference/module"

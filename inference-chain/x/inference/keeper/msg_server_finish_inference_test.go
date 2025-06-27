@@ -5,8 +5,8 @@ import (
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
-	"go.uber.org/mock/gomock"
 	inference "github.com/productscience/inference/x/inference/module"
+	"go.uber.org/mock/gomock"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
