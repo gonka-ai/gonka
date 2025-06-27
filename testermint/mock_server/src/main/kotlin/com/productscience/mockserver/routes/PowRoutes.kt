@@ -75,7 +75,7 @@ fun Route.powRoutes(webhookService: WebhookService) {
         call.respond(HttpStatusCode.OK)
     }
 
-    get("/api/v1/pow/state") {
+    get("/api/v1/pow/status") {
         // Respond with the current state
         call.respond(
             HttpStatusCode.OK,
