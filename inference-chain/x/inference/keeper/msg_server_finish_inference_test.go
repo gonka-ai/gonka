@@ -21,9 +21,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 	mocks.StubForInitGenesis(ctx)
 
-	// For escrow calls
-	mocks.BankKeeper.ExpectAny(ctx)
-
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
