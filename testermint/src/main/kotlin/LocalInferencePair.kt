@@ -141,7 +141,8 @@ data class LocalInferencePair(
     val mock: InferenceMock?,
     val name: String,
     override val config: ApplicationConfig,
-    var mostRecentParams: InferenceParams? = null
+    var mostRecentParams: InferenceParams? = null,
+    var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
@@ -199,6 +200,7 @@ data class LocalInferencePair(
             }
             this.node.waitForNextBlock()
             currentBlock = this.getCurrentBlockHeight()
+            mostRecentEpochData = this.api.getLatestEpoch()
         }
         error("Block $targetBlock reached without condition passing")
     }
