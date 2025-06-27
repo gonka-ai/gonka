@@ -7,6 +7,7 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -79,32 +80,51 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 }
 
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
+	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 	epochState := o.phaseTracker.GetCurrentEpochState()
-	startOfPoCBlockHeight := epochState.CurrentEpoch.PocStartBlockHeight
+	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
 	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
+	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"epochState.CurrentBlock.Height", epochState.CurrentBlock.Height,
+		"epochState.CurrentPhase", epochState.CurrentPhase,
+		"epochState.LatestEpoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
+		"epochState.LatestEpoch.EpochIndex", epochState.LatestEpoch.EpochIndex)
+
 	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
 	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
 		return
 	}
+	logging.Info("ValidateReceivedBatches. Got start of PoC block hash.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight, "pocStartBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
 
 	// 1. GET ALL SUBMITTED BATCHES!
 	// batches, err := o.cosmosClient.GetPoCBatchesByStage(startOfPoCBlockHeight)
 	// FIXME: might be too long of a transaction, paging might be needed
 	batches, err := o.chainBridge.PoCBatchesForStage(startOfPoCBlockHeight)
 	if err != nil {
-		logging.Error("Failed to get PoC batches", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
 		return
 	}
+	participants := make([]string, len(batches.PocBatch))
+	for i, batch := range batches.PocBatch {
+		participants[i] = batch.Participant
+	}
+	logging.Info("ValidateReceivedBatches. Got PoC batches.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"numParticipants", len(batches.PocBatch),
+		"participants", participants)
 
 	nodes, err := o.nodeBroker.GetNodes()
 	if err != nil {
-		logging.Error("Failed to get nodes", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
 		return
 	}
+	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
-		logging.Error("No nodes available to validate PoC batches", types.PoC)
+		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 		return
 	}
 
@@ -121,15 +141,20 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		}
 		node := nodes[i%len(nodes)]
 
-		logging.Debug("ValidateReceivedBatches. pubKey", types.PoC, "pubKey", batch.HexPubKey)
+		logging.Info("ValidateReceivedBatches. Sending joined batch for validation.", types.PoC,
+			"startOfValStageHeight", startOfValStageHeight,
+			"node.Id", node.Node.Id, "node.Host", node.Node.Host,
+			"batch.Participant", batch.Participant)
 		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
 
 		// FIXME: copying: doesn't look good for large PoCBatch structures?
-		nodeClient := o.nodeBroker.NewNodeClient(node.Node)
+		nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
 		err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
 		if err != nil {
-			logging.Error("Failed to send validate batch request to node", types.PoC, "node", node.Node.Host, "error", err)
+			logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
 			continue
 		}
 	}
+
+	logging.Info("ValidateReceivedBatches. Finished.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 }

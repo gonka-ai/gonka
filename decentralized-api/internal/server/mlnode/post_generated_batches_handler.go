@@ -41,18 +41,28 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 	var body mlnodeclient.ValidatedBatch
 
 	if err := ctx.Bind(&body); err != nil {
-		logging.Error("Failed to decode request body of type ValidatedBatch", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches-callback. Failed to decode request body of type ValidatedBatch", types.PoC, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	logging.Info("ValidatedProofBatch received", types.PoC, "NInvalid", body.NInvalid, "ProbabilityHonest", body.ProbabilityHonest, "FraudDetected", body.FraudDetected)
-	logging.Debug("ValidatedProofBatch received", types.PoC, "body", body)
+	logging.Debug("ValidateReceivedBatches-callback. ValidatedProofBatch received", types.PoC, "body", body)
 
 	address, err := cosmos_client.PubKeyToAddress(body.PublicKey)
 	if err != nil {
-		logging.Error("Failed to convert public key to address", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches-callback. Failed to convert public key to address", types.PoC,
+			"publicKey", body.PublicKey,
+			"NInvalid", body.NInvalid,
+			"ProbabilityHonest", body.ProbabilityHonest,
+			"FraudDetected", body.FraudDetected,
+			"error", err)
 		return err
 	}
+
+	logging.Info("ValidateReceivedBatches-callback. ValidatedProofBatch received", types.PoC,
+		"participant", address,
+		"NInvalid", body.NInvalid,
+		"ProbabilityHonest", body.ProbabilityHonest,
+		"FraudDetected", body.FraudDetected)
 
 	msg := &inference.MsgSubmitPocValidation{
 		ParticipantAddress:       address,
@@ -74,7 +84,9 @@ func (s *Server) postValidatedBatches(ctx echo.Context) error {
 	emptyArrays(msg)
 
 	if err := s.recorder.SubmitPoCValidation(msg); err != nil {
-		logging.Error("Failed to submit MsgSubmitValidatedPocBatch", types.PoC, "error", err)
+		logging.Error("ValidateReceivedBatches-callback. Failed to submit MsgSubmitValidatedPocBatch", types.PoC,
+			"participant", address,
+			"error", err)
 		return err
 	}
 

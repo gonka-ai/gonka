@@ -7,165 +7,268 @@ import (
 // EpochContext provides a stable context for an Epoch, anchored by its starting block height.
 // It is used to reliably calculate phases and transitions regardless of changes to Epoch parameters.
 type EpochContext struct {
-	Epoch               uint64
+	EpochIndex          uint64
 	PocStartBlockHeight int64
 	EpochParams         EpochParams
 }
 
-func NewEpochContext(epochGroup *EpochGroupData, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
-	if epochGroup == nil {
-		if currentBlockHeight < getNextPoCStart(nil, &epochParams) {
-			return &EpochContext{
-				Epoch:               0,
-				PocStartBlockHeight: -epochParams.EpochShift,
-				EpochParams:         epochParams,
-			}
-		} else if currentBlockHeight <= getNextGroupBecomesEffective(nil, &epochParams) {
-			return &EpochContext{
-				Epoch:               1,
-				PocStartBlockHeight: getNextPoCStart(nil, &epochParams),
-				EpochParams:         epochParams,
-			}
-		} else {
-			msg := fmt.Sprintf("epoch group in nil. currentBlockHeight = %d", currentBlockHeight)
-			panic(msg)
-		}
+func NewEpochContext(epoch Epoch, params EpochParams) EpochContext {
+	return EpochContext{
+		EpochIndex:          epoch.Index,
+		PocStartBlockHeight: epoch.PocStartBlockHeight,
+		EpochParams:         params,
 	}
+}
 
-	if currentBlockHeight < getNextPoCStart(epochGroup, &epochParams) &&
-		currentBlockHeight > getGroupBecomesEffective(epochGroup, &epochParams) {
+// NewEpochContextFromEffectiveEpoch determines the most up-to-date Epoch context based on the current block height.
+func NewEpochContextFromEffectiveEpoch(epoch Epoch, epochParams EpochParams, currentBlockHeight int64) *EpochContext {
+	ec := NewEpochContext(epoch, epochParams)
+	nextEc := NewEpochContext(
+		Epoch{
+			Index:               epoch.Index + 1,
+			PocStartBlockHeight: ec.NextPoCStart(),
+		},
+		epochParams,
+	)
+	if currentBlockHeight < ec.NextPoCStart() &&
+		currentBlockHeight > ec.SetNewValidators() {
 		return &EpochContext{
-			Epoch:               epochGroup.EpochGroupId,
-			PocStartBlockHeight: int64(epochGroup.PocStartBlockHeight),
+			EpochIndex:          epoch.Index,
+			PocStartBlockHeight: epoch.PocStartBlockHeight,
 			EpochParams:         epochParams,
 		}
-	} else if currentBlockHeight <= getNextGroupBecomesEffective(epochGroup, &epochParams) {
+	} else if currentBlockHeight <= nextEc.SetNewValidators() {
 		return &EpochContext{
-			Epoch:               epochGroup.EpochGroupId + 1,
-			PocStartBlockHeight: getNextPoCStart(epochGroup, &epochParams),
+			EpochIndex:          epoch.Index + 1,
+			PocStartBlockHeight: ec.NextPoCStart(),
 			EpochParams:         epochParams,
 		}
 	} else {
 		// This is a special case where the current block height is beyond the expected range.
 		// It should not happen in normal operation, but we handle it gracefully.
-		msg := fmt.Sprintf("Unexpected currentBlockHeight = %d for epochGroup.PocStartBlockHeight = %d",
+		msg := fmt.Sprintf("Unexpected currentBlockHeight = %d for epoch.PocStartBlockHeight = %d",
 			currentBlockHeight,
-			epochGroup.PocStartBlockHeight)
+			epoch.PocStartBlockHeight)
 		panic(msg)
 	}
 }
 
-func getNextPoCStart(epochGroup *EpochGroupData, params *EpochParams) int64 {
-	if params == nil {
-		panic("getNextPoCStart: params cannot be nil")
+// TODO: rework when you implement setting new EpochParams at next epoch?
+func (ec *EpochContext) NextEpochContext() EpochContext {
+	return EpochContext{
+		EpochIndex:          ec.EpochIndex + 1,
+		PocStartBlockHeight: ec.NextPoCStart(),
+		EpochParams:         ec.EpochParams,
 	}
-
-	if epochGroup == nil {
-		return -params.EpochShift + params.EpochLength
-	}
-
-	return int64(epochGroup.PocStartBlockHeight) + params.EpochLength
-}
-
-func getGroupBecomesEffective(epochGroup *EpochGroupData, epochParams *EpochParams) int64 {
-	if epochParams == nil {
-		panic("getGroupBecomesEffective: epochParams cannot be nil")
-	}
-
-	if epochGroup == nil {
-		return 1
-	}
-
-	return int64(epochGroup.PocStartBlockHeight) + epochParams.GetSetNewValidatorsStage()
-}
-
-func getNextGroupBecomesEffective(epochGroup *EpochGroupData, params *EpochParams) int64 {
-	if params == nil {
-		panic("getNextGroupBecomesEffective: params cannot be nil")
-	}
-
-	if epochGroup == nil {
-		return -params.EpochShift + params.EpochLength + params.GetSetNewValidatorsStage()
-	}
-
-	return int64(epochGroup.PocStartBlockHeight) + params.EpochLength + params.GetSetNewValidatorsStage()
 }
 
 // GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
 func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
-	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
-	epochStartHeight := ec.PocStartBlockHeight
-	if blockHeight < epochStartHeight {
-		// This can happen during the initial Epoch or if there's a state mismatch.
-		// InferencePhase is the safest default.
+	// We don't do PoC for epoch 0, so we return InferencePhase.
+	if ec.EpochIndex == 0 {
 		return InferencePhase
 	}
 
-	// Calculate height relative to the Epoch's true start.
-	relativeBlockHeight := blockHeight - epochStartHeight
+	// Use the reliable PocStartBlockHeight as the anchor for all calculations.
+	epochStartHeight := ec.PocStartBlockHeight
+	if blockHeight < epochStartHeight {
+		// InferencePhase is the safest default in case of a state mismatch like this
+		return InferencePhase
+	}
 
-	startOfPoC := ec.EpochParams.getStartOfPocStage()
-	pocGenerateWindDownStart := ec.EpochParams.GetPoCWinddownStage()
-	startOfPoCValidation := ec.EpochParams.GetStartOfPoCValidationStage()
-	pocValidateWindDownStart := ec.EpochParams.GetPoCValidationWindownStage()
-	endOfPoCValidation := ec.EpochParams.GetEndOfPoCValidationStage()
+	startOfPoC := ec.StartOfPoC()
+	pocGenerateWindDownStart := ec.PoCGenerationWindDown()
+	startOfPoCValidation := ec.StartOfPoCValidation()
+	pocValidateWindDownStart := ec.PoCValidationWindDown()
+	endOfPoCValidation := ec.EndOfPoCValidation()
 
-	if relativeBlockHeight >= startOfPoC && relativeBlockHeight < pocGenerateWindDownStart {
+	if blockHeight >= startOfPoC && blockHeight < pocGenerateWindDownStart {
 		return PoCGeneratePhase
 	}
-	if relativeBlockHeight >= pocGenerateWindDownStart && relativeBlockHeight < startOfPoCValidation {
+	if blockHeight >= pocGenerateWindDownStart && blockHeight < startOfPoCValidation {
 		return PoCGenerateWindDownPhase
 	}
-	if relativeBlockHeight >= startOfPoCValidation && relativeBlockHeight < pocValidateWindDownStart {
+	if blockHeight >= startOfPoCValidation && blockHeight < pocValidateWindDownStart {
 		return PoCValidatePhase
 	}
-	if relativeBlockHeight >= pocValidateWindDownStart && relativeBlockHeight < endOfPoCValidation {
+	if blockHeight >= pocValidateWindDownStart && blockHeight < endOfPoCValidation {
 		return PoCValidateWindDownPhase
 	}
 
 	return InferencePhase
 }
 
-// isAtPhaseBoundary checks if the given block height is at a specific phase boundary within the Epoch.
-func (ec *EpochContext) isAtPhaseBoundary(blockHeight, phaseOffset int64) bool {
-	if ec.IsStartOfNextPoC(blockHeight) {
-		return phaseOffset == ec.EpochParams.getStartOfPocStage()
-	}
-
-	relativeHeight := blockHeight - int64(ec.PocStartBlockHeight)
-	if relativeHeight < 0 {
-		return false
-	}
-
-	return relativeHeight%ec.EpochParams.EpochLength == phaseOffset
+func (ec *EpochContext) String() string {
+	return fmt.Sprintf("EpochContext{EpochIndex:%d PocStartBlockHeight:%d EpochParams:%s}",
+		ec.EpochIndex, ec.PocStartBlockHeight, &ec.EpochParams)
 }
 
-// TODO: inspect this function usage!!
-// IsStartOfNextPoC determines if the given block height triggers the start of the PoC for the next Epoch.
-func (ec *EpochContext) IsStartOfNextPoC(blockHeight int64) bool {
-	return blockHeight == ec.PocStartBlockHeight+ec.EpochParams.EpochLength
+// Add absolute-height helpers that transform the relative offsets provided by
+// EpochParams into concrete block-heights for this specific epoch. Having them
+// centralised means any future change to the maths only happens here.
+
+// getPocAnchor returns the absolute block height considered offset 0 for this
+// epochʼs PoC calculations. For every epoch except the genesis one this is
+// simply PocStartBlockHeight. The genesis epoch does **not** run PoC, so these
+// helpers are never used there – but we still return a sensible value.
+func (ec *EpochContext) getPocAnchor() int64 {
+	// For epoch 0 we keep the anchor at the recorded block height (usually 0).
+	return ec.PocStartBlockHeight
 }
+
+// --- Absolute boundaries ----------------------------------------------------
+
+func (ec *EpochContext) StartOfPoC() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.PocStartBlockHeight // alias for readability
+}
+
+func (ec *EpochContext) PoCGenerationWindDown() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetPoCWindDownStage()
+}
+
+func (ec *EpochContext) EndOfPoCGeneration() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetEndOfPoCStage()
+}
+
+func (ec *EpochContext) PoCExchangeDeadline() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetPoCExchangeDeadline()
+}
+
+func (ec *EpochContext) StartOfPoCValidation() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetStartOfPoCValidationStage()
+}
+
+func (ec *EpochContext) PoCValidationWindDown() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetPoCValidationWindDownStage()
+}
+
+func (ec *EpochContext) EndOfPoCValidation() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetEndOfPoCValidationStage()
+}
+
+func (ec *EpochContext) SetNewValidators() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetSetNewValidatorsStage()
+}
+
+func (ec *EpochContext) ClaimMoney() int64 {
+	if ec.EpochIndex == 0 {
+		return 0
+	}
+	return ec.getPocAnchor() + ec.EpochParams.GetClaimMoneyStage()
+}
+
+func (ec *EpochContext) NextPoCStart() int64 {
+	if ec.EpochIndex == 0 {
+		return -ec.EpochParams.EpochShift + ec.EpochParams.EpochLength
+	}
+	return ec.PocStartBlockHeight + ec.EpochParams.EpochLength
+}
+
+// --- Exchange windows -------------------------------------------------------
+
+func (ec *EpochContext) PoCExchangeWindow() EpochExchangeWindow {
+	if ec.EpochIndex == 0 {
+		return EpochExchangeWindow{Start: 0, End: 0} // no PoC in epoch 0
+	}
+
+	return EpochExchangeWindow{
+		Start: ec.StartOfPoC() + 1, // window opens one block *after* PoC start
+		End:   ec.PoCExchangeDeadline(),
+	}
+}
+
+func (ec *EpochContext) ValidationExchangeWindow() EpochExchangeWindow {
+	if ec.EpochIndex == 0 {
+		return EpochExchangeWindow{Start: 0, End: 0} // no PoC validation in epoch 0
+	}
+
+	return EpochExchangeWindow{
+		Start: ec.StartOfPoCValidation() + 1, // open interval (start, end]
+		End:   ec.SetNewValidators(),
+	}
+}
+
+// --- Boolean helpers ---------------
 
 func (ec *EpochContext) IsStartOfPocStage(blockHeight int64) bool {
-	return blockHeight == ec.PocStartBlockHeight
+	return blockHeight == ec.StartOfPoC()
+}
+
+func (ec *EpochContext) IsPoCExchangeWindow(blockHeight int64) bool {
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	w := ec.PoCExchangeWindow()
+	return blockHeight >= w.Start && blockHeight <= w.End
+}
+
+func (ec *EpochContext) IsValidationExchangeWindow(blockHeight int64) bool {
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	w := ec.ValidationExchangeWindow()
+	return blockHeight >= w.Start && blockHeight <= w.End
 }
 
 func (ec *EpochContext) IsEndOfPoCStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetEndOfPoCStage())
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	return blockHeight == ec.EndOfPoCGeneration()
 }
 
 func (ec *EpochContext) IsStartOfPoCValidationStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetStartOfPoCValidationStage())
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	return blockHeight == ec.StartOfPoCValidation()
 }
 
 func (ec *EpochContext) IsEndOfPoCValidationStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetEndOfPoCValidationStage())
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	return blockHeight == ec.EndOfPoCValidation()
 }
 
 func (ec *EpochContext) IsSetNewValidatorsStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetSetNewValidatorsStage())
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	return blockHeight == ec.SetNewValidators()
 }
 
 func (ec *EpochContext) IsClaimMoneyStage(blockHeight int64) bool {
-	return ec.isAtPhaseBoundary(blockHeight, ec.EpochParams.GetClaimMoneyStage())
+	if ec.EpochIndex == 0 {
+		return false
+	}
+	return blockHeight == ec.ClaimMoney()
+}
+
+func (ec *EpochContext) IsNextPoCStart(blockHeight int64) bool {
+	return blockHeight == ec.NextPoCStart()
 }

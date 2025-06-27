@@ -8,7 +8,7 @@ The architecture is designed around the following key principles:
     *   **Imperative Commands**: External actors, like the `OnNewBlockDispatcher`, issue explicit commands (e.g., `StartPocCommand`, `InitValidateCommand`) to the broker in response to specific blockchain events.
     *   **Declarative State Machine**: These commands are handled by the broker's command processor, which translates them into a declarative state by setting an **`IntendedStatus`** and **`PocIntendedStatus`** on the relevant nodes. The broker's sole long-term goal is to make the node's **`CurrentStatus`** and **`PocCurrentStatus`** match this intended state.
 
-2.  **Asynchronous Reconciliation Loop**: A central, continuously running goroutine, the `reconcilerLoop`, is the heart of the system. It periodically checks the state of all nodes and is the only component that initiates actions. This avoids complex, event-driven race conditions and makes the system's behavior predictable.
+2.  **Asynchronous Reconciliation Loop**: A central, continuously running goroutine, the `reconcilerLoop`, is the heart of the system. It periodically checks the state of all nodes, but can also be manually triggered for immediate action via the `TriggerReconciliation()` method. This loop is the only component that initiates state-changing actions on nodes. This design avoids complex, event-driven race conditions and makes the system's behavior predictable. A manual trigger is typically issued after a command has been processed to ensure the system reacts quickly to changes in the nodes' intended state.
 
 3.  **Thread-Safe State Management**: All access to the shared `nodes` map and their state is protected by a `sync.RWMutex`, ensuring that reads and writes from different goroutines are safe.
 
@@ -22,7 +22,7 @@ The architecture is designed around the following key principles:
 
 ### TODOs:
 
-- [ ] **CRITICAL**: Rewrite how determining current epoch and stages is determined. Right now it assumes epoch length never changes: `epoch := int64(blockHeight / EpochLength)`.
+- [ ] ...
 
 ### UML Sequence Diagram
 

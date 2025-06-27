@@ -50,7 +50,7 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
-		k.LogError("GetCurrentEpochGroup", types.EpochGroup, err)
+		k.LogError("GetCurrentEpochGroup", types.EpochGroup, "err", err)
 		return nil, err
 	}
 	existingInference.Status = types.InferenceStatus_FINISHED
@@ -113,7 +113,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, currentEpochGroup *
 			break
 		}
 	}
-	modelEpochGroup, err := k.GetEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
+	modelEpochGroup, err := k.GetOrCreateEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
 	if err != nil {
 		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
 		return err

@@ -101,7 +101,7 @@ func registerGenesisParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	if err != nil {
 		return err
 	}
-	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
+	validatorKeyString := keyToString(validatorKey)
 	workerPublicKey, err := configManager.CreateWorkerKey()
 	if err != nil {
 		return fmt.Errorf("failed to create worker key: %w", err)
@@ -131,7 +131,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	if err != nil {
 		return err
 	}
-	validatorKeyString := base64.StdEncoding.EncodeToString(validatorKey.Bytes())
+	validatorKeyString := keyToString(validatorKey)
 
 	workerKey, err := configManager.CreateWorkerKey()
 	if err != nil {
@@ -143,7 +143,7 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 	if err != nil {
 		return fmt.Errorf("Failed to get public key: %w", err)
 	}
-	pubKeyString := base64.StdEncoding.EncodeToString(pubKey.Bytes())
+	pubKeyString := keyToStringFromBytes(pubKey.Bytes())
 
 	logging.Info(
 		"Registering joining participant",
@@ -190,6 +190,20 @@ func registerJoiningParticipant(recorder cosmosclient.CosmosMessageClient, confi
 		return fmt.Errorf("received non-OK response: %s", resp.Status)
 	}
 	return nil
+}
+
+func keyToString(key crypto.PubKey) string {
+	if key == nil {
+		return ""
+	}
+	return keyToStringFromBytes(key.Bytes())
+}
+
+func keyToStringFromBytes(keyBytes []byte) string {
+	if keyBytes == nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(keyBytes)
 }
 
 func getValidatorKey(chainNodeUrl string) (crypto.PubKey, error) {

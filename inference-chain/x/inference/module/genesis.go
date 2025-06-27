@@ -1,16 +1,36 @@
 package inference
 
 import (
+	"log"
+	"strings"
+
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/productscience/inference/x/inference/epochgroup"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// IgnoreDuplicateDenomRegistration can be toggled by tests to suppress the
+// "denom already registered" error that arises from the Cosmos-SDK's global
+// denom registry when multiple tests within the same process call InitGenesis.
+//
+// In production code this flag MUST remain false so that duplicate
+// registrations still panic.
+var IgnoreDuplicateDenomRegistration bool
+
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
+	// PRTODO: set active participants here, but how?
+	// Set all the epochGroupData
+	// Add explicit InitGenesis method for setting epoch data
+	/*	for _, elem := range genState.EpochGroupDataList {
+		k.SetEpochGroupData(ctx, elem)
+	}*/
+	InitGenesisEpoch(ctx, k)
+
 	// Set all the inference
 	for _, elem := range genState.InferenceList {
 		k.SetInference(ctx, elem)
@@ -18,11 +38,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	// Set all the participant
 	for _, elem := range genState.ParticipantList {
 		k.SetParticipant(ctx, elem)
-	}
-	// PRTODO: set active participants here, but how?
-	// Set all the epochGroupData
-	for _, elem := range genState.EpochGroupDataList {
-		k.SetEpochGroupData(ctx, elem)
 	}
 	// Set all the settleAmount
 	for _, elem := range genState.SettleAmountList {
@@ -77,6 +92,51 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 }
 
+func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
+	genesisEpoch := &types.Epoch{
+		Index:                0,
+		PocStartBlockHeight:  0,
+		EffectiveBlockHeight: 0,
+	}
+	k.SetEpoch(ctx, genesisEpoch)
+	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
+
+	InitGenesisEpochGroup(ctx, k, uint64(genesisEpoch.PocStartBlockHeight))
+}
+
+func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight uint64) {
+	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
+	}
+	err = epochGroup.CreateGroup(ctx)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] epochGroup.CreateGroup failed. err = %v", err)
+	}
+
+	stakingValidators, err := k.Staking.GetAllValidators(ctx)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] Staking.GetAllValidators failed. err = %v", err)
+	}
+
+	for _, validator := range stakingValidators {
+		member, err := epochgroup.NewEpochMemberFromStakingValidator(validator)
+		if err != nil || member == nil {
+			log.Panicf("[InitGenesisEpoch] NewEpochMemberFromStakingValidator failed. err = %v", err)
+		}
+
+		err = epochGroup.AddMember(ctx, *member)
+		if err != nil {
+			log.Panicf("[InitGenesisEpoch] epochGroup.AddMember failed. err = %v", err)
+		}
+	}
+
+	err = epochGroup.MarkUnchanged(ctx)
+	if err != nil {
+		log.Panicf("[InitGenesisEpoch] epochGroup.MarkUnchanged failed. err = %v", err)
+	}
+}
+
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {
 
 	supplyDenom := state.GenesisOnlyParams.SupplyDenom
@@ -106,14 +166,28 @@ func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisSt
 }
 
 func LoadMetadataToSdk(metadata banktypes.Metadata) error {
+	// NOTE: sdk.RegisterDenom stores the mapping in a process-global registry.
+	// When several tests initialise the app within the same "go test" process
+	// the same denom (nicoin/icoin/…) can be registered more than once and the
+	// second attempt returns an error.  In production this situation should be
+	// considered fatal, therefore we gate the duplicate-tolerant behaviour
+	// behind a flag that tests can enable explicitly.
+
 	for _, denom := range metadata.DenomUnits {
 		err := sdk.RegisterDenom(denom.Denom, math.LegacyNewDec(10).Power(uint64(denom.Exponent)))
 		if err != nil {
+			if IgnoreDuplicateDenomRegistration && strings.Contains(err.Error(), "already registered") {
+				// Skip duplicate error in test runs.
+				continue
+			}
 			return err
 		}
 	}
-	err := sdk.SetBaseDenom(metadata.Base)
-	if err != nil {
+
+	if err := sdk.SetBaseDenom(metadata.Base); err != nil {
+		if IgnoreDuplicateDenomRegistration && strings.Contains(err.Error(), "already registered") {
+			return nil
+		}
 		return err
 	}
 	return nil

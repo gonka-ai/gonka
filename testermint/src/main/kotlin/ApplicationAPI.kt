@@ -211,6 +211,11 @@ data class ApplicationAPI(
         get(url, "v1/training/tasks/$taskId")
     }
 
+    fun getLatestEpoch(): EpochResponse {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        return get(url, "v1/epochs/latest")
+    }
+
     inline fun <reified Out : Any> get(url: String, path: String): Out {
         val response = Fuel.get("$url/$path")
             .responseObject<Out>(gsonDeserializer(cosmosJson))

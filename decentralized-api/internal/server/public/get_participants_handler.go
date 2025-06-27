@@ -47,15 +47,12 @@ func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
 }
 
 func (s *Server) getParticipantsByEpoch(c echo.Context) error {
-	epochParam := c.Param("epoch")
-	var epoch *uint64
-	if epochParam != "current" {
-		epochId, err := strconv.ParseUint(epochParam, 10, 64)
-		if err != nil || epochId <= 0 {
-			return ErrInvalidEpochId
-		}
-		epoch = &epochId
+	epoch, err := s.resolveEpochFromContext(c)
+	if err != nil {
+		logging.Error("Failed to resolve epoch from context", types.Server, "error", err)
+		return err
 	}
+
 	resp, err := s.getParticipants(epoch)
 	if err != nil {
 		return err
@@ -63,27 +60,34 @@ func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
-	queryClient := s.recorder.NewInferenceQueryClient()
-	currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
-	if err != nil {
-		logging.Error("Failed to get current epoch", types.Participants, "error", err)
-		return nil, err
+// resolveEpochFromContext extracts the epoch from the context parameters.
+// If the epoch is "current", it returns nil
+func (s *Server) resolveEpochFromContext(c echo.Context) (uint64, error) {
+	epochParam := c.Param("epoch")
+	if epochParam == "" {
+		return 0, ErrInvalidEpochId
 	}
-	logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
 
-	var epoch uint64
-	if epochOrNil == nil {
-		// /v1/epoch/current/participants
-		epoch = currEpoch.Epoch
-	} else {
-		// /v1/epoch/{epoch}/participants
-		if *epochOrNil > currEpoch.Epoch {
-			return nil, ErrEpochIsNotReached
+	if epochParam == "current" {
+		queryClient := s.recorder.NewInferenceQueryClient()
+		currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
+		if err != nil {
+			logging.Error("Failed to get current epoch", types.Participants, "error", err)
+			return 0, err
 		}
-		epoch = *epochOrNil
+		logging.Info("Current epoch resolved.", types.Participants, "epoch", currEpoch.Epoch)
+		return currEpoch.Epoch, nil
+	} else {
+		epochId, err := strconv.ParseUint(epochParam, 10, 64)
+		if err != nil {
+			return 0, ErrInvalidEpochId
+		}
+		return epochId, nil
 	}
+}
 
+func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, error) {
+	// FIXME: now we can set active participants even for epoch 0, fix InitGenesis for that
 	if epoch == 0 {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "Epoch enumeration starts with 1")
 	}

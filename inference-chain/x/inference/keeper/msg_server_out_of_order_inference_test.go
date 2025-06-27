@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	inference "github.com/productscience/inference/x/inference/module"
 	"testing"
 
 	"github.com/productscience/inference/testutil"
@@ -9,8 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// NEEDREVIEW: for some reason this test is failing when run with other tests, but works fine when run alone.
 func TestMsgServer_OutOfOrderInference(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	mocks.StubForInitGenesis(ctx)
+
+	// For escrow calls
+	mocks.BankKeeper.ExpectAny(ctx)
+
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	// Add participants directly
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{

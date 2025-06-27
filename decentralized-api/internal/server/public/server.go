@@ -55,6 +55,7 @@ func NewServer(
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
+	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 

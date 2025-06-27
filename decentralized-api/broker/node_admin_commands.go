@@ -1,10 +1,112 @@
 package broker
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
 	"github.com/productscience/inference/x/inference/types"
+	"time"
 )
+
+type RegisterNode struct {
+	Node     apiconfig.InferenceNodeConfig
+	Response chan *apiconfig.InferenceNodeConfig
+}
+
+func (r RegisterNode) GetResponseChannelCapacity() int {
+	return cap(r.Response)
+}
+
+func (c RegisterNode) Execute(b *Broker) {
+	b.curMaxNodesNum.Add(1)
+	curNum := b.curMaxNodesNum.Load()
+
+	models := make(map[string]ModelArgs)
+	for model, config := range c.Node.Models {
+		models[model] = ModelArgs{Args: config.Args}
+	}
+
+	node := Node{
+		Host:             c.Node.Host,
+		InferenceSegment: c.Node.InferenceSegment,
+		InferencePort:    c.Node.InferencePort,
+		PoCSegment:       c.Node.PoCSegment,
+		PoCPort:          c.Node.PoCPort,
+		Models:           models,
+		Id:               c.Node.Id,
+		MaxConcurrent:    c.Node.MaxConcurrent,
+		NodeNum:          curNum,
+		Hardware:         c.Node.Hardware,
+		Version:          c.Node.Version,
+	}
+
+	var currentEpoch uint64
+	if b.phaseTracker != nil {
+		epochState := b.phaseTracker.GetCurrentEpochState()
+		if epochState == nil {
+			currentEpoch = 0
+		} else {
+			currentEpoch = epochState.LatestEpoch.EpochIndex
+		}
+	}
+
+	nodeWithState := &NodeWithState{
+		Node: node,
+		State: NodeState{
+			IntendedStatus:    types.HardwareNodeStatus_UNKNOWN,
+			CurrentStatus:     types.HardwareNodeStatus_UNKNOWN,
+			ReconcileInfo:     nil,
+			PocIntendedStatus: PocStatusIdle,
+			PocCurrentStatus:  PocStatusIdle,
+			LockCount:         0,
+			FailureReason:     "",
+			StatusTimestamp:   time.Now(),
+			AdminState: AdminState{
+				Enabled: true,
+				Epoch:   currentEpoch,
+			},
+		},
+	}
+
+	func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.nodes[c.Node.Id] = nodeWithState
+
+		// Create and register a worker for this node
+		client := b.NewNodeClient(&node)
+		worker := NewNodeWorkerWithClient(c.Node.Id, nodeWithState, client, b)
+		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
+	}()
+
+	logging.Debug("Registered node", types.Nodes, "node", c.Node)
+	c.Response <- &c.Node
+}
+
+type RemoveNode struct {
+	NodeId   string
+	Response chan bool
+}
+
+func (r RemoveNode) GetResponseChannelCapacity() int {
+	return cap(r.Response)
+}
+
+func (command RemoveNode) Execute(b *Broker) {
+	// Remove the worker first (it will wait for pending jobs)
+	b.nodeWorkGroup.RemoveWorker(command.NodeId)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.nodes[command.NodeId]; !ok {
+		command.Response <- false
+		return
+	}
+	delete(b.nodes, command.NodeId)
+	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)
+	command.Response <- true
+}
 
 // SetNodeAdminStateCommand enables or disables a node administratively
 type SetNodeAdminStateCommand struct {
@@ -21,7 +123,12 @@ func (c SetNodeAdminStateCommand) Execute(b *Broker) {
 	// Get current epoch
 	var currentEpoch uint64
 	if b.phaseTracker != nil {
-		currentEpoch = b.phaseTracker.GetCurrentEpochState().CurrentEpoch.Epoch
+		epochState := b.phaseTracker.GetCurrentEpochState()
+		if epochState == nil {
+			currentEpoch = 0
+		} else {
+			currentEpoch = epochState.LatestEpoch.EpochIndex
+		}
 	}
 
 	b.mu.Lock()

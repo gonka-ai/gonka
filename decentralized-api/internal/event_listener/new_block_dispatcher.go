@@ -3,6 +3,7 @@ package event_listener
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -21,8 +22,7 @@ import (
 
 // Minimal interface for query operations needed by the dispatcher
 type ChainStateClient interface {
-	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
-	CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error)
+	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -154,20 +154,27 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return err // Skip processing this block
 	}
 
+	// Let's check in prod how often this happens
+	if networkInfo.BlockHeight != blockInfo.Height {
+		logging.Warn("Block height mismatch between event and network query", types.Stages,
+			"event_height", blockInfo.Height,
+			"network_height", networkInfo.BlockHeight)
+	}
+
 	// 2. Update phase tracker and get phase info
 	// FIXME: It looks like a problem that queries are separate inside networkInfo, and blockInfo
 	// 	comes from a totally different source?
 	// TODO: log block that came from event vs block returned by query
 	// TODO: can we add the state to the block event? As a future optimization?
-	d.phaseTracker.Update(blockInfo, networkInfo.CurrentEpochGroup, networkInfo.EpochParams, networkInfo.IsSynced)
+	d.phaseTracker.Update(blockInfo, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
 		"blockHeight", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.Epoch,
-		"epoch.PocStartBlockHeight", epochState.CurrentEpoch.PocStartBlockHeight,
+		"epoch", epochState.LatestEpoch.EpochIndex,
+		"epoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
 		"currentPhase", epochState.CurrentPhase,
-		"isSynched", epochState.IsSynced,
-		"blockHase", epochState.CurrentBlock.Hash)
+		"isSynced", epochState.IsSynced,
+		"blockHash", epochState.CurrentBlock.Hash)
 	logging.Debug("[new-block-dispatcher]", types.Stages, "blockHeight", epochState.CurrentBlock.Height, "blochHash", epochState.CurrentBlock.Hash)
 	if !epochState.IsSynced {
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
@@ -193,9 +200,10 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 // NetworkInfo contains information queried from the network
 type NetworkInfo struct {
-	EpochParams       *types.EpochParams
-	IsSynced          bool
-	CurrentEpochGroup *types.EpochGroupData
+	EpochParams types.EpochParams
+	IsSynced    bool
+	LatestEpoch types.Epoch
+	BlockHeight int64
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -207,33 +215,28 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (*NetworkIn
 	}
 	isSynced := !status.SyncInfo.CatchingUp
 
-	// Query epoch parameters using our minimal interface
-	params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Query for the current epoch group data, which is our new source of truth
-	epochGroupData, err := d.queryClient.CurrentEpochGroupData(ctx, &types.QueryCurrentEpochGroupDataRequest{})
-	if err != nil {
+	epochInfo, err := d.queryClient.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
+	if err != nil || epochInfo == nil {
+		logging.Error("Failed to query epoch info", types.Stages, "error", err)
 		return nil, err
 	}
 
 	return &NetworkInfo{
-		EpochParams:       params.Params.EpochParams,
-		IsSynced:          isSynced,
-		CurrentEpochGroup: &epochGroupData.EpochGroupData,
+		EpochParams: *epochInfo.Params.EpochParams,
+		IsSynced:    isSynced,
+		LatestEpoch: epochInfo.LatestEpoch,
+		BlockHeight: epochInfo.BlockHeight,
 	}, nil
 }
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
-	epochContext := epochState.CurrentEpoch
+	epochContext := epochState.LatestEpoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
 
 	// Check for PoC start for the next epoch. This is the most important transition.
-	if epochContext.IsStartOfNextPoC(blockHeight) {
+	if epochContext.IsStartOfPocStage(blockHeight) {
 		logging.Info("IsStartOfPocStage: sending StartPoCEvent to the PoC orchestrator", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash)
 		d.randomSeedManager.GenerateSeed(blockHeight)
 		return
@@ -287,10 +290,12 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase.EpochState) bool {
 	switch epochState.CurrentPhase {
-	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase, types.PoCValidatePhase, types.PoCValidateWindDownPhase:
+	case types.PoCGeneratePhase, types.PoCValidatePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
 	case types.InferencePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.Inference)
+	case types.PoCGenerateWindDownPhase, types.PoCValidateWindDownPhase:
+		return false
 	}
 	return false
 }
@@ -313,21 +318,22 @@ func shouldTriggerReconciliation(blockHeight int64, config *MlNodeReconciliation
 
 // triggerReconciliation starts node reconciliation with current phase info
 func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.EpochState) {
-	logging.Info("Triggering reconciliation", types.Nodes,
-		"height", epochState.CurrentBlock.Height,
-		"epoch", epochState.CurrentEpoch.Epoch,
-		"phase", epochState.CurrentPhase)
-
 	cmd, response := getCommandForPhase(epochState)
 	if cmd == nil || response == nil {
-		logging.Info("No command required for phase", types.Nodes,
+		logging.Info("[triggerReconciliation] No command required for phase", types.Nodes,
 			"phase", epochState.CurrentPhase, "height", epochState.CurrentBlock.Height)
 		return
 	}
 
+	logging.Info("[triggerReconciliation] Created command for reconciliation", types.Nodes,
+		"command_type", fmt.Sprintf("%T", cmd),
+		"height", epochState.CurrentBlock.Height,
+		"epoch", epochState.LatestEpoch.EpochIndex,
+		"phase", epochState.CurrentPhase)
+
 	err := d.nodeBroker.QueueMessage(cmd)
 	if err != nil {
-		logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
+		logging.Error("[triggerReconciliation] Failed to queue reconciliation command", types.Nodes, "error", err)
 		return
 	}
 

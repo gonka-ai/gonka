@@ -121,14 +121,9 @@ type MockQueryClient struct {
 	mock.Mock
 }
 
-func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
+func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
-}
-
-func (m *MockQueryClient) CurrentEpochGroupData(ctx context.Context, req *types.QueryCurrentEpochGroupDataRequest, opts ...grpc.CallOption) (*types.QueryCurrentEpochGroupDataResponse, error) {
-	args := m.Called(ctx, req)
-	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
 }
 
 // Test setup helpers
@@ -191,10 +186,12 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
-	mockQueryClient.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
+	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,
 		},
+		// Empty epoch for now
+		LatestEpoch: types.Epoch{},
 	}, nil)
 
 	// Setup mock expectations for RandomSeedManager
@@ -256,6 +253,40 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 	_ = <-responseChan
 }
 
+func (setup *IntegrationTestSetup) advanceBlockHeight(blockHeight int64) {
+	resp, err := setup.MockQueryClient.EpochInfo(context.Background(), &types.QueryEpochInfoRequest{})
+	if err != nil {
+		panic(err)
+	}
+
+	setup.setLatestEpoch(blockHeight, resp.LatestEpoch)
+}
+
+func (setup *IntegrationTestSetup) setLatestEpoch(blockHeight int64, epoch types.Epoch) {
+	setup.MockQueryClient.ExpectedCalls = nil
+	setup.MockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
+		BlockHeight: blockHeight,
+		Params: types.Params{
+			EpochParams: setup.EpochParams,
+		},
+		LatestEpoch: epoch,
+	}, nil)
+}
+
+func (setup *IntegrationTestSetup) transitionChainStateToNextEpoch(blockHeight int64) {
+	epochInfo, err := setup.MockQueryClient.EpochInfo(context.Background(), &types.QueryEpochInfoRequest{})
+	if err != nil || epochInfo == nil {
+		panic(fmt.Sprintf("Failed to get epoch info: %v", err))
+	}
+
+	newEpoch := types.Epoch{
+		Index:               epochInfo.LatestEpoch.Index + 1,
+		PocStartBlockHeight: blockHeight,
+	}
+
+	setup.setLatestEpoch(blockHeight, newEpoch)
+}
+
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
 	response := make(chan error, 1)
 	err := setup.NodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
@@ -270,6 +301,9 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 }
 
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
+	// Now call to chain mock will return new blockHeight
+	setup.advanceBlockHeight(height)
+
 	blockInfo := chainphase.BlockInfo{
 		Height: height,
 		Hash:   fmt.Sprintf("hash-%d", height),
@@ -289,6 +323,20 @@ func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnod
 	return client
 }
 
+func (setup *IntegrationTestSetup) assertNode(nodeId string, assertion func(n broker.NodeResponse)) {
+	nodes, err := setup.NodeBroker.GetNodes()
+	if err != nil {
+		panic(err)
+	}
+
+	for _, node := range nodes {
+		if node.Node.Id == nodeId {
+			assertion(node)
+			return
+		}
+	}
+}
+
 func (setup *IntegrationTestSetup) getNode(nodeId string) (*broker.Node, *broker.NodeState) {
 	nodes, err := setup.NodeBroker.GetNodes()
 	if err != nil {
@@ -297,7 +345,7 @@ func (setup *IntegrationTestSetup) getNode(nodeId string) (*broker.Node, *broker
 
 	for _, node := range nodes {
 		if node.Node.Id == nodeId {
-			return node.Node, node.State
+			return &node.Node, &node.State
 		}
 	}
 
@@ -324,19 +372,21 @@ func testreconcilialtionConfig(blockInterval int) MlNodeReconciliationConfig {
 }
 
 func TestInferenceReconciliation(t *testing.T) {
+	epochParams := defaultEpochParams
 	reconciliationConfig := testreconcilialtionConfig(5)
-	setup := createIntegrationTestSetup(&reconciliationConfig, nil)
+	setup := createIntegrationTestSetup(&reconciliationConfig, &epochParams)
 
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
-	_, nodeState1 := setup.getNode("node-1")
-	_, nodeState2 := setup.getNode("node-2")
-
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, nodeState2.IntendedStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_UNKNOWN, n.State.IntendedStatus)
+	})
 
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
@@ -345,7 +395,7 @@ func TestInferenceReconciliation(t *testing.T) {
 
 	var i = int64(1)
 	for i <= int64(reconciliationConfig.Inference.BlockInterval) {
-		err := setup.simulateBlock(int64(i))
+		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
@@ -353,10 +403,14 @@ func TestInferenceReconciliation(t *testing.T) {
 
 	waitForAsync(500 * time.Millisecond)
 
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, nodeState2.IntendedStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.IntendedStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.IntendedStatus)
+	})
 
 	expected := NodeClientAssertion{1, 0, 0, 1}
 	assertNodeClient(t, expected, node1Client)
@@ -371,14 +425,12 @@ func TestInferenceReconciliation(t *testing.T) {
 }
 
 func TestRegularPocScenario(t *testing.T) {
-	setup := createIntegrationTestSetup(nil, nil)
+	epochParams := defaultEpochParams
+	setup := createIntegrationTestSetup(nil, &epochParams)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
-
-	_, nodeState1 := setup.getNode("node-1")
-	_, nodeState2 := setup.getNode("node-2")
 
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
@@ -389,7 +441,10 @@ func TestRegularPocScenario(t *testing.T) {
 	for i <= setup.EpochParams.EpochLength {
 		require.Equal(t, 0, node1Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node1Client.InitGenerateCalled, i)
 		require.Equal(t, 0, node2Client.InitGenerateCalled, "InitGenerate was called. n = %d. i = %d", node2Client.InitGenerateCalled, i)
-		err := setup.simulateBlock(int64(i))
+		if i == setup.EpochParams.EpochLength {
+			setup.transitionChainStateToNextEpoch(i)
+		}
+		err := setup.simulateBlock(i)
 		require.NoError(t, err)
 
 		i++
@@ -397,12 +452,16 @@ func TestRegularPocScenario(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, nodeState1.PocCurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState2.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, nodeState2.PocCurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, nodeState1.IntendedStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.IntendedStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.IntendedStatus)
+	})
 
 	// +1 stop call for inference reconciliation
 	expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 0, InferenceUpCalled: 1}
@@ -428,7 +487,7 @@ func TestRegularPocScenario(t *testing.T) {
 		require.NoError(t, err)
 
 		if i == pocValStart {
-			waitForAsync(100 * time.Millisecond)
+			waitForAsync(300 * time.Millisecond)
 		}
 
 		expected := NodeClientAssertion{StopCalled: 2, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
@@ -454,6 +513,14 @@ func TestRegularPocScenario(t *testing.T) {
 	expected = NodeClientAssertion{StopCalled: 3, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 2}
 	assertNodeClient(t, expected, node1Client)
 	assertNodeClient(t, expected, node2Client)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		assert.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.IntendedStatus)
+		assert.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		assert.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.IntendedStatus)
+		assert.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+	})
 }
 
 type NodeClientAssertion struct {
@@ -480,7 +547,7 @@ func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *ml
 // Test Scenario 1: Node disable scenario - node should skip PoC when disabled
 func TestNodeDisableScenario_Integration(t *testing.T) {
 	reconciliationConfig := testreconcilialtionConfig(5)
-	epochParans := &types.EpochParams{
+	epochParams := &types.EpochParams{
 		EpochLength:           100,
 		EpochShift:            0,
 		EpochMultiplier:       1,
@@ -489,14 +556,12 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
 	}
-	setup := createIntegrationTestSetup(&reconciliationConfig, epochParans)
+	setup := createIntegrationTestSetup(&reconciliationConfig, epochParams)
 
 	// Add two nodes - both initially enabled
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
-	_, node1State := setup.getNode("node-1")
-	_, node2State := setup.getNode("node-2")
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
@@ -505,22 +570,41 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
-	require.Equal(t, false, node1State.AdminState.Enabled)
-	require.Equal(t, uint64(0), node1State.AdminState.Epoch)
-	require.Equal(t, true, node2State.AdminState.Enabled)
-	require.Equal(t, uint64(0), node2State.AdminState.Epoch)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, false, n.State.AdminState.Enabled)
+		require.Equal(t, uint64(0), n.State.AdminState.Epoch)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, true, n.State.AdminState.Enabled)
+		require.Equal(t, uint64(0), n.State.AdminState.Epoch)
+	})
 
 	// Simulate epoch PoC phase (block 100) to avoid same-epoch restrictions
 	// Only node-2 should participate since node-1 is disabled
+	latestEpoch := types.Epoch{
+		Index:               1,
+		PocStartBlockHeight: epochParams.EpochLength,
+	}
+
 	var i = setup.EpochParams.EpochLength
+	setup.setLatestEpoch(i, latestEpoch)
+	ec := types.NewEpochContext(latestEpoch, *setup.EpochParams)
+
 	for i < 2*setup.EpochParams.EpochLength {
-		if setup.EpochParams.IsEndOfPoCStage(i) || setup.EpochParams.IsEndOfPoCValidationStage(i) {
+		err = setup.simulateBlock(i)
+		require.NoError(t, err)
+
+		// TODO: overall feels like a hack, should we just unconditionally wait after each block?
+		//  or maybe add some explicit sync mechanism that would notify subscribers when all commands are processed?
+		if ec.IsStartOfPocStage(i) ||
+			ec.IsEndOfPoCStage(i) ||
+			ec.IsStartOfPoCValidationStage(i) ||
+			ec.IsEndOfPoCValidationStage(i) {
+			println("Simulating block:", i, "ec.IsStartOfPocStage == ", ec.IsStartOfPocStage(i), "ec.IsEndOfPoCValidationStage == ", ec.IsEndOfPoCValidationStage(i))
 			// Wait for all commands to finish so we don't cancel them too soon
 			waitForAsync(500 * time.Millisecond)
 		}
 
-		err = setup.simulateBlock(i)
-		require.NoError(t, err)
 		i++
 	}
 
@@ -538,11 +622,15 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 
 	node1Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 0, InitValidateCalled: 0, InferenceUpCalled: 0}
 	assertNodeClient(t, node1Expected, node1Client)
-	require.Equal(t, types.HardwareNodeStatus_STOPPED, node1State.CurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
+	})
 
 	node2Expected := NodeClientAssertion{StopCalled: 1, InitGenerateCalled: 1, InitValidateCalled: 1, InferenceUpCalled: 1}
 	assertNodeClient(t, node2Expected, node2Client)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+	})
 }
 
 // Test Scenario 2: Node enable scenario - node should participate in PoC after being enabled
@@ -554,8 +642,6 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
-	_, node1State := setup.getNode("node-1")
-	_, node2State := setup.getNode("node-2")
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
@@ -564,12 +650,17 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
 
-	require.Equal(t, false, node1State.AdminState.Enabled)
-	require.Equal(t, uint64(0), node1State.AdminState.Epoch)
-	require.Equal(t, true, node2State.AdminState.Enabled)
-	require.Equal(t, uint64(0), node2State.AdminState.Epoch)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, false, n.State.AdminState.Enabled)
+		require.Equal(t, uint64(0), n.State.AdminState.Epoch)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, true, n.State.AdminState.Enabled)
+		require.Equal(t, uint64(0), n.State.AdminState.Epoch)
+	})
 
 	// Simulate first PoC (block 100) - only node-2 should participate
+	setup.transitionChainStateToNextEpoch(100)
 	err = setup.simulateBlock(100)
 	require.NoError(t, err)
 
@@ -579,9 +670,13 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	// Verify only node-2 received PoC start command
 	require.Equal(t, 0, node1Client.InitGenerateCalled, "Disabled node-1 should NOT receive InitGenerate call")
 	require.Equal(t, 1, node2Client.InitGenerateCalled, "Enabled node-2 should receive InitGenerate call")
-	require.Equal(t, types.HardwareNodeStatus_STOPPED, node1State.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_STOPPED, n.State.CurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
 
 	// Enable node-1 during inference phase
 	err = setup.setNodeAdminState("node-1", true)
@@ -596,20 +691,29 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	}
 	waitForAsync(300 * time.Millisecond)
 
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node1State.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node2State.CurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE, n.State.CurrentStatus)
+	})
 
 	// Simulate next epoch PoC (block 200) - both nodes should participate
+	setup.transitionChainStateToNextEpoch(200)
 	err = setup.simulateBlock(200)
 	require.NoError(t, err)
 
 	// Give time for processing
 	waitForAsync(500 * time.Millisecond)
 
-	require.Equal(t, types.HardwareNodeStatus_POC, node1State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node1State.PocCurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
 
 	// Verify both nodes received PoC start command
 	require.Equal(t, 1, node1Client.InitGenerateCalled, "Node-1 should receive InitGenerate call after being enabled")
@@ -631,6 +735,7 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	assertNodeClient(t, NodeClientAssertion{0, 0, 0, 0}, node2Client)
 
 	// Simulate PoC start (block 0)
+	setup.transitionChainStateToNextEpoch(100)
 	err := setup.simulateBlock(100)
 	require.NoError(t, err)
 	waitForAsync(100 * time.Millisecond)
@@ -697,14 +802,13 @@ func TestPoCRetry(t *testing.T) {
 	setup.addTestNode("node-1", 8081)
 	setup.addTestNode("node-2", 8082)
 
-	_, node1State := setup.getNode("node-1")
-	_, node2State := setup.getNode("node-2")
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
 	node1Client.InitGenerateError = errors.New("test error")
 
 	var i = params.EpochLength
+	setup.transitionChainStateToNextEpoch(i)
 	err := setup.simulateBlock(i)
 	i++
 	require.NoError(t, err)
@@ -713,9 +817,13 @@ func TestPoCRetry(t *testing.T) {
 
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
-	require.Equal(t, types.HardwareNodeStatus_FAILED, node1State.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_FAILED, n.State.CurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
 
 	for i <= params.EpochLength+int64(reconciliationConfig.PoC.BlockInterval) {
 		err = setup.simulateBlock(i)
@@ -729,9 +837,13 @@ func TestPoCRetry(t *testing.T) {
 	// check PoC init generate was retried
 	assertNodeClient(t, NodeClientAssertion{0, 2, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
-	require.Equal(t, types.HardwareNodeStatus_FAILED, node1State.CurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_FAILED, n.State.CurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
 
 	node1Client.InitGenerateError = nil
 
@@ -747,8 +859,12 @@ func TestPoCRetry(t *testing.T) {
 	// check only 1 retry happened and then it stopped once we removed the error
 	assertNodeClient(t, NodeClientAssertion{0, 3, 0, 0}, node1Client)
 	assertNodeClient(t, NodeClientAssertion{0, 1, 0, 0}, node2Client)
-	require.Equal(t, types.HardwareNodeStatus_POC, node1State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node1State.PocCurrentStatus)
-	require.Equal(t, types.HardwareNodeStatus_POC, node2State.CurrentStatus)
-	require.Equal(t, broker.PocStatusGenerating, node2State.PocCurrentStatus)
+	setup.assertNode("node-1", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
+	setup.assertNode("node-2", func(n broker.NodeResponse) {
+		require.Equal(t, types.HardwareNodeStatus_POC, n.State.CurrentStatus)
+		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
+	})
 }

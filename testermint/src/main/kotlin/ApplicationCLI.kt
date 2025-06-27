@@ -90,11 +90,11 @@ data class ApplicationCLI(
                     timeout = Instant.now().plus(staleTimeout)
                 }
                 if (Instant.now().isAfter(timeout)) {
-                    Logger.error("State is stale, was identical for {}", staleTimeout)
-                    error("State is stale, was identical for $staleTimeout")
+                    Logger.error("State is stale, was identical for {}. Wait failed for: {}", staleTimeout, description)
+                    error("State is stale, was identical for $staleTimeout. Wait failed for: $description")
                 }
                 previousState = currentState
-                Logger.debug("Current block is {}, waiting...", currentState.syncInfo.latestBlockHeight)
+                Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
                 Thread.sleep(1000)
             }
         }
@@ -142,10 +142,6 @@ data class ApplicationCLI(
     fun getAddress(): String = wrapLog("getAddress", false) {
         getAccountIfNeeded()
         accountKey!!.address
-    }
-
-    fun getVersion(): String = wrapLog("getVersion", false) {
-        exec(listOf(config.execName, "version")).first()
     }
 
     private fun getAccountIfNeeded() {
