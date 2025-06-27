@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -34,8 +36,72 @@ type GetNodesCommand struct {
 	Response chan []NodeResponse
 }
 
-func (g GetNodesCommand) GetResponseChannelCapacity() int {
-	return cap(g.Response)
+func NewGetNodesCommand() GetNodesCommand {
+	return GetNodesCommand{
+		Response: make(chan []NodeResponse, 2),
+	}
+}
+
+func (c GetNodesCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+func (c GetNodesCommand) Execute(b *Broker) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	nodeResponses := make([]NodeResponse, 0, len(b.nodes))
+	for _, nodeWithState := range b.nodes {
+		// --- Deep copy Node ---
+		nodeCopy := nodeWithState.Node // Start with a shallow copy
+
+		// Deep copy Models map
+		if nodeWithState.Node.Models != nil {
+			nodeCopy.Models = make(map[string]ModelArgs, len(nodeWithState.Node.Models))
+			for model, modelArgs := range nodeWithState.Node.Models {
+				newArgs := make([]string, len(modelArgs.Args))
+				copy(newArgs, modelArgs.Args)
+				nodeCopy.Models[model] = ModelArgs{Args: newArgs}
+			}
+		}
+
+		// Deep copy Hardware slice
+		if nodeWithState.Node.Hardware != nil {
+			nodeCopy.Hardware = make([]apiconfig.Hardware, len(nodeWithState.Node.Hardware))
+			copy(nodeCopy.Hardware, nodeWithState.Node.Hardware)
+		}
+
+		// --- Deep copy NodeState ---
+		stateCopy := nodeWithState.State // Start with a shallow copy
+
+		// Nil out internal-only fields
+		stateCopy.cancelInFlightTask = nil
+
+		// Deep copy pointer fields
+		if nodeWithState.State.ReconcileInfo != nil {
+			reconcileInfoCopy := *nodeWithState.State.ReconcileInfo
+			stateCopy.ReconcileInfo = &reconcileInfoCopy
+		}
+
+		if nodeWithState.State.TrainingTask != nil {
+			trainingTaskCopy := *nodeWithState.State.TrainingTask // shallow copy of struct
+
+			if nodeWithState.State.TrainingTask.NodeRanks != nil {
+				trainingTaskCopy.NodeRanks = make(map[string]int, len(nodeWithState.State.TrainingTask.NodeRanks))
+				for k, v := range nodeWithState.State.TrainingTask.NodeRanks {
+					trainingTaskCopy.NodeRanks[k] = v
+				}
+			}
+			stateCopy.TrainingTask = &trainingTaskCopy
+		}
+
+		nodeResponses = append(nodeResponses, NodeResponse{
+			Node:  &nodeCopy,
+			State: &stateCopy,
+		})
+	}
+	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
+	c.Response <- nodeResponses
 }
 
 type InferenceResult interface {

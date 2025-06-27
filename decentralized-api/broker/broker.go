@@ -313,7 +313,7 @@ func (b *Broker) executeCommand(command Command) {
 	case RemoveNode:
 		command.Execute(b)
 	case GetNodesCommand:
-		b.getNodes(command)
+		command.Execute(b)
 	case SyncNodesCommand:
 		b.syncNodes()
 	case LockNodesForTrainingCommand:
@@ -356,20 +356,6 @@ func (b *Broker) QueueMessage(command Command) error {
 		b.lowPriorityCommands <- command
 	}
 	return nil
-}
-
-func (b *Broker) getNodes(command GetNodesCommand) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	var nodeResponses []NodeResponse
-	for _, node := range b.nodes {
-		nodeResponses = append(nodeResponses, NodeResponse{
-			Node:  &node.Node,
-			State: &node.State,
-		})
-	}
-	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
-	command.Response <- nodeResponses
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
@@ -520,14 +506,12 @@ func LockNode[T any](
 
 // FIXME: Should return a copy! To avoid modifying state outside of the broker
 func (b *Broker) GetNodes() ([]NodeResponse, error) {
-	response := make(chan []NodeResponse, 2)
-	err := b.QueueMessage(GetNodesCommand{
-		Response: response,
-	})
+	command := NewGetNodesCommand()
+	err := b.QueueMessage(command)
 	if err != nil {
 		return nil, err
 	}
-	nodes := <-response
+	nodes := <-command.Response
 
 	if nodes == nil {
 		return nil, errors.New("Error getting nodes")
@@ -1005,6 +989,11 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
 		}
 	}
+
+	// TODO: probably should also check PoC sub status here
+	//  but before implementing it, need to check we treat them correctly during reconciliation
+	//  for example I think we expect IDLE instead of STOPPED for PoC nodes
+	//  which is actually wrong
 
 	return &statusQueryResult{
 		PrevStatus:    prevStatus,
