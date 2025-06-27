@@ -247,7 +247,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
     Logger.info("Initializing cluster with {} nodes", allGroups.size)
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
-    Thread.sleep(Duration.ofSeconds(20L))
+    Thread.sleep(Duration.ofSeconds(30L))
     joinGroups.forEach { it.init() }
     return allGroups
 }
