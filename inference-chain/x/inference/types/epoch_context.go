@@ -53,6 +53,15 @@ func NewEpochContextFromEffectiveEpoch(epoch Epoch, epochParams EpochParams, cur
 	}
 }
 
+// TODO: rework when you implement setting new EpochParams at next epoch?
+func (ec *EpochContext) NextEpochContext() EpochContext {
+	return EpochContext{
+		EpochIndex:          ec.EpochIndex + 1,
+		PocStartBlockHeight: ec.NextPoCStart(),
+		EpochParams:         ec.EpochParams,
+	}
+}
+
 // GetCurrentPhase calculates the current Epoch phase based on the block height relative to the Epoch's start.
 func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 	// We don't do PoC for epoch 0, so we return InferencePhase.
