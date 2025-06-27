@@ -182,6 +182,10 @@ func (ec *EpochContext) NextPoCStart() int64 {
 // --- Exchange windows -------------------------------------------------------
 
 func (ec *EpochContext) PoCExchangeWindow() EpochExchangeWindow {
+	if ec.EpochIndex == 0 {
+		return EpochExchangeWindow{Start: 0, End: 0} // no PoC in epoch 0
+	}
+
 	return EpochExchangeWindow{
 		Start: ec.StartOfPoC() + 1, // window opens one block *after* PoC start
 		End:   ec.PoCExchangeDeadline(),
@@ -189,6 +193,10 @@ func (ec *EpochContext) PoCExchangeWindow() EpochExchangeWindow {
 }
 
 func (ec *EpochContext) ValidationExchangeWindow() EpochExchangeWindow {
+	if ec.EpochIndex == 0 {
+		return EpochExchangeWindow{Start: 0, End: 0} // no PoC validation in epoch 0
+	}
+
 	return EpochExchangeWindow{
 		Start: ec.StartOfPoCValidation() + 1, // open interval (start, end]
 		End:   ec.SetNewValidators(),
