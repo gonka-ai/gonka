@@ -52,7 +52,7 @@ The current Model structure in `inference-chain/x/inference/types/model.pb.go` c
 #### After: Enhanced Model Registry with Comprehensive Metadata
 
 **New Implementation:**
-- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds Name, Version, HuggingFaceLink, HuggingFaceCommitHash, ModelArgs (array of strings), VRAM, and ThroughputPerNonce (performance metric for economic calculations).
+- Extended Model structure in `inference-chain/x/inference/types/model.pb.go` adds HFRepo, HFCommit, ModelArgs (array of strings), VRAM, and ThroughputPerNonce (performance metric for economic calculations).
 
 **Enhanced Functions in `inference-chain/x/inference/keeper/model.go`:**
 - `GetGovernanceModels` - Enhanced version of existing `GetAllModels` (or semantic naming for clarity)
