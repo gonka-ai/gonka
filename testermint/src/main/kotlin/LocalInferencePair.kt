@@ -161,6 +161,7 @@ data class LocalInferencePair(
     }
 
     fun getParams(): InferenceParams {
+        this.mostRecentEpochData = this.api.getLatestEpoch()
         this.mostRecentParams = this.node.getInferenceParams().params
         return this.mostRecentParams!!
     }
@@ -206,16 +207,12 @@ data class LocalInferencePair(
     }
 
     fun getNextStage(stage: EpochStage): Long {
-        if (this.mostRecentParams == null) {
+        if (this.mostRecentEpochData == null) {
             this.getParams()
         }
-        val epochParams = this.mostRecentParams?.epochParams!!
-        val currentHeight = this.getCurrentBlockHeight()
-        val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
-        val nextStage = currentHeight + blocksTillEpoch + epochParams.getStage(stage) + 1
-        return if (nextStage - epochParams.epochLength > currentHeight)
-            nextStage - epochParams.epochLength
-        else nextStage
+        val epochData = this.mostRecentEpochData
+            ?: error("No epoch data available")
+        return epochData.getNextStage(stage)
     }
 
     fun waitForFirstBlock() {
@@ -229,18 +226,21 @@ data class LocalInferencePair(
         }
     }
 
+    // FIXME: query this info from chain when epochs/0 endpoint is implemented?
     fun waitForFirstValidators() {
-        if (this.mostRecentParams == null) {
+        if (this.mostRecentEpochData == null) {
             this.getParams()
         }
-        val epochParams = this.mostRecentParams?.epochParams!!
-        if (epochParams.epochLength > 500) {
+
+        val epochData = this.mostRecentEpochData
+            ?: error("No epoch data available")
+
+        if (epochData.epochParams.epochLength > 500) {
             error("Epoch length is too long for testing")
         }
-        val epochFinished = epochParams.epochLength +
-                epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) +
-                1 -
-                epochParams.epochShift
+
+        val epochFinished = epochData.getNextStage(EpochStage.SET_NEW_VALIDATORS) + 1
+
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
