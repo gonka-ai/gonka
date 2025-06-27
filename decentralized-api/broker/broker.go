@@ -8,6 +8,7 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -155,6 +156,19 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+}
+
+func (s NodeState) MarshalJSON() ([]byte, error) {
+	type Alias NodeState
+	return json.Marshal(&struct {
+		Alias
+		IntendedStatus string `json:"intended_status"`
+		CurrentStatus  string `json:"current_status"`
+	}{
+		Alias:          (Alias)(s),
+		IntendedStatus: s.IntendedStatus.String(),
+		CurrentStatus:  s.CurrentStatus.String(),
+	})
 }
 
 type TrainingTaskPayload struct {
