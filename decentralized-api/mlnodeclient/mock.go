@@ -3,6 +3,7 @@ package mlnodeclient
 import (
 	"context"
 	"decentralized-api/logging"
+	"errors"
 	"sync"
 	"testing"
 
@@ -13,9 +14,9 @@ import (
 type MockClient struct {
 	Mu sync.Mutex
 	// State tracking
-	CurrentState MLNodeState
-	PowStatus    PowState
-	IsHealthy    bool
+	CurrentState       MLNodeState
+	PowStatus          PowState
+	InferenceIsHealthy bool
 
 	// Error injection
 	StopError            error
@@ -58,9 +59,9 @@ type MockClient struct {
 // NewMockClient creates a new mock client with default values
 func NewMockClient() *MockClient {
 	return &MockClient{
-		CurrentState: MlNodeState_STOPPED,
-		PowStatus:    POW_IDLE,
-		IsHealthy:    true,
+		CurrentState:       MlNodeState_STOPPED,
+		PowStatus:          POW_STOPPED,
+		InferenceIsHealthy: false,
 	}
 }
 
@@ -84,6 +85,8 @@ func (m *MockClient) Stop(ctx context.Context) error {
 		return m.StopError
 	}
 	m.CurrentState = MlNodeState_STOPPED
+	m.PowStatus = POW_STOPPED
+	m.InferenceIsHealthy = false
 	return nil
 }
 
@@ -113,6 +116,11 @@ func (m *MockClient) GetPowStatus(ctx context.Context) (*PowStatusResponse, erro
 func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
+
+	if m.CurrentState != MlNodeState_STOPPED {
+		return errors.New("InitGenerate called with invalid state. Expected STOPPED. Actual: currentState =" + string(m.CurrentState))
+	}
+
 	logging.Info("MockClient. InitGenerate: called", types.Testing)
 	m.InitGenerateCalled++
 	m.LastInitDto = &dto
@@ -127,6 +135,12 @@ func (m *MockClient) InitGenerate(ctx context.Context, dto InitDto) error {
 func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
+
+	if m.CurrentState != MlNodeState_POW ||
+		m.PowStatus != POW_GENERATING {
+		return errors.New("InitValidate called with invalid state. Expected MlNodeState_POW and POW_GENERATING. Actual: currentState = " + string(m.CurrentState) + ". powStatus =" + string(m.PowStatus))
+	}
+
 	logging.Info("MockClient. InitValidate: called", types.Testing)
 	m.InitValidateCalled++
 	m.LastInitValidateDto = &dto
@@ -141,6 +155,12 @@ func (m *MockClient) InitValidate(ctx context.Context, dto InitDto) error {
 func (m *MockClient) ValidateBatch(ctx context.Context, batch ProofBatch) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
+
+	if m.CurrentState != MlNodeState_POW ||
+		m.PowStatus != POW_VALIDATING {
+		return errors.New("ValidateBatch called with invalid state. Expected MlNodeState_POW and POW_VALIDATING. Actual: currentState = " + string(m.CurrentState) + ". powStatus =" + string(m.PowStatus))
+	}
+
 	m.ValidateBatchCalled++
 	m.LastValidateBatch = batch
 	if m.ValiateBatchError != nil {
@@ -158,7 +178,7 @@ func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
 	if m.InferenceHealthError != nil {
 		return false, m.InferenceHealthError
 	}
-	return m.IsHealthy, nil
+	return m.InferenceIsHealthy, nil
 }
 
 func (m *MockClient) InferenceUp(ctx context.Context, model string, args []string) error {
@@ -171,8 +191,7 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 		return m.InferenceUpError
 	}
 	m.CurrentState = MlNodeState_INFERENCE
-	m.PowStatus = POW_IDLE
-	m.IsHealthy = true
+	m.InferenceIsHealthy = true
 	return nil
 }
 

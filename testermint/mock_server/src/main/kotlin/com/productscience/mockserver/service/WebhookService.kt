@@ -96,44 +96,6 @@ class WebhookService(private val responseService: ResponseService) {
     }
 
     /**
-     * Processes a webhook for the validate POC endpoint.
-     */
-    fun processValidatePocWebhook(requestBody: String) {
-        try {
-            val jsonNode = mapper.readTree(requestBody)
-            val url = jsonNode.get("url")?.asText()
-            val publicKey = jsonNode.get("public_key")?.asText()
-            val blockHash = jsonNode.get("block_hash")?.asText()
-            val blockHeight = jsonNode.get("block_height")?.asInt()
-            val rTarget = jsonNode.get("r_target")?.asDouble()
-            val fraudThreshold = jsonNode.get("fraud_threshold")?.asDouble()
-
-            if (url != null && publicKey != null && blockHash != null && blockHeight != null && 
-                rTarget != null && fraudThreshold != null) {
-                val webhookUrl = "$url/validated"
-
-                // Get the weight from the ResponseService, default to 10 if not set
-                val weight = responseService.getPocResponseWeight() ?: 10L
-
-                // Use ResponseService to generate the webhook body
-                val webhookBody = responseService.generatePocValidationResponseBody(
-                    weight,
-                    publicKey,
-                    blockHash,
-                    blockHeight,
-                    rTarget,
-                    fraudThreshold
-                )
-
-                // Use the validation webhook delay
-                sendDelayedWebhook(webhookUrl, webhookBody, delayMillis = validationWebhookDelay)
-            }
-        } catch (e: Exception) {
-            println("Error processing validate POC webhook: ${e.message}")
-        }
-    }
-
-    /**
      * Processes a webhook for the validate POC batch endpoint.
      */
     fun processValidatePocBatchWebhook(requestBody: String) {

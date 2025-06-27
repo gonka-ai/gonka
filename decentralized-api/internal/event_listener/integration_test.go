@@ -805,7 +805,9 @@ func TestPoCRetry(t *testing.T) {
 	node1Client := setup.getNodeClient("node-1", 8081)
 	node2Client := setup.getNodeClient("node-2", 8082)
 
-	node1Client.InitGenerateError = errors.New("test error")
+	node1Client.WithTryLock(t, func() {
+		node1Client.InitGenerateError = errors.New("test error")
+	})
 
 	var i = params.EpochLength
 	setup.transitionChainStateToNextEpoch(i)
@@ -845,7 +847,9 @@ func TestPoCRetry(t *testing.T) {
 		require.Equal(t, broker.PocStatusGenerating, n.State.PocCurrentStatus)
 	})
 
-	node1Client.InitGenerateError = nil
+	node1Client.WithTryLock(t, func() {
+		node1Client.InitGenerateError = nil
+	})
 
 	for i < params.EpochLength+params.GetEndOfPoCStage() {
 		err = setup.simulateBlock(i)
