@@ -253,9 +253,19 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 	_ = <-responseChan
 }
 
-func (setup *IntegrationTestSetup) setLatestEpoch(epoch types.Epoch) {
+func (setup *IntegrationTestSetup) advanceBlockHeight(blockHeight int64) {
+	resp, err := setup.MockQueryClient.EpochInfo(context.Background(), &types.QueryEpochInfoRequest{})
+	if err != nil {
+		panic(err)
+	}
+
+	setup.setLatestEpoch(blockHeight, resp.LatestEpoch)
+}
+
+func (setup *IntegrationTestSetup) setLatestEpoch(blockHeight int64, epoch types.Epoch) {
 	setup.MockQueryClient.ExpectedCalls = nil
 	setup.MockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
+		BlockHeight: blockHeight,
 		Params: types.Params{
 			EpochParams: setup.EpochParams,
 		},
@@ -274,7 +284,7 @@ func (setup *IntegrationTestSetup) transitionChainStateToNextEpoch(blockHeight i
 		PocStartBlockHeight: blockHeight,
 	}
 
-	setup.setLatestEpoch(newEpoch)
+	setup.setLatestEpoch(blockHeight, newEpoch)
 }
 
 func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool) error {
@@ -291,6 +301,9 @@ func (setup *IntegrationTestSetup) setNodeAdminState(nodeId string, enabled bool
 }
 
 func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
+	// Now call to chain mock will return new blockHeight
+	setup.advanceBlockHeight(height)
+
 	blockInfo := chainphase.BlockInfo{
 		Height: height,
 		Hash:   fmt.Sprintf("hash-%d", height),
@@ -572,10 +585,11 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 		Index:               1,
 		PocStartBlockHeight: epochParams.EpochLength,
 	}
-	setup.setLatestEpoch(latestEpoch)
-	ec := types.NewEpochContext(latestEpoch, *setup.EpochParams)
 
 	var i = setup.EpochParams.EpochLength
+	setup.setLatestEpoch(i, latestEpoch)
+	ec := types.NewEpochContext(latestEpoch, *setup.EpochParams)
+
 	for i < 2*setup.EpochParams.EpochLength {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
