@@ -56,7 +56,7 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 	nodes, err := nodeBroker.GetNodes()
 	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
-		node := *n.Node
+		node := n.Node
 
 		models := make(map[string]apiconfig.ModelConfig)
 		for model, cfg := range node.Models {

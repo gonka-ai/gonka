@@ -32,6 +32,7 @@ func (r ReleaseNode) GetResponseChannelCapacity() int {
 	return cap(r.Response)
 }
 
+// GetNodesCommand retrieves all nodes from the broker and returns them as copies
 type GetNodesCommand struct {
 	Response chan []NodeResponse
 }
@@ -96,8 +97,8 @@ func (c GetNodesCommand) Execute(b *Broker) {
 		}
 
 		nodeResponses = append(nodeResponses, NodeResponse{
-			Node:  &nodeCopy,
-			State: &stateCopy,
+			Node:  nodeCopy,
+			State: stateCopy,
 		})
 	}
 	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))

@@ -227,8 +227,8 @@ func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase
 }
 
 type NodeResponse struct {
-	Node  *Node      `json:"node"`
-	State *NodeState `json:"state"`
+	Node  Node      `json:"node"`
+	State NodeState `json:"state"`
 }
 
 func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
@@ -929,7 +929,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
-			queryStatusResult, err := broker.queryNodeStatus(*nodeResp.Node, *nodeResp.State)
+			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node, nodeResp.State)
 			timestamp := time.Now()
 			if err != nil {
 				logging.Error("nodeStatusQueryWorker. Failed to queue status query command", types.Nodes,

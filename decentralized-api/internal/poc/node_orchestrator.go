@@ -148,7 +148,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
 
 		// FIXME: copying: doesn't look good for large PoCBatch structures?
-		nodeClient := o.nodeBroker.NewNodeClient(node.Node)
+		nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
 		err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
 		if err != nil {
 			logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
