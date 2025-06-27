@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -53,6 +54,10 @@ func main() {
 	config, err := apiconfig.LoadDefaultConfigManager()
 	if err != nil {
 		log.Fatalf("Error loading config: %v", err)
+	}
+
+	if config.GetApiConfig().TestMode {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
@@ -125,7 +130,10 @@ func main() {
 	addr := fmt.Sprintf(":%v", config.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor)
+	// Bridge external block queue
+	blockQueue := pserver.NewBlockQueue(recorder)
+
+	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)

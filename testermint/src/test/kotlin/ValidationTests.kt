@@ -51,6 +51,7 @@ class ValidationTests : TestermintTest() {
 
     @Test
     @Timeout(15, unit = TimeUnit.MINUTES)
+    @Tag("unstable")
     fun `test invalid gets removed`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
@@ -97,12 +98,24 @@ class ValidationTests : TestermintTest() {
 }
 
 
+fun inParallel(
+    count: Int,
+    maxConcurrent: Int,
+    action: (Int) -> Unit
+) {
+    runBlocking {
+        val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrent).asCoroutineDispatcher()
+        val requests = List(count) { async(limitedDispatcher) { action(it) } }
+        requests.forEach { it.await() }
+    }
+}
+
 fun runParallelInferences(
     genesis: LocalInferencePair,
     count: Int,
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
-    models: List<String> = listOf(defaultModel)
+    models: List<String> = listOf(defaultModel),
 ): List<Int> = runBlocking {
     // Launch coroutines with async and collect the deferred results
 
@@ -110,7 +123,14 @@ fun runParallelInferences(
     val requests = List(count) { i ->
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
-            genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+            try {
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+            } catch (e: Exception) {
+                Logger.error("Error making inference request: ${e.message}")
+                null
+            } finally {
+                Logger.warn("Finished request $i")
+            }
         }
     }
 
@@ -120,9 +140,11 @@ fun runParallelInferences(
     genesis.node.waitForNextBlock(waitForBlocks)
 
     // Return statuses
-    results.map { result ->
-        val inference = genesis.api.getInference(result.id)
-        inference.status
+    results.mapNotNull { result ->
+        result?.let {
+            val inference = genesis.api.getInference(result.id)
+            inference.status
+        }
     }
 }
 

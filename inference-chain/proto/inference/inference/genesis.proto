@@ -17,6 +17,7 @@ import "inference/inference/inference_timeout.proto";
 import "inference/inference/inference_validation_details.proto";
 import "inference/inference/epoch_performance_summary.proto";
 import "inference/inference/partial_upgrade.proto";
+import "inference/inference/contracts.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -38,5 +39,6 @@ message GenesisState {
   repeated InferenceValidationDetails inferenceValidationDetailsList = 12 [(gogoproto.nullable) = false] ;
   repeated EpochPerformanceSummary    epochPerformanceSummaryList    = 13 [(gogoproto.nullable) = false] ;
   repeated PartialUpgrade             partialUpgradeList             = 14 [(gogoproto.nullable) = false] ;
+           CosmWasmParams             cosm_wasm_params               = 15 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
 

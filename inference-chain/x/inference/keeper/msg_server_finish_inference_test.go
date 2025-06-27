@@ -3,7 +3,9 @@ package keeper_test
 import (
 	"context"
 	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
+	"go.uber.org/mock/gomock"
 	inference "github.com/productscience/inference/x/inference/module"
 	"testing"
 
@@ -27,6 +29,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
+	mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
@@ -49,7 +53,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		Model:               "model1",
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
-		EscrowAmount:        keeper.DefaultMaxTokens * keeper.PerTokenCost,
+		EscrowAmount:        keeper.DefaultMaxTokens * calculations.PerTokenCost,
 	}, savedInference)
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
@@ -79,8 +83,8 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
 		EndBlockTimestamp:    ctx2.BlockTime().UnixMilli(),
 		MaxTokens:            keeper.DefaultMaxTokens,
-		EscrowAmount:         keeper.DefaultMaxTokens * keeper.PerTokenCost,
-		ActualCost:           30 * keeper.PerTokenCost,
+		EscrowAmount:         keeper.DefaultMaxTokens * calculations.PerTokenCost,
+		ActualCost:           30 * calculations.PerTokenCost,
 	}, savedInference)
 
 	participantState, found := k.GetParticipant(ctx, testutil.Executor)
@@ -94,7 +98,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		LastInferenceTime: ctx2.BlockTime().UnixMilli(),
 		InferenceUrl:      "url",
 		Status:            types.ParticipantStatus_ACTIVE,
-		CoinBalance:       30 * keeper.PerTokenCost,
+		CoinBalance:       30 * calculations.PerTokenCost,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 1,
 		},

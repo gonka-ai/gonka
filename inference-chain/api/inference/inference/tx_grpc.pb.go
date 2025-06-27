@@ -44,6 +44,7 @@ const (
 	Msg_SetBarrier_FullMethodName                       = "/inference.inference.Msg/SetBarrier"
 	Msg_JoinTrainingStatus_FullMethodName               = "/inference.inference.Msg/JoinTrainingStatus"
 	Msg_CreateDummyTrainingTask_FullMethodName          = "/inference.inference.Msg/CreateDummyTrainingTask"
+	Msg_BridgeExchange_FullMethodName                   = "/inference.inference.Msg/BridgeExchange"
 )
 
 // MsgClient is the client API for Msg service.
@@ -77,6 +78,7 @@ type MsgClient interface {
 	SetBarrier(ctx context.Context, in *MsgSetBarrier, opts ...grpc.CallOption) (*MsgSetBarrierResponse, error)
 	JoinTrainingStatus(ctx context.Context, in *MsgJoinTrainingStatus, opts ...grpc.CallOption) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDummyTrainingTask, opts ...grpc.CallOption) (*MsgCreateDummyTrainingTaskResponse, error)
+	BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error)
 }
 
 type msgClient struct {
@@ -312,6 +314,15 @@ func (c *msgClient) CreateDummyTrainingTask(ctx context.Context, in *MsgCreateDu
 	return out, nil
 }
 
+func (c *msgClient) BridgeExchange(ctx context.Context, in *MsgBridgeExchange, opts ...grpc.CallOption) (*MsgBridgeExchangeResponse, error) {
+	out := new(MsgBridgeExchangeResponse)
+	err := c.cc.Invoke(ctx, Msg_BridgeExchange_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -343,6 +354,7 @@ type MsgServer interface {
 	SetBarrier(context.Context, *MsgSetBarrier) (*MsgSetBarrierResponse, error)
 	JoinTrainingStatus(context.Context, *MsgJoinTrainingStatus) (*MsgJoinTrainingStatusResponse, error)
 	CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error)
+	BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -424,6 +436,9 @@ func (UnimplementedMsgServer) JoinTrainingStatus(context.Context, *MsgJoinTraini
 }
 func (UnimplementedMsgServer) CreateDummyTrainingTask(context.Context, *MsgCreateDummyTrainingTask) (*MsgCreateDummyTrainingTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateDummyTrainingTask not implemented")
+}
+func (UnimplementedMsgServer) BridgeExchange(context.Context, *MsgBridgeExchange) (*MsgBridgeExchangeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BridgeExchange not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -888,6 +903,24 @@ func _Msg_CreateDummyTrainingTask_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_BridgeExchange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgBridgeExchange)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).BridgeExchange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_BridgeExchange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).BridgeExchange(ctx, req.(*MsgBridgeExchange))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -994,6 +1027,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateDummyTrainingTask",
 			Handler:    _Msg_CreateDummyTrainingTask_Handler,
+		},
+		{
+			MethodName: "BridgeExchange",
+			Handler:    _Msg_BridgeExchange_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

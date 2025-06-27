@@ -140,7 +140,7 @@ class UpgradeTests : TestermintTest() {
             )
             it.api.addNode(
                 validNode.copy(
-                    host = "${it.name.trim('/')}-wiremock", pocPort = 8080, inferencePort = 8080,
+                    host = "${it.name.trim('/')}-mock-server", pocPort = 8080, inferencePort = 8080,
                     inferenceSegment = newSegment, version = newVersion, id = "v1Node"
                 )
             )
@@ -167,7 +167,7 @@ class UpgradeTests : TestermintTest() {
     fun getBinaryPath(path: String): String {
         val localPath = "../public-html/$path"
         val sha = getSha256Checksum(localPath)
-        return "http://genesis-wiremock:8080/$path?checksum=sha256:$sha"
+        return "http://genesis-mock-server:8080/$path?checksum=sha256:$sha"
     }
 }
 

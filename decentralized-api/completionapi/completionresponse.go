@@ -106,14 +106,22 @@ func (r *StreamedCompletionResponse) GetInferenceId() (string, error) {
 }
 
 func (r *StreamedCompletionResponse) GetUsage() (*Usage, error) {
+	backupLength := 0
 	if len(r.Resp.Data) > 0 {
 		for _, d := range r.Resp.Data {
+			if len(d.Choices) != 0 {
+				backupLength += len(d.Choices[0].Logprobs.Content)
+			}
 			if d.Usage.IsEmpty() {
 				continue
 			}
 			return &d.Usage, nil
 		}
-		return nil, errors.New("StreamedCompletionResponse: no usage found in streamed response")
+		usage := &Usage{
+			PromptTokens:     0,
+			CompletionTokens: uint64(backupLength),
+		}
+		return usage, nil
 	} else {
 		return nil, ErrorNoDataAvailableInStreamedResponse
 	}

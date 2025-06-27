@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -39,22 +41,52 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 	escrowPayment := settleAmount.GetWorkCoins()
 	err := ms.PayParticipantFromEscrow(ctx, msg.Creator, escrowPayment, "work_coins:"+settleAmount.Participant)
 	if err != nil {
+		if sdkerrors.ErrInsufficientFunds.Is(err) {
+			ms.handleUnderfundedWork(ctx, err, settleAmount)
+			return err
+		}
 		ms.LogError("Error paying participant", types.Claims, "error", err)
 		return err
 	}
 	ms.AddTokenomicsData(ctx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()})
 	err = ms.PayParticipantFromModule(ctx, msg.Creator, settleAmount.GetRewardCoins(), types.ModuleName, "reward_coins:"+settleAmount.Participant)
 	if err != nil {
+		if sdkerrors.ErrInsufficientFunds.Is(err) {
+			ms.LogError("Insufficient funds for paying rewards. Work paid, rewards declined", types.Claims, "error", err, "settleAmount", settleAmount)
+			ms.finishSettle(ctx, settleAmount)
+			return err
+		}
 		ms.LogError("Error paying participant for rewards", types.Claims, "error", err)
 		return err
 	}
-	ms.RemoveSettleAmount(ctx, msg.Creator)
-	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.PocStartHeight, msg.Creator)
+	ms.finishSettle(ctx, settleAmount)
+	return nil
+}
+
+func (ms msgServer) handleUnderfundedWork(ctx sdk.Context, err error, settleAmount *types.SettleAmount) {
+	ms.LogError("Insufficient funds for paying participant for work! Unpaid settlement", types.Claims, "error", err, "settleAmount", settleAmount)
+
+	spendable, required := ms.parseBalanceError(err.Error())
+	ms.LogError("Balance details", types.Claims, "spendable", spendable, "required", required)
+
+	ms.finishSettle(ctx, settleAmount)
+}
+
+func (ms msgServer) parseBalanceError(errMsg string) (spendable int64, required int64) {
+	_, err := fmt.Sscanf(errMsg, "spendable balance %dnicoin is smaller than %dnicoin", &spendable, &required)
+	if err != nil {
+		return 0, 0
+	}
+	return spendable, required
+}
+
+func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
+	ms.RemoveSettleAmount(ctx, settleAmount.Participant)
+	perfSummary, found := ms.GetEpochPerformanceSummary(ctx, settleAmount.PocStartHeight, settleAmount.Participant)
 	if found {
 		perfSummary.Claimed = true
 		ms.SetEpochPerformanceSummary(ctx, perfSummary)
 	}
-	return nil
 }
 
 func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) (*types.SettleAmount, *types.MsgClaimRewardsResponse) {

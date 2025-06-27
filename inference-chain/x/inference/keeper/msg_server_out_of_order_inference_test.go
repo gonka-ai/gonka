@@ -2,10 +2,10 @@ package keeper_test
 
 import (
 	inference "github.com/productscience/inference/x/inference/module"
+	"github.com/productscience/inference/x/inference/calculations"
 	"testing"
 
 	"github.com/productscience/inference/testutil"
-	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
@@ -92,7 +92,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 
 	// Verify that the escrow amount is based on the actual token counts, not the MaxTokens
 	// The actual cost should be (10 + 20) * PerTokenCost = 30 * PerTokenCost
-	expectedActualCost := int64(30 * keeper.PerTokenCost)
+	expectedActualCost := int64(30 * calculations.PerTokenCost)
 	require.Equal(t, expectedActualCost, savedInference.ActualCost)
 
 	// The escrow amount should be the same as the actual cost

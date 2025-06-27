@@ -55,7 +55,39 @@ data class Function(
 )
 
 // Response
-
+//{
+//    "id": "chatcmpl-BhMSzEWm9ArChzeJ3GNzdxmCaWXgT",
+//    "object": "chat.completion.chunk",
+//    "created": 1749674165,
+//    "model": "gpt-4.1-2025-04-14",
+//    "service_tier": "default",
+//    "system_fingerprint": "fp_51e1070cf2",
+//    "choices": [
+//    {
+//        "index": 0,
+//        "delta": {
+//        "content": "onn"
+//    },
+//        "logprobs": {
+//        "content": [
+//        {
+//            "token": "onn",
+//            "logprob": 0.0,
+//            "bytes": [
+//            111,
+//            110,
+//            110
+//            ],
+//            "top_logprobs": []
+//        }
+//        ],
+//        "refusal": null
+//    },
+//        "finish_reason": null
+//    }
+//    ],
+//    "usage": null
+//}
 data class OpenAIResponse(
     val choices: List<Choice>,
     val created: Long,
@@ -113,7 +145,7 @@ data class TopLogprob(
 data class ResponseMessage(
     val content: String,
     val role: String,
-    val toolCalls: List<Any>,
+    val toolCalls: List<Any>?,
 )
 
 data class Usage(
