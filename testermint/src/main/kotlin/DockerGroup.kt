@@ -247,6 +247,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
     Logger.info("Initializing cluster with {} nodes", allGroups.size)
     allGroups.forEach { it.tearDownExisting() }
     genesisGroup.init()
+    // TODO: can we wait here by querying the genesis API?
     Thread.sleep(Duration.ofSeconds(30L))
     joinGroups.forEach { it.init() }
     return allGroups

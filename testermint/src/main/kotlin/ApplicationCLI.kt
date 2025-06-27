@@ -94,7 +94,7 @@ data class ApplicationCLI(
                     error("State is stale, was identical for $staleTimeout. Wait failed for: $description")
                 }
                 previousState = currentState
-                Logger.debug("Current block is {}, waiting: {}", currentState.syncInfo.latestBlockHeight, description)
+                Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
                 Thread.sleep(1000)
             }
         }
