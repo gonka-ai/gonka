@@ -12,7 +12,7 @@ services:
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
-      - DEBUG=true
+      - DEBUG=false
     networks:
       - chain-public
     ports:
@@ -45,7 +45,7 @@ services:
       - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__IS_GENESIS=true
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DEBUG=true
+      - DEBUG=false
     networks:
       - chain-public
 
