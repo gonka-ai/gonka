@@ -630,7 +630,7 @@ message ParticipantCurrentStats {
 
 message ParticipantFullStats {
   string account_address = 1;
-  string validator_operator_addres = 2;
+  string operator_address = 2;
   int32  reputation = 3;
   uint64 earned_coins_current_epoch = 4;
   uint64 rewarded_coins_latest_epoch = 5;
