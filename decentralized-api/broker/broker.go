@@ -158,11 +158,7 @@ type NodeState struct {
 	AdminState      AdminState `json:"admin_state"`
 }
 
-func (s *NodeState) MarshalJSON() ([]byte, error) {
-	if s == nil {
-		return json.Marshal(nil)
-	}
-
+func (s NodeState) MarshalJSON() ([]byte, error) {
 	type Alias NodeState
 	return json.Marshal(&struct {
 		IntendedStatus string `json:"intended_status"`
@@ -171,7 +167,7 @@ func (s *NodeState) MarshalJSON() ([]byte, error) {
 	}{
 		IntendedStatus: s.IntendedStatus.String(),
 		CurrentStatus:  s.CurrentStatus.String(),
-		Alias:          (Alias)(*s),
+		Alias:          (Alias)(s),
 	})
 }
 
