@@ -73,6 +73,7 @@ class WebhookService(private val responseService: ResponseService) {
             val publicKey = jsonNode.get("public_key")?.asText()
             val blockHash = jsonNode.get("block_hash")?.asText()
             val blockHeight = jsonNode.get("block_height")?.asInt()
+            val nodeNumber = jsonNode.get("node_id")?.asInt() ?: 1
 
             if (url != null && publicKey != null && blockHash != null && blockHeight != null) {
                 val webhookUrl = "$url/generated"
@@ -85,7 +86,8 @@ class WebhookService(private val responseService: ResponseService) {
                     weight,
                     publicKey,
                     blockHash,
-                    blockHeight
+                    blockHeight,
+                    nodeNumber,
                 )
 
                 sendDelayedWebhook(webhookUrl, webhookBody)

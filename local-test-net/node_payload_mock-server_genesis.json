@@ -26,7 +26,7 @@
   },
   {
     "id": "wiremock-2",
-    "host": "genesis-wiremock-2",
+    "host": "genesis-mock-server-2",
     "inference_port": 8080,
     "poc_port": 8080,
     "max_concurrent": 10,
