@@ -77,9 +77,9 @@ func (ec *EpochContext) GetCurrentPhase(blockHeight int64) EpochPhase {
 	}
 
 	startOfPoC := ec.StartOfPoC()
-	pocGenerateWindDownStart := ec.PoCGenerationWinddown()
+	pocGenerateWindDownStart := ec.PoCGenerationWindDown()
 	startOfPoCValidation := ec.StartOfPoCValidation()
-	pocValidateWindDownStart := ec.PoCValidationWinddown()
+	pocValidateWindDownStart := ec.PoCValidationWindDown()
 	endOfPoCValidation := ec.EndOfPoCValidation()
 
 	if blockHeight >= startOfPoC && blockHeight < pocGenerateWindDownStart {
@@ -125,11 +125,11 @@ func (ec *EpochContext) StartOfPoC() int64 {
 	return ec.PocStartBlockHeight // alias for readability
 }
 
-func (ec *EpochContext) PoCGenerationWinddown() int64 {
+func (ec *EpochContext) PoCGenerationWindDown() int64 {
 	if ec.EpochIndex == 0 {
 		return 0
 	}
-	return ec.getPocAnchor() + ec.EpochParams.GetPoCWinddownStage()
+	return ec.getPocAnchor() + ec.EpochParams.GetPoCWindDownStage()
 }
 
 func (ec *EpochContext) EndOfPoCGeneration() int64 {
@@ -153,11 +153,11 @@ func (ec *EpochContext) StartOfPoCValidation() int64 {
 	return ec.getPocAnchor() + ec.EpochParams.GetStartOfPoCValidationStage()
 }
 
-func (ec *EpochContext) PoCValidationWinddown() int64 {
+func (ec *EpochContext) PoCValidationWindDown() int64 {
 	if ec.EpochIndex == 0 {
 		return 0
 	}
-	return ec.getPocAnchor() + ec.EpochParams.GetPoCValidationWindownStage()
+	return ec.getPocAnchor() + ec.EpochParams.GetPoCValidationWindDownStage()
 }
 
 func (ec *EpochContext) EndOfPoCValidation() int64 {

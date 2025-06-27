@@ -71,7 +71,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 
 	i++
 
-	for i < startOfPoc+epochParams.GetPoCWinddownStage() {
+	for i < startOfPoc+epochParams.GetPoCWindDownStage() {
 		ec := types.NewEpochContextFromEffectiveEpoch(initialEpoch, epochParams, i)
 		require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 		require.Equal(t, types.PoCGeneratePhase, ec.GetCurrentPhase(i))
@@ -108,7 +108,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.False(t, ec.IsValidationExchangeWindow(i))
 	i++
 
-	for i < startOfPoc+epochParams.GetPoCValidationWindownStage() {
+	for i < startOfPoc+epochParams.GetPoCValidationWindDownStage() {
 		ec = types.NewEpochContextFromEffectiveEpoch(initialEpoch, epochParams, i)
 		require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 		require.Equal(t, types.PoCValidatePhase, ec.GetCurrentPhase(i))

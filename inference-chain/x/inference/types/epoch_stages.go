@@ -17,10 +17,10 @@ type EpochExchangeWindow struct {
 type EpochStages struct {
 	EpochIndex            uint64              `json:"epoch_index"`
 	PocStart              int64               `json:"poc_start"`
-	PocGenerationWinddown int64               `json:"poc_generation_winddown"`
+	PocGenerationWindDown int64               `json:"poc_generation_wind_down"`
 	PocGenerationEnd      int64               `json:"poc_generation_end"`
 	PocValidationStart    int64               `json:"poc_validation_start"`
-	PocValidationWinddown int64               `json:"poc_validation_winddown"`
+	PocValidationWindDown int64               `json:"poc_validation_wind_down"`
 	PocValidationEnd      int64               `json:"poc_validation_end"`
 	SetNewValidators      int64               `json:"set_new_validators"`
 	ClaimMoney            int64               `json:"claim_money"`
@@ -39,10 +39,10 @@ func (ec *EpochContext) GetEpochStages() EpochStages {
 	return EpochStages{
 		EpochIndex:            ec.EpochIndex,
 		PocStart:              ec.StartOfPoC(),
-		PocGenerationWinddown: ec.PoCGenerationWinddown(),
+		PocGenerationWindDown: ec.PoCGenerationWindDown(),
 		PocGenerationEnd:      ec.EndOfPoCGeneration(),
 		PocValidationStart:    ec.StartOfPoCValidation(),
-		PocValidationWinddown: ec.PoCValidationWinddown(),
+		PocValidationWindDown: ec.PoCValidationWindDown(),
 		PocValidationEnd:      ec.EndOfPoCValidation(),
 		SetNewValidators:      ec.SetNewValidators(),
 		ClaimMoney:            ec.ClaimMoney(),

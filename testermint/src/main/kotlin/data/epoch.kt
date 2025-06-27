@@ -35,14 +35,14 @@ data class EpochStages(
     val epochIndex: Long,
     @SerializedName("poc_start")
     val pocStart: Long,
-    @SerializedName("poc_generation_winddown")
-    val pocGenerationWinddown: Long,
+    @SerializedName("poc_generation_wind_down")
+    val pocGenerationWindDown: Long,
     @SerializedName("poc_generation_end")
     val pocGenerationEnd: Long,
     @SerializedName("poc_validation_start")
     val pocValidationStart: Long,
-    @SerializedName("poc_validation_winddown")
-    val pocValidationWinddown: Long,
+    @SerializedName("poc_validation_wind_down")
+    val pocValidationWindDown: Long,
     @SerializedName("poc_validation_end")
     val pocValidationEnd: Long,
     @SerializedName("set_new_validators")

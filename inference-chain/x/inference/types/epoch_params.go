@@ -21,7 +21,7 @@ func (p *EpochParams) getStartOfPocStage() int64 {
 	return 0
 }
 
-func (p *EpochParams) GetPoCWinddownStage() int64 {
+func (p *EpochParams) GetPoCWindDownStage() int64 {
 	return p.getStartOfPocStage() + int64(float64(p.PocStageDuration)*PoCGenerateWindDownFactor)
 }
 
@@ -38,7 +38,7 @@ func (p *EpochParams) GetStartOfPoCValidationStage() int64 {
 	return p.GetEndOfPoCStage() + p.PocValidationDelay
 }
 
-func (p *EpochParams) GetPoCValidationWindownStage() int64 {
+func (p *EpochParams) GetPoCValidationWindDownStage() int64 {
 	return p.GetStartOfPoCValidationStage() + int64(float64(p.PocValidationDuration)*PoCValidateWindDownFactor)
 }
 
