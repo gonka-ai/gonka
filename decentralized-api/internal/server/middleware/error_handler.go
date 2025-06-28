@@ -21,18 +21,7 @@ import (
 //
 // NOTE: Make sure NOT to expose sensitive information in production.
 func TransparentErrorHandler(err error, c echo.Context) {
-	var (
-		status              = http.StatusInternalServerError
-		message interface{} = err.Error()
-	)
-
-	var he *echo.HTTPError
-	if errors.As(err, &he) {
-		status = he.Code
-		if he.Message != nil {
-			message = he.Message
-		}
-	}
+	status, message := ExtractError(err)
 
 	// Avoid double responses
 	if c.Response().Committed {
@@ -44,7 +33,7 @@ func TransparentErrorHandler(err error, c echo.Context) {
 	_ = c.JSON(status, map[string]interface{}{"error": message})
 }
 
-func getErrorMessage(err error) (int, interface{}) {
+func ExtractError(err error) (int, interface{}) {
 	var (
 		status              = http.StatusInternalServerError
 		message interface{} = err.Error()
