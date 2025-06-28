@@ -1,11 +1,12 @@
 package admin
 
 import (
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -31,6 +32,7 @@ func NewServer(
 	cdc := getCodec()
 
 	e := echo.New()
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
 		e:             e,
 		nodeBroker:    nodeBroker,

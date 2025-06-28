@@ -9,18 +9,19 @@ import (
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/api/inference/inference"
-	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/types"
 	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/api/inference/inference"
+	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func (s *Server) postChat(ctx echo.Context) error {

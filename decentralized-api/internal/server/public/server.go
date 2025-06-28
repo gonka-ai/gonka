@@ -28,6 +28,7 @@ func NewServer(
 	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
 		e:                e,
 		nodeBroker:       nodeBroker,
