@@ -5,8 +5,8 @@ export ACCOUNT_NAME="test-account"
 # Url of the genesis k8s node API
 export NODE_URL="http://34.9.136.116:30000"
 export GONKA_ENDPOINTS=$NODE_URL/v1
-export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
-export INFERENCED_BINARY="inferenced"
+# export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
+# export INFERENCED_BINARY="inferenced"
 export INFERENCED_BINARY="/Users/dima/cosmos/bin/inferenced"
 
 # Example endpoints to check the server status with
@@ -17,7 +17,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address $NODE_URL
 
-export GONKA_ADDRESS="gonka1cmtt7pq0l7398eff2qunuh3mlqd3ljk6yhca2s"
+export GONKA_ADDRESS="gonka13r2vss5uqqakpn7gyy97mt6q70csclexr2j7kq"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -27,6 +27,7 @@ export GONKA_ADDRESS="gonka1cmtt7pq0l7398eff2qunuh3mlqd3ljk6yhca2s"
 
 # Export private key:
 GONKA_PRIVATE_KEY="$(echo y | "$INFERENCED_BINARY" keys export $ACCOUNT_NAME --unarmored-hex --unsafe)"
+echo "$GONKA_PRIVATE_KEY"
 
 # Use compressa:
 # Prerequisite, create and activate venv:
