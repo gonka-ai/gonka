@@ -17,17 +17,16 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address $NODE_URL
 
-export GONKA_ADDRESS="gonka10l00h0tt7s2fp3xvz4ra4w3vm0rp4n5p50cm8v"
+export GONKA_ADDRESS="gonka1cmtt7pq0l7398eff2qunuh3mlqd3ljk6yhca2s"
 
 # View it
 "$INFERENCED_BINARY" keys list
 
-"$INFERENCED_BINARY" query bank balances "$ACC_ADDRESS" \
+"$INFERENCED_BINARY" query bank balances "$GONKA_ADDRESS" \
   --node tcp://34.9.136.116:30002
 
 # Export private key:
-"$INFERENCED_BINARY" keys export $ACCOUNT_NAME --unarmored-hex --unsafe
-export GONKA_PRIVATE_KEY="..."
+GONKA_PRIVATE_KEY="$(echo y | "$INFERENCED_BINARY" keys export $ACCOUNT_NAME --unarmored-hex --unsafe)"
 
 # Use compressa:
 # Prerequisite, create and activate venv:
