@@ -462,7 +462,7 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	command.Response <- true
 }
 
-var ErrNoNodesAvailable = errors.New("no nodes available")
+var ErrNoNodesAvailable = errors.New("no nodes available for inference")
 
 func LockNode[T any](
 	b *Broker,
