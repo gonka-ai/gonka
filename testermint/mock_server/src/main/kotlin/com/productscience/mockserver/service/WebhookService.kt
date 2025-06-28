@@ -75,11 +75,14 @@ class WebhookService(private val responseService: ResponseService) {
             val blockHeight = jsonNode.get("block_height")?.asInt()
             val nodeNumber = jsonNode.get("node_id")?.asInt() ?: 1
 
+            logger.info("Processing generate POC webhook - URL: $url, PublicKey: $publicKey, BlockHeight: $blockHeight, NodeNumber: $nodeNumber")
+
             if (url != null && publicKey != null && blockHash != null && blockHeight != null) {
                 val webhookUrl = "$url/generated"
 
                 // Get the weight from the ResponseService, default to 10 if not set
                 val weight = responseService.getPocResponseWeight() ?: 10L
+                logger.info("Using weight for POC generation: $weight")
 
                 // Use ResponseService to generate the webhook body
                 val webhookBody = responseService.generatePocResponseBody(
@@ -90,10 +93,13 @@ class WebhookService(private val responseService: ResponseService) {
                     nodeNumber,
                 )
 
+                logger.info("Sending generate POC webhook to $webhookUrl with weight: $weight")
                 sendDelayedWebhook(webhookUrl, webhookBody)
+            } else {
+                logger.warn("Missing required fields in generate POC webhook request: url=$url, publicKey=$publicKey, blockHash=$blockHash, blockHeight=$blockHeight")
             }
         } catch (e: Exception) {
-            println("Error processing generate POC webhook: ${e.message}")
+            logger.error("Error processing generate POC webhook: ${e.message}", e)
         }
     }
 
@@ -108,6 +114,8 @@ class WebhookService(private val responseService: ResponseService) {
             val blockHeight = jsonNode.get("block_height")?.asInt()
             val nonces = jsonNode.get("nonces")
             val dist = jsonNode.get("dist")
+
+            logger.info("Processing validate POC batch webhook - PublicKey: $publicKey, BlockHeight: $blockHeight")
 
             if (publicKey != null && blockHash != null && blockHeight != null && nonces != null && dist != null) {
                 // Create the webhook body using the values from the request
@@ -127,15 +135,17 @@ class WebhookService(private val responseService: ResponseService) {
                     }
                 """.trimIndent()
 
-
                 val keyName = (System.getenv("KEY_NAME") ?: "localhost")
                 // Use the validation webhook delay
                 val webHookUrl = "http://$keyName-api:9100/v1/poc-batches/validated"
-                logger.info("Sending batch validation webhook to $webHookUrl")
+                logger.info("Sending batch validation webhook to $webHookUrl with delay: ${validationWebhookDelay}ms")
+                logger.debug("Batch validation webhook body: $webhookBody")
                 sendDelayedWebhook(webHookUrl, webhookBody, delayMillis = validationWebhookDelay)
+            } else {
+                logger.warn("Missing required fields in validate POC batch webhook request: publicKey=$publicKey, blockHash=$blockHash, blockHeight=$blockHeight, nonces=$nonces, dist=$dist")
             }
         } catch (e: Exception) {
-            println("Error processing validate POC batch webhook: ${e.message}")
+            logger.error("Error processing validate POC batch webhook: ${e.message}", e)
         }
     }
 }
