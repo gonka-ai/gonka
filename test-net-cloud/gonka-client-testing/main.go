@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	GONKA_PRIVATE_KEY       = "0x1234..." // ECDSA private key for signing requests
 	INTERNAL_TEST_NET_ADDR  = ""
 	INTERNAL_TEST_NET_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 )
@@ -14,7 +15,7 @@ var (
 func main() {
 	// Private key can be provided directly or through environment variable GONKA_PRIVATE_KEY
 	client, err := gonkaopenai.NewGonkaOpenAI(gonkaopenai.Options{
-		GonkaPrivateKey: "0x1234...",                      // ECDSA private key for signing requests
+		GonkaPrivateKey: GONKA_PRIVATE_KEY,
 		Endpoints:       []string{INTERNAL_TEST_NET_ADDR}, // Gonka endpoints
 		// Optional parameters:
 		// GonkaAddress: "cosmos1...", // Override derived Cosmos address
