@@ -8,7 +8,7 @@ import (
 
 var (
 	GONKA_PRIVATE_KEY       = "0x1234..." // ECDSA private key for signing requests
-	INTERNAL_TEST_NET_ADDR  = ""
+	INTERNAL_TEST_NET_ADDR  = "http://34.9.136.116:30000/v1"
 	INTERNAL_TEST_NET_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 )
 
