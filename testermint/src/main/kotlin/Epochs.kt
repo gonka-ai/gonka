@@ -1,5 +1,6 @@
 package com.productscience
 
+import com.productscience.data.EpochParams
 import com.productscience.data.EpochResponse
 
 enum class EpochStage {
@@ -31,4 +32,15 @@ fun EpochResponse.resolveUpcomingStage(latestEpochStage: Long, nextEpochStage: L
     } else {
         nextEpochStage
     }
+}
+
+@Deprecated("Use EpochResponse.getNextStage instead. We keep it only to get the block when the very 1st validators are active.")
+fun EpochParams.getStage(stage: EpochStage): Long = when (stage) {
+    EpochStage.START_OF_POC -> 0L
+    EpochStage.END_OF_POC -> getStage(EpochStage.START_OF_POC) + pocValidationDuration * epochMultiplier
+    EpochStage.POC_EXCHANGE_DEADLINE -> getStage(EpochStage.END_OF_POC) + pocExchangeDuration * epochMultiplier
+    EpochStage.START_OF_POC_VALIDATION -> getStage(EpochStage.END_OF_POC) + pocValidationDelay * epochMultiplier
+    EpochStage.END_OF_POC_VALIDATION -> getStage(EpochStage.START_OF_POC_VALIDATION) + pocValidationDuration * epochMultiplier
+    EpochStage.SET_NEW_VALIDATORS -> getStage(EpochStage.END_OF_POC_VALIDATION) + 1 * epochMultiplier
+    EpochStage.CLAIM_REWARDS -> getStage(EpochStage.SET_NEW_VALIDATORS) + 1 * epochMultiplier
 }
