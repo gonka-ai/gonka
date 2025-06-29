@@ -17,7 +17,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address $NODE_URL
 
-export GONKA_ADDRESS="gonka13r2vss5uqqakpn7gyy97mt6q70csclexr2j7kq"
+export GONKA_ADDRESS="gonka1lhag5dcf7lpqp9tqrt7l20yjmxurtg4auhk58u"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -43,3 +43,5 @@ compressa-perf measure-from-yaml \
   --node_url $NODE_URL \
   config.yml \
   --model_name Qwen/Qwen2.5-7B-Instruct
+
+kubectl -n genesis exec node-0 -- inferenced query inference list-inference --output json
