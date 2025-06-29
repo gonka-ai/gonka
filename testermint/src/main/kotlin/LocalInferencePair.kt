@@ -298,6 +298,10 @@ data class LocalInferencePair(
                 1 -
                 epochParams.epochShift
 
+        if (epochFinished <= epochData.blockHeight) {
+            return
+        }
+
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
