@@ -63,7 +63,7 @@ func main() {
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"gonka",
-		10,
+		20,
 		5*time.Second,
 		config,
 	)
