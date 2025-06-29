@@ -786,7 +786,7 @@ func TestBasicSetup(t *testing.T) {
 }
 
 func TestPoCRetry(t *testing.T) {
-	var params = types.EpochParams{
+	params := types.EpochParams{
 		EpochLength:           100,
 		EpochShift:            0,
 		EpochMultiplier:       1,
@@ -855,10 +855,12 @@ func TestPoCRetry(t *testing.T) {
 		err = setup.simulateBlock(i)
 		require.NoError(t, err)
 
+		waitForAsync(100 * time.Millisecond)
+
 		i++
 	}
 
-	waitForAsync(100 * time.Millisecond)
+	// waitForAsync(100 * time.Millisecond)
 
 	// check only 1 retry happened and then it stopped once we removed the error
 	assertNodeClient(t, NodeClientAssertion{0, 3, 0, 0}, node1Client)
