@@ -85,7 +85,7 @@ class ParticipantTests : TestermintTest() {
         val zeroParticipantKey = zeroParticipant.node.getValidatorInfo()
         val participants = genesis.api.getParticipants()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        zeroParticipant.changePoc(0)
+        zeroParticipant.changePoc(0, setNewValidatorsOffset = 3)
         logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
@@ -109,7 +109,12 @@ class ParticipantTests : TestermintTest() {
         val participants = genesis.api.getParticipants()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         genesis.markNeedsReboot()
-        zeroParticipant.changePoc(0)
+        // Looks like comet validators will only be changed with a 2 block more
+        // setNewValidators -- EndBlock: change module state: active participants, epoch groups
+        // setNewValidators + 1 -- EndBlock: epoch group change is detected and a call to staking is made
+        // setNewValidators + 2 -- staking module update validator update is visible
+        // setNewValidators + 3 -- the staking update is propagated to comet
+        zeroParticipant.changePoc(0, setNewValidatorsOffset = 3)
         logSection("Confirming ${zeroParticipant.name} is removed from validators")
         val validatorsAfter = genesis.node.getValidators()
         val zeroValidator = validatorsAfter.validators.first {
@@ -117,6 +122,7 @@ class ParticipantTests : TestermintTest() {
         }
         assertThat(zeroValidator.tokens).isZero
         assertThat(zeroValidator.status).isEqualTo(2) // Unbonding
+        // Ideally just add here smth like "wait for 1 block?"
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
             it.pubKey.key == zeroParticipantKey.key
@@ -124,7 +130,7 @@ class ParticipantTests : TestermintTest() {
         assertThat(cometValidators.validators).hasSize(2)
 
         logSection("Setting ${zeroParticipant.name} back to 15 power")
-        zeroParticipant.changePoc(15)
+        zeroParticipant.changePoc(15, setNewValidatorsOffset = 3)
 
         logSection("Confirming ${zeroParticipant.name} is back in validators")
         val validatorsAfterRejoin = genesis.node.getValidators()

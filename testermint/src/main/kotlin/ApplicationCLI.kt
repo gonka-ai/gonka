@@ -75,8 +75,8 @@ data class ApplicationCLI(
         check: (status: NodeInfoResponse) -> Boolean,
         description: String,
         staleTimeout: Duration = Duration.ofSeconds(20),
-    ) {
-        wrapLog("waitForState", false) {
+    ): NodeInfoResponse {
+        return wrapLog("waitForState", false) {
             Logger.info("Waiting for state: {}", description)
             var timeout = Instant.now().plus(staleTimeout)
             var previousState: NodeInfoResponse? = null
@@ -84,7 +84,7 @@ data class ApplicationCLI(
                 val currentState = getStatus()
                 if (check(currentState)) {
                     Logger.info("State reached: $description")
-                    break
+                    return@wrapLog currentState
                 }
                 if (previousState != currentState) {
                     timeout = Instant.now().plus(staleTimeout)
@@ -97,16 +97,19 @@ data class ApplicationCLI(
                 Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
                 Thread.sleep(1000)
             }
+            // IDE says unreachable (and it's because of the timeout error in the while loop above,
+            //   but if I remove this line then it complains about return being Unit)
+            error("Unreachable code reached in waitForState")
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
-        wrapLog("waitForMinimumBlock", false) {
+    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
+        return wrapLog("waitForMinimumBlock", false) {
             waitForState(
                 { it.syncInfo.latestBlockHeight >= minBlockHeight },
                 "$waitingFor:block height $minBlockHeight"
             )
-        }
+        }.syncInfo.latestBlockHeight
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
