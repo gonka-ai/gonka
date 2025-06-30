@@ -3,14 +3,15 @@ package epochgroup
 import (
 	"context"
 	"encoding/base64"
+	"strconv"
+	"time"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
-	"strconv"
-	"time"
 )
 
 // EpochMember contains all the parameters related to a member in an epoch group
@@ -60,6 +61,7 @@ func NewEpochMemberFromStakingValidator(
 type EpochGroup struct {
 	GroupKeeper       types.GroupMessageKeeper
 	ParticipantKeeper types.ParticipantKeeper
+	ModelKeeper       types.ModelKeeper
 	Authority         string
 	Logger            types.InferenceLogger
 	GroupDataKeeper   types.EpochGroupDataKeeper
@@ -72,6 +74,7 @@ type EpochGroup struct {
 func NewEpochGroup(
 	group types.GroupMessageKeeper,
 	participant types.ParticipantKeeper,
+	modelKeeper types.ModelKeeper,
 	authority string,
 	logger types.InferenceLogger,
 	groupDataKeeper types.EpochGroupDataKeeper,
@@ -80,6 +83,7 @@ func NewEpochGroup(
 	return &EpochGroup{
 		GroupKeeper:       group,
 		ParticipantKeeper: participant,
+		ModelKeeper:       modelKeeper,
 		Authority:         authority,
 		Logger:            logger,
 		GroupDataKeeper:   groupDataKeeper,
@@ -168,21 +172,22 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 }
 
 func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
-	for _, model := range member.Models {
-		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", model, "address", member.Address)
-		subGroup, err := eg.GetSubGroup(ctx, model)
+	for _, modelId := range member.Models {
+		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", modelId, "address", member.Address)
+
+		subGroup, err := eg.GetOrCreateSubGroup(ctx, modelId)
 		if err != nil {
-			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", model)
+			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", modelId)
 			continue
 		}
 
 		// Add the member to the sub-group with the same weight, pubkey, etc.
 		// We're explicitly passing only this model to prevent further recursion
 		subMember := member
-		subMember.Models = []string{model}
+		subMember.Models = []string{modelId}
 		err = subGroup.AddMember(ctx, subMember)
 		if err != nil {
-			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", model)
+			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", modelId)
 		}
 	}
 }
@@ -320,35 +325,37 @@ func (eg *EpochGroup) GetGroupMembers(ctx context.Context) ([]*group.GroupMember
 }
 
 // CreateSubGroup creates a new sub-group for a specific model
-func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+func (eg *EpochGroup) CreateSubGroup(ctx context.Context, model *types.Model) (*EpochGroup, error) {
 	// Check if this is already a sub-group
 	if eg.GroupData.IsModelGroup() {
 		return nil, types.ErrCannotCreateSubGroupFromSubGroup
 	}
 
-	epochGroup := eg.getGroupFromMemory(modelId)
+	epochGroup := eg.getGroupFromMemory(model.Id)
 	if epochGroup != nil {
 		return epochGroup, nil
 	}
 
-	epochGroup = eg.getGroupFromState(ctx, modelId)
+	epochGroup = eg.getGroupFromState(ctx, model.Id)
 	if epochGroup != nil {
 		return epochGroup, nil
 	}
 
-	return eg.createNewEpochSubGroup(ctx, modelId)
+	return eg.createNewEpochSubGroup(ctx, model)
 }
 
-func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, model *types.Model) (*EpochGroup, error) {
 	subGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
-		ModelId:             modelId,
+		ModelId:             model.Id,
+		ModelSnapshot:       model,
 	}
 
 	// Create a new EpochGroup for the sub-group
 	subGroup := NewEpochGroup(
 		eg.GroupKeeper,
 		eg.ParticipantKeeper,
+		eg.ModelKeeper,
 		eg.Authority,
 		eg.Logger,
 		eg.GroupDataKeeper,
@@ -362,13 +369,13 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string
 	}
 
 	// Add the sub-group to the parent's list of sub-groups
-	eg.GroupData.SubGroupModels = append(eg.GroupData.SubGroupModels, modelId)
+	eg.GroupData.SubGroupModels = append(eg.GroupData.SubGroupModels, model.Id)
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 
 	// Add the sub-group to the in-memory map
-	eg.subGroups[modelId] = subGroup
+	eg.subGroups[model.Id] = subGroup
 
-	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", modelId, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
+	eg.Logger.LogInfo("Created sub-group", types.EpochGroup, "modelId", model.Id, "groupID", subGroupData.EpochGroupId, "height", eg.GroupData.PocStartBlockHeight)
 	return subGroup, nil
 }
 
@@ -389,6 +396,7 @@ func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *Ep
 				subGroup := NewEpochGroup(
 					eg.GroupKeeper,
 					eg.ParticipantKeeper,
+					eg.ModelKeeper,
 					eg.Authority,
 					eg.Logger,
 					eg.GroupDataKeeper,
@@ -403,14 +411,44 @@ func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *Ep
 	return nil
 }
 
-// GetSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
+// GetSubGroup gets a sub-group for a specific model, but does not create it if it doesn't exist.
 func (eg *EpochGroup) GetSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	// Check if this is already a sub-group
 	if eg.GroupData.GetModelId() != "" {
 		return nil, types.ErrCannotGetSubGroupFromSubGroup
 	}
 
-	// Use CreateSubGroup which now handles checking for existing sub-groups
-	// and creates a new one only if needed
-	return eg.CreateSubGroup(ctx, modelId)
+	epochGroup := eg.getGroupFromMemory(modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
+	}
+
+	epochGroup = eg.getGroupFromState(ctx, modelId)
+	if epochGroup != nil {
+		return epochGroup, nil
+	}
+
+	return nil, types.ErrEpochGroupDataNotFound
+}
+
+// GetOrCreateSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
+func (eg *EpochGroup) GetOrCreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+	subGroup, err := eg.GetSubGroup(ctx, modelId)
+	if err == nil {
+		return subGroup, nil
+	}
+
+	// If the error is anything other than not found, return the error
+	if err != types.ErrEpochGroupDataNotFound {
+		return nil, err
+	}
+
+	// The subgroup was not found, so we create it
+	model, found := eg.ModelKeeper.GetGovernanceModel(ctx, modelId)
+	if !found {
+		eg.Logger.LogError("Error getting model for sub-group", types.EpochGroup, "error", "model not found", "model", modelId)
+		return nil, types.ErrInvalidModel
+	}
+
+	return eg.CreateSubGroup(ctx, model)
 }

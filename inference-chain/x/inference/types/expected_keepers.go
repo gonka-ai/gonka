@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -93,4 +94,9 @@ type EpochGroupDataKeeper interface {
 	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)
 	RemoveEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string)
 	GetAllEpochGroupData(ctx context.Context) []EpochGroupData
+}
+
+type ModelKeeper interface {
+	GetGovernanceModel(ctx context.Context, id string) (val *Model, found bool)
+	GetGovernanceModels(ctx context.Context) (list []*Model, err error)
 }

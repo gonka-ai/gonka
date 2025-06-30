@@ -119,21 +119,36 @@ Each task includes:
 ### Section 3: Model Parameter Snapshots in Epoch Groups
 
 #### 3.1 Epoch Group Data Protobuf Enhancement
-- **Task**: [ ] Add model snapshot field to EpochGroupData
+- **Task**: [x] Add model snapshot field to EpochGroupData
 - **What**: Add `model_snapshot` (Model) field to EpochGroupData protobuf. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
+- **Result**:
+  - Added the `model_snapshot` field to the `EpochGroupData` message in `inference-chain/proto/inference/inference/epoch_group_data.proto`.
+  - Regenerated the protobuf files using `ignite generate proto-go`.
 - **Dependencies**: 1.1
 
 #### 3.2 Epoch Model Management Functions
-- **Task**: [ ] Create epoch model management functions
+- **Task**: [x] Create epoch model management functions
 - **What**: Create `GetEpochModel` function in new epoch_models.go file
 - **Where**: `inference-chain/x/inference/keeper/epoch_models.go`
+- **Result**:
+  - Created a new file `inference-chain/x/inference/keeper/epoch_models.go`.
+  - Added the `GetEpochModel` function to retrieve model snapshots from epoch data.
+  - Defined a new `ErrModelSnapshotNotFound` error in `x/inference/types/errors.go`.
+  - The `inference-chain` build was successful after the changes.
 - **Dependencies**: 3.1
 
 #### 3.3 Epoch Group Formation Enhancement
-- **Task**: [ ] Update epoch group formation to store model snapshots
+- **Task**: [x] Update epoch group formation to store model snapshots
 - **What**: Modify `createNewEpochSubGroup` and `CreateSubGroup` to store complete Model objects
 - **Where**: `inference-chain/x/inference/epochgroup/epoch_group.go`
+- **Result**:
+  - Modified `epoch_group.go` to snapshot the full `Model` object into `ModelSnapshot` during subgroup creation.
+  - Introduced the `ModelKeeper` interface and added it to the `EpochGroup` struct to facilitate fetching governance models.
+  - Refactored the original `GetSubGroup` into two distinct methods for clarity and safety: a read-only `GetSubGroup` and a write-capable `GetOrCreateSubGroup`.
+  - Updated callers (`addToModelGroups`, `GetRandomMemberForModel`) to use the appropriate new functions.
+  - Simplified `keeper.GetEpochModel` to use the new safe, read-only `GetSubGroup` function.
+  - The `inference-chain` build was successful after all refactoring.
 - **Dependencies**: 3.1, 3.2
 
 #### 3.4 Current Models API Update

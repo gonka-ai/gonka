@@ -1,6 +1,7 @@
 syntax = "proto3";
 import "inference/inference/participant.proto";
 import "inference/inference/params.proto";
+import "inference/inference/model.proto";
 package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -24,6 +25,7 @@ message EpochGroupData {
   string model_id = 14;
   // List of model IDs for sub EpochGroups, only used in parent EpochGroup
   repeated string sub_group_models = 15;
+  Model model_snapshot = 16;
 }
 
 message ValidationWeight {

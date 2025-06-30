@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -78,6 +79,7 @@ func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64) (*e
 func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
 	return epochgroup.NewEpochGroup(
 		k.group,
+		k,
 		k,
 		k.GetAuthority(),
 		k,
