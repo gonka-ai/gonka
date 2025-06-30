@@ -2,11 +2,12 @@ package keeper
 
 import (
 	"context"
+	"log"
+
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/productscience/inference/x/inference/types"
-	"log"
 )
 
 // SetParticipant set a specific participant in the store from its index

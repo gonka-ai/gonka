@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,6 +39,8 @@ type BrokerChainBridge interface {
 	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
 	GetBlockHash(height int64) (string, error)
 	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
+	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
+	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -82,6 +85,21 @@ func (b *BrokerChainBridgeImpl) GetGovernanceModels() (*types.QueryModelsAllResp
 	return queryClient.ModelsAll(*b.client.GetContext(), req)
 }
 
+func (b *BrokerChainBridgeImpl) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryCurrentEpochGroupDataRequest{}
+	return queryClient.CurrentEpochGroupData(*b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryGetEpochGroupDataRequest{
+		PocStartBlockHeight: pocHeight,
+		ModelId:             modelId,
+	}
+	return queryClient.EpochGroupData(*b.client.GetContext(), req)
+}
+
 type Broker struct {
 	highPriorityCommands chan Command
 	lowPriorityCommands  chan Command
@@ -95,6 +113,8 @@ type Broker struct {
 	callbackUrl          string
 	mlNodeClientFactory  mlnodeclient.ClientFactory
 	reconcileTrigger     chan struct{}
+	lastEpochIndex       uint64
+	lastEpochPhase       types.EpochPhase
 }
 
 const (
@@ -163,6 +183,10 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+
+	// Epoch-specific data, populated from the chain
+	EpochModels  map[string]types.Model      `json:"epoch_models"`
+	EpochMLNodes map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -1070,4 +1094,140 @@ func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
 	}
 
 	command.Response <- true
+}
+
+// UpdateNodeWithEpochData queries the current epoch group data from the chain
+// and populates the NodeState with the epoch-specific model and MLNode info.
+// It only performs the update if the epoch index or phase has changed.
+func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if epochState.LatestEpoch.EpochIndex == b.lastEpochIndex && epochState.CurrentPhase == b.lastEpochPhase {
+		return nil // No change, no need to update
+	}
+
+	logging.Info("Epoch or phase change detected, updating node data with epoch info.", types.Nodes,
+		"old_epoch", b.lastEpochIndex, "new_epoch", epochState.LatestEpoch.EpochIndex,
+		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
+
+	// 1. Get the parent epoch group to find all subgroup models
+	parentGroupResp, err := b.chainBridge.GetCurrentEpochGroupData()
+	if err != nil {
+		logging.Error("Failed to get parent epoch group", types.Nodes, "error", err)
+		return err
+	}
+	if parentGroupResp == nil || parentGroupResp.EpochGroupData.SubGroupModels == nil {
+		logging.Warn("Parent epoch group data or its models are nil", types.Nodes)
+		return nil
+	}
+
+	parentEpochData := parentGroupResp.GetEpochGroupData()
+
+	// Clear existing epoch data for all nodes first
+	for _, node := range b.nodes {
+		node.State.EpochModels = make(map[string]types.Model)
+		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+	}
+
+	// 2. Iterate through each model subgroup
+	for _, modelId := range parentEpochData.SubGroupModels {
+		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.PocStartBlockHeight, modelId)
+		if err != nil {
+			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
+			continue
+		}
+		if subgroupResp == nil {
+			logging.Warn("Subgroup epoch data response is nil", types.Nodes, "model_id", modelId)
+			continue
+		}
+
+		subgroup := subgroupResp.EpochGroupData
+		if subgroup.ModelSnapshot == nil {
+			logging.Error("ModelSnapshot is nil in subgroup", types.Nodes, "model_id", modelId)
+			continue
+		}
+
+		// 3. Iterate through participants in the subgroup
+		for _, weightInfo := range subgroup.ValidationWeights {
+			// Check if the participant is the one this broker is managing
+			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+				// 4. Iterate through the ML nodes for this participant in the epoch data
+				for _, mlNodeInfo := range weightInfo.MlNodes {
+					// 5. Find the corresponding local node and update its state
+					if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
+						node.State.EpochModels[modelId] = *subgroup.ModelSnapshot
+						node.State.EpochMLNodes[modelId] = *mlNodeInfo
+						logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
+					}
+				}
+			}
+		}
+	}
+
+	// Update the broker's last known state
+	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+	b.lastEpochPhase = epochState.CurrentPhase
+
+	return nil
+}
+
+// MergeModelArgs combines model arguments from the epoch snapshot with locally
+// configured arguments, with epoch arguments taking precedence.
+// It understands arguments as --key or --key value pairs.
+func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string {
+	// The final merged arguments, preserving the order from epochArgs, then localArgs.
+	mergedArgs := make([]string, 0, len(epochArgs)+len(localArgs))
+	// A set to store the keys from epochArgs to check for precedence.
+	epochKeys := make(map[string]struct{})
+
+	// 1. Process epochArgs first. They all go into the result and populate epochKeys.
+	for i := 0; i < len(epochArgs); i++ {
+		arg := epochArgs[i]
+		if strings.HasPrefix(arg, "--") {
+			key := arg
+			epochKeys[key] = struct{}{}
+			mergedArgs = append(mergedArgs, key)
+
+			// Check if the next element is a value for this key.
+			if i+1 < len(epochArgs) && !strings.HasPrefix(epochArgs[i+1], "--") {
+				// It's a value, add it to mergedArgs and skip it in the next iteration.
+				mergedArgs = append(mergedArgs, epochArgs[i+1])
+				i++
+			}
+		} else {
+			// This case handles a value without a preceding key in epochArgs,
+			// which is unlikely but we add it to be safe.
+			mergedArgs = append(mergedArgs, arg)
+		}
+	}
+
+	// 2. Process localArgs and add only the ones with keys not present in epochArgs.
+	for i := 0; i < len(localArgs); i++ {
+		arg := localArgs[i]
+		if strings.HasPrefix(arg, "--") {
+			key := arg
+			if _, exists := epochKeys[key]; !exists {
+				// This key is not in epochArgs, so we can add it.
+				mergedArgs = append(mergedArgs, key)
+
+				// Check if it has a value.
+				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
+					// It has a value, add it and skip.
+					mergedArgs = append(mergedArgs, localArgs[i+1])
+					i++
+				}
+			} else {
+				// Key already exists in epoch args, so we skip it.
+				// If it has a value, we need to skip that too.
+				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
+					i++ // Skip the value of the overridden key.
+				}
+			}
+		}
+		// Non-key arguments are ignored here as they are considered values
+		// of keys, which are handled within the loop.
+	}
+
+	return mergedArgs
 }

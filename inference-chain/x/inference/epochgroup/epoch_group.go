@@ -59,13 +59,14 @@ func NewEpochMemberFromStakingValidator(
 }
 
 type EpochGroup struct {
-	GroupKeeper       types.GroupMessageKeeper
-	ParticipantKeeper types.ParticipantKeeper
-	ModelKeeper       types.ModelKeeper
-	Authority         string
-	Logger            types.InferenceLogger
-	GroupDataKeeper   types.EpochGroupDataKeeper
-	GroupData         *types.EpochGroupData
+	GroupKeeper        types.GroupMessageKeeper
+	ParticipantKeeper  types.ParticipantKeeper
+	ModelKeeper        types.ModelKeeper
+	HardwareNodeKeeper types.HardwareNodeKeeper
+	Authority          string
+	Logger             types.InferenceLogger
+	GroupDataKeeper    types.EpochGroupDataKeeper
+	GroupData          *types.EpochGroupData
 	// In-memory map to find sub-groups by model ID
 	// This is not serialized in the chain state
 	subGroups map[string]*EpochGroup
@@ -75,20 +76,22 @@ func NewEpochGroup(
 	group types.GroupMessageKeeper,
 	participant types.ParticipantKeeper,
 	modelKeeper types.ModelKeeper,
+	hardwareNodeKeeper types.HardwareNodeKeeper,
 	authority string,
 	logger types.InferenceLogger,
 	groupDataKeeper types.EpochGroupDataKeeper,
 	groupData *types.EpochGroupData,
 ) *EpochGroup {
 	return &EpochGroup{
-		GroupKeeper:       group,
-		ParticipantKeeper: participant,
-		ModelKeeper:       modelKeeper,
-		Authority:         authority,
-		Logger:            logger,
-		GroupDataKeeper:   groupDataKeeper,
-		GroupData:         groupData,
-		subGroups:         make(map[string]*EpochGroup),
+		GroupKeeper:        group,
+		ParticipantKeeper:  participant,
+		ModelKeeper:        modelKeeper,
+		HardwareNodeKeeper: hardwareNodeKeeper,
+		Authority:          authority,
+		Logger:             logger,
+		GroupDataKeeper:    groupDataKeeper,
+		GroupData:          groupData,
+		subGroups:          make(map[string]*EpochGroup),
 	}
 }
 
@@ -162,13 +165,45 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		MemberAddress: member.Address,
 		Signature:     member.SeedSignature,
 	})
+
+	mlNodes := eg.storeMLNodeInfo(ctx, member.Address, eg.GroupData.ModelId)
+
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress: member.Address,
 		Weight:        int64(member.Weight),
 		Reputation:    int32(member.Reputation),
+		MlNodes:       mlNodes,
 	})
 	eg.GroupData.TotalWeight += member.Weight
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
+}
+
+func (eg *EpochGroup) storeMLNodeInfo(ctx context.Context, memberAddress string, modelId string) []*types.MLNodeInfo {
+	if modelId == "" {
+		return nil // Do not store ML nodes in the parent group
+	}
+
+	nodesContainer, found := eg.HardwareNodeKeeper.GetHardwareNodes(ctx, memberAddress)
+	if !found {
+		eg.Logger.LogWarn("Hardware nodes not found for member", types.EpochGroup, "member", memberAddress)
+		return nil
+	}
+
+	var mlNodes []*types.MLNodeInfo
+	for _, node := range nodesContainer.HardwareNodes {
+		for _, nodeModelId := range node.Models {
+			if nodeModelId == modelId {
+				// This node supports the model for this sub-group
+				mlNodes = append(mlNodes, &types.MLNodeInfo{
+					NodeId: node.LocalId,
+					// Throughput and PocWeight will be populated in later tasks
+				})
+				break // Move to the next node once a model match is found
+			}
+		}
+	}
+
+	return mlNodes
 }
 
 func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
@@ -356,6 +391,7 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, model *types.M
 		eg.GroupKeeper,
 		eg.ParticipantKeeper,
 		eg.ModelKeeper,
+		eg.HardwareNodeKeeper,
 		eg.Authority,
 		eg.Logger,
 		eg.GroupDataKeeper,
@@ -397,6 +433,7 @@ func (eg *EpochGroup) getGroupFromState(ctx context.Context, modelId string) *Ep
 					eg.GroupKeeper,
 					eg.ParticipantKeeper,
 					eg.ModelKeeper,
+					eg.HardwareNodeKeeper,
 					eg.Authority,
 					eg.Logger,
 					eg.GroupDataKeeper,
