@@ -4,8 +4,9 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/logging"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type RegisterNode struct {
@@ -18,6 +19,26 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
+	govModels, err := b.chainBridge.GetGovernanceModels()
+	if err != nil {
+		logging.Error("Failed to get governance models", types.Nodes, "error", err)
+		c.Response <- nil
+		return
+	}
+
+	modelMap := make(map[string]struct{})
+	for _, model := range govModels.Model {
+		modelMap[model.Id] = struct{}{}
+	}
+
+	for modelId := range c.Node.Models {
+		if _, ok := modelMap[modelId]; !ok {
+			logging.Error("Model is not a valid governance model", types.Nodes, "model_id", modelId)
+			c.Response <- nil
+			return
+		}
+	}
+
 	b.curMaxNodesNum.Add(1)
 	curNum := b.curMaxNodesNum.Load()
 
