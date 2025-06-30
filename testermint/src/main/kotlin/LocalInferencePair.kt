@@ -1,10 +1,23 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.*
+import com.github.dockerjava.api.model.Container
+import com.github.dockerjava.api.model.ContainerPort
+import com.github.dockerjava.api.model.HostConfig
+import com.github.dockerjava.api.model.LogConfig
+import com.github.dockerjava.api.model.Volume
 import com.github.dockerjava.core.DockerClientBuilder
+import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
-import com.productscience.data.*
+import com.productscience.data.AppState
+import com.productscience.data.GovernanceMessage
+import com.productscience.data.GovernanceProposal
+import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceParticipant
+import com.productscience.data.OpenAIResponse
+import com.productscience.data.PubKey
+import com.productscience.data.Spec
+import com.productscience.data.TxResponse
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Instant
@@ -23,7 +36,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
     }
     val nodes = containers.filter { it.image == config.nodeImageName || it.image == config.genesisNodeImage }
     val apis = containers.filter { it.image == config.apiImageName }
-    val mocks = containers.filter { it.image == config.wireMockImageName }
+    val mocks = containers.filter { it.image == config.mockImageName }
     var foundPairs = 0
     return nodes.mapNotNull { chainContainer ->
         foundPairs++
@@ -34,7 +47,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         }
         val name = nameMatch.groupValues[1]
         val apiContainer: Container = apis.find { it.names.any { it == "$name-api" } }!!
-        val mockContainer: Container? = mocks.find { it.names.any { it == "$name-wiremock" } }
+        val mockContainer: Container? = mocks.find { it.names.any { it == "$name-mock-server" } }
         val configWithName = config.copy(pairName = name)
         val nodeLogs = attachDockerLogs(dockerClient, name, "node", chainContainer.id)
         val dapiLogs = attachDockerLogs(dockerClient, name, "dapi", apiContainer.id)
@@ -60,7 +73,11 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
         LocalInferencePair(
             node = ApplicationCLI(configWithName, nodeLogs, executor, listOf()),
             api = ApplicationAPI(apiUrls, configWithName, dapiLogs),
-            mock = mockContainer?.let { InferenceMock(it.getMappedPort(8080)!!, it.names.first()) },
+            mock = mockContainer?.let {
+                MockServerInferenceMock(
+                    baseUrl = "http://localhost:${it.getMappedPort(8080)!!}", name = it.names.first()
+                )
+            },
             name = name,
             config = configWithName
         )
@@ -138,7 +155,7 @@ fun attachDockerLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
-    val mock: InferenceMock?,
+    val mock: IInferenceMock?,
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null
@@ -168,6 +185,41 @@ data class LocalInferencePair(
         val signature = node.signPayload(request, account)
         val address = node.getAddress()
         return api.makeInferenceRequest(request, address, signature)
+    }
+
+    /**
+     * Makes a streaming inference request that can be interrupted.
+     * 
+     * @param request The request body as a string. The request should include "stream": true.
+     * @param account The account to use for signing the payload (optional)
+     * @return A StreamConnection object that can be used to read from the stream and interrupt it
+     */
+    fun streamInferenceRequest(request: String, account: String? = null): StreamConnection {
+        // Ensure the request has the stream flag set to true
+        val requestWithStream = if (!request.contains("\"stream\"")) {
+            // If the request doesn't contain the stream flag, add it
+            val lastBrace = request.lastIndexOf("}")
+            if (lastBrace > 0) {
+                val prefix = request.substring(0, lastBrace)
+                val suffix = request.substring(lastBrace)
+                val separator = if (prefix.trim().endsWith(",")) "" else ","
+                "$prefix$separator\"stream\":true$suffix"
+            } else {
+                // If the request doesn't have a valid JSON structure, just use it as is
+                request
+            }
+        } else if (!request.contains("\"stream\":true") && !request.contains("\"stream\": true")) {
+            // If the request contains the stream flag but it's not set to true, set it to true
+            request.replace("\"stream\":false", "\"stream\":true")
+                .replace("\"stream\": false", "\"stream\": true")
+        } else {
+            // If the request already has the stream flag set to true, use it as is
+            request
+        }
+
+        val signature = node.signPayload(requestWithStream, account)
+        val address = node.getAddress()
+        return api.createInferenceStreamConnection(requestWithStream, address, signature)
     }
 
     fun getCurrentBlockHeight(): Long {
@@ -253,8 +305,10 @@ data class LocalInferencePair(
             // We are seeing in k8s (remote) connections this timesout, even though the submit worked. This should pick
             // up the TXHash from the api logs instead.
             if (e.toString().contains("Read timed out")) {
-                Logger.info("Found read timeout, checking node logs for TX hash in " +
-                        this.api.logOutput.mostRecentTxResp)
+                Logger.info(
+                    "Found read timeout, checking node logs for TX hash in " +
+                            this.api.logOutput.mostRecentTxResp
+                )
                 this.api.logOutput.mostRecentTxResp?.takeIf { it.time.isAfter(start) }?.let {
                     TxResponse(0, it.hash, "", 0, "", "", "", 0, 0, null, null, listOf())
                 } ?: throw e
@@ -419,7 +473,7 @@ data class ApplicationConfig(
     val nodeImageName: String,
     val genesisNodeImage: String,
     val apiImageName: String,
-    val wireMockImageName: String,
+    val mockImageName: String,
     val denom: String,
     val stateDirName: String,
     val pairName: String = "",

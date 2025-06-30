@@ -30,3 +30,6 @@ prod-local/
 /inference-chain/junit-report.xml
 /deploy/**/config.env
 /testermint/reboot.txt
+/local-test-net/node_payload_2.json
+/testermint/downloads/
+/testermint/logs/

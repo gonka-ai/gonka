@@ -103,6 +103,10 @@ func (s *InferenceValidator) SampleInferenceToValidate(ids []string, transaction
 		}
 
 		currentSeed := s.configManager.GetCurrentSeed().Seed
+		if inferenceWithExecutor.TotalPower <= inferenceWithExecutor.ExecutorPower {
+			logging.Warn("Total power is less than or equal to executor power, skipping validation", types.Validation, "inferenceId", inferenceWithExecutor.InferenceId, "totalPower", inferenceWithExecutor.TotalPower, "executorPower", inferenceWithExecutor.ExecutorPower)
+			continue
+		}
 		shouldValidate, message := calculations.ShouldValidate(
 			currentSeed,
 			inferenceWithExecutor,
@@ -265,6 +269,10 @@ func (s *InferenceValidator) Validate(inference types.Inference, inferenceNode *
 	baseResult := BaseValidationResult{
 		InferenceId:   inference.InferenceId,
 		ResponseBytes: respBodyBytes,
+	}
+	if len(originalLogits) == 0 || len(validationLogits) == 0 {
+		logging.Error("No logits found in original or validation response", types.Validation, "id", inference.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits)
+		return nil, errors.New("no logits found in original or validation response")
 	}
 
 	return compareLogits(originalLogits, validationLogits, baseResult), nil

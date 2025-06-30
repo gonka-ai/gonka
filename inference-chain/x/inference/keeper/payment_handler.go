@@ -14,8 +14,7 @@ type PaymentHandler interface {
 	PayParticipantFromEscrow(ctx context.Context, address string, amount uint64) error
 }
 
-func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference) (int64, error) {
-	cost := CalculateCost(*inference)
+func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference, cost int64) (int64, error) {
 	payeeAddress, err := sdk.AccAddressFromBech32(inference.RequestedBy)
 	if err != nil {
 		return 0, err
