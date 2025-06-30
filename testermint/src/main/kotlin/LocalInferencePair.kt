@@ -10,6 +10,7 @@ import com.github.dockerjava.core.DockerClientBuilder
 import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.AppState
+import com.productscience.data.EpochPhase
 import com.productscience.data.EpochResponse
 import com.productscience.data.GovernanceMessage
 import com.productscience.data.GovernanceProposal
@@ -233,7 +234,7 @@ data class LocalInferencePair(
         this.mock?.setPocResponse(newPoc)
         this.waitForStage(EpochStage.START_OF_POC)
         // CometBFT validators have a 1 block delay
-        this.waitForStage(EpochStage.START_OF_POC, 2)
+        this.waitForStage(EpochStage.SET_NEW_VALIDATORS, 1)
     }
 
     fun waitForStage(stage: EpochStage, offset: Int = 1) {
@@ -260,9 +261,7 @@ data class LocalInferencePair(
     }
 
     fun getNextStage(stage: EpochStage): Long {
-        if (this.mostRecentEpochData == null) {
-            this.getParams()
-        }
+        this.getParams()
         val epochData = this.mostRecentEpochData
             ?: error("No epoch data available")
         return epochData.getNextStage(stage)
