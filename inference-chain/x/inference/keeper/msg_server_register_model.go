@@ -25,6 +25,7 @@ func (k msgServer) RegisterModel(goCtx context.Context, msg *types.MsgRegisterMo
 		ModelArgs:              msg.ModelArgs,
 		VRam:                   msg.VRam,
 		ThroughputPerNonce:     msg.ThroughputPerNonce,
+		ValidationThreshold:    msg.ValidationThreshold,
 	})
 
 	return &types.MsgRegisterModelResponse{}, nil
