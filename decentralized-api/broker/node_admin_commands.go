@@ -86,6 +86,8 @@ func (c RegisterNode) Execute(b *Broker) {
 				Enabled: true,
 				Epoch:   currentEpoch,
 			},
+			EpochModels:  make(map[string]types.Model),
+			EpochMLNodes: make(map[string]types.MLNodeInfo),
 		},
 	}
 

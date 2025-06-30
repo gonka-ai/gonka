@@ -32,9 +32,18 @@ message ValidationWeight {
   string member_address = 1;
   int64 weight = 2;
   int32 reputation = 3;
+  // We may decide to move ml_nodes directly to EpochGroupData,
+  // but for now, this is a good solution.
+  repeated MLNodeInfo ml_nodes = 4;
 }
 
 message SeedSignature {
   string member_address = 1;
   string signature = 2;
+}
+
+message MLNodeInfo {
+  string node_id = 1;
+  int64 throughput = 2;
+  int64 poc_weight = 3;
 }

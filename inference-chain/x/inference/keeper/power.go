@@ -81,6 +81,7 @@ func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochG
 		k.group,
 		k,
 		k,
+		k,
 		k.GetAuthority(),
 		k,
 		k,

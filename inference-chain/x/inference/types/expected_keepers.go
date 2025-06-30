@@ -89,6 +89,8 @@ type ParticipantKeeper interface {
 	ParticipantAll(ctx context.Context, req *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 }
 
+}
+
 type EpochGroupDataKeeper interface {
 	SetEpochGroupData(ctx context.Context, epochGroupData EpochGroupData)
 	GetEpochGroupData(ctx context.Context, pocStartBlockHeight uint64, modelId string) (val EpochGroupData, found bool)

@@ -89,7 +89,7 @@ func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+	return args.Get(0).(*types.QueryHardwareNodesResponse), nil
 }
 
 func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
@@ -107,6 +107,22 @@ func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResp
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(pocHeight, modelId)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
 type MockRandomSeedManager struct {
@@ -199,6 +215,27 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			{Id: "test-model"},
 		},
 	}, nil)
+	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			ModelSnapshot: &types.Model{Id: "test-model"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "some-address",
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "node-1"},
+						{NodeId: "node-2"},
+					},
+				},
+			},
+		},
+	}, nil)
+
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,

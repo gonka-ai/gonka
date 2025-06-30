@@ -42,6 +42,22 @@ func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResp
 	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryCurrentEpochGroupDataResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error) {
+	args := m.Called(pocHeight, modelId)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
+}
+
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
 		Address: "cosmos1dummyaddress",
@@ -61,6 +77,31 @@ func NewTestBroker() *Broker {
 			{Id: "model1"},
 		},
 	}, nil)
+
+	// Setup meaningful mock responses for epoch data
+	parentEpochData := &types.QueryCurrentEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"model1"},
+		},
+	}
+	model1EpochData := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			ModelSnapshot:       &types.Model{Id: "model1"},
+			ValidationWeights: []*types.ValidationWeight{
+				{
+					MemberAddress: "cosmos1dummyaddress",
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "test-node-1"},
+					},
+				},
+			},
+		},
+	}
+
+	mockChainBridge.On("GetCurrentEpochGroupData").Return(parentEpochData, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model1").Return(model1EpochData, nil)
 
 	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
