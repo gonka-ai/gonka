@@ -5,13 +5,42 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
-	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
 )
+
+type MockBrokerChainBridge struct {
+	mock.Mock
+}
+
+func (m *MockBrokerChainBridge) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
+	args := m.Called()
+	return args.Get(0).(*types.QueryHardwareNodesResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
+	args := m.Called(diff)
+	return args.Error(0)
+}
+
+func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
+	args := m.Called(height)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
 
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
@@ -26,7 +55,14 @@ func NewTestBroker() *Broker {
 		true,
 	)
 
-	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
+	mockChainBridge := &MockBrokerChainBridge{}
+	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
+		Model: []types.Model{
+			{Id: "model1"},
+		},
+	}, nil)
+
+	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
 }
 
 func TestSingleNode(t *testing.T) {
