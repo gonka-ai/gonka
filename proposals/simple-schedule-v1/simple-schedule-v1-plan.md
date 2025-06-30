@@ -14,7 +14,14 @@ Before starting implementation, please read the following documents to understan
 ### Workflow
 - **Focus on a single task**: Please work on only one task at a time to ensure clarity and quality. Avoid implementing parts of future tasks.
 - **Request a review**: Once a task's implementation is complete, change its status to `[?] - Review` and wait for my confirmation.
-- **Wait for completion**: After I confirm the review, you can mark the task as `[x] - Finished` and move on to the next one.
+- **Update all usages**: If a function or variable is renamed, find and update all its references throughout the codebase.
+- **Build after each task**: After each task is completed, build the project to ensure there are no compilation errors.
+- **Test after each section**: After completing all tasks in a section, run the corresponding tests to verify the functionality.
+- **Wait for completion**: After I confirm the review, mark the task as `[x] - Finished`, add a **Result** section summarizing the changes, and then move on to the next one.
+
+### Build & Test Commands
+- **Build Inference Chain**: From the project root, run `make node-local-build`
+- **Build Decentralized API**: From the project root, run `make api-local-build`
 
 ### Status Indicators
 - `[ ]` **Not Started** - Task has not been initiated
@@ -36,60 +43,84 @@ Each task includes:
 ### Section 1: Enhanced Model Structure and Parameters
 
 #### 1.1 Protobuf Model Enhancement
-- **Task**: [ ] Add new fields to Model protobuf structure
-- **What**: Add `HFRepo`, `HFCommit`, `ModelArgs` (repeated string), `VRAM`, and `ThroughputPerNonce` fields to Model message
+- **Task**: [x] Add new fields to Model protobuf structure
+- **What**: Add `HFRepo`, `HFCommit`, `ModelArgs` (repeated string), `VRAM`, and `ThroughputPerNonce` fields to Model message. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/model.pb.go`
 - **Dependencies**: None
 
 #### 1.2 Model Keeper Functions Enhancement  
-- **Task**: [ ] Enhance model keeper functions with comprehensive metadata support
-- **What**: Update `SetModel`, rename `GetAllModels` to `GetGovernanceModels`, add `GetGovernanceModel` function
+- **Task**: [x] Enhance model keeper functions with comprehensive metadata support
+- **What**: Update `SetModel`, rename `GetAllModels` to `GetGovernanceModels`, and add `GetGovernanceModel` function
 - **Where**: `inference-chain/x/inference/keeper/model.go`
 - **Dependencies**: 1.1
 
 #### 1.3 Model Registration Message Handler Update
-- **Task**: [ ] Update model registration to handle all new parameters
+- **Task**: [x] Update model registration to handle all new parameters
 - **What**: Modify `RegisterModel` to process and validate all new model fields including throughput
 - **Where**: `inference-chain/x/inference/keeper/msg_server_register_model.go`
+- **Result**:
+  - Added `hf_repo`, `hf_commit`, `model_args`, `v_ram`, and `throughput_per_nonce` to the `MsgRegisterModel` message in `inference-chain/proto/inference/inference/tx.proto`.
+  - Regenerated protobuf files using `ignite generate proto-go`.
+  - Updated the `RegisterModel` message handler in `inference-chain/x/inference/keeper/msg_server_register_model.go` to handle the new fields.
+  - The `inference-chain` build was successful after the changes.
 - **Dependencies**: 1.1, 1.2
 
 #### 1.4 Genesis Model Initialization Update
-- **Task**: [ ] Update genesis handling for enhanced model structure
-- **What**: Modify genesis initialization and export to handle new model fields
+- **Task**: [x] Update genesis handling for enhanced model structure
+- **What**: Modify genesis initialization and export to handle new model fields. **Note**: `throughput_per_nonce` is temporarily set to 1,000,000 for both models in the genesis files and should be properly computed later.
 - **Where**: `inference-chain/x/inference/module/genesis.go`
+- **Result**:
+  - Updated `genesis_test.go` to include a test case for models with the new fields.
+  - Added the "Qwen/Qwen2-72B-Instruct" and "Qwen/Qwen1.5-7B-Instruct" models to all `genesis-overrides.json` files.
+  - The `inference-chain` build and tests were successful after the changes.
 - **Dependencies**: 1.1, 1.2
 
 ### Section 2: MLNode Model Assignment Validation
 
 #### 2.1 Model Validation Functions
-- **Task**: [ ] Add governance model validation functions
+- **Task**: [x] Add governance model validation functions
 - **What**: Create `IsValidGovernanceModel` function to check model ID existence in governance registry
 - **Where**: `inference-chain/x/inference/keeper/model.go`
-- **Dependencies**: 1.2
+- **Result**:
+  - Added the `IsValidGovernanceModel` function to `inference-chain/x/inference/keeper/model.go`.
+  - The `inference-chain` build was successful after the changes.
+- **Dependencies**: 2.1
 
 #### 2.2 Hardware Node Validation Functions
-- **Task**: [ ] Add hardware node validation and query functions
-- **What**: Create `GetNodesForModel`, `GetValidatedHardwareNodes` functions
+- **Task**: [x] Add hardware node validation and query functions
+- **What**: Create `GetNodesForModel` functions
 - **Where**: `inference-chain/x/inference/keeper/hardware_node.go`
+- **Result**:
+  - Added the `GetNodesForModel` function to `inference-chain/x/inference/keeper/hardware_node.go`.
+  - The `inference-chain` build was successful after the changes.
 - **Dependencies**: 2.1
 
 #### 2.3 Hardware Diff Message Validation
-- **Task**: [ ] Add model validation to hardware diff submission
+- **Task**: [x] Add model validation to hardware diff submission
 - **What**: Enhance `MsgSubmitHardwareDiff` to validate all model IDs against governance registry
 - **Where**: `inference-chain/x/inference/keeper/msg_server_submit_hardware_diff.go`
+- **Result**:
+  - Added logic to `MsgSubmitHardwareDiff` to validate that all models in a hardware diff submission exist in the governance registry.
+  - Defined a new `ErrInvalidModel` in `x/inference/types/errors.go`.
+  - The `inference-chain` build was successful after the changes.
 - **Dependencies**: 2.1, 2.2
 
 #### 2.4 API Node Registration Validation
-- **Task**: [ ] Add model validation to node registration
+- **Task**: [x] Add model validation to node registration
 - **What**: Enhance `RegisterNode Execute` to validate model IDs during node registration
-- **Where**: `decentralized-api/broker/node_admin_console.go`
+- **Where**: `decentralized-api/broker/node_admin_commands.go`
+- **Result**:
+  - Enhanced `RegisterNode.Execute` in `decentralized-api/broker/node_admin_commands.go` to validate model IDs against the governance model registry.
+  - Added the `GetGovernanceModels` method to the `BrokerChainBridge` interface in `decentralized-api/broker/broker.go` to allow the API to query the chain for governance models.
+  - Refactored the `RegisterNode` command.
+  - The `decentralized-api` was successfully built with `make api-local-build` after all changes.
 - **Dependencies**: 2.1
 
 ### Section 3: Model Parameter Snapshots in Epoch Groups
 
 #### 3.1 Epoch Group Data Protobuf Enhancement
 - **Task**: [ ] Add model snapshot field to EpochGroupData
-- **What**: Add `model_snapshot` (Model) field to EpochGroupData protobuf
+- **What**: Add `model_snapshot` (Model) field to EpochGroupData protobuf. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
 - **Dependencies**: 1.1
 
@@ -139,13 +170,13 @@ Each task includes:
 
 #### 4.1 MLNode Info Protobuf Structure
 - **Task**: [ ] Create MLNodeInfo protobuf structure
-- **What**: Create `MLNodeInfo` message with `node_id`, `throughput`, and `poc_weight` fields
+- **What**: Create `MLNodeInfo` message with `node_id`, `throughput`, and `poc_weight` fields. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
 - **Dependencies**: 3.1
 
 #### 4.2 Epoch Group MLNode Fields
 - **Task**: [ ] Add MLNode fields to EpochGroupData
-- **What**: Add `ml_nodes` (repeated MLNodeInfo) field organized per participant
+- **What**: Add `ml_nodes` (repeated MLNodeInfo) field organized per participant. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
 - **Dependencies**: 4.1
 
@@ -189,7 +220,7 @@ Each task includes:
 
 #### 5.1 PoCBatch Protobuf Enhancement
 - **Task**: [ ] Add NodeId field to PoCBatch structure
-- **What**: Add `NodeId` field to PoCBatch protobuf to track which MLNode generated the batch
+- **What**: Add `NodeId` field to PoCBatch protobuf to track which MLNode generated the batch. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/poc_batch.pb.go`
 - **Dependencies**: None
 
@@ -201,7 +232,7 @@ Each task includes:
 
 #### 5.3 Epoch Group Total Throughput Field
 - **Task**: [ ] Add total throughput tracking to EpochGroupData
-- **What**: Add `total_throughput` field to EpochGroupData protobuf
+- **What**: Add `total_throughput` field to EpochGroupData protobuf. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
 - **Dependencies**: 4.2
 
@@ -235,19 +266,19 @@ Each task includes:
 
 #### 7.1 MLNode Allocation Protobuf Types
 - **Task**: [ ] Create timeslot allocation protobuf types
-- **What**: Create enum for PRE_POC_SLOT, POC_SLOT and timeslot allocation structures
+- **What**: Create enum for PRE_POC_SLOT, POC_SLOT and timeslot allocation structures. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/mlnode_allocation.pb.go`
 - **Dependencies**: None
 
 #### 7.2 MLNode Timeslot Fields
 - **Task**: [ ] Add timeslot allocation to MLNodeInfo
-- **What**: Add `timeslot_allocation` (repeated boolean) field to MLNodeInfo
+- **What**: Add `timeslot_allocation` (repeated boolean) field to MLNodeInfo. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (update to existing MLNodeInfo)
 - **Dependencies**: 7.1, 4.1
 
 #### 7.3 Throughput Vector Fields
 - **Task**: [ ] Add throughput vectors to EpochGroupData
-- **What**: Add `expected_throughput_vector` and `real_throughput_vector` fields
+- **What**: Add `expected_throughput_vector` and `real_throughput_vector` fields. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
 - **Dependencies**: 5.3
 

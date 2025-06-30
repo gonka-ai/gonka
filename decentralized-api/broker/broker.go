@@ -37,6 +37,7 @@ type BrokerChainBridge interface {
 	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
 	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
 	GetBlockHash(height int64) (string, error)
+	GetGovernanceModels() (*types.QueryModelsAllResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -73,6 +74,12 @@ func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
 	}
 
 	return block.Block.Hash().String(), err
+}
+
+func (b *BrokerChainBridgeImpl) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryModelsAllRequest{}
+	return queryClient.ModelsAll(*b.client.GetContext(), req)
 }
 
 type Broker struct {
@@ -267,10 +274,10 @@ func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *api
 		Response: responseChan,
 	})
 	if err != nil {
-		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
+		logging.Error("Error loading node to broker", types.Nodes, "error", err)
 		panic(err)
+		// return nil
 	}
-
 	return responseChan
 }
 

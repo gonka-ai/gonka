@@ -7,4 +7,9 @@ message Model {
   string proposed_by = 1;
   string id = 2;
   uint64 units_of_compute_per_token = 3;
+  string hf_repo = 4;
+  string hf_commit = 5;
+  repeated string model_args = 6;
+  uint64 v_ram = 7;
+  uint64 throughput_per_nonce = 8;
 }

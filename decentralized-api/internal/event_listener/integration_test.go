@@ -101,6 +101,14 @@ func (m *MockBrokerChainBridge) GetBlockHash(height int64) (string, error) {
 	return "block-hash-" + strconv.FormatInt(height, 10), nil
 }
 
+func (m *MockBrokerChainBridge) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryModelsAllResponse), args.Error(1)
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 }

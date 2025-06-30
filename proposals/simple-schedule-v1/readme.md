@@ -86,7 +86,6 @@ of strings with model ids), Hardware, Host, and Port
 
 **Enhanced Hardware Node Functions in `inference-chain/x/inference/keeper/hardware_node.go`:**
 - `GetNodesForModel` - Find nodes supporting a specific model (enhanced from existing functionality)
-- `GetValidatedHardwareNodes` - Return only nodes with valid model references
 
 **Modified Functions in `inference-chain/x/inference/keeper/msg_server_submit_hardware_diff.go`:**
 - `MsgSubmitHardwareDiff` in `inference-chain/x/inference/keeper/msg_server_submit_hardware_diff.go` enhanced to validate all model IDs against governance registry before accepting hardware node updates

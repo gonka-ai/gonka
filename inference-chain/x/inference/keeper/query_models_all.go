@@ -16,7 +16,7 @@ func (k Keeper) ModelsAll(goCtx context.Context, req *types.QueryModelsAllReques
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	models, err := k.GetAllModels(ctx)
+	models, err := k.GetGovernanceModels(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
