@@ -345,7 +345,6 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 }
 
 func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error) {
-	// create a guid
 	id := uuid.New().String()
 	sendTransactionMutex.Lock()
 	defer sendTransactionMutex.Unlock()
