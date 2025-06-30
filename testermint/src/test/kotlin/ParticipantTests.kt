@@ -1,5 +1,7 @@
 import com.productscience.EpochStage
+import com.productscience.data.EpochPhase
 import com.productscience.data.UpdateParams
+import com.productscience.getNextStage
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
@@ -10,6 +12,13 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
+        val epochData = genesis.getEpochData()
+        val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
+        if (genesis.getEpochData().phase != EpochPhase.Inference &&
+            startOfNextPoc - epochData.blockHeight > 2) {
+            genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        }
+
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
         runParallelInferences(genesis, 10)

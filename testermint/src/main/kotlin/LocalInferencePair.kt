@@ -179,10 +179,19 @@ data class LocalInferencePair(
         return this.mostRecentParams?.epochParams?.epochLength ?: this.getParams().epochParams.epochLength
     }
 
-    fun getParams(): InferenceParams {
+    fun refreshMostRecentState() {
         this.mostRecentEpochData = this.api.getLatestEpoch()
         this.mostRecentParams = this.node.getInferenceParams().params
-        return this.mostRecentParams!!
+    }
+
+    fun getParams(): InferenceParams {
+        refreshMostRecentState()
+        return this.mostRecentParams ?: error("No inference params available")
+    }
+
+    fun getEpochData(): EpochResponse {
+        refreshMostRecentState()
+        return this.mostRecentEpochData ?: error("No epoch data available")
     }
 
     fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
