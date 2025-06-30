@@ -194,6 +194,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}}}, nil)
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
+	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
+		Model: []types.Model{
+			{Id: "test-model"},
+		},
+	}, nil)
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{
 			EpochParams: paramsToReturn,
