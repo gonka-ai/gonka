@@ -243,7 +243,7 @@ data class LocalInferencePair(
         this.mock?.setPocResponse(newPoc)
         this.waitForStage(EpochStage.START_OF_POC)
         // CometBFT validators have a 1 block delay
-        this.waitForStage(EpochStage.SET_NEW_VALIDATORS, 1)
+        this.waitForStage(EpochStage.SET_NEW_VALIDATORS, 2)
     }
 
     fun waitForStage(stage: EpochStage, offset: Int = 1) {
