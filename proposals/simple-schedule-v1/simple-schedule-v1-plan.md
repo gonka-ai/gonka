@@ -152,33 +152,51 @@ Each task includes:
 - **Dependencies**: 3.1, 3.2
 
 #### 3.4 Current Models API Update
-- **Task**: [ ] Update models API to use epoch snapshots
+- **Task**: [x] Update models API to use epoch snapshots
 - **What**: Modify `getModels` to query epoch model snapshots instead of governance models
 - **Where**: `decentralized-api/internal/server/public/get_models_handler.go`
+- **Result**:
+  - The `getModels` handler in the public API was updated to return models active in the current epoch.
+  - It now fetches the parent epoch group, then iterates through the model IDs to query the `EpochGroupData` for each subgroup.
+  - The `ModelSnapshot` from each subgroup is extracted to build the final list of active models.
+  - This approach reuses the existing `EpochGroupData` query, avoiding the need for a new chain-level query.
+  - The `decentralized-api` build was successful.
+  - **Note**: This handler will be refactored in task 4.6 to use a cached model list from the Broker instead of querying the chain directly.
 - **Dependencies**: 3.1, 3.2, 3.3
 
 #### 3.5 Current Pricing API Update
-- **Task**: [ ] Update pricing API to use epoch snapshots  
+- **Task**: [x] Update pricing API to use epoch snapshots  
 - **What**: Modify `getPricing` to use epoch model snapshots for price calculations
 - **Where**: `decentralized-api/internal/server/public/get_pricing_handler.go`
+- **Result**:
+  - The `getPricing` handler was updated to use epoch snapshots for its calculations.
+  - It now fetches active models for the current epoch and uses their snapshotted `UnitsOfComputePerToken` for consistent pricing.
+  - The `decentralized-api` build was successful.
 - **Dependencies**: 3.1, 3.2, 3.3
 
 #### 3.6 Governance Models API Creation
-- **Task**: [ ] Create new governance models API endpoint
+- **Task**: [x] Create new governance models API endpoint
 - **What**: Create `getGovernanceModels` function and handler for latest governance models
 - **Where**: `decentralized-api/internal/server/public/get_governance_models_handler.go`
+- **Result**:
+  - The `getGovernanceModels` function was created and consolidated into `get_models_handler.go`.
+  - The `/v1/governance/models` route was added to the API server.
 - **Dependencies**: 1.2
 
 #### 3.7 Governance Pricing API Creation
-- **Task**: [ ] Create new governance pricing API endpoint
+- **Task**: [x] Create new governance pricing API endpoint
 - **What**: Create `getGovernancePricing` function and handler for upcoming pricing
 - **Where**: `decentralized-api/internal/server/public/get_governance_pricing_handler.go`
+- **Result**:
+  - The `getGovernancePricing` function was created and consolidated into `get_pricing_handler.go`.
 - **Dependencies**: 1.2
 
 #### 3.8 API Routes Registration
-- **Task**: [ ] Register new API routes for governance endpoints
+- **Task**: [x] Register new API routes for governance endpoints
 - **What**: Add routes for `/v1/governance/models` and `/v1/governance/pricing`
 - **Where**: API router configuration files
+- **Result**:
+  - The `/v1/governance/models` and `/v1/governance/pricing` routes were added to the API server.
 - **Dependencies**: 3.6, 3.7
 
 ### Section 4: MLNode Snapshots in Epoch Groups
@@ -215,7 +233,7 @@ Each task includes:
 
 #### 4.6 Epoch Data Update Functions
 - **Task**: [ ] Create broker epoch data update functions
-- **What**: Create `UpdateNodeWithEpochData` and `MergeModelArgs` functions
+- **What**: Create `UpdateNodeWithEpochData` and `MergeModelArgs` functions. Also cache the list of active epoch models in the Broker. This cache will be used by the public `/v1/models` API endpoint.
 - **Where**: `decentralized-api/broker/broker.go`
 - **Dependencies**: 4.5
 
