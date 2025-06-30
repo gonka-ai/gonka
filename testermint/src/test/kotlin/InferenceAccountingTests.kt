@@ -212,7 +212,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     private fun getFailingInference(
         cluster: LocalCluster,
-        failingAddress: String,
         requestingNode: LocalInferencePair = cluster.genesis,
         requester: String? = cluster.genesis.node.getAddress(),
     ): List<InferencePayload> {
@@ -233,7 +232,7 @@ class InferenceAccountingTests : TestermintTest() {
                     val inferences = cluster.genesis.node.getInferences()
                     foundInference =
                         inferences.inference
-                            .firstOrNull { it.assignedTo == failingAddress && it.startBlockHeight >= currentBlock }
+                            .firstOrNull { it.startBlockHeight >= currentBlock }
                     if (tries++ > 5) {
                         error("Could not find inference after block $currentBlock")
                     }
@@ -293,9 +292,10 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
-            val failingAddress = localCluster.joinPairs.first().node.getAddress()
-            val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
+            localCluster.joinPairs.forEach {
+                it.mock?.setInferenceResponse("This is invalid json!!!")
+            }
+            val inferences = getFailingInference(localCluster, consumer.pair, consumer.address)
             val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
             val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
             logSection("Waiting for inference to expire")
