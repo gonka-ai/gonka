@@ -89,6 +89,8 @@ type ParticipantKeeper interface {
 	ParticipantAll(ctx context.Context, req *QueryAllParticipantRequest) (*QueryAllParticipantResponse, error)
 }
 
+type HardwareNodeKeeper interface {
+	GetHardwareNodes(ctx context.Context, address string) (*HardwareNodes, bool)
 }
 
 type EpochGroupDataKeeper interface {
