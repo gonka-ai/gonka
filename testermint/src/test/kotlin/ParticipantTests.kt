@@ -15,7 +15,7 @@ class ParticipantTests : TestermintTest() {
         val epochData = genesis.getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
         if (genesis.getEpochData().phase != EpochPhase.Inference &&
-            startOfNextPoc - epochData.blockHeight > 2) {
+            startOfNextPoc - epochData.blockHeight > 5) {
             genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         }
 
