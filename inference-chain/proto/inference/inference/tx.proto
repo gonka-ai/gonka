@@ -221,6 +221,7 @@ message MsgRegisterModel {
   repeated string model_args        = 7;
   uint64 v_ram                      = 8;
   uint64 throughput_per_nonce       = 9;
+  float validation_threshold        = 10;
 }
 
 message MsgRegisterModelResponse {}

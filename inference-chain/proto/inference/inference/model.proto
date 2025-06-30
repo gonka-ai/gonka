@@ -12,4 +12,5 @@ message Model {
   repeated string model_args = 6;
   uint64 v_ram = 7;
   uint64 throughput_per_nonce = 8;
+  float validation_threshold = 9;
 }
