@@ -17,6 +17,9 @@ import com.productscience.inferenceRequest
 import com.productscience.inferenceRequestObject
 import com.productscience.initCluster
 import com.productscience.logSection
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
@@ -61,9 +64,19 @@ class InferenceAccountingTests : TestermintTest() {
             it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
         }
         val seed = Random.nextInt()
-        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
-        val lastRequest =
-            cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+
+        CoroutineScope(Dispatchers.Default).launch {
+            genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        }
+
+        var lastRequest: InferenceRequestPayload? = null
+        var attempts = 0
+        while (lastRequest == null && attempts < 5) {
+            Thread.sleep(Duration.ofSeconds(1))
+            attempts++
+            lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+        }
+
         assertThat(lastRequest).isNotNull
         assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
