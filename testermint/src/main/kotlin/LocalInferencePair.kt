@@ -246,10 +246,24 @@ data class LocalInferencePair(
         this.waitForStage(EpochStage.SET_NEW_VALIDATORS, setNewValidatorsOffset)
     }
 
-    fun waitForStage(stage: EpochStage, offset: Int = 1) {
-        this.node.waitForMinimumBlock(
-            getNextStage(stage) + offset,
+    data class WaitForStageResult(
+        val stageBlock: Long,
+        val stageBlockWithOffset: Long,
+        val currentBlock: Long
+    )
+
+    fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
+        val stageBlock = getNextStage(stage)
+        val stageBlockWithOffset = stageBlock + offset
+        val currentBlock = this.node.waitForMinimumBlock(
+            stageBlockWithOffset,
             "stage $stage" + if (offset > 0) "+$offset)" else ""
+        )
+
+        return WaitForStageResult(
+            stageBlock = stageBlock,
+            stageBlockWithOffset = stageBlockWithOffset,
+            currentBlock = currentBlock
         )
     }
 
