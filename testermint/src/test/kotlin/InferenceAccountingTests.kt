@@ -249,7 +249,7 @@ class InferenceAccountingTests : TestermintTest() {
     fun `verify failed inference is refunded`() {
         val (localCluster, genesis) = initCluster()
         logSection("Waiting to clear claims")
-        genesis.waitForStage(EpochStage.END_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
         val timeoutsAtStart = genesis.node.getInferenceTimeouts()
