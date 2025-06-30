@@ -29,8 +29,8 @@ class ParticipantTests : TestermintTest() {
 
         val statsPairs = startStats.participantCurrentStats.zip(endStats.participantCurrentStats)
         statsPairs.forEach { (start, end) ->
-            assertThat(end.reputation).isGreaterThan(start.reputation)
             assertThat(end.participantId).isEqualTo(start.participantId)
+            assertThat(end.reputation).isGreaterThan(start.reputation)
         }
     }
 
