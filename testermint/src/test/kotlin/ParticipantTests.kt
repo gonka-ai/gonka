@@ -24,7 +24,7 @@ class ParticipantTests : TestermintTest() {
                     "currentPhase=$currentPhase"
         }
 
-        if (genesis.getEpochData().phase != EpochPhase.Inference &&
+        if (genesis.getEpochData().phase != EpochPhase.Inference ||
             startOfNextPoc - currentBlockHeight > 5) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before runParallelInferences")
             genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
