@@ -57,6 +57,7 @@ class MultiModelTests : TestermintTest() {
     @Tag("unstable")
     fun `invalidate invalid multi model response`() {
         val (cluster, genesis) = initCluster(3)
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         var tries = 5
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
         logSection("Setting up invalid inference")
