@@ -6,6 +6,7 @@ import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.tinylog.kotlin.Logger
 import java.time.Duration
 
 class ParticipantTests : TestermintTest() {
@@ -14,9 +15,21 @@ class ParticipantTests : TestermintTest() {
         val (_, genesis) = initCluster()
         val epochData = genesis.getEpochData()
         val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
+        val currentPhase = epochData.phase
+        val currentBlockHeight = epochData.blockHeight
+        Logger.info {
+            "Checking if should wait for next SET_NEW_VALIDATORS to run inference. " +
+                    "startOfNextPoc=$startOfNextPoc. " +
+                    "currentBlockHeight=$currentBlockHeight. " +
+                    "currentPhase=$currentPhase"
+        }
+
         if (genesis.getEpochData().phase != EpochPhase.Inference &&
-            startOfNextPoc - epochData.blockHeight > 5) {
+            startOfNextPoc - currentBlockHeight > 5) {
+            logSection("Waiting for SET_NEW_VALIDATORS stage before runParallelInferences")
             genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        } else {
+            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
         }
 
         val startStats = genesis.node.getParticipantCurrentStats()

@@ -284,9 +284,7 @@ data class LocalInferencePair(
     }
 
     fun getNextStage(stage: EpochStage): Long {
-        this.getParams()
-        val epochData = this.mostRecentEpochData
-            ?: error("No epoch data available")
+        val epochData = this.getEpochData()
         return epochData.getNextStage(stage)
     }
 
