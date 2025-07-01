@@ -17,19 +17,21 @@ import (
 )
 
 func TestMsgServer_FinishInference(t *testing.T) {
+	const (
+		epochId  = 1
+		epochId2 = 2
+
+		inferenceId = "inferenceId"
+	)
+
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
-
-	mocks.StubForInitGenesis(ctx)
-
-	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
-
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
 	mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
-		InferenceId:   "inferenceId",
+		InferenceId:   inferenceId,
 		PromptHash:    "promptHash",
 		PromptPayload: "promptPayload",
 		RequestedBy:   testutil.Requester,
@@ -37,12 +39,13 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		Model:         "model1",
 	})
 	require.NoError(t, err)
-	savedInference, found := k.GetInference(ctx, "inferenceId")
+	savedInference, found := k.GetInference(ctx, inferenceId)
+
 	ctx2 := sdk.UnwrapSDKContext(ctx)
 	require.True(t, found)
-	require.Equal(t, types.Inference{
-		Index:               "inferenceId",
-		InferenceId:         "inferenceId",
+	expectedInference := types.Inference{
+		Index:               inferenceId,
+		InferenceId:         inferenceId,
 		PromptHash:          "promptHash",
 		PromptPayload:       "promptPayload",
 		RequestedBy:         testutil.Requester,
@@ -51,10 +54,20 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		StartBlockTimestamp: ctx2.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
 		EscrowAmount:        keeper.DefaultMaxTokens * calculations.PerTokenCost,
-	}, savedInference)
+	}
+	require.Equal(t, expectedInference, savedInference)
+	devStat, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId)
+	require.True(t, found)
+	require.Equal(t, types.DeveloperStatsByEpoch{
+		EpochId:      epochId,
+		InferenceIds: []string{expectedInference.InferenceId},
+	}, devStat)
+	k.SetEffectiveEpochGroupId(ctx, epochId2)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
+
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
-		InferenceId:          "inferenceId",
+		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
@@ -62,11 +75,12 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		ExecutedBy:           testutil.Executor,
 	})
 	require.NoError(t, err)
-	savedInference, found = k.GetInference(ctx, "inferenceId")
+	savedInference, found = k.GetInference(ctx, inferenceId)
 	require.True(t, found)
-	require.Equal(t, types.Inference{
-		Index:                "inferenceId",
-		InferenceId:          "inferenceId",
+
+	expectedInference2 := types.Inference{
+		Index:                inferenceId,
+		InferenceId:          inferenceId,
 		PromptHash:           "promptHash",
 		PromptPayload:        "promptPayload",
 		RequestedBy:          testutil.Requester,
@@ -75,6 +89,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		ResponsePayload:      "responsePayload",
 		PromptTokenCount:     10,
 		CompletionTokenCount: 20,
+		EpochGroupId:         epochId2,
 		ExecutedBy:           testutil.Executor,
 		Model:                "model1",
 		StartBlockTimestamp:  ctx2.BlockTime().UnixMilli(),
@@ -82,7 +97,9 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		MaxTokens:            keeper.DefaultMaxTokens,
 		EscrowAmount:         keeper.DefaultMaxTokens * calculations.PerTokenCost,
 		ActualCost:           30 * calculations.PerTokenCost,
-	}, savedInference)
+	}
+
+	require.Equal(t, expectedInference2, savedInference)
 
 	participantState, found := k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, found)
@@ -98,8 +115,19 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		CoinBalance:       30 * calculations.PerTokenCost,
 		CurrentEpochStats: &types.CurrentEpochStats{
 			InferenceCount: 1,
+			EarnedCoins:    30 * keeper.TokenCost,
 		},
 	}, participantState)
+
+	devStat, found = k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
+	require.True(t, found)
+	require.Equal(t, 1, len(devStat.InferenceIds))
+
+	devStatUpdated, found := k.GetDevelopersStatsByEpoch(ctx, testutil.Requester, epochId2)
+	require.True(t, found)
+	require.Equal(t, types.DeveloperStatsByEpoch{
+		EpochId:      epochId2,
+		InferenceIds: []string{expectedInference2.InferenceId}}, devStatUpdated)
 }
 
 func MustAddParticipant(t *testing.T, ms types.MsgServer, ctx context.Context, address string) {

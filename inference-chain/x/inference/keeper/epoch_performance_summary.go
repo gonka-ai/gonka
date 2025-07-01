@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
@@ -89,4 +88,27 @@ func (k Keeper) GetEpochPerformanceSummariesByParticipant(ctx context.Context, p
 	}
 
 	return
+}
+
+func (k Keeper) GetParticipantsEpochSummaries(
+	ctx context.Context,
+	participantIds []string,
+	epochStartHeight uint64,
+) []types.EpochPerformanceSummary {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochPerformanceSummaryKeyPrefix))
+
+	var summaries []types.EpochPerformanceSummary
+	for _, participantId := range participantIds {
+		key := types.EpochPerformanceSummaryKey(participantId, epochStartHeight)
+		bz := store.Get(key)
+		if bz == nil {
+			continue
+		}
+
+		var summary types.EpochPerformanceSummary
+		k.cdc.MustUnmarshal(bz, &summary)
+		summaries = append(summaries, summary)
+	}
+	return summaries
 }

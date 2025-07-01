@@ -31,6 +31,18 @@ APP_NAME="inferenced"
 CHAIN_ID="gonka-testnet-3"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
+
+update_configs_for_explorer() {
+  if [ "${WITH_EXPLORER:-}" = true ]; then
+    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
+
+    "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
+  else
+    echo "Skipping config changes for explorer"
+  fi
+}
+
+
 # Init the chain:
 # I'm using prod-sim as the chain name (production simulation)
 #   and icoin (intelligence coin) as the default denomination
@@ -144,6 +156,8 @@ if [ -f "config_override.toml" ]; then
     echo "Applying config overrides from config_override.toml"
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
+
+update_configs_for_explorer
 
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {
