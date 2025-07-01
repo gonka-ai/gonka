@@ -104,7 +104,9 @@ func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer 
 		}
 	}
 
-	newStats.InferenceIds = append(newStats.InferenceIds, infStats.InferenceId)
-	epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
+	if !inferenceIdExists(newStats.InferenceIds, infStats.InferenceId) {
+		newStats.InferenceIds = append(newStats.InferenceIds, infStats.InferenceId)
+		epochStore.Set(newKey, k.cdc.MustMarshal(&newStats))
+	}
 	k.LogInfo("stat set by epoch: inference successfully added to epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId)
 }
