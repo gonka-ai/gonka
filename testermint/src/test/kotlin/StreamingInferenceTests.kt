@@ -106,7 +106,7 @@ class StreamingInferenceTests : TestermintTest() {
                         genesis,
                         inferenceRequestStreamObject.toJson(),
                         Random.nextInt(80),
-                        check = false
+                        checkStarted = false
                     )
                 }
             }
