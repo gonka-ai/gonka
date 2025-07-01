@@ -1,8 +1,20 @@
 services:
+  explorer:
+    container_name: explorer
+    image: gcr.io/decentralized-ai/ping-pub-explorer
+    environment:
+      - API_ENDPOINT=http://genesis-node:1317
+      - RPC_ENDPOINT=http://genesis-node:26657
+    ports:
+      - "3000:3000"
+    networks:
+      - chain-public
+    restart: unless-stopped
+
   chain-node:
-    container_name: ${KEY_NAME}-node
+    container_name: genesis-node
     command: [ "sh", "./init-docker-genesis.sh" ]
-    image: ghcr.io/product-science/inferenced
+    image: ghcr.io/product-science/inferenced:f30172c2
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
     environment:
@@ -10,57 +22,46 @@ services:
       - IS_GENESIS=true
       - INIT_TGBOT=false
       - TGBOT_PRIVATE_KEY_PASS=${TGBOT_PRIVATE_KEY_PASS:-defaultpassword}
-      - SNAPSHOT_INTERVAL=100
-      - SNAPSHOT_KEEP_RECENT=5
       - WITH_EXPLORER=true
-      - DEBUG=true
     networks:
       - chain-public
     ports:
       - "26656:26656" #p2p
       - "26657:26657" #rpc
-      - "9090:9090"
-      - "9091:9091"
       - "1317:1317"
 
   api:
-    container_name: ${KEY_NAME}-api
+    container_name: genesis-api
     image: ghcr.io/product-science/api
     volumes:
-        - ./prod-local/${KEY_NAME}:/root/.inference
-        - ./${NODE_CONFIG}:/root/node_config.json
+      - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./${NODE_CONFIG}:/root/node_config.json
     ports:
       - "${PUBLIC_SERVER_PORT}:9000"
       - "${ML_SERVER_PORT}:9100"
       - "${ADMIN_SERVER_PORT}:9200"
-      - "${ML_GRPC_SERVER_PORT}:9300"
     environment:
       - KEY_NAME=${KEY_NAME}
       - NODE_HOST=${KEY_NAME}-node
       - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - DAPI_API__EXPLORER_URL=http://explorer:5173
       - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
       - DAPI_API__PUBLIC_SERVER_PORT=9000
       - DAPI_API__ML_SERVER_PORT=9100
       - DAPI_API__ADMIN_SERVER_PORT=9200
-      - DAPI_API__ML_GRPC_SERVER_PORT=9300
-      - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__IS_GENESIS=true
-      - DAPI_API__EXPLORER_URL=http://explorer:5173
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DEBUG=true
     networks:
       - chain-public
 
-  mock-server:
-    container_name: ${KEY_NAME}-mock-server
-    image: inference-mock-server
-    build:
-      context: ../testermint
-      dockerfile: Dockerfile
-    environment:
-      - KEY_NAME=${KEY_NAME}
+  wiremock:
+    container_name: genesis-wiremock
+    image: "wiremock/wiremock:latest"
     ports:
       - "${WIREMOCK_PORT}:8080"
+    volumes:
+      - ./prod-local/wiremock/${KEY_NAME}:/home/wiremock
+    entrypoint: [ "/docker-entrypoint.sh", "--global-response-templating", "--disable-gzip", "--verbose" ]
     networks:
       - chain-public
 

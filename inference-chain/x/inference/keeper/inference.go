@@ -17,6 +17,13 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 	store.Set(types.InferenceKey(
 		inference.Index,
 	), b)
+
+	err := k.SetDeveloperStats(ctx, inference)
+	if err != nil {
+		k.LogError("error setting developer stat", types.Stat, err)
+	} else {
+		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
+	}
 }
 
 // GetInference returns a inference from its index

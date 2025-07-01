@@ -5,15 +5,18 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/logging"
 	"decentralized-api/training"
-	"net/http"
-
 	"github.com/labstack/echo/v4"
+	"github.com/productscience/inference/x/inference/types"
+	"net/http"
+	"net/url"
 )
 
 type Server struct {
 	e                *echo.Echo
 	nodeBroker       *broker.Broker
+	explorerTargetUrl *url.URL
 	configManager    *apiconfig.ConfigManager
 	recorder         cosmosclient.CosmosMessageClient
 	trainingExecutor *training.Executor
@@ -22,6 +25,7 @@ type Server struct {
 
 // TODO: think about rate limits
 func NewServer(
+	explorerUrl string,
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	recorder cosmosclient.CosmosMessageClient,
@@ -37,10 +41,18 @@ func NewServer(
 		blockQueue:       blockQueue,
 	}
 
+	explorerUrlParsed, err := url.Parse(explorerUrl)
+	if err != nil {
+		logging.Error("Failed to parse explorer url", types.Server, "error", err, "url", explorerUrl)
+	} else {
+		s.explorerTargetUrl = explorerUrlParsed
+	}
+
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/v1/")
 
 	g.GET("status", s.getStatus)
+	g.Any("explorer/*", s.getExplorerUI)
 
 	g.POST("chat/completions", s.postChat)
 	g.GET("chat/completions/:id", s.getChatById)
@@ -59,7 +71,6 @@ func NewServer(
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
-	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
@@ -70,6 +81,8 @@ func NewServer(
 	g.POST("bridge/block", s.postBlock)
 	g.GET("bridge/status", s.getBridgeStatus)
 
+
+	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	return s
 }
 
