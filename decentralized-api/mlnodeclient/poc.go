@@ -106,6 +106,7 @@ type ProofBatch struct {
 	BlockHeight int64     `json:"block_height"`
 	Nonces      []int64   `json:"nonces"`
 	Dist        []float64 `json:"dist"`
+	NodeNum     int64     `json:"node_id"`
 }
 
 type ValidatedBatch struct {
