@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/maps"
@@ -56,7 +57,7 @@ func (k Keeper) GetParticipantsFullStats(ctx context.Context, _ *types.QueryPart
 		accAddr, _ := sdk.AccAddressFromBech32(member.MemberAddress)
 		participants[member.MemberAddress] = &types.ParticipantFullStats{
 			AccountAddress:          member.MemberAddress,
-			ValidatorOperatorAddres: sdk.ValAddress(accAddr).String(),
+			OperatorAddress:         sdk.ValAddress(accAddr).String(),
 			Reputation:              member.Reputation,
 			EarnedCoinsCurrentEpoch: participant.CurrentEpochStats.EarnedCoins,
 			EpochsCompleted:         participant.EpochsCompleted,

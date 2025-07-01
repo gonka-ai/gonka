@@ -119,6 +119,7 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)
 	k.SetInference(ctx, inference)
+
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			"inference_validation",

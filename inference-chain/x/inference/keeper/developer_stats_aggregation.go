@@ -341,3 +341,12 @@ func removeInferenceId(slice []string, inferenceId string) []string {
 	}
 	return slice
 }
+
+func inferenceIdExists(slice []string, inferenceId string) bool {
+	for _, v := range slice {
+		if v == inferenceId {
+			return true
+		}
+	}
+	return false
+}
