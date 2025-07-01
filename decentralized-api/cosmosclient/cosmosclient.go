@@ -298,6 +298,7 @@ func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Ms
 	}
 	response, err := c.Client.Context().BroadcastTxSync(txBytes)
 	if err == nil && response.Code == 0 {
+		logging.Info("Tx added to mempool", types.Messages, "factory_sequence", factory.Sequence())
 		highestSequence = int64(factory.Sequence())
 	}
 	return response, err
@@ -334,7 +335,7 @@ func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
 		return nil, err
 	}
 	if int64(sequence) <= highestSequence {
-		logging.Info("Sequence is lower than highest sequence", types.Messages, "sequence", sequence, "highestSequence", highestSequence)
+		logging.Info("Factory sequence is lower than highest sequence", types.Messages, "sequence", sequence, "highestSequence", highestSequence)
 		sequence = uint64(highestSequence + 1)
 	}
 	logging.Debug("Transaction sequence", types.Messages, "sequence", sequence, "accountNumber", accountNumber)
