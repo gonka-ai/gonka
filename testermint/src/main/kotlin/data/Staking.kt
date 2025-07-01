@@ -19,7 +19,14 @@ data class StakeValidator(
     val unbondingTime: Instant,
     val commission: Commission,
     val minSelfDelegation: String
-)
+) {
+    companion object {
+        enum class Status(val value: Int) {
+            UNBONDING(2),
+            BONDED(3)
+        }
+    }
+}
 
 data class ConsensusPubkey(
     val type: String,

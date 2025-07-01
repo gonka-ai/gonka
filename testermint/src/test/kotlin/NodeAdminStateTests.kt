@@ -1,6 +1,7 @@
 import com.productscience.*
 import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
@@ -11,8 +12,11 @@ class NodeAdminStateTests : TestermintTest() {
 
     @Test
     fun `test node disable during inference phase`() {
-        val (cluster, genesis) = initCluster()
-        
+        val (_, genesis) = initCluster(reboot = true)
+        val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
+        assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
+        assertThat(genesisValidatorBeforeDisabled.status).isEqualTo(StakeValidator.Companion.Status.BONDED.value)
+
         logSection("Getting initial nodes")
         val nodes = genesis.api.getNodes()
         assertThat(nodes).isNotEmpty()
@@ -65,6 +69,11 @@ class NodeAdminStateTests : TestermintTest() {
         assertThat(enabledNode.state.adminState?.enabled)
             .isTrue()
             .`as`("Node should be enabled again")
+
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 3)
+        val genesisValidatorAfterNodeIsDisabled = genesis.node.getStakeValidator()
+        assertThat(genesisValidatorAfterNodeIsDisabled.tokens).isEqualTo(0)
+        assertThat(genesisValidatorAfterNodeIsDisabled.status).isEqualTo(StakeValidator.Companion.Status.UNBONDING.value)
     }
 
     @Test
@@ -139,6 +148,7 @@ class NodeAdminStateTests : TestermintTest() {
             .`as`("Enabled node should serve inference requests")
     }
 
+    @Disabled // Wait until we've integrated multiple nodes
     @Test
     fun `test multiple node state changes`() {
         val (cluster, genesis) = initCluster()
