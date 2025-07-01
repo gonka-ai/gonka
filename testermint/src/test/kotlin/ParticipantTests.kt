@@ -1,10 +1,13 @@
 import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
+import com.productscience.createSpec
 import com.productscience.data.EpochPhase
 import com.productscience.data.StakeValidator
 import com.productscience.data.StakeValidatorStatus
 import com.productscience.data.UpdateParams
+import com.productscience.data.spec
 import com.productscience.getNextStage
+import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
@@ -15,8 +18,8 @@ import java.time.Duration
 class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
-        val (_, genesis) = initCluster()
-        genesis.waitForNextInferenceWindow()
+        val (_, genesis) = initCluster(config = inferenceConfig.copy(genesisSpec = createSpec(epochLength = 20)))
+        genesis.waitForNextInferenceWindow(windowSizeInBlocks = 12)
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
