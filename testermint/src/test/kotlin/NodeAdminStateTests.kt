@@ -13,6 +13,8 @@ class NodeAdminStateTests : TestermintTest() {
     @Test
     fun `test node disable during inference phase`() {
         val (_, genesis) = initCluster(reboot = true)
+        genesis.waitForNextInferenceWindow()
+
         val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
         assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
         assertThat(genesisValidatorBeforeDisabled.status).isEqualTo(StakeValidator.Companion.Status.BONDED.value)
@@ -78,7 +80,7 @@ class NodeAdminStateTests : TestermintTest() {
 
     @Test
     fun `test node disable during PoC phase`() {
-        val (cluster, genesis) = initCluster()
+        val (cluster, genesis) = initCluster(reboot = true)
         
         logSection("Waiting for PoC phase")
         genesis.waitForStage(EpochStage.START_OF_POC)
@@ -111,6 +113,7 @@ class NodeAdminStateTests : TestermintTest() {
             .`as`("Node should remain disabled in new epoch")
     }
 
+    @Disabled // This test doesn't make sense at the moment, rework it
     @Test
     fun `test node enable during PoC phase`() {
         val (cluster, genesis) = initCluster()

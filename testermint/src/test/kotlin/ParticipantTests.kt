@@ -15,24 +15,7 @@ class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
         val (_, genesis) = initCluster()
-        val epochData = genesis.getEpochData()
-        val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
-        val currentPhase = epochData.phase
-        val currentBlockHeight = epochData.blockHeight
-        Logger.info {
-            "Checking if should wait for next SET_NEW_VALIDATORS to run inference. " +
-                    "startOfNextPoc=$startOfNextPoc. " +
-                    "currentBlockHeight=$currentBlockHeight. " +
-                    "currentPhase=$currentPhase"
-        }
-
-        if (genesis.getEpochData().phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight > 5) {
-            logSection("Waiting for SET_NEW_VALIDATORS stage before runParallelInferences")
-            genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        } else {
-            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
-        }
+        genesis.waitForNextInferenceWindow()
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")

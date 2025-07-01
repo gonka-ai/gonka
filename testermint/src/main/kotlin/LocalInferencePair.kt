@@ -252,6 +252,27 @@ data class LocalInferencePair(
         val currentBlock: Long
     )
 
+    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5) {
+        val epochData = getEpochData()
+        val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
+        val currentPhase = epochData.phase
+        val currentBlockHeight = epochData.blockHeight
+        Logger.info {
+            "Checking if should wait for next SET_NEW_VALIDATORS to run inference. " +
+                    "startOfNextPoc=$startOfNextPoc. " +
+                    "currentBlockHeight=$currentBlockHeight. " +
+                    "currentPhase=$currentPhase"
+        }
+
+        if (getEpochData().phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+            logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
+            waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        } else {
+            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
+        }
+    }
+
     fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
         val stageBlock = getNextStage(stage)
         val stageBlockWithOffset = stageBlock + offset
