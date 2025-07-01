@@ -12,6 +12,7 @@ import (
 func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmitHardwareDiff) (*types.MsgSubmitHardwareDiffResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// TODO: Make sure that before the update, we have models in the state
 	for _, node := range msg.NewOrModified {
 		for _, modelId := range node.Models {
 			if !k.IsValidGovernanceModel(ctx, modelId) {

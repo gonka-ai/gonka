@@ -306,6 +306,15 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces (arr
 - Participant total weight is the sum of their MLNode weights (keep it in `ValidationWeight`)
 - Model-specific throughput aggregated from individual node capacities
 
+**Integration with Model-Based MLNode Organization:**
+The per-MLNode tracking system implement the double repeated MLNode array structure instead repated MLNode introduced in Section 4, to support per model lists:
+
+**Weight Calculation Flow:**
+1. **Initial Weight Assignment**: `ComputeNewWeights` calculates per-MLNode weights and populates all MLNodes in the first array (index 0) of the `ActiveParticipant.ml_nodes` structure
+2. **Model Distribution**: `setModelsForParticipants` redistributes MLNodes from the first array into model-specific arrays based on governance model assignments
+3. **Epoch Group Formation**: `updateEpochGroupWithNewMember` transfers the organized MLNode arrays to epoch group `ValidationWeight.ml_nodes`, preserving both the model-specific organization and individual MLNode weights
+4. **Model-Specific Aggregation**: Each model subgroup aggregates `total_throughput` and weights from its assigned MLNodes
+
 **Note**:
 - Check if MLNodes should be added to ActiveParticipants as well, as currently Weights are set ActiveParticipants in `ComputeNewWeights`, and only then added to Epoch Group from ActiveParticipants
 
@@ -359,6 +368,9 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces (arr
 - Timeslot allocation vector stored per MLNode in epoch model group data structure
 - API nodes read epoch group data when transitioning to each stage to determine slot-based participation
 
+**Integration with Model-Based Organization:**
+The timeslot allocation system works seamlessly with the double repeated MLNode array structure:
+
 **MLNode Lifecycle:**
 - When MLNode joins, it becomes active only after the next PoC period
 - In Genesis, initial weights are set for initial MLNodes
@@ -368,6 +380,15 @@ The current PoCBatch structure contains ParticipantAddress, BatchId, Nonces (arr
 - Each API node checks its assigned timeslot allocation vector
 - MLNodes with `POC_SLOT` allocation equal `true` continue inference service during PoC
 - Other MLNodes switch to PoC mining
+
+**Timeslot Assignment During Model Distribution:**
+1. **Initial State**: All MLNodes start in the first array (index 0) with default timeslot allocations
+2. **Model Assignment**: During `setModelsForParticipants`, as MLNodes are moved to model-specific arrays:
+   - `PRE_POC_SLOT` is set to `true` only for the first model assignment per MLNode
+   - `PRE_POC_SLOT` is set to `false` for subsequent model assignments  
+   - `POC_SLOT` is initially set to `false` for all models
+3. **Array Organization**: MLNodes in each model array maintain their individual timeslot allocation vectors
+4. **Pre-PoC Selection**: The pre-PoC scheduling algorithm selects nodes from model-specific arrays and updates their `POC_SLOT` allocation to `true`
 
 **New Fields in MLNodeInfo in Epoch Group:**
 - `timeslot_allocation` (repeated boolean) - Vector defining inference participation per time period

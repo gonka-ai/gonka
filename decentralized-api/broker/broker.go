@@ -551,6 +551,19 @@ func (b *Broker) GetNodes() ([]NodeResponse, error) {
 	return nodes, nil
 }
 
+func (b *Broker) GetNodeByNodeNum(nodeNum uint64) (*Node, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for _, nodeWithState := range b.nodes {
+		if nodeWithState.Node.NodeNum == nodeNum {
+			return &nodeWithState.Node, true
+		}
+	}
+
+	return nil, false
+}
+
 func (b *Broker) syncNodes() {
 	resp, err := b.chainBridge.GetHardwareNodes()
 	if err != nil {

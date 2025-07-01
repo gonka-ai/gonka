@@ -229,7 +229,7 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 	wc.Logger.LogInfo("Calculate: Found validations for participant", types.PoC,
 		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
 
-	claimedWeight := calculateParticipantWeight(wc.OriginalBatches[participantAddress])
+	nodeWeights, claimedWeight := calculateParticipantWeight(wc.OriginalBatches[participantAddress])
 	if claimedWeight < 1 {
 		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", participantAddress, "claimedWeight", claimedWeight)
 		return nil
@@ -252,13 +252,28 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		return nil
 	}
 
+	mlNodes := make([]*types.MLNodeInfo, 0, len(nodeWeights))
+	for nodeId, pocWeight := range nodeWeights {
+		mlNodes = append(mlNodes, &types.MLNodeInfo{
+			NodeId:    nodeId,
+			PocWeight: pocWeight,
+		})
+	}
+
+	// Create the double repeated structure with all MLNodes in the first array (index 0)
+	firstMLNodeArray := &types.ModelMLNodes{
+		MlNodes: mlNodes,
+	}
+	modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
+
 	activeParticipant := &types.ActiveParticipant{
-		Index:        participantAddress,
+		Index:        participant.Address,
 		ValidatorKey: participant.ValidatorKey,
 		Weight:       claimedWeight,
 		InferenceUrl: participant.InferenceUrl,
 		Seed:         &seed,
 		Models:       make([]string, 0),
+		MlNodes:      modelMLNodesArray, // Now using the double repeated structure
 	}
 	return activeParticipant
 }
@@ -314,18 +329,19 @@ func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participant
 	return shouldContinue
 }
 
-func calculateParticipantWeight(batches []types.PoCBatch) int64 {
-	uniqueNonces := make(map[int64]struct{})
-
-	for _, b := range batches {
-		for _, nonce := range b.Nonces {
-			uniqueNonces[nonce] = struct{}{}
-		}
+func calculateParticipantWeight(batches []types.PoCBatch) (map[string]int64, int64) {
+	nodeWeights := make(map[string]int64)
+	totalWeight := int64(0)
+	for _, batch := range batches {
+		weight := int64(len(batch.Nonces))
+		nodeId := batch.NodeId // Keep empty string for legacy batches without node_id
+		nodeWeights[nodeId] += weight
+		totalWeight += weight
 	}
-
-	return int64(len(uniqueNonces))
+	return nodeWeights, totalWeight
 }
 
+// calculateTotalWeight calculates the total weight of all validators
 func calculateTotalWeight(validatorWeights map[string]int64) uint64 {
 	if validatorWeights == nil {
 		return 0

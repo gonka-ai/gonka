@@ -172,6 +172,7 @@ message MsgSubmitPocBatch {
            string batch_id                     = 3;
   repeated int64  nonces                       = 4;
   repeated double dist                         = 5;
+           string node_id                      = 6;
 }
 
 message MsgSubmitPocBatchResponse {}

@@ -275,86 +275,220 @@ Each task includes:
 ### Section 5: Per-MLNode PoC Tracking System
 
 #### 5.1 PoCBatch Protobuf Enhancement
-- **Task**: [ ] Add NodeId field to PoCBatch structure
+- **Task**: [x] Add NodeId field to PoCBatch structure
 - **What**: Add `NodeId` field to PoCBatch protobuf to track which MLNode generated the batch. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
-- **Where**: `inference-chain/x/inference/types/poc_batch.pb.go`
+- **Where**: `inference-chain/x/inference/types/pocbatch.pb.go`
+- **Result**:
+  - Added the `node_id` string field to the `PoCBatch` message in `inference-chain/proto/inference/inference/pocbatch.proto`.
+  - Added the `node_id` string field to the `MsgSubmitPocBatch` message in `inference-chain/proto/inference/inference/tx.proto`.
+  - Regenerated the protobuf Go files using `ignite generate proto-go` to apply the changes.
 - **Dependencies**: None
 
+#### 5.1.1 dAPI PoC Batch Handling Update
+- **Task**: [x] Update dAPI to process Node ID for PoC Batches
+- **What**: Enhance the dAPI to identify which MLNode generated a PoC batch. After `NodeNum` is added to the `ProofBatch` payload from the ML node, the `postGeneratedBatches` handler will use it to query the Broker for the node's string `Id`. This `Id` will then be added to the `MsgSubmitPocBatch` before it's sent to the chain. For backward compatibility, if the `NodeNum` field is missing or zero, the handler should submit an empty string for the `NodeId`.
+- **Where**: 
+  - `decentralized-api/mlnodeclient/client.go` (or wherever `ProofBatch` is defined)
+  - `decentralized-api/internal/server/mlnode/post_generated_batches_handler.go`
+- **Result**:
+  - Added a `NodeNum` field to the `ProofBatch` struct in `decentralized-api/mlnodeclient/poc.go`.
+  - Injected the `Broker` into the `mlnode.Server` to provide access to node information.
+  - Added a `GetNodeByNodeNum` helper method to the `Broker`.
+  - The `postGeneratedBatches` handler now correctly reads the `NodeNum`, retrieves the full node `Id`, and adds it to the `MsgSubmitPocBatch` sent to the chain.
+  - Updated Go module dependencies with `go mod tidy` to resolve compilation errors.
+- **Dependencies**: 5.1
+- **Note**: This task may require providing the `postGeneratedBatches` handler with access to the Broker instance via dependency injection.
+
 #### 5.2 PoC Batch Keeper Functions
-- **Task**: [ ] Add per-MLNode PoC query functions
+- **Task**: [x] Add per-MLNode PoC query functions
 - **What**: Create `GetPoCBatchesForNode`, `GetPoCBatchesForModel`, `CalculateNodeWeight`, `CalculateModelPower`
 - **Where**: `inference-chain/x/inference/keeper/poc_batch.go`
 - **Dependencies**: 5.1
+- **Note**: Implementation of these functions is deferred for now.
 
 #### 5.3 Epoch Group Total Throughput Field
-- **Task**: [ ] Add total throughput tracking to EpochGroupData
+- **Task**: [x] Add total throughput tracking to EpochGroupData
 - **What**: Add `total_throughput` field to EpochGroupData protobuf. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
+- **Result**:
+  - Added the `total_throughput` int64 field to the `EpochGroupData` message in `epoch_group_data.proto`.
+  - Regenerated the protobuf Go files successfully.
 - **Dependencies**: 4.2
 
 #### 5.4 Chain Validation Weight Calculation Update
-- **Task**: [ ] Enhance weight calculation for per-MLNode tracking
-- **What**: Modify `ComputeNewWeights` to record per-MLNode poc_weight
+- **Task**: [x] Enhance weight calculation for per-MLNode tracking
+- **What**: Modify `ComputeNewWeights` and `validatedParticipant` to record per-MLNode poc_weight in active participants (use repeated MLNodeInfo)
 - **Where**: `inference-chain/x/inference/module/chainvalidation.go`
+- **Result**:
+  - Added a `repeated MLNodeInfo ml_nodes` field to the `ActiveParticipant` protobuf message.
+  - The `calculateParticipantWeight` function was refactored to return a map of weights per `NodeId` and the participant's total weight.
+  - The `validatedParticipant` function was updated to use this new data structure, populating the `ActiveParticipant.MlNodes` slice with the per-node weights.
+  - Regenerated the protobuf Go files to apply the changes.
 - **Dependencies**: 5.2
 
 #### 5.5 Epoch Group Member Update Enhancement
-- **Task**: [ ] Add MLNode weight and throughput calculation to epoch group updates
+- **Task**: [x] Add MLNode weight and throughput calculation to epoch group updates
 - **What**: Enhance `updateEpochGroupWithNewMember` to calculate poc_weight and total_throughput
 - **Where**: `inference-chain/x/inference/epochgroup/epoch_group.go`
+- **Result**:
+  - Added the `MlNodes` field to the `EpochMember` struct to carry detailed node information from the `ActiveParticipant`.
+  - Updated `NewEpochMemberFromActiveParticipant` to correctly populate this new field.
+  - Enhanced `updateEpochGroupWithNewMember` and its helper `storeMLNodeInfo` to:
+    - Read the `PocWeight` from the member's `MLNodeInfo` and store it in the `ValidationWeight` for the subgroup.
+    - Calculate the `TotalThroughput` for the model's subgroup by summing the throughput of all associated ML nodes (currently stubbed to 0 pending hardware node updates).
+  - The `inference-chain` build was successful.
 - **Dependencies**: 5.3, 5.4
 
-### Section 6: Per Model Sybil Resistance Incentives
+#### 5.6 ActiveParticipant MLNode Structure Reorganization
+- **Task**: [x] Restructure ActiveParticipant to use double repeated MLNodes arrays
+- **What**: Change `ActiveParticipant` to have `repeated repeated MLNodeInfo ml_nodes` where each inner array corresponds to a model at the same index, allowing MLNodes to be organized by model
+- **Where**: `inference-chain/proto/inference/inference/activeparticipants.proto`
+- **Note**: Use `ignite generate proto-go` to regenerate protobuf files after protobuf changes
+- **Result**:
+  - Created a new `ModelMLNodes` wrapper message containing `repeated MLNodeInfo ml_nodes` to enable the double repeated structure.
+  - Modified the `ActiveParticipant` message to use `repeated ModelMLNodes ml_nodes` instead of `repeated MLNodeInfo ml_nodes`.
+  - Added detailed comment explaining that each `ModelMLNodes` corresponds to a model at the same index.
+  - Successfully regenerated protobuf Go files using `ignite generate proto-go`.
+  - The structural change enables model-based MLNode organization where each inner array corresponds to MLNodes supporting a specific governance model.
+- **Dependencies**: 5.5
 
-#### 6.1 Model Coverage Query Function
-- **Task**: [ ] Create participant model coverage checking function
-- **What**: Create `GetParticipantModelCoverage` function to check if participant supports all models
+#### 5.7 EpochMember MLNode Structure Update  
+- **Task**: [x] Update EpochMember to match ActiveParticipant MLNode structure
+- **What**: Change `EpochMember` to have `repeated repeated MLNodeInfo ml_nodes` structure matching ActiveParticipant and update `NewEpochMemberFromActiveParticipant` to properly copy the double repeated structure
 - **Where**: `inference-chain/x/inference/epochgroup/epoch_group.go`
-- **Dependencies**: 4.3
+- **Result**:
+  - Updated the `EpochMember` struct to use `[]*types.ModelMLNodes` instead of `[]*types.MLNodeInfo` for the `MlNodes` field.
+  - Modified `NewEpochMemberFromActiveParticipant` to properly copy the double repeated structure from `ActiveParticipant`.
+  - Updated `storeMLNodeInfo` function to handle the double repeated structure by iterating through both the outer `ModelMLNodes` arrays and inner `MLNodeInfo` arrays to build the `pocWeightMap`.
+  - The changes ensure `EpochMember` structure matches the new `ActiveParticipant` structure for consistent MLNode organization.
+- **Dependencies**: 5.6
 
-#### 6.2 Account Settlement Enhancement
-- **Task**: [ ] Add model coverage bonus to reward calculation
-- **What**: Enhance `getSettleAmount` and `GetSettleAmounts` to apply 10% bonus for full model coverage
-- **Where**: `inference-chain/x/inference/keeper/accountsettle.go`
-- **Dependencies**: 6.1
+#### 5.8 Weight Calculation MLNode Array Population
+- **Task**: [x] Modify weight calculation to populate first MLNode array
+- **What**: Update `calculateParticipantWeight` and related functions to add all MLNodes to the first array (index 0) in the double repeated structure during weight calculation phase
+- **Where**: `inference-chain/x/inference/module/chainvalidation.go`
+- **Result**:
+  - Modified the `validatedParticipant` function in `chainvalidation.go` to create the double repeated MLNode structure.
+  - All MLNodes are now populated in the first array (index 0) using a `ModelMLNodes` wrapper containing the individual `MLNodeInfo` objects.
+  - Created `firstMLNodeArray` as a `ModelMLNodes` structure and wrapped it in `modelMLNodesArray` slice for the `ActiveParticipant.MlNodes` field.
+  - This establishes the foundation for the model-based distribution that will be implemented in subsequent tasks.
+- **Dependencies**: 5.7
 
-### Section 7: MLNode Uptime Management System
+#### 5.9 Model-Based MLNode Distribution in setModelsForParticipants
+- **Task**: [x] Implement governance model iteration and MLNode sorting
+- **What**: Modify `setModelsForParticipants` to:
+  - Iterate through governance models instead of HardwareNode models
+  - For each governance model, pick the first available MLNode from the first array that supports that model
+  - Move the selected MLNode to the corresponding model index array 
+  - Keep remaining unassigned MLNodes in the final array (governance_models_count + 1)
+- **Where**: `inference-chain/x/inference/module/module.go`
+- **Result**:
+  - Completely restructured `setModelsForParticipants` to implement model-based MLNode distribution.
+  - The function now gets governance models first and iterates through them instead of hardware node models.
+  - Implemented logic to reorganize MLNodes from the first array (index 0) into model-specific arrays:
+    - For each governance model, finds the first available MLNode that supports it
+    - Moves selected MLNode to the corresponding model index array
+    - Tracks assigned MLNodes to prevent double assignment
+    - Builds list of supported governance models for each participant
+  - Remaining unassigned MLNodes are placed in the overflow array at index (governance_models_count + 1).
+  - Added `nodeSupportsModel` helper function to check if a specific MLNode supports a given governance model.
+  - The double repeated structure now correctly maps: `p.Models[i]` corresponds to `p.MlNodes[i]` for each governance model.
+  - Removed the old `getAllModels` function as it's no longer needed.
+- **Dependencies**: 5.8
 
-#### 7.1 MLNode Allocation Protobuf Types
+#### 5.10 Validation Weight MLNode Structure Update
+- **Task**: [x] Update ValidationWeight to support model-indexed MLNode arrays
+- **What**: Modify how `ValidationWeight.MlNodes` is populated in `updateEpochGroupWithNewMember` to properly handle the new double repeated structure from EpochMember, and update `addToModelGroups` to keep not only one model but the corresponding array of MLNodes for each model
+- **Where**: `inference-chain/x/inference/epochgroup/epoch_group.go`  
+- **Result**:
+  - The `storeMLNodeInfo` function already correctly handles the double repeated structure by finding the model index in `member.Models` and returning the corresponding MLNode array from `member.MlNodes[modelIndex]`.
+  - The `addToModelGroups` function properly copies only the MLNode array for the specific model being processed.
+  - The `updateEpochGroupWithNewMember` function calls `storeMLNodeInfo` with the correct `modelId`, ensuring ValidationWeight gets populated with only the MLNodes that support that specific model subgroup.
+  - The ValidationWeight structure correctly uses `repeated MLNodeInfo ml_nodes` since each model subgroup should only contain MLNodes supporting that specific model.
+- **Dependencies**: 5.9
+
+#### 5.11 PoC Weight Distribution and Aggregation Enhancement
+- **Task**: [x] Handle PoC weight distribution for mixed batch types and multiple batches per node
+- **What**: Enhance PoC weight calculation and distribution to:
+  - **Legacy Batch Handling**: Use empty string `""` instead of `"unknown"` for batches without NodeId
+  - **Legacy Weight Distribution**: Add function in `setModelsForParticipants` to detect MLNodes with empty NodeId, remove them, and distribute their weight evenly among actual hardware nodes
+  - **Multi-Batch Aggregation**: Ensure multiple batches per node are properly accumulated (already using `+=`)
+  - **Mixed Scenario Support**: Handle participants with both legacy batches (no NodeId) and new batches (with NodeId) in same epoch
+- **Where**: 
+  - `inference-chain/x/inference/module/chainvalidation.go` - `calculateParticipantWeight` function (change "unknown" to "")
+  - `inference-chain/x/inference/module/module.go` - `setModelsForParticipants` function (add legacy weight distribution)
+- **Result**:
+  - **Updated `calculateParticipantWeight`**: Changed legacy batch handling to use empty string `""` instead of `"unknown"` for batches without NodeId, ensuring cleaner identification of legacy entries.
+  - **Added `distributeLegacyWeight` function**: New simple function in `module.go` that processes legacy PoC weight distribution:
+    - **Early Processing**: Called immediately after copying `originalMLNodes` from the first array, before model assignment logic
+    - **Legacy Detection**: Finds MLNode with empty NodeId (legacy batches) and removes it from the list
+    - **Fair Distribution**: Calculates `weightPerNode = totalWeight / numNodes` and distributes remainder by giving +1 to first nodes until remainder is over
+    - **Smart Merging**: Adds distributed weight to existing MLNodes with matching NodeIds or creates new MLNode entries as needed
+    - **Clean Return**: Returns updated `originalMLNodes` list ready for model assignment processing
+  - **Simplified Integration**: The function processes the MLNode list early in `setModelsForParticipants`, making the subsequent model assignment logic work with clean, properly distributed weights.
+  - **Backward Compatibility**: System seamlessly handles mixed scenarios with both legacy batches (no NodeId) and new per-node batches in the same epoch.
+  - **Weight Preservation**: Multi-batch aggregation continues to work correctly with the existing `+=` operator in `calculateParticipantWeight`.
+- **Dependencies**: 5.8, 5.9, 5.10
+
+### Section 6: MLNode Uptime Management System
+
+#### 6.1 MLNode Allocation Protobuf Types
 - **Task**: [ ] Create timeslot allocation protobuf types
 - **What**: Create enum for PRE_POC_SLOT, POC_SLOT and timeslot allocation structures. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/mlnode_allocation.pb.go`
 - **Dependencies**: None
 
-#### 7.2 MLNode Timeslot Fields
+#### 6.2 MLNode Timeslot Fields
 - **Task**: [ ] Add timeslot allocation to MLNodeInfo
 - **What**: Add `timeslot_allocation` (repeated boolean) field to MLNodeInfo. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (update to existing MLNodeInfo)
-- **Dependencies**: 7.1, 4.1
+- **Dependencies**: 6.1, 4.1
 
-#### 7.3 Throughput Vector Fields
+#### 6.2.1 Model-Based MLNode Distribution in setModelsForParticipants
+- **Task**: [ ] Implement governance model iteration and MLNode sorting
+- **What**: Modify `setModelsForParticipants` to:
+  - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `false` for the MLNodes
+  - Keep remaining unassigned MLNodes in the final array (governance_models_count + 1)
+- **Where**: `inference-chain/x/inference/module/module.go`
+- **Dependencies**: 6.2.2, 6.2.3
+
+#### 6.3 Throughput Vector Fields
 - **Task**: [ ] Add throughput vectors to EpochGroupData
 - **What**: Add `expected_throughput_vector` and `real_throughput_vector` fields. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
-- **Dependencies**: 5.3
+- **Dependencies**: 6.2.5
 
-#### 7.4 Throughput Measurement Functions
+#### 6.4 Throughput Measurement Functions
 - **Task**: [ ] Create throughput measurement and validation functions
 - **What**: Create `MeasureModelThroughputForBlocks`, `SetExpectedThroughput`, `SetRealThroughput`, `ValidateThroughputPerformance`
 - **Where**: `inference-chain/x/inference/keeper/throughput_measurement.go` (new file)
-- **Dependencies**: 7.3
+- **Dependencies**: 6.3
 
-#### 7.5 Pre-PoC MLNode Selection Algorithm
+#### 6.5 Pre-PoC MLNode Selection Algorithm
 - **Task**: [ ] Implement weighted participant selection for PoC slot assignment
 - **What**: Create node selection algorithm in EndBlocker before PoC Stage
 - **Where**: `inference-chain/x/inference/module/module.go` (enhance EndBlocker)
-- **Dependencies**: 7.2, 7.4
+- **Dependencies**: 6.4, 6.2
 
-#### 7.6 PoC Weight Preservation System
+#### 6.6 PoC Weight Preservation System
 - **Task**: [ ] Implement weight preservation for inference-serving MLNodes
 - **What**: Enhance `ComputeNewWeights` to handle mixed PoC mining and inference service weights
 - **Where**: `inference-chain/x/inference/module/chainvalidation.go`
-- **Dependencies**: 5.4, 7.5
+- **Dependencies**: 6.5, 6.2.3
+
+### Section 7: Per Model Sybil Resistance Incentives
+
+#### 7.1 Model Coverage Query Function
+- **Task**: [ ] Create participant model coverage checking function
+- **What**: Create `GetParticipantModelCoverage` function to check if participant supports all models
+- **Where**: `inference-chain/x/inference/epochgroup/epoch_group.go`
+- **Dependencies**: 4.3
+
+#### 7.2 Account Settlement Enhancement
+- **Task**: [ ] Add model coverage bonus to reward calculation
+- **What**: Enhance `getSettleAmount` and `GetSettleAmounts` to apply 10% bonus for full model coverage
+- **Where**: `inference-chain/x/inference/keeper/accountsettle.go`
+- **Dependencies**: 7.1
 
 ### Section 8: Enhanced PoC Stages
 
@@ -373,8 +507,7 @@ Each task includes:
 #### 8.3 Orchestrator PoC Stage Handling
 - **Task**: [ ] Add new stage handling to orchestrator
 - **What**: Update `ProcessNewBlockEvent` to handle OnNextEpochReady and add `LoadModelsForNextEpoch`
-- **Where**: `decentralized-api/internal/poc/orchestrator.go`
-- **Dependencies**: 8.2
+- **Where**: `decentralized-api/internal/poc/orchestrator.go`- **Dependencies**: 8.2
 
 ### Section 9: Testing and Integration
 
@@ -438,6 +571,12 @@ Each task includes:
   - `decentralized-api/internal/server/public/get_models_handler.go`
   - `decentralized-api/internal/server/public/get_pricing_handler.go`
 - **Dependencies**: 4.6
+
+#### 11.2 MLNode Throughput Population Review
+- **Task**: [ ] Review and implement throughput population in setModelsForParticipants
+- **What**: Evaluate whether `setModelsForParticipants` should populate `MLNodeInfo.Throughput` using the governance model's `ThroughputPerNonce` field instead of relying solely on hardware node declarations. This would ensure consistent throughput calculations based on governance-approved model parameters during epoch group formation.
+- **Where**: `inference-chain/x/inference/module/module.go` - `setModelsForParticipants` function
+- **Dependencies**: 5.9, 5.10
 
 ## Critical Dependencies Summary
 

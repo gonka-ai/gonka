@@ -22,7 +22,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
-	"sort"
 
 	// this line is used by starport scaffolding # 1
 
@@ -553,28 +552,171 @@ func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...i
 }
 
 func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant) {
+	// TODO: We may need to populate throughput in MLNodeInfo using the model's ThroughputPerNonce
+	// This would ensure consistent throughput calculations based on governance model parameters
+	// rather than relying on hardware node declarations alone.
+
+	// Get governance models to iterate through
+	governanceModels, err := am.keeper.GetGovernanceModels(ctx)
+	if err != nil {
+		am.LogError("setModelsForParticipants: Unable to get governance models", types.EpochGroup, "error", err.Error())
+		return
+	}
+
 	for _, p := range participants {
 		hardwareNodes, found := am.keeper.GetHardwareNodes(ctx, p.Index)
 		if !found {
+			// No hardware nodes - just set empty arrays
 			p.Models = make([]string, 0)
+			p.MlNodes = make([]*types.ModelMLNodes, 0)
 			continue
 		}
-		p.Models = getAllModels(hardwareNodes)
+
+		// Get the original MLNodes from the first array (index 0) - populated by task 5.8
+		var originalMLNodes []*types.MLNodeInfo
+		if len(p.MlNodes) > 0 && p.MlNodes[0] != nil {
+			originalMLNodes = p.MlNodes[0].MlNodes
+		}
+
+		// Handle legacy PoC weight distribution for batches without NodeId
+		originalMLNodes = am.distributeLegacyWeight(originalMLNodes, hardwareNodes)
+
+		// Track which MLNodes have been assigned
+		assignedMLNodes := make(map[string]bool)
+		var supportedModels []string
+		var newMLNodeArrays []*types.ModelMLNodes
+
+		// For each governance model, pick the first available MLNode that supports it
+		for _, model := range governanceModels {
+			var modelMLNodes []*types.MLNodeInfo
+
+			for _, mlNode := range originalMLNodes {
+				if assignedMLNodes[mlNode.NodeId] {
+					continue // MLNode already assigned to another model
+				}
+
+				// Check if this MLNode supports the current governance model
+				if nodeSupportsModel(hardwareNodes, mlNode.NodeId, model.Id) {
+					// Add this MLNode to the current model's array
+					modelMLNodes = append(modelMLNodes, mlNode)
+					assignedMLNodes[mlNode.NodeId] = true
+					break // Move to next governance model (only one MLNode per model)
+				}
+			}
+
+			// Only add the model and MLNode array if we found supporting MLNodes
+			if len(modelMLNodes) > 0 {
+				supportedModels = append(supportedModels, model.Id)
+				newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: modelMLNodes})
+			}
+		}
+
+		// Add remaining unassigned MLNodes as overflow array (if any exist)
+		var unassignedMLNodes []*types.MLNodeInfo
+		for _, mlNode := range originalMLNodes {
+			if !assignedMLNodes[mlNode.NodeId] {
+				unassignedMLNodes = append(unassignedMLNodes, mlNode)
+			}
+		}
+		if len(unassignedMLNodes) > 0 {
+			newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: unassignedMLNodes})
+		}
+
+		// Update participant with reorganized MLNode arrays and supported models
+		p.MlNodes = newMLNodeArrays
+		p.Models = supportedModels
 	}
 }
 
-func getAllModels(nodes *types.HardwareNodes) []string {
-	modelMap := make(map[string]struct{})
-	for _, node := range nodes.HardwareNodes {
-		for _, model := range node.Models {
-			modelMap[model] = struct{}{}
+// distributeLegacyWeight handles legacy PoC batches by distributing weight from
+// MLNodes with empty NodeId among actual hardware nodes
+func (am AppModule) distributeLegacyWeight(originalMLNodes []*types.MLNodeInfo, hardwareNodes *types.HardwareNodes) []*types.MLNodeInfo {
+	if len(originalMLNodes) == 0 || hardwareNodes == nil || len(hardwareNodes.HardwareNodes) == 0 {
+		return originalMLNodes
+	}
+
+	// Find MLNode with empty NodeId (legacy batches)
+	var legacyMLNode *types.MLNodeInfo
+	var legacyIndex int = -1
+
+	for i, mlNode := range originalMLNodes {
+		if mlNode.NodeId == "" {
+			legacyMLNode = mlNode
+			legacyIndex = i
+			break
 		}
 	}
 
-	models := make([]string, 0, len(modelMap))
-	for model := range modelMap {
-		models = append(models, model)
+	// If no legacy MLNode found, return original list unchanged
+	if legacyMLNode == nil {
+		return originalMLNodes
 	}
-	sort.Strings(models)
-	return models
+
+	// Remove the legacy MLNode from the list
+	newMLNodes := make([]*types.MLNodeInfo, 0, len(originalMLNodes)-1)
+	newMLNodes = append(newMLNodes, originalMLNodes[:legacyIndex]...)
+	newMLNodes = append(newMLNodes, originalMLNodes[legacyIndex+1:]...)
+
+	// Calculate weight per hardware node
+	totalLegacyWeight := legacyMLNode.PocWeight
+	numHardwareNodes := int64(len(hardwareNodes.HardwareNodes))
+	weightPerNode := totalLegacyWeight / numHardwareNodes
+	remainderWeight := totalLegacyWeight % numHardwareNodes
+
+	// Distribute weight among hardware nodes
+	// Give weightPerNode to each, then distribute remainder by giving +1 to first nodes until remainder is over
+	for i, hwNode := range hardwareNodes.HardwareNodes {
+		nodeId := hwNode.LocalId
+		distributedWeight := weightPerNode
+		if int64(i) < remainderWeight {
+			distributedWeight++ // Give +1 to first remainderWeight nodes
+		}
+
+		if distributedWeight <= 0 {
+			continue
+		}
+
+		// Find existing MLNode for this hardware node
+		found := false
+		for _, existingMLNode := range newMLNodes {
+			if existingMLNode.NodeId == nodeId {
+				// Add distributed weight to existing MLNode
+				existingMLNode.PocWeight += distributedWeight
+				found = true
+				break
+			}
+		}
+
+		// If no existing MLNode found, create new one
+		if !found {
+			newMLNode := &types.MLNodeInfo{
+				NodeId:     nodeId,
+				PocWeight:  distributedWeight,
+				Throughput: 0, // Will be populated later if needed
+			}
+			newMLNodes = append(newMLNodes, newMLNode)
+		}
+	}
+
+	am.LogInfo("Distributed legacy PoC weight", types.PoC,
+		"legacyWeight", totalLegacyWeight,
+		"numHardwareNodes", numHardwareNodes,
+		"weightPerNode", weightPerNode)
+
+	return newMLNodes
+}
+
+// Helper function to check if a specific MLNode supports a given model
+func nodeSupportsModel(hardwareNodes *types.HardwareNodes, nodeId string, modelId string) bool {
+	for _, node := range hardwareNodes.HardwareNodes {
+		if node.LocalId == nodeId {
+			for _, supportedModel := range node.Models {
+				if supportedModel == modelId {
+					return true
+				}
+			}
+			break
+		}
+	}
+	return false
 }

@@ -22,6 +22,7 @@ type EpochMember struct {
 	SeedSignature string
 	Reputation    int64
 	Models        []string
+	MlNodes       []*types.ModelMLNodes
 }
 
 func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
@@ -32,6 +33,7 @@ func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation 
 		SeedSignature: p.Seed.Signature,
 		Reputation:    reputation,
 		Models:        p.Models,
+		MlNodes:       p.MlNodes,
 	}
 }
 
@@ -166,7 +168,7 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		Signature:     member.SeedSignature,
 	})
 
-	mlNodes := eg.storeMLNodeInfo(ctx, member.Address, eg.GroupData.ModelId)
+	mlNodes := eg.storeMLNodeInfo(member, eg.GroupData.ModelId)
 
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{
 		MemberAddress: member.Address,
@@ -175,35 +177,37 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		MlNodes:       mlNodes,
 	})
 	eg.GroupData.TotalWeight += member.Weight
+
+	totalThroughput := int64(0)
+	for _, node := range mlNodes {
+		totalThroughput += node.Throughput
+	}
+	eg.GroupData.TotalThroughput += totalThroughput
+
 	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 }
 
-func (eg *EpochGroup) storeMLNodeInfo(ctx context.Context, memberAddress string, modelId string) []*types.MLNodeInfo {
+func (eg *EpochGroup) storeMLNodeInfo(member EpochMember, modelId string) []*types.MLNodeInfo {
 	if modelId == "" {
 		return nil // Do not store ML nodes in the parent group
 	}
 
-	nodesContainer, found := eg.HardwareNodeKeeper.GetHardwareNodes(ctx, memberAddress)
-	if !found {
-		eg.Logger.LogWarn("Hardware nodes not found for member", types.EpochGroup, "member", memberAddress)
-		return nil
-	}
-
-	var mlNodes []*types.MLNodeInfo
-	for _, node := range nodesContainer.HardwareNodes {
-		for _, nodeModelId := range node.Models {
-			if nodeModelId == modelId {
-				// This node supports the model for this sub-group
-				mlNodes = append(mlNodes, &types.MLNodeInfo{
-					NodeId: node.LocalId,
-					// Throughput and PocWeight will be populated in later tasks
-				})
-				break // Move to the next node once a model match is found
-			}
+	// Find the index of the modelId in member.Models
+	modelIndex := -1
+	for i, model := range member.Models {
+		if model == modelId {
+			modelIndex = i
+			break
 		}
 	}
 
-	return mlNodes
+	// Return the MLNodeInfo objects from the corresponding model index array
+	if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
+		modelMLNodes := member.MlNodes[modelIndex]
+		return modelMLNodes.MlNodes
+	}
+
+	return nil
 }
 
 func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
@@ -218,8 +222,26 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 
 		// Add the member to the sub-group with the same weight, pubkey, etc.
 		// We're explicitly passing only this model to prevent further recursion
+		// TODO: Check if this recursion prevention logic is still needed since there should be no recursion risk
 		subMember := member
 		subMember.Models = []string{modelId}
+
+		// Find the model index and copy the corresponding MLNode array
+		modelIndex := -1
+		for i, model := range member.Models {
+			if model == modelId {
+				modelIndex = i
+				break
+			}
+		}
+
+		// Copy only the MLNode array for this specific model
+		if modelIndex >= 0 && modelIndex < len(member.MlNodes) {
+			subMember.MlNodes = []*types.ModelMLNodes{member.MlNodes[modelIndex]}
+		} else {
+			subMember.MlNodes = []*types.ModelMLNodes{}
+		}
+
 		err = subGroup.AddMember(ctx, subMember)
 		if err != nil {
 			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", modelId)

@@ -94,7 +94,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	// Start PoC
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
 	)
 	if err := worker.mlClient.InitGenerate(ctx, dto); err != nil {
 		logging.Error("Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
@@ -158,7 +158,7 @@ func (c InitValidateNodeCommand) Execute(ctx context.Context, worker *NodeWorker
 
 	dto := mlnodeclient.BuildInitDto(
 		c.BlockHeight, c.PubKey, int64(c.TotalNodes),
-		int64(worker.node.Node.NodeNum), c.BlockHash, c.CallbackUrl,
+		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
 	)
 
 	if err := worker.mlClient.InitValidate(ctx, dto); err != nil {

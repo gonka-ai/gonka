@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"decentralized-api/mlnodeclient"
+
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/api/inference/inference"
@@ -22,11 +23,23 @@ func (s *Server) postGeneratedBatches(ctx echo.Context) error {
 
 	logging.Info("ProofBatch received", types.PoC, "body", body)
 
+	var nodeId string
+	if body.NodeNum > 0 {
+		node, found := s.broker.GetNodeByNodeNum(body.NodeNum)
+		if found {
+			nodeId = node.Id
+		} else {
+			logging.Warn("Received PoC batch with unknown NodeNum", types.PoC, "node_num", body.NodeNum)
+			// NodeId will be an empty string
+		}
+	}
+
 	msg := &inference.MsgSubmitPocBatch{
 		PocStageStartBlockHeight: body.BlockHeight,
 		Nonces:                   body.Nonces,
 		Dist:                     body.Dist,
 		BatchId:                  uuid.New().String(),
+		NodeId:                   nodeId,
 	}
 
 	if err := s.recorder.SubmitPocBatch(msg); err != nil {
