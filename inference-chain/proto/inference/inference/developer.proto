@@ -16,6 +16,7 @@ message InferenceStats {
   uint64 total_token_count = 4;
   string model = 5;
   int64 actual_cost_in_coins = 6;
+  uint64 epoch_id = 7;
 }
 
 message DeveloperStatsByTime {

@@ -16,15 +16,40 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+func advanceEpoch(ctx context.Context, k *keeper.Keeper, blockHeight int64) (*types.Epoch, error) {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return nil, types.ErrEffectiveEpochNotFound
+	}
+	newEpoch := types.Epoch{Index: epochIndex + 1, PocStartBlockHeight: blockHeight}
+	k.SetEpoch(ctx, &newEpoch)
+	k.SetEffectiveEpochIndex(ctx, newEpoch.Index)
+
+	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight))
+	if err != nil {
+		return nil, err
+	}
+	err = eg.CreateGroup(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &newEpoch, nil
+}
+
 func TestMsgServer_FinishInference(t *testing.T) {
 	const (
-		epochId  = 1
-		epochId2 = 2
+		epochId  = 0
+		epochId2 = 1
 
 		inferenceId = "inferenceId"
 	)
 
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	mocks.StubForInitGenesis(ctx)
+
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
@@ -62,8 +87,10 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		EpochId:      epochId,
 		InferenceIds: []string{expectedInference.InferenceId},
 	}, devStat)
-	k.SetEffectiveEpochGroupId(ctx, epochId2)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
+
+	if _, err := advanceEpoch(ctx, &k, ctx2.BlockHeight()); err != nil {
+		t.Fatalf("Failed to advance epoch: %v", err)
+	}
 
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{

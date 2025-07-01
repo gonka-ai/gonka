@@ -17,12 +17,11 @@ type StatsSummary struct {
 
 func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
 	k.LogInfo("SetDeveloperStats: got stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy, "poc_block_height", inference.EpochGroupId)
-	epoch, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		return err
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found {
+		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
 	}
 
-	currentEpochId := epoch.GroupData.EpochGroupId
 	tokens := inference.CompletionTokenCount + inference.PromptTokenCount
 	inferenceTime := inference.StartBlockTimestamp
 	if inferenceTime == 0 {
@@ -30,7 +29,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	}
 
 	inferenceStats := types.InferenceStats{
-		EpochPocBlockHeight: inference.EpochGroupId,
+		EpochPocBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
 		InferenceId:         inference.InferenceId,
 		Status:              inference.Status,
 		TotalTokenCount:     tokens,
@@ -38,12 +37,12 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		ActualCostInCoins:   inference.ActualCost,
 	}
 
-	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, currentEpochId)
+	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, effectiveEpoch.Index)
 	if err != nil {
 		return err
 	}
 	k.setInferenceStatsByModel(ctx, inference.RequestedBy, inferenceStats, inferenceTime)
-	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, currentEpochId, inferencePrevEpochId)
+	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, effectiveEpoch.Index, inferencePrevEpochId)
 	return nil
 }
 
@@ -306,6 +305,7 @@ func modelByTimeKey(model string, timestamp int64, inferenceId string) []byte {
 	return append(modelKey, []byte(inferenceId)...)
 }
 
+// TODO [PRTODO]: why not / like we use everywhere else?
 var keySeparator = []byte("__SEP__")
 
 func developerByEpochKey(developerAddr string, epochId uint64) []byte {
