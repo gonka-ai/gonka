@@ -25,6 +25,15 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	)
 
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	mocks.StubForInitGenesis(ctx)
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	// FIXME: rework when moved to the new epoch system
+	epoch1 := types.Epoch{Index: epochId, PocStartBlockHeight: epochId}
+	k.SetEpoch(ctx, &epoch1)
+	k.SetEffectiveEpochIndex(ctx, epoch1.Index)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId, PocStartBlockHeight: epochId})
+
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
@@ -62,7 +71,11 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		EpochId:      epochId,
 		InferenceIds: []string{expectedInference.InferenceId},
 	}, devStat)
-	k.SetEffectiveEpochGroupId(ctx, epochId2)
+
+	// FIXME: rework when moved to the new epoch system
+	epoch2 := types.Epoch{Index: epochId2, PocStartBlockHeight: epochId2}
+	k.SetEpoch(ctx, &epoch2)
+	k.SetEffectiveEpochIndex(ctx, epoch2.Index)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
 
 	// require that
