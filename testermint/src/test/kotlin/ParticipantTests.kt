@@ -2,6 +2,7 @@ import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
 import com.productscience.data.EpochPhase
 import com.productscience.data.StakeValidator
+import com.productscience.data.StakeValidatorStatus
 import com.productscience.data.UpdateParams
 import com.productscience.getNextStage
 import com.productscience.initCluster
@@ -89,7 +90,7 @@ class ParticipantTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(StakeValidator.Companion.Status.UNBONDING.value)
+        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
             it.pubKey.key == zeroParticipantKey.key
@@ -118,7 +119,7 @@ class ParticipantTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(StakeValidator.Companion.Status.UNBONDING.value)
+        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         // Ideally just add here smth like "wait for 1 block?"
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
@@ -136,7 +137,7 @@ class ParticipantTests : TestermintTest() {
         }
 
         assertThat(rejoinedValidator.tokens).isEqualTo(15)
-        assertThat(rejoinedValidator.status).isEqualTo(StakeValidator.Companion.Status.BONDED.value)
+        assertThat(rejoinedValidator.status).isEqualTo(StakeValidatorStatus.BONDED.value)
         val cometValidatorsAfterRejoin = genesis.node.getCometValidators()
         assertThat(cometValidatorsAfterRejoin.validators).anyMatch {
             it.pubKey.key == zeroParticipantKey.key
