@@ -87,7 +87,7 @@ fun getLocalInferencePairs(config: ApplicationConfig): List<LocalInferencePair> 
 }
 
 private fun getUrlForPrivatePort(portMap: Map<Int?, ContainerPort>, privatePort: Int): String {
-    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "0.0.0.0"
+    val privateUrl = portMap[privatePort]?.ip?.takeUnless { it == "::" } ?: "localhost"
     return "http://$privateUrl:${portMap[privatePort]?.publicPort}"
 }
 

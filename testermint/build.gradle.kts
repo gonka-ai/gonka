@@ -28,6 +28,10 @@ dependencies {
     implementation("org.wiremock:wiremock:3.10.0")
 }
 
+tasks.withType<JavaExec>().configureEach {
+    systemProperty("java.net.preferIPv6Addresses", "true")
+}
+
 tasks.test {
     outputs.upToDateWhen { false }
     useJUnitPlatform {
@@ -40,7 +44,7 @@ tasks.test {
             excludeTags(*excludeTags.split(",").toTypedArray())
         }
     }
-
+    systemProperty("java.net.preferIPv6Addresses", "true")
 }
 kotlin {
     jvmToolchain(19)
