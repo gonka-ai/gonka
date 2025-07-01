@@ -7,6 +7,11 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -15,10 +20,6 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 )
 
 func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {

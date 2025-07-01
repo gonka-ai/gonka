@@ -28,6 +28,7 @@ func (c RegisterNode) Execute(b *Broker) {
 
 	modelMap := make(map[string]struct{})
 	for _, model := range govModels.Model {
+		logging.Info("Governance model", types.Nodes, "model_id", model.Id)
 		modelMap[model.Id] = struct{}{}
 	}
 

@@ -49,9 +49,9 @@
         },
         {
           "proposed_by": "genesis",
-          "id": "Qwen/Qwen1.5-7B-Instruct",
+          "id": "Qwen/Qwen2.5-7B-Instruct",
           "units_of_compute_per_token": "100",
-          "hf_repo": "Qwen/Qwen1.5-7B-Instruct",
+          "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
           "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28",
           "model_args": [
             "--quantization",

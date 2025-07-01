@@ -310,7 +310,7 @@ fun initialize(pairs: List<LocalInferencePair>): LocalInferencePair {
     val currentParticipants = highestFunded.api.getParticipants()
     for (pair in funded) {
         if (currentParticipants.none { it.id == pair.node.getAddress() }) {
-            pair.addSelfAsParticipant(listOf("unsloth/llama-3-8b-Instruct"))
+            pair.addSelfAsParticipant(listOf("Qwen/Qwen2.5-7B-Instruct"))
         }
     }
     addUnfundedDirectly(unfunded, currentParticipants, highestFunded)
@@ -344,7 +344,7 @@ private fun addUnfundedDirectly(
             highestFunded.api.addUnfundedInferenceParticipant(
                 UnfundedInferenceParticipant(
                     url = "http://${pair.name}-api:8080",
-                    models = listOf("unsloth/llama-3-8b-Instruct"),
+                    models = listOf("Qwen/Qwen2.5-7B-Instruct"),
                     validatorKey = valPubKey.value,
                     pubKey = selfKey.pubkey.key,
                     address = selfKey.address,
@@ -468,7 +468,7 @@ data class InferenceRequestPayload(
 // Hardcoded for now
 const val inferenceRequestPromptTokens = 19
 val inferenceRequestObject = InferenceRequestPayload(
-    model = "unsloth/llama-3-8b-Instruct",
+    model = "Qwen/Qwen2.5-7B-Instruct",
     temperature = 0.8,
     messages = listOf(
         ChatMessage("system", "Regardless of the language of the question, answer in english"),
@@ -482,7 +482,7 @@ val inferenceRequest = cosmosJson.toJson(inferenceRequestObject)
 val inferenceRequestStreamObject = inferenceRequestObject.copy(stream = true)
 val inferenceRequestStream = cosmosJson.toJson(inferenceRequestStreamObject)
 
-const val defaultModel = "unsloth/llama-3-8b-Instruct"
+const val defaultModel = "Qwen/Qwen2.5-7B-Instruct"
 
 val validNode = InferenceNode(
     host = "36.189.234.237:19009/",
@@ -502,7 +502,7 @@ val defaultInferenceResponse = """
         "id": "cmpl-1c7b769de9b0494694eeee854da0a014",
         "object": "chat.completion",
         "created": 1736220740,
-        "model": "unsloth/llama-3-8b-Instruct",
+        "model": "Qwen/Qwen2.5-7B-Instruct",
         "choices": [
             {
                 "index": 0,

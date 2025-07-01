@@ -12,7 +12,7 @@ const (
   "id": "cmpl-2d320c7a47f24b02b48a376b979a9242",
   "object": "chat.completion",
   "created": 1722197559,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,
@@ -37,7 +37,7 @@ const (
   "id": "cmpl-c5298389c6d34738b1ecb8a557ddfba3",
   "object": "chat.completion",
   "created": 1722197602,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,
@@ -136,7 +136,7 @@ const (
   "id": "cmpl-7804309bf8404215aefc67fd9275d1ff",
   "object": "chat.completion",
   "created": 1722197678,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,
@@ -438,7 +438,7 @@ const (
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
   "created": 1726472629,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,
@@ -456,7 +456,7 @@ const (
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
   "created": 1726472629,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,
@@ -511,7 +511,7 @@ const (
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
   "created": 1726472629,
-  "model": "unsloth/llama-3-8b-Instruct",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
   "choices": [
     {
       "index": 0,

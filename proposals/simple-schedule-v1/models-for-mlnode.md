@@ -24,7 +24,7 @@ MLNodes are initially defined in the API node configuration files managed by the
 During API node startup in `decentralized-api/main.go`, the system loads all configured MLNodes through the `LoadNodeToBroker` function. This process reads the configuration and queues registration commands `RegisterNode` command for each node, ensuring all configured MLNodes are available when the API node begins operation.
 
 **Model Source in Configuration:**
-The models listed in MLNode configurations are arbitrary model names/identifiers chosen by the node operator. These are typically model names like "unsloth/llama-3-8b-Instruct" or similar identifiers that correspond to actual AI models the node can run. At this stage, there is no validation against the blockchain governance registry.
+The models listed in MLNode configurations are arbitrary model names/identifiers chosen by the node operator. These are typically model names like "Qwen/Qwen2.5-7B-Instruct" or similar identifiers that correspond to actual AI models the node can run. At this stage, there is no validation against the blockchain governance registry.
 
 ### Phase 2: Broker Registration
 

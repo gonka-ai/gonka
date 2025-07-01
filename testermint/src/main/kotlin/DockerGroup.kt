@@ -73,6 +73,7 @@ data class DockerGroup(
         process.waitFor()
         // Just register the log events
         getLocalInferencePairs(config)
+        print("Genesis overrides file: $genesisOverridesFile | content: ${Files.readString(Path.of(workingDirectory, genesisOverridesFile))}")
     }
 
     fun tearDownExisting() {
@@ -198,7 +199,7 @@ fun createDockerGroup(
                 "poc_port": 8080,
                 "max_concurrent": 10,
                 "models": [
-                  "unsloth/llama-3-8b-Instruct"
+                  "Qwen/Qwen2.5-7B-Instruct"
                 ]
               }
             ]
