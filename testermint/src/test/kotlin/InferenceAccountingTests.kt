@@ -330,7 +330,7 @@ fun verifySettledInferences(
     // More than just debugging, this forces the evaluation of the sequence
     val allInferences = inferences.toList()
     highestFunded.waitForStage(EpochStage.START_OF_POC)
-    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS)
+    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
 
     logSection("Verifying balance changes")
     val afterSettleParticipants = highestFunded.api.getParticipants()
