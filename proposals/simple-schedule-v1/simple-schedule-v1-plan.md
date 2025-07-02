@@ -433,48 +433,71 @@ Each task includes:
 ### Section 6: MLNode Uptime Management System
 
 #### 6.1 MLNode Allocation Protobuf Types
-- **Task**: [ ] Create timeslot allocation protobuf types
+- **Task**: [~] Create timeslot allocation protobuf types
 - **What**: Create enum for PRE_POC_SLOT, POC_SLOT and timeslot allocation structures. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
-- **Where**: `inference-chain/x/inference/types/mlnode_allocation.pb.go`
+- **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (add enum to existing epoch_group_data.proto)
 - **Dependencies**: None
 
 #### 6.2 MLNode Timeslot Fields
-- **Task**: [ ] Add timeslot allocation to MLNodeInfo
+- **Task**: [~] Add timeslot allocation to MLNodeInfo
 - **What**: Add `timeslot_allocation` (repeated boolean) field to MLNodeInfo. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (update to existing MLNodeInfo)
 - **Dependencies**: 6.1, 4.1
 
 #### 6.2.1 Model-Based MLNode Distribution in setModelsForParticipants
-- **Task**: [ ] Implement governance model iteration and MLNode sorting
+- **Task**: [~] Timeslots initial allocation in MLNode
 - **What**: Modify `setModelsForParticipants` to:
-  - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `false` for the MLNodes
-  - Keep remaining unassigned MLNodes in the final array (governance_models_count + 1)
+  - Add MLNode only for first model of corresponding hardware node
+  - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `true` for the MLNode
 - **Where**: `inference-chain/x/inference/module/module.go`
-- **Dependencies**: 6.2.2, 6.2.3
+- **Dependencies**: 6.2
 
-#### 6.3 Throughput Vector Fields
+#### 6.2.2 Model-Based MLNode Distribution in setModelsForParticipants
+- **Task**: [~] POC 50% of nodes allocation
+- **What**: Modify `setModelsForParticipants` to:
+  - After allocating nodes per participant, for each participant, iterate through models, for each model calculate total PoC weight of the MLNodes with `POC_SLOT` set to `true` (PoC weight of that participant for that model), and mark nodes `POC_SLOT` to `false` until we reach <50% PoC weight of that participant for that model. Before switching to the next model, take the "remainder" (what we marked above 50%), and subtract the remainder from total PoC weight for the next model, so that we need to switch fewer MLNodes to `false` potentially. When iterating through the models, iterate in random but deterministic order with seed of epoch ID and participant address.
+- **Where**: `inference-chain/x/inference/module/module.go`
+- **Dependencies**: 6.2.1
+
+#### 6.2.3 API Node POC_SLOT Enforcement
+- **Task**: [ ] Prevent ML nodes from switching to PoC when POC_SLOT is true
+- **What**: Modify API node state command logic to check MLNode's POC_SLOT allocation before changing node states:
+  - In `StartPocCommand.Execute`: Before switching a node to PoC mining, query epoch group data to get the node's timeslot allocation and check if `POC_SLOT` is `true`. If true, skip the PoC mining transition and keep the node in inference service mode.
+  - In `InitValidateCommand.Execute`: Ensure validation state transitions respect POC_SLOT allocations for nodes that should continue inference service.
+  - In `InferenceUpAllCommand.Execute`: Verify that the existing implementation already checks if nodes are in inference mode and does nothing for those nodes (no special POC_SLOT logic needed).
+  - Add helper function `shouldNodeContinueInference(nodeId string)` to query epoch MLNode info and check POC_SLOT status.
+  - Log decisions for debugging and monitoring.
+- **Where**: `decentralized-api/broker/state_commands.go` in the Execute methods of `StartPocCommand`, `InitValidateCommand`, and `InferenceUpAllCommand`
+- **Dependencies**: 6.2.2
+
+#### 6.3 PoC Weight Preservation System
+- **Task**: [ ] Implement weight preservation for inference-serving MLNodes
+- **What**: Enhance weight transition system to preserve weights from previous epoch for MLNodes that continue inference service during PoC:
+  - Create `PreserveInferenceNodeWeights` function that takes old and new `ActiveParticipant` arrays
+  - Iterate through old `ActiveParticipant` MLNodes to find nodes with `POC_SLOT = true`
+  - For each inference-serving MLNode, copy its weight to the corresponding MLNode in new `ActiveParticipant`
+  - Ensure preserved weights are properly integrated with new PoC mining weights
+  - Call this function after `setModelsForParticipants` in `onSetNewValidatorsStage`
+- **Where**: `inference-chain/x/inference/module/module.go` - new function called from `onSetNewValidatorsStage`
+- **Dependencies**: 6.2.3
+
+#### 6.4 Throughput Vector Fields
 - **Task**: [ ] Add throughput vectors to EpochGroupData
 - **What**: Add `expected_throughput_vector` and `real_throughput_vector` fields. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go`
-- **Dependencies**: 6.2.5
+- **Dependencies**: 6.3
 
-#### 6.4 Throughput Measurement Functions
+#### 6.5 Throughput Measurement Functions
 - **Task**: [ ] Create throughput measurement and validation functions
 - **What**: Create `MeasureModelThroughputForBlocks`, `SetExpectedThroughput`, `SetRealThroughput`, `ValidateThroughputPerformance`
 - **Where**: `inference-chain/x/inference/keeper/throughput_measurement.go` (new file)
-- **Dependencies**: 6.3
+- **Dependencies**: 6.4
 
-#### 6.5 Pre-PoC MLNode Selection Algorithm
+#### 6.6 Pre-PoC MLNode Selection Algorithm
 - **Task**: [ ] Implement weighted participant selection for PoC slot assignment
 - **What**: Create node selection algorithm in EndBlocker before PoC Stage
 - **Where**: `inference-chain/x/inference/module/module.go` (enhance EndBlocker)
-- **Dependencies**: 6.4, 6.2
-
-#### 6.6 PoC Weight Preservation System
-- **Task**: [ ] Implement weight preservation for inference-serving MLNodes
-- **What**: Enhance `ComputeNewWeights` to handle mixed PoC mining and inference service weights
-- **Where**: `inference-chain/x/inference/module/chainvalidation.go`
-- **Dependencies**: 6.5, 6.2.3
+- **Dependencies**: 6.5
 
 ### Section 7: Per Model Sybil Resistance Incentives
 
