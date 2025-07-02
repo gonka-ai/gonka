@@ -436,9 +436,9 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 
 		summary := keeper.GetSummaryLastNEpochs(ctx, 1)
-		assert.Equal(t, summary, expectedSummary)
+		assert.Equal(t, expectedSummary, summary)
 
-		summary2 := keeper.GetSummaryByTime(ctx, inference.StartBlockTimestamp-10, inference2.StartBlockTimestamp+20)
-		assert.Equal(t, summary2, expectedSummary)
+		summary2 := keeper.GetSummaryByTime(ctx, inference.EndBlockTimestamp-10, inference2.EndBlockTimestamp+20)
+		assert.Equal(t, expectedSummary, summary2)
 	})
 }
