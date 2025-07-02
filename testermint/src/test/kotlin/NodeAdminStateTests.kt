@@ -1,18 +1,24 @@
 import com.productscience.*
 import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.util.concurrent.TimeUnit
 
-@Timeout(value = 5, unit = TimeUnit.MINUTES)
+@Timeout(value = 10, unit = TimeUnit.MINUTES)
 class NodeAdminStateTests : TestermintTest() {
 
     @Test
     fun `test node disable during inference phase`() {
-        val (cluster, genesis) = initCluster()
-        
+        val (_, genesis) = initCluster(reboot = true)
+        genesis.waitForNextInferenceWindow()
+
+        val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
+        assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
+        assertThat(genesisValidatorBeforeDisabled.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+
         logSection("Getting initial nodes")
         val nodes = genesis.api.getNodes()
         assertThat(nodes).isNotEmpty()
@@ -65,11 +71,16 @@ class NodeAdminStateTests : TestermintTest() {
         assertThat(enabledNode.state.adminState?.enabled)
             .isTrue()
             .`as`("Node should be enabled again")
+
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 3)
+        val genesisValidatorAfterNodeIsDisabled = genesis.node.getStakeValidator()
+        assertThat(genesisValidatorAfterNodeIsDisabled.tokens).isEqualTo(0)
+        assertThat(genesisValidatorAfterNodeIsDisabled.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
     }
 
     @Test
     fun `test node disable during PoC phase`() {
-        val (cluster, genesis) = initCluster()
+        val (_, genesis) = initCluster(reboot = true)
         
         logSection("Waiting for PoC phase")
         genesis.waitForStage(EpochStage.START_OF_POC)
@@ -85,14 +96,25 @@ class NodeAdminStateTests : TestermintTest() {
         
         val nodesAfterDisable = genesis.api.getNodes()
         val disabledNode = nodesAfterDisable.first { it.node.id == nodeId }
-        val disableEpoch = disabledNode.state.adminState?.epoch ?: 0UL
-        
+        assertThat(disabledNode.state.adminState?.enabled)
+            .isFalse()
+            .`as`("Node should be disabled")
+
         logSection("Waiting for next epoch to verify node doesn't participate")
-        genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION)
+        genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION, offset = 3)
+
+        // It's too late to disable at PoC, so we expect the node to participate and keep its weight
+        val genesisStakeValidatorWhenDisabledAtPoc = genesis.node.getStakeValidator()
+        assertThat(genesisStakeValidatorWhenDisabledAtPoc.tokens).isEqualTo(10)
+        assertThat(genesisStakeValidatorWhenDisabledAtPoc.status).isEqualTo(StakeValidatorStatus.BONDED.value)
+
         genesis.waitForStage(EpochStage.START_OF_POC)
-        
+        genesis.waitForStage(EpochStage.END_OF_POC_VALIDATION, offset = 3)
+
         // At this point, disabled node should not be participating in new PoC
-        // The test could be enhanced to verify PoC participation more directly
+        val genesisValidatorAfterOneMoreEpoch = genesis.node.getStakeValidator()
+        assertThat(genesisValidatorAfterOneMoreEpoch.tokens).isEqualTo(0)
+        assertThat(genesisValidatorAfterOneMoreEpoch.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         
         logSection("Verifying disabled node state persists across epochs")
         val nodesInNewEpoch = genesis.api.getNodes()
@@ -102,9 +124,10 @@ class NodeAdminStateTests : TestermintTest() {
             .`as`("Node should remain disabled in new epoch")
     }
 
+    @Disabled // This test doesn't make sense at the moment, rework it
     @Test
     fun `test node enable during PoC phase`() {
-        val (cluster, genesis) = initCluster()
+        val (_, genesis) = initCluster()
         
         logSection("Disabling a node first")
         val nodes = genesis.api.getNodes()
@@ -139,6 +162,7 @@ class NodeAdminStateTests : TestermintTest() {
             .`as`("Enabled node should serve inference requests")
     }
 
+    @Disabled // Wait until we've integrated multiple nodes
     @Test
     fun `test multiple node state changes`() {
         val (cluster, genesis) = initCluster()

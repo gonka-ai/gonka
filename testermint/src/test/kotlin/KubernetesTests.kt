@@ -7,7 +7,6 @@ import com.productscience.getK8sInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequestObject
 import com.productscience.logSection
-import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -50,7 +49,7 @@ class KubernetesTests : TestermintTest() {
                             genesis,
                             inferenceRequestStreamObject.toJson(),
                             Random.nextInt(80),
-                            check = false
+                            checkStarted = false
                         )
                     }
                 }

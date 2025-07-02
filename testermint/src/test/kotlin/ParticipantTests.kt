@@ -1,23 +1,25 @@
+import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
+import com.productscience.createSpec
 import com.productscience.data.EpochPhase
+import com.productscience.data.StakeValidator
+import com.productscience.data.StakeValidatorStatus
 import com.productscience.data.UpdateParams
+import com.productscience.data.spec
 import com.productscience.getNextStage
+import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.tinylog.kotlin.Logger
 import java.time.Duration
 
 class ParticipantTests : TestermintTest() {
     @Test
     fun `reputation increases after epoch participation`() {
-        val (_, genesis) = initCluster()
-        val epochData = genesis.getEpochData()
-        val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
-        if (genesis.getEpochData().phase != EpochPhase.Inference &&
-            startOfNextPoc - epochData.blockHeight > 5) {
-            genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        }
+        val (_, genesis) = initCluster(config = inferenceConfig.copy(genesisSpec = createSpec(epochLength = 20)))
+        genesis.waitForNextInferenceWindow(windowSizeInBlocks = 12)
 
         val startStats = genesis.node.getParticipantCurrentStats()
         logSection("Running inferences")
@@ -83,7 +85,6 @@ class ParticipantTests : TestermintTest() {
         val zeroParticipant = cluster.joinPairs.first()
         logSection("Setting ${zeroParticipant.name} to 0 power")
         val zeroParticipantKey = zeroParticipant.node.getValidatorInfo()
-        val participants = genesis.api.getParticipants()
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         zeroParticipant.changePoc(0, setNewValidatorsOffset = 3)
         logSection("Confirming ${zeroParticipant.name} is removed from validators")
@@ -92,7 +93,7 @@ class ParticipantTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(2) // Unbonding
+        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
             it.pubKey.key == zeroParticipantKey.key
@@ -121,7 +122,7 @@ class ParticipantTests : TestermintTest() {
             it.consensusPubkey.value == zeroParticipantKey.key
         }
         assertThat(zeroValidator.tokens).isZero
-        assertThat(zeroValidator.status).isEqualTo(2) // Unbonding
+        assertThat(zeroValidator.status).isEqualTo(StakeValidatorStatus.UNBONDING.value)
         // Ideally just add here smth like "wait for 1 block?"
         val cometValidators = genesis.node.getCometValidators()
         assertThat(cometValidators.validators).noneMatch {
@@ -139,7 +140,7 @@ class ParticipantTests : TestermintTest() {
         }
 
         assertThat(rejoinedValidator.tokens).isEqualTo(15)
-        assertThat(rejoinedValidator.status).isEqualTo(3) // Bonded
+        assertThat(rejoinedValidator.status).isEqualTo(StakeValidatorStatus.BONDED.value)
         val cometValidatorsAfterRejoin = genesis.node.getCometValidators()
         assertThat(cometValidatorsAfterRejoin.validators).anyMatch {
             it.pubKey.key == zeroParticipantKey.key
@@ -153,18 +154,22 @@ class ParticipantTests : TestermintTest() {
         logSection("Changing ${genesis.name} power to 11")
         genesis.changePoc(11)
         logSection("Verifying change")
-        val validators = genesis.node.getValidators()
-        val genesisKey = genesis.node.getValidatorInfo().key
-        val genesisValidator = validators.validators.first { it.consensusPubkey.value == genesisKey }
-        val tokensAfterChange = genesisValidator.tokens
+        val tokensAfterChange = genesis.node.getStakeValidator().tokens
 
         logSection("Changing ${genesis.name} power back to 10")
         genesis.changePoc(10)
 
         logSection("Verifying change back")
-        val updatedValidators = genesis.node.getValidators()
-        val updatedGenesisValidator = updatedValidators.validators.first { it.consensusPubkey.value == genesisKey }
-        assertThat(updatedGenesisValidator.tokens).isEqualTo(10)
+        val updatedGenesisTokens = genesis.node.getStakeValidator().tokens
+
+        assertThat(updatedGenesisTokens).isEqualTo(10)
         assertThat(tokensAfterChange).isEqualTo(11)
     }
+}
+
+fun ApplicationCLI.getStakeValidator(): StakeValidator {
+    val validators = getValidators()
+    val valKey = getValidatorInfo().key
+    val validator = validators.validators.first { it.consensusPubkey.value == valKey }
+    return validator
 }
