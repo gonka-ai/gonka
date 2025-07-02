@@ -22,10 +22,12 @@ func TestGenesis(t *testing.T) {
 
 		InferenceList: []types.Inference{
 			{
-				Index: "0",
+				Index:       "0",
+				InferenceId: "0",
 			},
 			{
-				Index: "1",
+				Index:       "1",
+				InferenceId: "1",
 			},
 		},
 		ParticipantList: []types.Participant{

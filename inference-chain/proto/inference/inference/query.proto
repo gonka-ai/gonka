@@ -27,6 +27,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge_transaction.proto";
+import  "inference/inference/developer.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -74,15 +75,14 @@ service Query {
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
-
   }
+
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
-
   }
 
   // Queries a list of SettleAmount items.
-  rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
+  rpc SettleAmount  (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
 
   }
@@ -178,9 +178,9 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
 
   }
+
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
-
   }
 
   // Queries a list of TrainingTask items.
@@ -225,6 +225,46 @@ service Query {
 
   }
 
+  rpc GetParticipantsFullStats (QueryParticipantsFullStatsRequest)
+      returns (QueryParticipantsFullStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants_stats";
+  }
+
+  rpc StatsByTimePeriodByDeveloper(QueryStatsByTimePeriodByDeveloperRequest)
+      returns (QueryStatsByTimePeriodByDeveloperResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_time";
+  }
+
+  rpc StatsByDeveloperAndEpochsBackwards(QueryStatsByDeveloperAndEpochBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
+  }
+
+  rpc CountParticipants(QueryCountAllParticipantsRequest)
+      returns (QueryCountAllParticipantsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants/count";
+  }
+
+  rpc DebugStatsDeveloperStats(QueryDebugStatsRequest)
+      returns (QueryDebugStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/debug/developer/all_stats";
+  }
+
+  rpc InferencesAndTokensStatsByEpochsBackwards(QueryInferencesAndTokensStatsByEpochsBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/stats_by_epochs_backwards";
+  }
+
+  rpc InferencesAndTokensStatsByTimePeriod(QueryInferencesAndTokensStatsByTimePeriodRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_stats_by_time";
+  }
+
+  rpc InferencesAndTokensStatsByModels(QueryInferencesAndTokensStatsByModelsRequest)
+      returns (QueryInferencesAndTokensStatsByModelsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/models_stats_by_time";
+  }
+
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
@@ -234,7 +274,6 @@ service Query {
   // Queries a list of InProgressTrainingTasks items.
   rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
-
   }
 
   // Queries a list of PartialUpgrade items.
@@ -437,6 +476,12 @@ message QueryCurrentEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
+message QueryPreviousEpochGroupDataRequest {}
+
+message QueryPreviousEpochGroupDataResponse {
+  EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
+}
+
 message QueryModelsAllRequest {}
 
 message QueryModelsAllResponse {
@@ -581,6 +626,88 @@ message ParticipantCurrentStats {
   string participant_id = 1;
   uint64 weight         = 2;
   int32  reputation     = 3;
+}
+
+message ParticipantFullStats {
+  string account_address = 1;
+  string operator_address = 2;
+  int32  reputation = 3;
+  uint64 earned_coins_current_epoch = 4;
+  uint64 rewarded_coins_latest_epoch = 5;
+  uint32 epochs_completed = 6;
+}
+
+message QueryParticipantsFullStatsRequest {}
+
+message QueryParticipantsFullStatsResponse {
+  repeated ParticipantFullStats participants_stats = 1;
+}
+
+message QueryStatsByTimePeriodByDeveloperRequest {
+  string developer = 1;
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryStatsByTimePeriodByDeveloperResponse {
+  repeated DeveloperStatsByTime stats = 1;
+}
+
+message QueryStatsByDeveloperAndEpochBackwardsRequest {
+  string developer = 1;
+  int32 epochs_n = 2;
+}
+
+message QueryInferencesAndTokensStatsByEpochsBackwardsRequest {
+  int32 epochs_n = 1;
+}
+
+message QueryInferencesAndTokensStatsByTimePeriodRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message ModelStats {
+  string model = 1;
+  int64 ai_tokens = 2;
+  int32 inferences = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsResponse {
+  repeated ModelStats stats_models = 1;
+}
+
+message QueryInferencesAndTokensStatsResponse {
+  int64 ai_tokens = 1;
+  int32 inferences = 2;
+  int64 actual_inferences_cost = 3;
+}
+
+message QueryCountAllParticipantsRequest {}
+message QueryCountAllParticipantsResponse {
+  int64 total = 1;
+}
+
+message QueryDebugStatsRequest {}
+
+message QueryDebugStatsResponse {
+  message TemporaryTimeStat {
+    string developer = 1;
+    repeated DeveloperStatsByTime stats = 2;
+  }
+
+  message TemporaryEpochStat {
+    string developer = 1;
+    repeated DeveloperStatsByEpoch stats = 2;
+  }
+
+  repeated TemporaryTimeStat stats_by_time = 1;
+  repeated TemporaryEpochStat stats_by_epoch = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}
