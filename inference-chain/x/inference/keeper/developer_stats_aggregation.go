@@ -33,13 +33,12 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	}
 
 	inferenceStats := types.InferenceStats{
-		EpochId:             inference.EpochId,
-		EpochPocBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
-		InferenceId:         inference.InferenceId,
-		Status:              inference.Status,
-		TotalTokenCount:     tokens,
-		Model:               inference.Model,
-		ActualCostInCoins:   inference.ActualCost,
+		EpochId:           inference.EpochId,
+		InferenceId:       inference.InferenceId,
+		Status:            inference.Status,
+		TotalTokenCount:   tokens,
+		Model:             inference.Model,
+		ActualCostInCoins: inference.ActualCost,
 	}
 
 	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, effectiveEpoch.Index)

@@ -1,3 +1,4 @@
+// PRTODO: rename file to developer_stats.proto
 syntax = "proto3";
 package inference.inference;
 
@@ -9,14 +10,14 @@ message DeveloperStatsByEpoch {
   repeated string inference_ids = 2;
 }
 
+// QUESTION: Are they ever stored outside of DeveloperStatsByTime?
 message InferenceStats {
   string inference_id = 1;
-  uint64 epoch_poc_block_height = 2;
+  uint64 epoch_id = 2;
   InferenceStatus status = 3;
   uint64 total_token_count = 4;
   string model = 5;
   int64 actual_cost_in_coins = 6;
-  uint64 epoch_id = 7;
 }
 
 message DeveloperStatsByTime {

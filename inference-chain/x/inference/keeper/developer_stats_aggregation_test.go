@@ -44,7 +44,8 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		RequestedBy:          developer1,
 		Model:                testModel2,
 		Status:               types.InferenceStatus_FINISHED,
-		EpochGroupId:         epochId2,
+		EpochGroupId:         0,
+		EpochId:              epochId2,
 		StartBlockTimestamp:  time.Now().UnixMilli(),
 		ActualCost:           1200,
 	}
@@ -57,7 +58,8 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		Status:               types.InferenceStatus_FINISHED,
 		Model:                testModel2,
 		EndBlockTimestamp:    time.Now().Add(-1 * time.Second).UnixMilli(),
-		EpochGroupId:         epochId2,
+		EpochGroupId:         0,
+		EpochId:              epochId2,
 		ActualCost:           5000,
 	}
 
@@ -73,14 +75,18 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	}
 
 	keeper, ctx := keepertest.InferenceKeeper(t)
+
+	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
 
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer1)) // tagged to epoch 1
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer2)) // tagged to epoch 1
 
+	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer1)) // tagged to epoch 2
 
+	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId3, PocStartBlockHeight: int64(epochId3 * 10)})
 	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId3})
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer2)) // tagged to epoch 3
 
@@ -100,24 +106,24 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			EpochId:   epochId2,
 			Timestamp: inference2Developer1.StartBlockTimestamp,
 			Inference: &types.InferenceStats{
-				InferenceId:         inference2Developer1.InferenceId,
-				EpochPocBlockHeight: inference2Developer1.EpochGroupId,
-				Status:              inference2Developer1.Status,
-				TotalTokenCount:     inference2Developer1.PromptTokenCount + inference2Developer1.CompletionTokenCount,
-				Model:               inference2Developer1.Model,
-				ActualCostInCoins:   inference2Developer1.ActualCost,
+				InferenceId:       inference2Developer1.InferenceId,
+				EpochId:           inference2Developer1.EpochId,
+				Status:            inference2Developer1.Status,
+				TotalTokenCount:   inference2Developer1.PromptTokenCount + inference2Developer1.CompletionTokenCount,
+				Model:             inference2Developer1.Model,
+				ActualCostInCoins: inference2Developer1.ActualCost,
 			},
 		},
 		inference1Developer2.InferenceId: {
 			EpochId:   epochId1,
 			Timestamp: inference1Developer2.EndBlockTimestamp,
 			Inference: &types.InferenceStats{
-				InferenceId:         inference1Developer2.InferenceId,
-				EpochPocBlockHeight: inference2Developer1.EpochGroupId,
-				Status:              inference1Developer2.Status,
-				TotalTokenCount:     inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount,
-				Model:               inference1Developer2.Model,
-				ActualCostInCoins:   inference1Developer2.ActualCost,
+				InferenceId:       inference1Developer2.InferenceId,
+				EpochId:           inference2Developer1.EpochId,
+				Status:            inference1Developer2.Status,
+				TotalTokenCount:   inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount,
+				Model:             inference1Developer2.Model,
+				ActualCostInCoins: inference1Developer2.ActualCost,
 			},
 		},
 		inference2Developer2.InferenceId: {
@@ -353,11 +359,11 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		}
 
 		expectedStatsBeforeUpdate := types.InferenceStats{
-			InferenceId:         inference.InferenceId,
-			EpochPocBlockHeight: inference.EpochGroupId,
-			Status:              inference.Status,
-			TotalTokenCount:     inference.PromptTokenCount + inference.CompletionTokenCount,
-			Model:               inference.Model,
+			InferenceId:     inference.InferenceId,
+			EpochId:         inference.EpochId,
+			Status:          inference.Status,
+			TotalTokenCount: inference.PromptTokenCount + inference.CompletionTokenCount,
+			Model:           inference.Model,
 		}
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
@@ -377,12 +383,12 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
 		expectedStatsAfterUpdate := types.InferenceStats{
-			InferenceId:         inference.InferenceId,
-			EpochPocBlockHeight: epochId2,
-			Status:              types.InferenceStatus_FINISHED,
-			TotalTokenCount:     inference.PromptTokenCount + inference.CompletionTokenCount,
-			Model:               inference.Model,
-			ActualCostInCoins:   actualCost,
+			InferenceId:       inference.InferenceId,
+			EpochId:           epochId2,
+			Status:            types.InferenceStatus_FINISHED,
+			TotalTokenCount:   inference.PromptTokenCount + inference.CompletionTokenCount,
+			Model:             inference.Model,
+			ActualCostInCoins: actualCost,
 		}
 
 		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
