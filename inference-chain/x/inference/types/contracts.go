@@ -7,7 +7,10 @@ func GetDefaultCW20ContractsParams() *CosmWasmParams {
 	// Read the CW20 contract code
 	wasmCode, err := os.ReadFile("/root/cw20_base.wasm")
 	if err != nil {
-		panic(err)
+		wasmCode, err = os.ReadFile("/root/.inference/cosmovisor/current/cw20_base.wasm")
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	return &CosmWasmParams{
