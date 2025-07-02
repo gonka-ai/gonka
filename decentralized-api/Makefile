@@ -99,32 +99,20 @@ build-for-upgrade:
 	@echo "--> clearing out ../public-html/v2/dapi"
 	@rm -rf ../public-html/v2/dapi/*
 	@mkdir -p ../public-html/v2/dapi
-	@echo "--> copying built decentralized-api binary to ../public-html/v2/inferenced"
-	@cp ./output/decentralized-api ../public-html/v2/dapi/decentralized-api-amd64
-	@echo "--> zipping decentralized-api binary"
+	@echo "--> copying built decentralized-api binary and dependencies to ../public-html/v2/dapi/"
+	@cp ./output/build_output/* ../public-html/v2/dapi/
+	@echo "--> zipping decentralized-api binary with dependencies"
 	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-amd64
-	@zip -X -j ../public-html/v2/dapi/decentralized-api-amd64.zip ../public-html/v2/dapi/decentralized-api-amd64
+	@TZ=UTC find ../public-html/v2/dapi -type f -exec touch -t 200001010000 {} \;
+	@cd ../public-html/v2/dapi && zip -X -r decentralized-api-amd64.zip .
 	@echo "--> generating shasum for decentralized-api-amd64.zip"
 	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip
 	@echo "--> appending to ../public-html/v2/checksums.txt"
 	@echo "decentralized-api-amd64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-amd64.zip)" >> ../public-html/v2/checksums.txt
 
+	# Disabled ARM builds as requested
 build-for-upgrade-arm:
-	@mkdir -p build
-	@echo "--> building decentralized-api for ARM64 using direct Go cross-compilation"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(BUILD_FLAGS) -o ./build/dapi-arm64
-	@mkdir -p ../public-html/v2/dapi
-	@echo "--> copying built decentralized-api binary to ../public-html/v2/dapi"
-	@cp ./build/dapi-arm64 ../public-html/v2/dapi/decentralized-api-arm64
-	@echo "--> zipping decentralized-api binary"
-	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/dapi/decentralized-api-arm64
-	@zip -X -j ../public-html/v2/dapi/decentralized-api-arm64.zip ../public-html/v2/dapi/decentralized-api-arm64
-	@echo "--> generating shasum for decentralized-api-arm64.zip"
-	@shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip
-	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "decentralized-api-arm64.zip $(shasum -a 256 ../public-html/v2/dapi/decentralized-api-arm64.zip)" >> ../public-html/v2/checksums.txt
+	@echo "ARM builds disabled"
 
 #################################################
 # CROSS-COMPILATION SECTION
