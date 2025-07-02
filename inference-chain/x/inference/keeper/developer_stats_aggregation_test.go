@@ -77,17 +77,17 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
-	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+	keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer1)) // tagged to epoch 1
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference1Developer2)) // tagged to epoch 1
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
-	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
+	keeper.SetEffectiveEpochIndex(ctx, epochId2)
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer1)) // tagged to epoch 2
 
 	keeper.SetEpoch(ctx, &types.Epoch{Index: epochId3, PocStartBlockHeight: int64(epochId3 * 10)})
-	keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId3})
+	keeper.SetEffectiveEpochIndex(ctx, epochId3)
 	assert.NoError(t, keeper.SetDeveloperStats(ctx, inference2Developer2)) // tagged to epoch 3
 
 	defaultExpectedStatsByTime := map[string]*types.DeveloperStatsByTime{
@@ -297,7 +297,8 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 
 	t.Run("inferences with zero start_timestamp and same end_timestamp, epoch and developer", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		now := time.Now().UnixMilli()
 
@@ -346,7 +347,8 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 
 	t.Run("update same inference", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		inference := types.Inference{
 			InferenceId:          "inferenceId1",
@@ -376,10 +378,12 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		actualCost := int64(10000)
 		inference.ActualCost = actualCost
 		inference.Status = types.InferenceStatus_FINISHED
-		inference.EpochGroupId = epochId2
+		inference.EpochGroupId = 0
+		inference.EpochId = epochId2
 		inference.EndBlockTimestamp = time.Now().Add(5 * time.Second).UnixMilli()
 
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId2)
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
 
 		expectedStatsAfterUpdate := types.InferenceStats{
@@ -399,13 +403,15 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 
 	t.Run("inference without developer address", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId1})
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		inference := types.Inference{
 			InferenceId:          uuid.New().String(),
 			PromptTokenCount:     tokens,
 			CompletionTokenCount: tokens * 2,
-			EpochGroupId:         epochId2,
+			EpochGroupId:         0,
+			EpochId:              epochId2,
 			RequestedBy:          "",
 			Status:               types.InferenceStatus_FINISHED,
 			Model:                testModel,
@@ -418,7 +424,8 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			InferenceId:          uuid.New().String(),
 			PromptTokenCount:     tokens * 2,
 			CompletionTokenCount: tokens * 2,
-			EpochGroupId:         epochId2,
+			EpochGroupId:         0,
+			EpochId:              epochId2,
 			RequestedBy:          developer1,
 			Status:               types.InferenceStatus_FINISHED,
 			Model:                testModel,
@@ -436,7 +443,8 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			ActualCost:     inference2.ActualCost,
 		}
 
-		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId2)
 
 		summary := keeper.GetSummaryLastNEpochs(ctx, 1)
 		assert.Equal(t, summary, expectedSummary)
