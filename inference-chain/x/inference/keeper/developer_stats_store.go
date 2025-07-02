@@ -59,7 +59,6 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 	byTimeStore.Set(timeKey, k.cdc.MustMarshal(&statsByTime))
 	byInferenceStore.Set([]byte(infStats.InferenceId), timeKey)
 
-	// TODO [PRTODO]: can we just do -1 here now?
 	return prevEpochId, nil
 }
 

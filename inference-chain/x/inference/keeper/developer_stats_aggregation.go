@@ -16,7 +16,11 @@ type StatsSummary struct {
 }
 
 func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
-	k.LogInfo("SetDeveloperStats: got stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy, "poc_block_height", inference.EpochGroupId)
+	k.LogInfo("SetDeveloperStats: got stat", types.Stat,
+		"inference_id", inference.InferenceId,
+		"inference_status", inference.Status.String(),
+		"developer", inference.RequestedBy,
+		"poc_block_height", inference.EpochGroupId)
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
 	if !found {
 		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
@@ -29,6 +33,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	}
 
 	inferenceStats := types.InferenceStats{
+		EpochId:             inference.EpochId,
 		EpochPocBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
 		InferenceId:         inference.InferenceId,
 		Status:              inference.Status,
@@ -46,7 +51,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	return nil
 }
 
-// PRTODO: refactor it later (move ”getter' logic to store level)
+// TODO: refactor it later (move ”getter' logic to store level)
 func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))

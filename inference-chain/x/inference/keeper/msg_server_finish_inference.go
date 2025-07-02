@@ -49,13 +49,19 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 			sdk.NewAttribute("inference_id", existingInference.InferenceId),
 		),
 	)
-	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found {
+		k.LogError("Effective Epoch Index not found", types.EpochGroup)
+		return types.ErrEffectiveEpochNotFound.Wrapf("handleInferenceCompleted: Effective Epoch Index not found")
+	}
+	currentEpochGroup, err := k.GetEpochGroupForEpoch(ctx, *effectiveEpoch)
 	if err != nil {
 		k.LogError("Unable to get current Epoch Group", types.EpochGroup, "err", err)
 		return err
 	}
 
-	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
+	existingInference.EpochGroupId = uint64(effectiveEpoch.PocStartBlockHeight)
+	existingInference.EpochId = effectiveEpoch.Index
 	currentEpochGroup.GroupData.NumberOfRequests++
 
 	executorPower := uint64(0)
@@ -82,10 +88,13 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
 		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+		EpochIndex:         effectiveEpoch.Index,
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
 		k.LogWarn("Executor Power equals Total Power", types.Validation,
 			"model", existingInference.Model,
+			"epoch_id", currentEpochGroup.GroupData.EpochGroupId,
+			"epoch_start_block_height", currentEpochGroup.GroupData.PocStartBlockHeight,
 			"group_id", modelEpochGroup.GroupData.EpochGroupId,
 			"inference_id", existingInference.InferenceId,
 			"executor_id", inferenceDetails.ExecutorId,
@@ -96,6 +105,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"Adding Inference Validation Details",
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
+		"epoch_index", inferenceDetails.EpochIndex,
 		"epoch_id", inferenceDetails.EpochId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,
