@@ -10,6 +10,7 @@ import (
 )
 
 // SetEpochGroupData set a specific epochGroupData in the store from its index
+// Bookmark
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.EpochGroupDataKeyPrefix))

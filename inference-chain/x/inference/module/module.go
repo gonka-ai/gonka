@@ -237,7 +237,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.SetEpoch(ctx, upcomingEpoch)
 
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
-		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight))
+		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight), upcomingEpoch.Index)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
@@ -271,7 +271,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	return &types.Epoch{
 		Index:               getNextEpochIndex(prevEpoch),
-		PocStartBlockHeight: int64(blockHeight),
+		PocStartBlockHeight: blockHeight,
 	}
 }
 

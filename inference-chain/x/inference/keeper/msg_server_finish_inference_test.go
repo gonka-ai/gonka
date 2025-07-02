@@ -30,7 +30,7 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 
 	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochGroupId)
 
-	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight))
+	eg, err := k.CreateEpochGroup(ctx, uint64(newEpoch.PocStartBlockHeight), epochIndex)
 	if err != nil {
 		return ctx, err
 	}

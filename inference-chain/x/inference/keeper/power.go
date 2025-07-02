@@ -2,8 +2,10 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
+	"strings"
 )
 
 func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
@@ -47,6 +49,12 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelI
 }
 
 func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
+	if strings.TrimSpace(modelId) == "" {
+		k.LogError("GetOrCreateEpochGroup: Model ID cannot be empty. GetOrCreateEpochGroup should be used only for creating subgroups",
+			types.EpochGroup, "pocStartHeight", pocStartHeight)
+		return nil, errors.New("modelId cannot be empty. This method should be used only for creating subgroups")
+	}
+
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
 	if !found {
 		data = types.EpochGroupData{
@@ -59,7 +67,7 @@ func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64
 	return k.epochGroupFromData(data), nil
 }
 
-func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64) (*epochgroup.EpochGroup, error) {
+func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epochId uint64) (*epochgroup.EpochGroup, error) {
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight, "")
 	if found {
 		k.LogError("CreateEpochGroup: Root epoch group data already exists", types.EpochGroup, "pocStartHeight", pocStartHeight)
@@ -68,6 +76,7 @@ func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64) (*e
 		data = types.EpochGroupData{
 			PocStartBlockHeight: pocStartHeight,
 			ModelId:             "",
+			EpochId:             epochId,
 		}
 		k.SetEpochGroupData(ctx, data)
 	}

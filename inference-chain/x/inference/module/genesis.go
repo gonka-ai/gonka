@@ -107,7 +107,7 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 }
 
 func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight uint64) {
-	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight)
+	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight, 0)
 	if err != nil {
 		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
 	}
