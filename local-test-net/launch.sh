@@ -7,7 +7,7 @@ export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
-export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 rm -r "prod-local" || true
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
@@ -33,7 +33,7 @@ export IS_GENESIS=false
 
 # join node 'join1'
 export KEY_NAME=join1
-export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
 export PUBLIC_SERVER_PORT=9010
 export ML_SERVER_PORT=9011
@@ -48,7 +48,7 @@ export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 
 # join node 'join2'
 export KEY_NAME=join2
-export NODE_CONFIG="node_payload_wiremock_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021
 export ADMIN_SERVER_PORT=9022

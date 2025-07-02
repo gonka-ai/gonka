@@ -385,10 +385,13 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			ActualCostInCoins:   actualCost,
 		}
 
-		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
+		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.EndBlockTimestamp-10, inference.EndBlockTimestamp+10)
 		assert.Equal(t, expectedStatsAfterUpdate, *stat[0].Inference)
-		assert.Equal(t, inference.StartBlockTimestamp, stat[0].Timestamp)
+		assert.Equal(t, inference.EndBlockTimestamp, stat[0].Timestamp)
 		assert.Equal(t, epochId2, stat[0].EpochId)
+
+		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockHeight-10, inference.StartBlockHeight+10)
+		assert.Empty(t, stat)
 	})
 
 	t.Run("inference without developer address", func(t *testing.T) {
