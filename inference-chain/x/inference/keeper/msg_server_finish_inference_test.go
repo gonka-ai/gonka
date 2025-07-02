@@ -39,16 +39,21 @@ func advanceEpoch(ctx context.Context, k *keeper.Keeper, blockHeight int64) (*ty
 
 func TestMsgServer_FinishInference(t *testing.T) {
 	const (
-		epochId  = 0
-		epochId2 = 1
+		epochId  = 1
+		epochId2 = 2
 
 		inferenceId = "inferenceId"
 	)
 
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	mocks.StubForInitGenesis(ctx)
-
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	// FIXME: rework when moved to the new epoch system
+	epoch1 := types.Epoch{Index: epochId, PocStartBlockHeight: epochId}
+	k.SetEpoch(ctx, &epoch1)
+	k.SetEffectiveEpochIndex(ctx, epoch1.Index)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId, PocStartBlockHeight: epochId})
 
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
@@ -88,9 +93,11 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		InferenceIds: []string{expectedInference.InferenceId},
 	}, devStat)
 
-	if _, err := advanceEpoch(ctx, &k, ctx2.BlockHeight()); err != nil {
-		t.Fatalf("Failed to advance epoch: %v", err)
-	}
+	// FIXME: rework when moved to the new epoch system
+	epoch2 := types.Epoch{Index: epochId2, PocStartBlockHeight: epochId2}
+	k.SetEpoch(ctx, &epoch2)
+	k.SetEffectiveEpochIndex(ctx, epoch2.Index)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
 
 	// require that
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
