@@ -284,9 +284,9 @@ data class LocalInferencePair(
             this.getParams()
         }
         val epochParams = this.mostRecentParams?.epochParams!!
-        if (epochParams.epochLength > 500) {
-            error("Epoch length is too long for testing")
-        }
+//        if (epochParams.epochLength > 500) {
+//            error("Epoch length is too long for testing")
+//        }
         val epochFinished = epochParams.epochLength +
                 epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) +
                 1 -

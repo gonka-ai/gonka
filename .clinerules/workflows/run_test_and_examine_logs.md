@@ -15,11 +15,11 @@ Do NOT include the output of this command in the context! If it fails, immediate
 # 4. Run the test(s)
 Use gradle for the testermint project. You can run by test names, class names or tags. For example:
 ```bash
-cd testermint && ./gradlew test --tests "TestClassName.*"
+cd testermint && ./gradlew :test --tests "TestClassName.*"
 ```
 or, for tags:
 ```bash
-cd testermint && ./gradlew test --tests "*" -DexcludeTags=unstable,exclude
+cd testermint && ./gradlew :test --tests "*" -DexcludeTags=unstable,exclude
 ```
 
 # 5. Examine the logs

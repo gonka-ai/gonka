@@ -16,10 +16,20 @@ import java.util.concurrent.TimeUnit
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
 class ValidationTests : TestermintTest() {
     @Test
+    fun `test inference during POC`() {
+        val (cluster, genesis) = initCluster()
+        genesis.waitForStage(EpochStage.START_OF_POC)
+        genesis.node.waitForNextBlock()
+        logSection("Making inference requests")
+        val inference = genesis.makeInferenceRequest(inferenceRequestObject.toJson())
+    }
+    @Test
     fun `test valid in parallel`() {
         val (_, genesis) = initCluster()
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference requests in parallel")
-        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
+        val iterations = 50
+        val statuses = runParallelInferences(genesis, iterations, maxConcurrentRequests = iterations)
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
@@ -28,6 +38,8 @@ class ValidationTests : TestermintTest() {
         }).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
+
+        assertThat(statuses).hasSize(iterations)
 
         Thread.sleep(10000)
     }

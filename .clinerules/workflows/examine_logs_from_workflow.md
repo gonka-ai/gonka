@@ -1,12 +1,13 @@
-Help the user figure out what happened in a Github Action test that failed.
+Help the user figure out what happened in a Github Action test that THEY SPECIFY.
 <detailed_sequence_of_steps>
 ## 1. Identify the workflow to analyze
 <ask_followup_question>
 <question>What Tests do you want to analyze?</question>
-</ask_followup_question>
 The user should describe the Tests they want to analyze. Unless otherwise specified, assume they mean the "Integration Tests" workflow.
-
 They could specify a run for a specific branch or commit or PR, or simply whatever the latest results are.
+DO NOT CONTINUE UNTIL THE USER HAS SPECIFIED WHAT TO ANALYZE!!
+</ask_followup_question>
+
 ## 2. Load the workflow run overview
 Use the GitHub CLI tool to find the workflow run specified by the user. Do NOT download the entire logs, they are too large. Instead, use the GitHub CLI tool to get the workflow run overview. This will give you a summary of the workflow run, including the status of each job and step.
 
@@ -17,7 +18,9 @@ The logs will be Artifacts attached to the workflow run. Download them to a dire
 There will be a file in the logs directory called `failures.log`. This file will contain a list of the tests that failed, along with the reason for the failure. You can use this file to identify which tests to analyze.
 
 ## 5. Use the testermintlogs tool to analyze the log
-Look at `examine_test_log.md` for details on how to analyze the logs. The test log for a failure will be in the logs directory, and will be named after the test case, with `ClassName-test name might have spaces.log` as the name.
+The test log for a failure will be in the logs directory, and will be named after the test case, with `ClassName-test name might have spaces.log` as the name.
+
+Use the `testermintlogs` tool. Start by loading the `Step by Step Approach` instructions resource. This will give you an overview of the approach to use for examining the log. There are other critical resources, but load them as needed, not before hand to reduce token usage. USE THE TOOL AND THE RESOURCES TO UNDERSTAND THE LOGS!
 
 ## 6. Summarize all the findings and include CLI commands for further analysis
 Focus on next steps and the likely cause of the failures. If a failure is clearly a known failure, be sure and emphasize that.

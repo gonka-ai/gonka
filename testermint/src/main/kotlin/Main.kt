@@ -415,7 +415,7 @@ val inferenceConfig = ApplicationConfig(
     genesisSpec = createSpec()
 )
 
-fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = spec {
+fun createSpec(epochLength: Long = 20L, epochShift: Int = 0): Spec<AppState> = spec {
     this[AppState::gov] = spec<GovState> {
         this[GovState::params] = spec<GovParams> {
             this[GovParams::votingPeriod] = Duration.ofSeconds(30)

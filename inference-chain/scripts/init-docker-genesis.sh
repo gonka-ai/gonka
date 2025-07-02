@@ -74,6 +74,10 @@ fi
 
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' \
   $STATE_DIR/config/config.toml
+
+sed -Ei 's/^max_open_connections = [0-9]+$/max_open_connections = 2048/g' $STATE_DIR/config/config.toml
+sed -Ei 's/^grpc_max_open_connections = [0-9]+$/grpc_max_open_connections = 2048/g' $STATE_DIR/config/config.toml
+
 # no seeds for genesis node
 sed -Ei "s/^seeds = .*$/seeds = \"\"/g" \
   $STATE_DIR/config/config.toml

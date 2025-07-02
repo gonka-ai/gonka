@@ -77,6 +77,8 @@ func (k Keeper) Logger() log.Logger {
 }
 
 func (k Keeper) LogTransaction(to string, from string, amount int64, memo string) {
+	k.Logger().Info("TransactionAudit", "account", to, "counter_account", from, "debit", 0, "credit", amount, "memo", memo)
+	k.Logger().Info("TransactionAudit", "account", from, "counter_account", to, "debit", amount, "credit", 0, "memo", memo)
 	k.Logger().Info("TransactionAudit", "to", to, "from", from, "amount", amount, "memo", memo)
 }
 

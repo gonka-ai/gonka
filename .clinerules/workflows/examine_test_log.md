@@ -32,7 +32,7 @@ Ask the user if they want to rerun any test or tests based on the findings.
 ## 8. Rerun tests if requested
 Use gradle for the testermint project. You can run by test names, class names or tags. For example:
 ```bash
-cd testermint && ./gradlew test --tests "TestClassName.*"
+cd testermint && ./gradlew :test --tests "TestClassName.*"
 ```
 
 ## 9. Repeat the analysis if tests were rerun

@@ -135,6 +135,8 @@ fi
 kv app state-sync.snapshot-interval    "$SNAPSHOT_INTERVAL"
 kv app state-sync.snapshot-keep-recent "$SNAPSHOT_KEEP_RECENT"
 sed -Ei 's/^laddr = ".*:26657"$/laddr = "tcp:\/\/0\.0\.0\.0:26657"/g' $STATE_DIR/config/config.toml
+sed -Ei 's/^max_open_connections = [0-9]+$/max_open_connections = 2048/g' $STATE_DIR/config/config.toml
+sed -Ei 's/^grpc_max_open_connections = [0-9]+$/grpc_max_open_connections = 2048/g' $STATE_DIR/config/config.toml
 
 # CONFIG_* environment overrides ----------------------------------------------
 (

@@ -142,7 +142,7 @@ jobs:
           KUBECONFIG: ${{ env.KUBECONFIG }}
         run: |
           cd testermint
-          sudo -E ./gradlew test --tests "KubernetesTests.k8sUpgrade" \
+          sudo -E ./gradlew :test --tests "KubernetesTests.k8sUpgrade" \
             -DRELEASE_TAG=${RELEASE_TAG} \
             -DKUBECONFIG=${KUBECONFIG}
 

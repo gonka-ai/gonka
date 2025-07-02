@@ -67,6 +67,7 @@ class UpgradeTests : TestermintTest() {
         }
 
     }
+
     @Test
     fun `submit upgrade`() {
         val (cluster, genesis) = initCluster(
@@ -168,6 +169,59 @@ class UpgradeTests : TestermintTest() {
         val localPath = "../public-html/$path"
         val sha = getSha256Checksum(localPath)
         return "http://genesis-mock-server:8080/$path?checksum=sha256:$sha"
+    }
+
+    @Test
+    @Tag("unstable")
+    fun blindUpgrade() {
+        //        val releaseTag = System.getenv("RELEASE_TAG") ?: "release/v0.1.4-25"
+        val releaseTag = "v0.1.10-test"
+        val releaseVersion = releaseTag.substringAfterLast("/")
+        val cluster = getLocalCluster(inferenceConfig)
+        val genesis = cluster!!.genesis
+        val govParams = genesis.node.getGovParams()
+        val height = genesis.getCurrentBlockHeight()
+        val upgradeBlock =
+            height + govParams.params.votingPeriod.toSeconds() / 5 + 5 // the 50 ensures we aren't on an Epoch boundary
+        val amdApiPath = getGithubPath(releaseTag, "decentralized-api-amd64.zip")
+//            val armApiPath = getGithubPath(releaseTag, "decentralized-api-arm64.zip")
+        val amdBinaryPath = getGithubPath(releaseTag, "inferenced-amd64.zip")
+//            val armBinaryPath = getGithubPath(releaseTag, "inferenced-arm64.zip")
+        Logger.info("Upgrading to $releaseTag at block $upgradeBlock", "")
+        val deposit = govParams.params.minDeposit.first().amount
+        logSection("Submitting upgrade proposal")
+        val response = genesis.submitUpgradeProposal(
+            title = releaseVersion,
+            description = "Automated upgrade to latest release",
+            binaries = mapOf(
+                "linux/amd64" to amdBinaryPath,
+//                    "linux/arm64" to armBinaryPath
+            ),
+            apiBinaries = mapOf(
+                "linux/amd64" to amdApiPath,
+//                    "linux/arm64" to armApiPath
+            ),
+            height = upgradeBlock,
+            nodeVersion = "",
+            deposit = deposit.toInt()
+        )
+        val proposalId = response.getProposalId()
+        if (proposalId == null) {
+            assert(false)
+            return
+        }
+        logSection("Making deposit")
+        val depositResponse = genesis.makeGovernanceDeposit(proposalId, deposit)
+        logSection("Voting on proposal")
+        cluster.allPairs.forEach {
+            val response2 = it.voteOnProposal(proposalId, "yes")
+            assertThat(response2).isNotNull()
+            println("VOTE:\n" + response2)
+        }
+        logSection("Waiting for upgrade to be effective at block $upgradeBlock")
+        genesis.node.waitForMinimumBlock(upgradeBlock - 2, "upgradeBlock")
+        logSection("Waiting for upgrade to finish")
+        Thread.sleep(Duration.ofMinutes(5))
     }
 }
 

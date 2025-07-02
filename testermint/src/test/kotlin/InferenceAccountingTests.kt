@@ -29,6 +29,9 @@ import kotlin.collections.component1
 import kotlin.collections.component2
 import kotlin.random.Random
 import kotlin.test.assertNotNull
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 const val DELAY_SEED = 8675309
 
@@ -61,7 +64,11 @@ class InferenceAccountingTests : TestermintTest() {
             it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
         }
         val seed = Random.nextInt()
-        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        CoroutineScope(Dispatchers.Default).launch {
+            genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        }
+
+        Thread.sleep(Duration.ofSeconds(3))
         val lastRequest =
             cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
         assertThat(lastRequest).isNotNull
