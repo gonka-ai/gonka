@@ -23,6 +23,11 @@ var IgnoreDuplicateDenomRegistration bool
 
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
+	// Observability: start of InitGenesis
+	k.LogInfo("InitGenesis: starting module genesis", types.System,
+		"inferences", len(genState.InferenceList),
+		"participants", len(genState.ParticipantList),
+	)
 	// PRTODO: set active participants here, but how?
 	// Set all the epochGroupData
 	// Add explicit InitGenesis method for setting epoch data
@@ -92,6 +97,9 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetModel(ctx, &elem)
 	}
 
+	// Observability: end of InitGenesis
+	k.LogInfo("InitGenesis: completed", types.System)
+
 }
 
 func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
@@ -106,6 +114,9 @@ func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 }
 
 func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight uint64) {
+	// Observability: creating initial epoch group
+	k.LogInfo("[InitGenesisEpoch]: creating epoch group", types.EpochGroup, "pocStartBlockHeight", pocStartBlockHeight)
+
 	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight, 0)
 	if err != nil {
 		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
@@ -115,9 +126,29 @@ func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight
 		log.Panicf("[InitGenesisEpoch] epochGroup.CreateGroup failed. err = %v", err)
 	}
 
+	// Fetch staking validators for logging and member addition
+	k.LogInfo("[InitGenesisEpoch]: retrieving staking validators", types.EpochGroup)
+
 	stakingValidators, err := k.Staking.GetAllValidators(ctx)
 	if err != nil {
 		log.Panicf("[InitGenesisEpoch] Staking.GetAllValidators failed. err = %v", err)
+	}
+
+	k.LogInfo("[InitGenesisEpoch]: staking validators retrieved", types.EpochGroup, "count", len(stakingValidators))
+
+	if len(stakingValidators) == 0 {
+		k.LogWarn("[InitGenesisEpoch]: no staking validators found", types.EpochGroup)
+	}
+
+	// Log the operator addresses of all validators to be added
+	{
+		addresses := make([]string, len(stakingValidators))
+		for i, v := range stakingValidators {
+			addresses[i] = v.OperatorAddress
+		}
+		if len(addresses) > 0 {
+			k.LogInfo("[InitGenesisEpoch]: validator addresses", types.EpochGroup, "addresses", addresses)
+		}
 	}
 
 	for _, validator := range stakingValidators {
