@@ -16,11 +16,8 @@ class PositionResult(BaseModel):
 
 
 class Result(BaseModel):
+    text: str
     results: List[PositionResult]
-
-    @property
-    def text(self) -> str:
-        return ''.join(result.token for result in self.results)
 
 
 class ModelInfo(BaseModel):

@@ -6,6 +6,8 @@ def wait_for_server(url, timeout=120, check_interval=3):
     for _ in range(timeout // check_interval):
         try:
             response = requests.get(url, timeout=check_interval)
+            if response.status_code == 503:
+                raise requests.exceptions.RequestException(f"Server at {url} is not ready")
             return response
         except requests.exceptions.RequestException:
             pass

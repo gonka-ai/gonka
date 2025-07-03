@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from api.inference.vllm.runner import IVLLMRunner
 
@@ -8,7 +8,7 @@ class VLLMRunnerTestImpl(IVLLMRunner):
         self,
         model: str,
         dtype: str = "auto",
-        additional_args: List[str] = None
+        additional_args: Optional[List[str]] = None
     ):
         self._running = False
         self._model = model
