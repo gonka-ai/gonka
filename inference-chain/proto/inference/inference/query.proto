@@ -459,6 +459,7 @@ message PoCBatchesWithParticipants {
 
 message QueryGetCurrentEpochRequest {}
 
+// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
 }

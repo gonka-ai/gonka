@@ -25,6 +25,7 @@ func CreateUpgradeHandler(
 
 		renameInferenceValidationDetailsEpochId(ctx, k)
 		renameInferenceEpochId(ctx, k)
+		renameActiveParticipantsEpochId(ctx, k, pocStartBlockHeightToEpochId)
 
 		return vm, nil
 	}
@@ -110,5 +111,21 @@ func renameInferenceEpochId(ctx context.Context, k keeper.Keeper) {
 	inferences := k.GetAllInference(ctx)
 	for _, inference := range inferences {
 		inference.EpochPocStartBlockHeight = inference.EpochGroupId
+	}
+}
+
+func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
+	// TODO: iterate over all active participants entries
+	for {
+		activeParticipantsList, found := k.GetActiveParticipants(ctx)
+		// TODO: what should we set here??
+		epochId, found := pocStartBlockHeightToEpochId[uint64(activeParticipantsList.PocStartBlockHeight)]
+		if !found {
+			k.LogError(UpgradeName+" - EpochId not found for ActiveParticipants", types.Upgrades,
+				"pocStartBlockHeight", activeParticipantsList.PocStartBlockHeight)
+			continue // or handle error
+		}
+		activeParticipantsList.EpochId = epochId
+		k.SetActiveParticipants(ctx, activeParticipantsList)
 	}
 }

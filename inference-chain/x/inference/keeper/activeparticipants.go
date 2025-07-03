@@ -32,10 +32,8 @@ func (k Keeper) GetActiveParticipants(ctx context.Context, epoch uint64) (val ty
 	return val, true
 }
 
-func (k Keeper) GetParticipantCounter(ctx context.Context, epoch uint64) uint32 {
-	activeParticipants, ok := k.GetActiveParticipants(ctx, epoch)
-	if !ok {
-		return 0
-	}
-	return uint32(len(activeParticipants.Participants))
+func (k Keeper) GetAllActiveParticipants(ctx context.Context, epoch uint64) ([]*types.ActiveParticipants, error) {
+	return GetAllValues(ctx, &k, []byte(types.ActiveParticipantsKeyPrefix), func() *types.ActiveParticipants {
+		return &types.ActiveParticipants{}
+	})
 }

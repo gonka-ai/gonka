@@ -8,10 +8,11 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 // Not added to the Genesis, because at genesis it's constructed based on Participants
 message ActiveParticipants {
   repeated ActiveParticipant participants = 1;
-  uint64 epoch_group_id = 2;
+  uint64 epoch_group_id = 2; // Still used as the index in the KV storage
   int64 poc_start_block_height = 3;
   int64 effective_block_height = 4;
   int64 created_at_block_height = 5; // Same as effective_block_height???
+  uint64 epoch_id = 6;
 }
 
 message ActiveParticipant {
