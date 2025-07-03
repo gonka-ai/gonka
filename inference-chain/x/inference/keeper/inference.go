@@ -26,6 +26,15 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 	}
 }
 
+func (k Keeper) SetInferenceWithoutDevStatComputation(ctx context.Context, inference types.Inference) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
+	b := k.cdc.MustMarshal(&inference)
+	store.Set(types.InferenceKey(
+		inference.Index,
+	), b)
+}
+
 // GetInference returns a inference from its index
 func (k Keeper) GetInference(
 	ctx context.Context,

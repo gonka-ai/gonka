@@ -96,9 +96,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
 	genesisEpoch := &types.Epoch{
-		Index:                0,
-		PocStartBlockHeight:  0,
-		EffectiveBlockHeight: 0,
+		Index:               0,
+		PocStartBlockHeight: 0,
 	}
 	k.SetEpoch(ctx, genesisEpoch)
 	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
