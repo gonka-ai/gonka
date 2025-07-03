@@ -62,17 +62,12 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.Equal(t, initialBlockHeight, ctx.BlockHeight())
 	initialBlockTime := ctx.BlockTime().UnixMilli()
 
-	// FIXME: rework when moved to the new epoch system
-	// epoch1 := types.Epoch{Index: epochId, PocStartBlockHeight: epochId}
-	// k.SetEpoch(ctx, &epoch1)
-	// k.SetEffectiveEpochIndex(ctx, epoch1.Index)
-	// k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId, PocStartBlockHeight: epochId})
-
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
 	mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
+
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   inferenceId,
 		PromptHash:    "promptHash",
@@ -113,13 +108,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}
 	require.Equal(t, newBlockHeight, ctx.BlockHeight())
 
-	// FIXME: rework when moved to the new epoch system
-	// epoch2 := types.Epoch{Index: epochId2, PocStartBlockHeight: epochId2}
-	// k.SetEpoch(ctx, &epoch2)
-	// k.SetEffectiveEpochIndex(ctx, epoch2.Index)
-	// k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2, PocStartBlockHeight: epochId2})
-
-	// require that
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
@@ -133,27 +122,28 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	require.True(t, found)
 
 	expectedInference2 := types.Inference{
-		Index:                inferenceId,
-		InferenceId:          inferenceId,
-		PromptHash:           "promptHash",
-		PromptPayload:        "promptPayload",
-		RequestedBy:          testutil.Requester,
-		Status:               types.InferenceStatus_FINISHED,
-		ResponseHash:         "responseHash",
-		ResponsePayload:      "responsePayload",
-		PromptTokenCount:     10,
-		CompletionTokenCount: 20,
-		EpochGroupId:         uint64(newBlockHeight), // EpochGroupId is epoch start block height
-		EpochId:              epochId2,
-		ExecutedBy:           testutil.Executor,
-		Model:                "model1",
-		StartBlockTimestamp:  initialBlockTime,
-		StartBlockHeight:     initialBlockHeight,
-		EndBlockTimestamp:    ctx.BlockTime().UnixMilli(),
-		EndBlockHeight:       newBlockHeight,
-		MaxTokens:            keeper.DefaultMaxTokens,
-		EscrowAmount:         keeper.DefaultMaxTokens * calculations.PerTokenCost,
-		ActualCost:           30 * calculations.PerTokenCost,
+		Index:                    inferenceId,
+		InferenceId:              inferenceId,
+		PromptHash:               "promptHash",
+		PromptPayload:            "promptPayload",
+		RequestedBy:              testutil.Requester,
+		Status:                   types.InferenceStatus_FINISHED,
+		ResponseHash:             "responseHash",
+		ResponsePayload:          "responsePayload",
+		PromptTokenCount:         10,
+		CompletionTokenCount:     20,
+		EpochGroupId:             uint64(newBlockHeight), // EpochGroupId is epoch start block height
+		EpochPocStartBlockHeight: uint64(newBlockHeight),
+		EpochId:                  epochId2,
+		ExecutedBy:               testutil.Executor,
+		Model:                    "model1",
+		StartBlockTimestamp:      initialBlockTime,
+		StartBlockHeight:         initialBlockHeight,
+		EndBlockTimestamp:        ctx.BlockTime().UnixMilli(),
+		EndBlockHeight:           newBlockHeight,
+		MaxTokens:                keeper.DefaultMaxTokens,
+		EscrowAmount:             keeper.DefaultMaxTokens * calculations.PerTokenCost,
+		ActualCost:               30 * calculations.PerTokenCost,
 	}
 
 	require.Equal(t, expectedInference2, savedInference)

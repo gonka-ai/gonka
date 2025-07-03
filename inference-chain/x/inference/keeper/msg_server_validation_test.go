@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
+	keeper2 "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
@@ -26,7 +27,7 @@ func TestMsgServer_Validation(t *testing.T) {
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	createParticipants(t, ms, ctx)
-	createCompletedInference(t, ms, ctx)
+	createCompletedInference(t, ms, ctx, mocks)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
 		Creator:     testutil.Validator,
@@ -57,7 +58,7 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 
 	mocks.BankKeeper.ExpectAny(ctx)
 	createParticipants(t, ms, ctx)
-	createCompletedInference(t, ms, ctx)
+	createCompletedInference(t, ms, ctx, mocks)
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
 	}, nil)
@@ -154,7 +155,7 @@ func TestMsgServer_ValidatorCannotBeExecutor(t *testing.T) {
 	require.Error(t, err)
 }
 
-func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Context) {
+func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Context, mocks *keeper2.InferenceMocks) {
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
@@ -164,6 +165,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		Model:         "Qwen/QwQ-32B",
 	})
 	require.NoError(t, err)
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",

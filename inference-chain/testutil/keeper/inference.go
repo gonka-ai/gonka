@@ -94,6 +94,13 @@ func (mocks *InferenceMocks) ExpectCreateGroupWithPolicyCall(ctx context.Context
 	}, nil).Times(1)
 }
 
+func (mocks *InferenceMocks) ExpectAnyCreateGroupWithPolicyCall() {
+	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(gomock.Any(), gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            0,
+		GroupPolicyAddress: "group-policy-address",
+	}, nil).Times(1)
+}
+
 func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {
 	return types.GenesisState{
 		Params:            types.DefaultParams(),
