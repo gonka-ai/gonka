@@ -1,0 +1,111 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream api_backend {
+        server ${KEY_NAME}-api:${API_PORT};
+    }
+
+    upstream chain_rpc_backend {
+        server ${KEY_NAME}-node:${CHAIN_RPC_PORT};
+    }
+
+    upstream chain_api_backend {
+        server ${KEY_NAME}-node:${CHAIN_API_PORT};
+    }
+
+    upstream chain_grpc_backend {
+        server ${KEY_NAME}-node:${CHAIN_GRPC_PORT};
+    }
+
+    # Dashboard upstream - only included if DASHBOARD_PORT is set
+    ${DASHBOARD_UPSTREAM}
+
+    # Enable gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Security headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Increase client body size for large requests
+        client_max_body_size 10M;
+
+        # Health check endpoint
+        location = /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
+        # API routes - main application API
+        location /api/ {
+            proxy_pass http://api_backend/;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            
+            # Handle WebSocket connections if needed
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # Timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        # Chain RPC endpoint
+        location /chain-rpc/ {
+            proxy_pass http://chain_rpc_backend/;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            
+            # WebSocket support for RPC connections
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $$http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+
+        # Chain API endpoint (REST API)
+        location /chain-api/ {
+            proxy_pass http://chain_api_backend/;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+        # Chain gRPC endpoint (if needed)
+        location /chain-grpc/ {
+            grpc_pass grpc://chain_grpc_backend;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+        # Root location - either dashboard or not configured page
+        ${ROOT_LOCATION}
+
+        # Default error pages
+        error_page 404 /404.html;
+        
+        location = /404.html {
+            internal;
+            return 404 "Not Found\n";
+            add_header Content-Type text/plain;
+        }
+    }
+} 

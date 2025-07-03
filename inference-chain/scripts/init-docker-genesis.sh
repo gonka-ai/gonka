@@ -32,6 +32,8 @@ CHAIN_ID="gonka-testnet-3"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 
+# TODO: With the new proxy, we don't need to update the configs for explorer,
+# so we can remove this function
 update_configs_for_explorer() {
   if [ "${WITH_EXPLORER:-}" = true ]; then
     sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"

@@ -62,6 +62,8 @@ SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-10}"
 SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
 TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2}"
 
+# TODO: With the new proxy, we don't need to update the configs for explorer,
+# so we can remove this function
 update_configs_for_explorer() {
   if [ "${WITH_EXPLORER:-}" = true ]; then
     sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"

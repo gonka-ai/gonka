@@ -1,0 +1,16 @@
+services:
+  explorer:
+    container_name: ${KEY_NAME}-explorer
+    image: gcr.io/decentralized-ai/ping-pub-explorer:latest
+    networks:
+      - chain-public
+    restart: unless-stopped
+
+  # Enable REST API server when explorer is included
+  chain-node:
+    environment:
+      - WITH_EXPLORER=true  # Enable REST API server for explorer
+
+  api:
+    environment:
+      - DAPI_API__EXPLORER_URL=http://explorer:5173 
