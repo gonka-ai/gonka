@@ -449,6 +449,28 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
         this[InferenceState::genesisOnlyParams] = spec<GenesisOnlyParams> {
             this[GenesisOnlyParams::topRewardPeriod] = Duration.ofDays(365).toSeconds()
         }
+        this[InferenceState::modelList] = listOf(
+            ModelListItem(
+                proposedBy = "genesis",
+                id = "Qwen/Qwen2-72B-Instruct",
+                unitsOfComputePerToken = "1000",
+                hfRepo = "Qwen/Qwen2-72B-Instruct",
+                hfCommit = "976055f8c83f394f35dbd3ab09a285a984907bd0",
+                modelArgs = listOf("--quantization", "fp8", "-kv-cache-dtype", "fp8"),
+                vRam = "32",
+                throughputPerNonce = "1000"
+            ),
+            ModelListItem(
+                proposedBy = "genesis",
+                id = "Qwen/Qwen2.5-7B-Instruct",
+                unitsOfComputePerToken = "100",
+                hfRepo = "Qwen/Qwen2.5-7B-Instruct",
+                hfCommit = "a09a35458c702b33eeacc393d103063234e8bc28",
+                modelArgs = listOf("--quantization", "fp8"),
+                vRam = "16",
+                throughputPerNonce = "10000"
+            )
+        )
     }
 }
 
