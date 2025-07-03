@@ -1435,6 +1435,7 @@ func (m *QueryGetCurrentEpochRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_QueryGetCurrentEpochRequest proto.InternalMessageInfo
 
+// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 type QueryGetCurrentEpochResponse struct {
 	Epoch uint64 `protobuf:"varint,1,opt,name=epoch,proto3" json:"epoch,omitempty"`
 }

@@ -1565,7 +1565,7 @@ type ActiveParticipants struct {
 	unknownFields protoimpl.UnknownFields
 
 	Participants         []*ActiveParticipant `protobuf:"bytes,1,rep,name=participants,proto3" json:"participants,omitempty"`
-	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // DEPRECATED: Use epoch_id
+	EpochGroupId         uint64               `protobuf:"varint,2,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // Still used as the index in the KV storage
 	PocStartBlockHeight  int64                `protobuf:"varint,3,opt,name=poc_start_block_height,json=pocStartBlockHeight,proto3" json:"poc_start_block_height,omitempty"`
 	EffectiveBlockHeight int64                `protobuf:"varint,4,opt,name=effective_block_height,json=effectiveBlockHeight,proto3" json:"effective_block_height,omitempty"`
 	CreatedAtBlockHeight int64                `protobuf:"varint,5,opt,name=created_at_block_height,json=createdAtBlockHeight,proto3" json:"created_at_block_height,omitempty"` // Same as effective_block_height???
