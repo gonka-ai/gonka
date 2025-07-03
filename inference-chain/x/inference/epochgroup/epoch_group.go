@@ -344,6 +344,7 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string
 	subGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
 		ModelId:             modelId,
+		EpochId:             eg.GroupData.EpochGroupId,
 	}
 
 	// Create a new EpochGroup for the sub-group
