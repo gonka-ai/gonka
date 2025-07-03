@@ -118,8 +118,9 @@ type QueryClient interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(ctx context.Context, in *QueryGetInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(ctx context.Context, in *QueryAllInferenceTimeoutRequest, opts ...grpc.CallOption) (*QueryAllInferenceTimeoutResponse, error)
-	// Queries a list of InferenceValidationDetails items.
+	// BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
 	InferenceValidationDetails(ctx context.Context, in *QueryGetInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationDetailsResponse, error)
+	// Queries a list of InferenceValidationDetails items.
 	InferenceValidationDetailsAll(ctx context.Context, in *QueryAllInferenceValidationDetailsRequest, opts ...grpc.CallOption) (*QueryAllInferenceValidationDetailsResponse, error)
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(ctx context.Context, in *QueryGetInferenceValidationParametersRequest, opts ...grpc.CallOption) (*QueryGetInferenceValidationParametersResponse, error)
@@ -708,8 +709,9 @@ type QueryServer interface {
 	// Queries a list of InferenceTimeout items.
 	InferenceTimeout(context.Context, *QueryGetInferenceTimeoutRequest) (*QueryGetInferenceTimeoutResponse, error)
 	InferenceTimeoutAll(context.Context, *QueryAllInferenceTimeoutRequest) (*QueryAllInferenceTimeoutResponse, error)
-	// Queries a list of InferenceValidationDetails items.
+	// BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
 	InferenceValidationDetails(context.Context, *QueryGetInferenceValidationDetailsRequest) (*QueryGetInferenceValidationDetailsResponse, error)
+	// Queries a list of InferenceValidationDetails items.
 	InferenceValidationDetailsAll(context.Context, *QueryAllInferenceValidationDetailsRequest) (*QueryAllInferenceValidationDetailsResponse, error)
 	// Queries a list of GetInferenceValidationParameters items.
 	GetInferenceValidationParameters(context.Context, *QueryGetInferenceValidationParametersRequest) (*QueryGetInferenceValidationParametersResponse, error)

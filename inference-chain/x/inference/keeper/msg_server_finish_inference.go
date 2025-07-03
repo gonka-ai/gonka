@@ -61,6 +61,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 	}
 
 	existingInference.EpochGroupId = uint64(effectiveEpoch.PocStartBlockHeight)
+	existingInference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
 	existingInference.EpochId = effectiveEpoch.Index
 	currentEpochGroup.GroupData.NumberOfRequests++
 
@@ -87,9 +88,9 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
 		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
+		EpochGroupId:       currentEpochGroup.GroupData.EpochGroupId,
 		Model:              existingInference.Model,
 		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
-		EpochIndex:         effectiveEpoch.Index,
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
 		k.LogWarn("Executor Power equals Total Power", types.Validation,
@@ -106,7 +107,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"Adding Inference Validation Details",
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
-		"epoch_index", inferenceDetails.EpochIndex,
 		"epoch_id", inferenceDetails.EpochId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,

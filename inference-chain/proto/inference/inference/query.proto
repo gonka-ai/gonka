@@ -158,11 +158,12 @@ service Query {
 
   }
 
-  // Queries a list of InferenceValidationDetails items.
+  // BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
   rpc InferenceValidationDetails    (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
 
   }
+  // Queries a list of InferenceValidationDetails items.
   rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
 

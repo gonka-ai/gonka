@@ -575,32 +575,33 @@ func (x *_Inference_23_list) IsValid() bool {
 }
 
 var (
-	md_Inference                        protoreflect.MessageDescriptor
-	fd_Inference_index                  protoreflect.FieldDescriptor
-	fd_Inference_inference_id           protoreflect.FieldDescriptor
-	fd_Inference_prompt_hash            protoreflect.FieldDescriptor
-	fd_Inference_prompt_payload         protoreflect.FieldDescriptor
-	fd_Inference_response_hash          protoreflect.FieldDescriptor
-	fd_Inference_response_payload       protoreflect.FieldDescriptor
-	fd_Inference_prompt_token_count     protoreflect.FieldDescriptor
-	fd_Inference_completion_token_count protoreflect.FieldDescriptor
-	fd_Inference_requested_by           protoreflect.FieldDescriptor
-	fd_Inference_executed_by            protoreflect.FieldDescriptor
-	fd_Inference_status                 protoreflect.FieldDescriptor
-	fd_Inference_start_block_height     protoreflect.FieldDescriptor
-	fd_Inference_end_block_height       protoreflect.FieldDescriptor
-	fd_Inference_start_block_timestamp  protoreflect.FieldDescriptor
-	fd_Inference_end_block_timestamp    protoreflect.FieldDescriptor
-	fd_Inference_model                  protoreflect.FieldDescriptor
-	fd_Inference_max_tokens             protoreflect.FieldDescriptor
-	fd_Inference_actual_cost            protoreflect.FieldDescriptor
-	fd_Inference_escrow_amount          protoreflect.FieldDescriptor
-	fd_Inference_proposal_details       protoreflect.FieldDescriptor
-	fd_Inference_epoch_group_id         protoreflect.FieldDescriptor
-	fd_Inference_assigned_to            protoreflect.FieldDescriptor
-	fd_Inference_validated_by           protoreflect.FieldDescriptor
-	fd_Inference_node_version           protoreflect.FieldDescriptor
-	fd_Inference_epoch_id               protoreflect.FieldDescriptor
+	md_Inference                              protoreflect.MessageDescriptor
+	fd_Inference_index                        protoreflect.FieldDescriptor
+	fd_Inference_inference_id                 protoreflect.FieldDescriptor
+	fd_Inference_prompt_hash                  protoreflect.FieldDescriptor
+	fd_Inference_prompt_payload               protoreflect.FieldDescriptor
+	fd_Inference_response_hash                protoreflect.FieldDescriptor
+	fd_Inference_response_payload             protoreflect.FieldDescriptor
+	fd_Inference_prompt_token_count           protoreflect.FieldDescriptor
+	fd_Inference_completion_token_count       protoreflect.FieldDescriptor
+	fd_Inference_requested_by                 protoreflect.FieldDescriptor
+	fd_Inference_executed_by                  protoreflect.FieldDescriptor
+	fd_Inference_status                       protoreflect.FieldDescriptor
+	fd_Inference_start_block_height           protoreflect.FieldDescriptor
+	fd_Inference_end_block_height             protoreflect.FieldDescriptor
+	fd_Inference_start_block_timestamp        protoreflect.FieldDescriptor
+	fd_Inference_end_block_timestamp          protoreflect.FieldDescriptor
+	fd_Inference_model                        protoreflect.FieldDescriptor
+	fd_Inference_max_tokens                   protoreflect.FieldDescriptor
+	fd_Inference_actual_cost                  protoreflect.FieldDescriptor
+	fd_Inference_escrow_amount                protoreflect.FieldDescriptor
+	fd_Inference_proposal_details             protoreflect.FieldDescriptor
+	fd_Inference_epoch_group_id               protoreflect.FieldDescriptor
+	fd_Inference_assigned_to                  protoreflect.FieldDescriptor
+	fd_Inference_validated_by                 protoreflect.FieldDescriptor
+	fd_Inference_node_version                 protoreflect.FieldDescriptor
+	fd_Inference_epoch_id                     protoreflect.FieldDescriptor
+	fd_Inference_epoch_poc_start_block_height protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -631,6 +632,7 @@ func init() {
 	fd_Inference_validated_by = md_Inference.Fields().ByName("validated_by")
 	fd_Inference_node_version = md_Inference.Fields().ByName("node_version")
 	fd_Inference_epoch_id = md_Inference.Fields().ByName("epoch_id")
+	fd_Inference_epoch_poc_start_block_height = md_Inference.Fields().ByName("epoch_poc_start_block_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -848,6 +850,12 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.EpochPocStartBlockHeight != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.EpochPocStartBlockHeight)
+		if !f(fd_Inference_epoch_poc_start_block_height, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -913,6 +921,8 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.NodeVersion != ""
 	case "inference.inference.Inference.epoch_id":
 		return x.EpochId != uint64(0)
+	case "inference.inference.Inference.epoch_poc_start_block_height":
+		return x.EpochPocStartBlockHeight != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -979,6 +989,8 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 		x.NodeVersion = ""
 	case "inference.inference.Inference.epoch_id":
 		x.EpochId = uint64(0)
+	case "inference.inference.Inference.epoch_poc_start_block_height":
+		x.EpochPocStartBlockHeight = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1073,6 +1085,9 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.epoch_id":
 		value := x.EpochId
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Inference.epoch_poc_start_block_height":
+		value := x.EpochPocStartBlockHeight
+		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1145,6 +1160,8 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 		x.NodeVersion = value.Interface().(string)
 	case "inference.inference.Inference.epoch_id":
 		x.EpochId = value.Uint()
+	case "inference.inference.Inference.epoch_poc_start_block_height":
+		x.EpochPocStartBlockHeight = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1222,6 +1239,8 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 		panic(fmt.Errorf("field node_version of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.epoch_id":
 		panic(fmt.Errorf("field epoch_id of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.epoch_poc_start_block_height":
+		panic(fmt.Errorf("field epoch_poc_start_block_height of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1286,6 +1305,8 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 	case "inference.inference.Inference.node_version":
 		return protoreflect.ValueOfString("")
 	case "inference.inference.Inference.epoch_id":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Inference.epoch_poc_start_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
@@ -1446,6 +1467,9 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.EpochId != 0 {
 			n += 2 + runtime.Sov(uint64(x.EpochId))
 		}
+		if x.EpochPocStartBlockHeight != 0 {
+			n += 2 + runtime.Sov(uint64(x.EpochPocStartBlockHeight))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1474,6 +1498,13 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.EpochPocStartBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochPocStartBlockHeight))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xd0
 		}
 		if x.EpochId != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochId))
@@ -2352,6 +2383,25 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 26:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EpochPocStartBlockHeight", wireType)
+				}
+				x.EpochPocStartBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.EpochPocStartBlockHeight |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2514,31 +2564,32 @@ type Inference struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Index                string           `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
-	InferenceId          string           `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	PromptHash           string           `protobuf:"bytes,3,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
-	PromptPayload        string           `protobuf:"bytes,4,opt,name=prompt_payload,json=promptPayload,proto3" json:"prompt_payload,omitempty"`
-	ResponseHash         string           `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
-	ResponsePayload      string           `protobuf:"bytes,6,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
-	PromptTokenCount     uint64           `protobuf:"varint,7,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
-	CompletionTokenCount uint64           `protobuf:"varint,8,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
-	RequestedBy          string           `protobuf:"bytes,9,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
-	ExecutedBy           string           `protobuf:"bytes,10,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
-	Status               InferenceStatus  `protobuf:"varint,11,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
-	StartBlockHeight     int64            `protobuf:"varint,12,opt,name=start_block_height,json=startBlockHeight,proto3" json:"start_block_height,omitempty"`
-	EndBlockHeight       int64            `protobuf:"varint,13,opt,name=end_block_height,json=endBlockHeight,proto3" json:"end_block_height,omitempty"`
-	StartBlockTimestamp  int64            `protobuf:"varint,14,opt,name=start_block_timestamp,json=startBlockTimestamp,proto3" json:"start_block_timestamp,omitempty"`
-	EndBlockTimestamp    int64            `protobuf:"varint,15,opt,name=end_block_timestamp,json=endBlockTimestamp,proto3" json:"end_block_timestamp,omitempty"`
-	Model                string           `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
-	MaxTokens            uint64           `protobuf:"varint,17,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	ActualCost           int64            `protobuf:"varint,18,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
-	EscrowAmount         int64            `protobuf:"varint,19,opt,name=escrow_amount,json=escrowAmount,proto3" json:"escrow_amount,omitempty"`
-	ProposalDetails      *ProposalDetails `protobuf:"bytes,20,opt,name=proposal_details,json=proposalDetails,proto3" json:"proposal_details,omitempty"`
-	EpochGroupId         uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"`
-	AssignedTo           string           `protobuf:"bytes,22,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
-	ValidatedBy          []string         `protobuf:"bytes,23,rep,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
-	NodeVersion          string           `protobuf:"bytes,24,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`
-	EpochId              uint64           `protobuf:"varint,25,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	Index                    string           `protobuf:"bytes,1,opt,name=index,proto3" json:"index,omitempty"`
+	InferenceId              string           `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	PromptHash               string           `protobuf:"bytes,3,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	PromptPayload            string           `protobuf:"bytes,4,opt,name=prompt_payload,json=promptPayload,proto3" json:"prompt_payload,omitempty"`
+	ResponseHash             string           `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	ResponsePayload          string           `protobuf:"bytes,6,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	PromptTokenCount         uint64           `protobuf:"varint,7,opt,name=prompt_token_count,json=promptTokenCount,proto3" json:"prompt_token_count,omitempty"`
+	CompletionTokenCount     uint64           `protobuf:"varint,8,opt,name=completion_token_count,json=completionTokenCount,proto3" json:"completion_token_count,omitempty"`
+	RequestedBy              string           `protobuf:"bytes,9,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	ExecutedBy               string           `protobuf:"bytes,10,opt,name=executed_by,json=executedBy,proto3" json:"executed_by,omitempty"`
+	Status                   InferenceStatus  `protobuf:"varint,11,opt,name=status,proto3,enum=inference.inference.InferenceStatus" json:"status,omitempty"`
+	StartBlockHeight         int64            `protobuf:"varint,12,opt,name=start_block_height,json=startBlockHeight,proto3" json:"start_block_height,omitempty"`
+	EndBlockHeight           int64            `protobuf:"varint,13,opt,name=end_block_height,json=endBlockHeight,proto3" json:"end_block_height,omitempty"`
+	StartBlockTimestamp      int64            `protobuf:"varint,14,opt,name=start_block_timestamp,json=startBlockTimestamp,proto3" json:"start_block_timestamp,omitempty"`
+	EndBlockTimestamp        int64            `protobuf:"varint,15,opt,name=end_block_timestamp,json=endBlockTimestamp,proto3" json:"end_block_timestamp,omitempty"`
+	Model                    string           `protobuf:"bytes,16,opt,name=model,proto3" json:"model,omitempty"`
+	MaxTokens                uint64           `protobuf:"varint,17,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	ActualCost               int64            `protobuf:"varint,18,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
+	EscrowAmount             int64            `protobuf:"varint,19,opt,name=escrow_amount,json=escrowAmount,proto3" json:"escrow_amount,omitempty"`
+	ProposalDetails          *ProposalDetails `protobuf:"bytes,20,opt,name=proposal_details,json=proposalDetails,proto3" json:"proposal_details,omitempty"`
+	EpochGroupId             uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // actually it's the epoch_poc_start_block_height :(
+	AssignedTo               string           `protobuf:"bytes,22,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
+	ValidatedBy              []string         `protobuf:"bytes,23,rep,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
+	NodeVersion              string           `protobuf:"bytes,24,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`
+	EpochId                  uint64           `protobuf:"varint,25,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	EpochPocStartBlockHeight uint64           `protobuf:"varint,26,opt,name=epoch_poc_start_block_height,json=epochPocStartBlockHeight,proto3" json:"epoch_poc_start_block_height,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -2736,6 +2787,13 @@ func (x *Inference) GetEpochId() uint64 {
 	return 0
 }
 
+func (x *Inference) GetEpochPocStartBlockHeight() uint64 {
+	if x != nil {
+		return x.EpochPocStartBlockHeight
+	}
+	return 0
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
@@ -2752,7 +2810,7 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x12, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63,
 	0x79, 0x49, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x61, 0x64,
 	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x6f, 0x6c,
-	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xf2, 0x07, 0x0a, 0x09, 0x49,
+	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xb2, 0x08, 0x0a, 0x09, 0x49,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21,
 	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02,
@@ -2815,7 +2873,11 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x79, 0x12, 0x21, 0x0a, 0x0c, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
 	0x6e, 0x18, 0x18, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x6e, 0x6f, 0x64, 0x65, 0x56, 0x65, 0x72,
 	0x73, 0x69, 0x6f, 0x6e, 0x12, 0x19, 0x0a, 0x08, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x64,
-	0x18, 0x19, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x2a,
+	0x18, 0x19, 0x20, 0x01, 0x28, 0x04, 0x52, 0x07, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12,
+	0x3e, 0x0a, 0x1c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61,
+	0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
+	0x1a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x18, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x63, 0x53,
+	0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x2a,
 	0x65, 0x0a, 0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74,
 	0x75, 0x73, 0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12,
 	0x0c, 0x0a, 0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a,
