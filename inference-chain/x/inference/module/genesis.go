@@ -156,6 +156,13 @@ func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight
 		if err != nil || member == nil {
 			log.Panicf("[InitGenesisEpoch] NewEpochMemberFromStakingValidator failed. err = %v", err)
 		}
+		k.LogInfo("[InitGenesisEpoch]: adding member to epoch group", types.EpochGroup,
+			"member.Address", member.Address,
+			"member.Weight", member.Weight,
+			"member.Pubkey", member.Pubkey,
+			"member.SeedSignature", member.SeedSignature,
+			"member.Reputation", member.Reputation,
+			"member.Models", member.Models)
 
 		err = epochGroup.AddMember(ctx, *member)
 		if err != nil {

@@ -22,6 +22,9 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+// TODO [CHAIN-RELAUNCH]: probably epoch_id should now contain the actual epoch ID
+//
+//	and we should use it as part of the key
 type InferenceValidationDetails struct {
 	EpochId            uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
 	InferenceId        string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`

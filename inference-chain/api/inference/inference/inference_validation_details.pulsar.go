@@ -861,12 +861,15 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// TODO [CHAIN-RELAUNCH]: probably epoch_id should now contain the actual epoch ID
+//
+//	and we should use it as part of the key
 type InferenceValidationDetails struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	EpochId            uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"` // same as #10, deprecated
+	EpochId            uint64 `protobuf:"varint,1,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"` // DEPRECATED: same as #10, renamed to better reflect what it is
 	InferenceId        string `protobuf:"bytes,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 	ExecutorId         string `protobuf:"bytes,3,opt,name=executor_id,json=executorId,proto3" json:"executor_id,omitempty"`
 	ExecutorReputation int32  `protobuf:"varint,4,opt,name=executor_reputation,json=executorReputation,proto3" json:"executor_reputation,omitempty"`
@@ -874,7 +877,7 @@ type InferenceValidationDetails struct {
 	ExecutorPower      uint64 `protobuf:"varint,6,opt,name=executor_power,json=executorPower,proto3" json:"executor_power,omitempty"`
 	Model              string `protobuf:"bytes,7,opt,name=model,proto3" json:"model,omitempty"`
 	TotalPower         uint64 `protobuf:"varint,8,opt,name=total_power,json=totalPower,proto3" json:"total_power,omitempty"`
-	EpochGroupId       uint64 `protobuf:"varint,10,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // same as epoch_id
+	EpochGroupId       uint64 `protobuf:"varint,10,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // The ID of the Group created by the GroupModule!
 }
 
 func (x *InferenceValidationDetails) Reset() {
