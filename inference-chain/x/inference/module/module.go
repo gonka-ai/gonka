@@ -316,11 +316,10 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		"len(activeParticipants)", len(activeParticipants))
 
 	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:        activeParticipants,
-		EpochGroupId:        upcomingEpoch.Index,
-		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
-		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
-		EffectiveBlockHeight: upcomingEpoch.EffectiveBlockHeight,
+		Participants:         activeParticipants,
+		EpochGroupId:         upcomingEpoch.Index,
+		PocStartBlockHeight:  upcomingEpoch.PocStartBlockHeight,
+		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
 	})
 
