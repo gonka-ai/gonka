@@ -1,4 +1,3 @@
-// PRTODO: rename file to developer_stats.proto
 syntax = "proto3";
 package inference.inference;
 
