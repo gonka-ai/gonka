@@ -65,6 +65,8 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
         async for chunk in request.stream():
             yield chunk
 
+    if not backend_path.startswith("/"):
+        backend_path = "/" + backend_path
     url = f"http://{VLLM_HOST}:{port}{backend_path}"
     headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
 
