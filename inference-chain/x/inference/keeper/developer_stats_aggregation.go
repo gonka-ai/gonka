@@ -27,9 +27,9 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	}
 
 	tokens := inference.CompletionTokenCount + inference.PromptTokenCount
-	inferenceTime := inference.StartBlockTimestamp
+	inferenceTime := inference.EndBlockTimestamp
 	if inferenceTime == 0 {
-		inferenceTime = inference.EndBlockTimestamp
+		inferenceTime = inference.StartBlockTimestamp
 	}
 
 	inferenceStats := types.InferenceStats{
@@ -53,7 +53,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 // TODO: refactor it later (move ”getter' logic to store level)
 func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
+	epochStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByEpoch))
 	epochKey := developerByEpochKey(developerAddr, epochId)
 
 	bz := epochStore.Get(epochKey)
@@ -72,7 +72,7 @@ func (k Keeper) GetDeveloperStatsByTime(
 	timeFrom, timeTo int64,
 ) []*types.DeveloperStatsByTime {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	var results []*types.DeveloperStatsByTime
 
@@ -96,7 +96,7 @@ func (k Keeper) GetDeveloperStatsByTime(
 
 func (k Keeper) GetSummaryByTime(ctx context.Context, from, to int64) StatsSummary {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	start := sdk.Uint64ToBigEndian(uint64(from))
 	end := sdk.Uint64ToBigEndian(uint64(to + 1))
@@ -127,9 +127,9 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 	}
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
-	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByInference))
-	byTimeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	epochStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByEpoch))
+	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByInference))
+	byTimeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
@@ -180,9 +180,9 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 	}
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
-	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByInference))
-	byTimeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	epochStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByEpoch))
+	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByInference))
+	byTimeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
@@ -226,7 +226,7 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 
 func (k Keeper) GetSummaryByModelAndTime(ctx context.Context, from, to int64) map[string]StatsSummary {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	start := sdk.Uint64ToBigEndian(uint64(from))
 	end := sdk.Uint64ToBigEndian(uint64(to + 1))
@@ -263,7 +263,7 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 
 	// === DeveloperStatsByEpoch ===
-	epochStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByEpoch))
+	epochStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByEpoch))
 	epochIter := epochStore.Iterator(nil, nil)
 	defer epochIter.Close()
 
@@ -282,7 +282,7 @@ func (k Keeper) DumpAllDeveloperStats(ctx context.Context) (map[string][]*types.
 	}
 
 	// === DeveloperStatsByTime ===
-	timeStore := prefix.NewStore(store, types.KeyPrefix(DevelopersByTime))
+	timeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 	timeIter := timeStore.Iterator(nil, nil)
 	defer timeIter.Close()
 
@@ -307,8 +307,7 @@ func modelByTimeKey(model string, timestamp int64, inferenceId string) []byte {
 	return append(modelKey, []byte(inferenceId)...)
 }
 
-// TODO [PRTODO]: why not / like we use everywhere else?
-var keySeparator = []byte("__SEP__")
+var keySeparator = []byte("/")
 
 func developerByEpochKey(developerAddr string, epochId uint64) []byte {
 	return append(append(sdk.Uint64ToBigEndian(epochId), keySeparator...), []byte(developerAddr)...)

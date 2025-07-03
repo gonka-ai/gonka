@@ -19,7 +19,7 @@ ENV GOOS=${GOOS} \
     # Override the wasmvm library path to use our musl version
     LD_LIBRARY_PATH=/lib
 
-RUN apk add --no-cache make gcc musl-dev git
+RUN apk add --no-cache make gcc musl-dev git patchelf
 
 # Use the musl libc version of wasmvm and create a symlink for the linker
 RUN if [ "$GOARCH" = "arm64" ]; then \
@@ -49,13 +49,17 @@ COPY decentralized-api/. .
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -tags muslc -ldflags "$LDFLAGS" \
-    -o ./build/dapi
-
+    -o ./build/dapi \
+    && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.dapi/cosmovisor/current' ./build/dapi
+RUN mkdir /build_output
 ################################################################################
 # Binary Exporter stage (for --output optimization)
 ################################################################################
 FROM scratch AS binary-exporter
-COPY --from=builder /app/decentralized-api/build/dapi /decentralized-api
+# Copy all required files to a flat structure
+COPY --from=builder /app/decentralized-api/build/dapi /build_output/decentralized-api
+COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
+COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
 ################################################################################
 # Final image

@@ -8,16 +8,16 @@ import (
 )
 
 const (
-	DevelopersByEpoch             = "developers/epoch"
-	DevelopersByTime              = "developers/time"
-	DevelopersByInference         = "developers/inference"
-	DevelopersByInferenceAndModel = "developers/inference/model"
+	StatsDevelopersByEpoch             = "stats/developers/epoch"
+	StatsDevelopersByTime              = "stats/developers/time"
+	StatsDevelopersByInference         = "stats/developers/inference"
+	StatsDevelopersByInferenceAndModel = "stats/model/inference"
 )
 
 func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer string, infStats types.InferenceStats, inferenceTime int64, epochId uint64) (uint64, error) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	byInferenceStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByInference))
-	byTimeStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByTime))
+	byInferenceStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByInference))
+	byTimeStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByTime))
 
 	timeKey := byInferenceStore.Get([]byte(infStats.InferenceId))
 	if timeKey == nil {
@@ -43,6 +43,13 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 		k.cdc.MustUnmarshal(val, &statsByTime)
 		prevEpochId = statsByTime.EpochId
 
+		prevInferenceTime := statsByTime.Timestamp
+		if prevInferenceTime != inferenceTime {
+			statsByTime.Timestamp = inferenceTime
+			byTimeStore.Delete(timeKey)
+			timeKey = developerByTimeAndInferenceKey(developer, uint64(inferenceTime), infStats.InferenceId)
+		}
+
 		statsByTime.EpochId = epochId
 		statsByTime.Inference.Status = infStats.Status
 		statsByTime.Inference.TotalTokenCount = infStats.TotalTokenCount
@@ -64,7 +71,7 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 
 func (k Keeper) setInferenceStatsByModel(ctx context.Context, developer string, stats types.InferenceStats, inferenceTime int64) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	byModelsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByInferenceAndModel))
+	byModelsStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByInferenceAndModel))
 
 	modelKey := modelByTimeKey(stats.Model, inferenceTime, stats.InferenceId)
 	byModelsStore.Set(modelKey, developerByTimeAndInferenceKey(developer, uint64(inferenceTime), stats.InferenceId))
@@ -73,7 +80,7 @@ func (k Keeper) setInferenceStatsByModel(ctx context.Context, developer string, 
 func (k Keeper) setOrUpdateInferenceStatsByEpoch(ctx context.Context, developer string, infStats types.InferenceStats, currentEpochId, prevEpochId uint64) {
 	k.LogInfo("stat set by epoch", types.Stat, "inference_id", infStats.InferenceId, "developer", developer, "epoch_id", currentEpochId, "previously_known_epoch_id", prevEpochId)
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(DevelopersByEpoch))
+	epochStore := prefix.NewStore(storeAdapter, types.KeyPrefix(StatsDevelopersByEpoch))
 
 	// === CASE 1: inference already exists, but was tagged by different epoch ===
 	if prevEpochId != 0 && prevEpochId != currentEpochId {
