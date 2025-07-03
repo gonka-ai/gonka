@@ -12,5 +12,5 @@ message InferenceValidationDetails {
   uint64 executor_power = 6;
   string model = 7;
   uint64 total_power = 8;
-  uint64 epoch_group_id = 10; // same as epoch_id
+  uint64 epoch_group_id = 10; // RENAME: same as previously epoch_id
 }

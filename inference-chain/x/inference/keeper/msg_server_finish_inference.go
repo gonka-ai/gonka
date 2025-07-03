@@ -107,7 +107,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"Adding Inference Validation Details",
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
-		"epoch_id", inferenceDetails.EpochId,
+		"epoch_group_id", inferenceDetails.EpochGroupId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,
 		"executor_reputation", inferenceDetails.ExecutorReputation,
