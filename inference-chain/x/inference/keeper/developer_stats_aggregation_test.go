@@ -385,10 +385,13 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			ActualCostInCoins:   actualCost,
 		}
 
-		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockTimestamp-10, inference.StartBlockTimestamp+10)
+		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.EndBlockTimestamp-10, inference.EndBlockTimestamp+10)
 		assert.Equal(t, expectedStatsAfterUpdate, *stat[0].Inference)
-		assert.Equal(t, inference.StartBlockTimestamp, stat[0].Timestamp)
+		assert.Equal(t, inference.EndBlockTimestamp, stat[0].Timestamp)
 		assert.Equal(t, epochId2, stat[0].EpochId)
+
+		stat = keeper.GetDeveloperStatsByTime(ctx, developer1, inference.StartBlockHeight-10, inference.StartBlockHeight+10)
+		assert.Empty(t, stat)
 	})
 
 	t.Run("inference without developer address", func(t *testing.T) {
@@ -433,9 +436,9 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		keeper.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId2})
 
 		summary := keeper.GetSummaryLastNEpochs(ctx, 1)
-		assert.Equal(t, summary, expectedSummary)
+		assert.Equal(t, expectedSummary, summary)
 
-		summary2 := keeper.GetSummaryByTime(ctx, inference.StartBlockTimestamp-10, inference2.StartBlockTimestamp+20)
-		assert.Equal(t, summary2, expectedSummary)
+		summary2 := keeper.GetSummaryByTime(ctx, inference.EndBlockTimestamp-10, inference2.EndBlockTimestamp+20)
+		assert.Equal(t, expectedSummary, summary2)
 	})
 }

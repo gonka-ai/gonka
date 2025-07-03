@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -119,7 +120,7 @@ func (k Keeper) GetContractsParams(ctx sdk.Context) (types.CosmWasmParams, bool)
 	return contractsParams, true
 }
 
-func (k Keeper) SetContractsParams(ctx sdk.Context, contractsParams types.CosmWasmParams) {
+func (k Keeper) SetContractsParams(ctx context.Context, contractsParams types.CosmWasmParams) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	key := []byte("contracts_params")
 	bz := k.cdc.MustMarshal(&contractsParams)
