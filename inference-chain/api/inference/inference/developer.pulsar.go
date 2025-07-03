@@ -1805,7 +1805,6 @@ func (x *DeveloperStatsByEpoch) GetInferenceIds() []string {
 	return nil
 }
 
-// QUESTION: Are they ever stored outside of DeveloperStatsByTime?
 type InferenceStats struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

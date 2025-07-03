@@ -132,7 +132,6 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		ResponsePayload:          "responsePayload",
 		PromptTokenCount:         10,
 		CompletionTokenCount:     20,
-		EpochGroupId:             uint64(newBlockHeight), // EpochGroupId is epoch start block height
 		EpochPocStartBlockHeight: uint64(newBlockHeight),
 		EpochId:                  epochId2,
 		ExecutedBy:               testutil.Executor,

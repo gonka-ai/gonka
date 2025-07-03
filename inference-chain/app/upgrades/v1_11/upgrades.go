@@ -22,7 +22,10 @@ func CreateUpgradeHandler(
 		fmt.Printf("OrderMigrations: %v\n", mm.OrderMigrations)
 		pocStartBlockHeightToEpochId := createEpochs(ctx, k)
 		setEpochIdToInferences(ctx, k, pocStartBlockHeightToEpochId)
-		updateInferenceValidationDetails(ctx, k)
+
+		renameInferenceValidationDetailsEpochId(ctx, k)
+		renameInferenceEpochId(ctx, k)
+
 		return vm, nil
 	}
 }
@@ -92,19 +95,20 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 		}
 		inference.EpochId = epochId
 
-		// And a field rename:
-		inference.EpochPocStartBlockHeight = inference.EpochGroupId
-
-		// TODO: should we retrospectively compute dev stats as well?
-		//  does it rely on the current epoch or smth?
 		k.SetInferenceWithoutDevStatComputation(ctx, inference)
 	}
 }
 
-// Basically a field rename
-func updateInferenceValidationDetails(ctx context.Context, k keeper.Keeper) {
+func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keeper) {
 	vs := k.GetAllInferenceValidationDetails(ctx)
 	for _, v := range vs {
 		v.EpochGroupId = v.EpochId
+	}
+}
+
+func renameInferenceEpochId(ctx context.Context, k keeper.Keeper) {
+	inferences := k.GetAllInference(ctx)
+	for _, inference := range inferences {
+		inference.EpochPocStartBlockHeight = inference.EpochGroupId
 	}
 }

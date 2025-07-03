@@ -20,7 +20,7 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		"inference_id", inference.InferenceId,
 		"inference_status", inference.Status.String(),
 		"developer", inference.RequestedBy,
-		"poc_block_height", inference.EpochGroupId)
+		"poc_block_height", inference.EpochPocStartBlockHeight)
 	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
 	if !found {
 		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)

@@ -74,7 +74,6 @@ func (m *DeveloperStatsByEpoch) GetInferenceIds() []string {
 	return nil
 }
 
-// QUESTION: Are they ever stored outside of DeveloperStatsByTime?
 type InferenceStats struct {
 	InferenceId       string          `protobuf:"bytes,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 	EpochId           uint64          `protobuf:"varint,2,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`

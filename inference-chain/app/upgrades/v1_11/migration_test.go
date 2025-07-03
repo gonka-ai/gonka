@@ -57,7 +57,8 @@ func TestEpochMigration(t *testing.T) {
 	// 2. Run migration helpers directly
 	m := createEpochs(sdkCtx, k)
 	setEpochIdToInferences(sdkCtx, k, m)
-	updateInferenceValidationDetails(sdkCtx, k)
+	renameInferenceValidationDetailsEpochId(sdkCtx, k)
+	renameInferenceEpochId(sdkCtx, k)
 
 	// 3. Assertions
 	// Epochs should be created and effective index set

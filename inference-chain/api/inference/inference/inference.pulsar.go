@@ -2584,7 +2584,7 @@ type Inference struct {
 	ActualCost               int64            `protobuf:"varint,18,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
 	EscrowAmount             int64            `protobuf:"varint,19,opt,name=escrow_amount,json=escrowAmount,proto3" json:"escrow_amount,omitempty"`
 	ProposalDetails          *ProposalDetails `protobuf:"bytes,20,opt,name=proposal_details,json=proposalDetails,proto3" json:"proposal_details,omitempty"`
-	EpochGroupId             uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // actually it's the epoch_poc_start_block_height :(
+	EpochGroupId             uint64           `protobuf:"varint,21,opt,name=epoch_group_id,json=epochGroupId,proto3" json:"epoch_group_id,omitempty"` // DEPRECATED: now use epoch_poc_start_block_height. Renaming
 	AssignedTo               string           `protobuf:"bytes,22,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
 	ValidatedBy              []string         `protobuf:"bytes,23,rep,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
 	NodeVersion              string           `protobuf:"bytes,24,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`

@@ -38,29 +38,29 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	}
 
 	inference2Developer1 := types.Inference{
-		InferenceId:          uuid.New().String(),
-		PromptTokenCount:     tokens,
-		CompletionTokenCount: tokens,
-		RequestedBy:          developer1,
-		Model:                testModel2,
-		Status:               types.InferenceStatus_FINISHED,
-		EpochGroupId:         0,
-		EpochId:              epochId2,
-		StartBlockTimestamp:  time.Now().UnixMilli(),
-		ActualCost:           1200,
+		InferenceId:              uuid.New().String(),
+		PromptTokenCount:         tokens,
+		CompletionTokenCount:     tokens,
+		RequestedBy:              developer1,
+		Model:                    testModel2,
+		Status:                   types.InferenceStatus_FINISHED,
+		EpochPocStartBlockHeight: 0,
+		EpochId:                  epochId2,
+		StartBlockTimestamp:      time.Now().UnixMilli(),
+		ActualCost:               1200,
 	}
 
 	inference1Developer2 := types.Inference{
-		InferenceId:          uuid.New().String(),
-		PromptTokenCount:     tokens * 3,
-		CompletionTokenCount: tokens,
-		RequestedBy:          developer2,
-		Status:               types.InferenceStatus_FINISHED,
-		Model:                testModel2,
-		EndBlockTimestamp:    time.Now().Add(-1 * time.Second).UnixMilli(),
-		EpochGroupId:         0,
-		EpochId:              epochId2,
-		ActualCost:           5000,
+		InferenceId:              uuid.New().String(),
+		PromptTokenCount:         tokens * 3,
+		CompletionTokenCount:     tokens,
+		RequestedBy:              developer2,
+		Status:                   types.InferenceStatus_FINISHED,
+		Model:                    testModel2,
+		EndBlockTimestamp:        time.Now().Add(-1 * time.Second).UnixMilli(),
+		EpochPocStartBlockHeight: 0,
+		EpochId:                  epochId2,
+		ActualCost:               5000,
 	}
 
 	inference2Developer2 := types.Inference{
@@ -378,7 +378,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		actualCost := int64(10000)
 		inference.ActualCost = actualCost
 		inference.Status = types.InferenceStatus_FINISHED
-		inference.EpochGroupId = 0
+		inference.EpochPocStartBlockHeight = 0
 		inference.EpochId = epochId2
 		inference.EndBlockTimestamp = time.Now().Add(5 * time.Second).UnixMilli()
 
@@ -410,31 +410,31 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		keeper.SetEffectiveEpochIndex(ctx, epochId1)
 
 		inference := types.Inference{
-			InferenceId:          uuid.New().String(),
-			PromptTokenCount:     tokens,
-			CompletionTokenCount: tokens * 2,
-			EpochGroupId:         0,
-			EpochId:              epochId2,
-			RequestedBy:          "",
-			Status:               types.InferenceStatus_FINISHED,
-			Model:                testModel,
-			StartBlockTimestamp:  time.Now().UnixMilli(),
-			EndBlockTimestamp:    time.Now().Add(5 * time.Second).UnixMilli(),
-			ActualCost:           5000,
+			InferenceId:              uuid.New().String(),
+			PromptTokenCount:         tokens,
+			CompletionTokenCount:     tokens * 2,
+			EpochPocStartBlockHeight: epochId2 * 10,
+			EpochId:                  epochId2,
+			RequestedBy:              "",
+			Status:                   types.InferenceStatus_FINISHED,
+			Model:                    testModel,
+			StartBlockTimestamp:      time.Now().UnixMilli(),
+			EndBlockTimestamp:        time.Now().Add(5 * time.Second).UnixMilli(),
+			ActualCost:               5000,
 		}
 
 		inference2 := types.Inference{
-			InferenceId:          uuid.New().String(),
-			PromptTokenCount:     tokens * 2,
-			CompletionTokenCount: tokens * 2,
-			EpochGroupId:         0,
-			EpochId:              epochId2,
-			RequestedBy:          developer1,
-			Status:               types.InferenceStatus_FINISHED,
-			Model:                testModel,
-			StartBlockTimestamp:  time.Now().UnixMilli(),
-			EndBlockTimestamp:    time.Now().Add(5 * time.Second).UnixMilli(),
-			ActualCost:           7000,
+			InferenceId:              uuid.New().String(),
+			PromptTokenCount:         tokens * 2,
+			CompletionTokenCount:     tokens * 2,
+			EpochPocStartBlockHeight: epochId2 * 10,
+			EpochId:                  epochId2,
+			RequestedBy:              developer1,
+			Status:                   types.InferenceStatus_FINISHED,
+			Model:                    testModel,
+			StartBlockTimestamp:      time.Now().UnixMilli(),
+			EndBlockTimestamp:        time.Now().Add(5 * time.Second).UnixMilli(),
+			ActualCost:               7000,
 		}
 
 		assert.NoError(t, keeper.SetDeveloperStats(ctx, inference))
