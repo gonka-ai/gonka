@@ -228,17 +228,21 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 }
 
 func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
-	store := keeper.PrefixStore(ctx, &k, []byte(types.ActiveParticipantsKeyPrefix))
+	emptyPrefixStore := keeper.EmptyPrefixStore(ctx, &k)
+	store := keeper.PrefixStore(ctx, &k, []byte(types.ActiveParticipantsKeyPrefixV1))
 	iterator := store.Iterator(nil, nil)
 	defer iterator.Close()
 
 	const batchSize = 1000
 	var updates []kvPair
 
+	i := 0
+	skipped := 0
 	for ; iterator.Valid(); iterator.Next() {
 		var ap types.ActiveParticipants
 		if err := k.Codec().Unmarshal(iterator.Value(), &ap); err != nil {
 			k.LogError(UpgradeName+" - failed to unmarshal active participants", types.Upgrades, "err", err)
+			skipped++
 			continue
 		}
 
@@ -246,6 +250,7 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 		if !ok {
 			k.LogError(UpgradeName+" - EpochId not found for ActiveParticipants", types.Upgrades,
 				"pocStartBlockHeight", ap.PocStartBlockHeight)
+			skipped++
 			continue
 		}
 		ap.EpochId = epochId
@@ -253,23 +258,29 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 		bz, err := k.Codec().Marshal(&ap)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal active participants", types.Upgrades, "err", err)
+			skipped++
 			continue
 		}
 
-		newKey := types.ActiveParticipantsKey(epochId)
+		newKey := types.ActiveParticipantsFullKey(epochId)
 		updates = append(updates, kvPair{newKey, bz})
+		i++
 
 		if len(updates) >= batchSize {
-			updates = writeBuffered(store, updates)
+			updates = writeBuffered(emptyPrefixStore, updates)
 		}
 	}
 
 	if len(updates) > 0 {
-		writeBuffered(store, updates)
+		writeBuffered(emptyPrefixStore, updates)
 	}
 
+	total := i + skipped
+
 	// validation – just count all current ActiveParticipants keys
-	validateCount(ctx, k, []byte(types.ActiveParticipantsKeyPrefix), -1, "activeParticipants")
+	// 2 x total, because they share the same key prefix
+	validateCount(ctx, k, []byte(types.ActiveParticipantsKeyPrefixV1), 2*total, "activeParticipants")
+	validateCount(ctx, k, []byte(types.ActiveParticipantsKeyPrefix), total, "activeParticipants")
 }
 
 func validateCount(ctx context.Context, k keeper.Keeper, keyPrefix []byte, expected int, label string) {

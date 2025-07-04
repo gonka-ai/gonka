@@ -5,7 +5,8 @@ import (
 	"strconv"
 )
 
-const ActiveParticipantsKeyPrefix = "ActiveParticipants/"
+const ActiveParticipantsKeyPrefixV1 = "ActiveParticipants/"
+const ActiveParticipantsKeyPrefix = "ActiveParticipants/value"
 
 // TODO [CHAIN-RELAUNCH]:
 //  1. Start using EpochId as the key
@@ -13,7 +14,7 @@ const ActiveParticipantsKeyPrefix = "ActiveParticipants/"
 func ActiveParticipantsFullKeyV1(epochGroupId uint64) []byte {
 	var key []byte
 
-	key = append(key, []byte(ActiveParticipantsKeyPrefix)...)
+	key = append(key, []byte(ActiveParticipantsKeyPrefixV1)...)
 	key = append(key, []byte(strconv.FormatUint(epochGroupId, 10))...)
 	key = append(key, []byte("/value/")...)
 
@@ -25,7 +26,7 @@ func ActiveParticipantsFullKey(epoch uint64) []byte {
 
 	key = append(key, []byte(ActiveParticipantsKeyPrefix)...)
 	key = append(key, sdk.Uint64ToBigEndian(epoch)...)
-	key = append(key, []byte("/value/")...)
+	key = append(key, []byte("/")...)
 
 	return key
 }
@@ -34,7 +35,7 @@ func ActiveParticipantsKey(epoch uint64) []byte {
 	var key []byte
 
 	key = append(key, sdk.Uint64ToBigEndian(epoch)...)
-	key = append(key, []byte("/value/")...)
+	key = append(key, []byte("/")...)
 
 	return key
 }
