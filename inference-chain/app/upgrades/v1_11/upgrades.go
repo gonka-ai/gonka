@@ -5,11 +5,29 @@ import (
 	"fmt"
 	"sort"
 
+	"cosmossdk.io/store/prefix"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// kvPair is a small helper type for buffered writes.
+type kvPair struct {
+	key   []byte
+	value []byte
+}
+
+// writeBuffered writes accumulated kvPairs to the provided store and resets the buffer slice.
+// It returns the (now reset) slice so it can be reused without extra allocations.
+func writeBuffered(store *prefix.Store, buf []kvPair) []kvPair {
+	for _, p := range buf {
+		store.Set(p.key, p.value)
+	}
+	// Reuse the slice memory: set length to zero but keep capacity.
+	return buf[:0]
+}
 
 func CreateUpgradeHandler(
 	mm *module.Manager,
@@ -24,7 +42,6 @@ func CreateUpgradeHandler(
 		setEpochIdToInferences(ctx, k, pocStartBlockHeightToEpochId)
 
 		renameInferenceValidationDetailsEpochId(ctx, k)
-		renameInferenceEpochId(ctx, k)
 		renameActiveParticipantsEpochId(ctx, k, pocStartBlockHeightToEpochId)
 
 		return vm, nil
@@ -83,49 +100,135 @@ func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
 }
 
 func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
-	// FIXME: add some kind of pagination?
-	inferences := k.GetAllInference(ctx)
-	k.LogInfo(UpgradeName+" - queried all inferences", types.Upgrades, "len(inference)", len(inferences))
-	for _, inference := range inferences {
-		epochId, found := pocStartBlockHeightToEpochId[inference.EpochGroupId]
-		if !found {
-			k.LogError(UpgradeName+" - EpochId not found for Inference", types.Upgrades,
-				"inferenceId", inference.InferenceId,
-				"epochGroupId", inference.EpochGroupId)
-			continue // or handle error
-		}
-		inference.EpochId = epochId
+	// Stream through the store instead of loading everything into RAM.
+	store := keeper.PrefixStore(ctx, &k, []byte(types.InferenceKeyPrefix))
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
 
-		k.SetInferenceWithoutDevStatComputation(ctx, inference)
+	// We cannot mutate the store while iterating, so collect updates first.
+	type kv struct {
+		key   []byte
+		value []byte
+	}
+	const batchSize = 1000
+	var updates []kvPair
+
+	for ; iterator.Valid(); iterator.Next() {
+		var inf types.Inference
+		if err := proto.Unmarshal(iterator.Value(), &inf); err != nil {
+			k.LogError(UpgradeName+" - failed to unmarshal inference", types.Upgrades, "err", err)
+			continue
+		}
+
+		epochId, ok := pocStartBlockHeightToEpochId[inf.EpochGroupId]
+		if !ok {
+			k.LogError(UpgradeName+" - EpochId not found for Inference", types.Upgrades,
+				"inferenceId", inf.InferenceId,
+				"epochGroupId", inf.EpochGroupId)
+			continue
+		}
+
+		inf.EpochId = epochId
+		inf.EpochPocStartBlockHeight = inf.EpochGroupId // field rename
+
+		bz, err := proto.Marshal(&inf)
+		if err != nil {
+			k.LogError(UpgradeName+" - failed to marshal inference", types.Upgrades, "err", err)
+			continue
+		}
+		keyCopy := append([]byte(nil), iterator.Key()...)
+		updates = append(updates, kvPair{keyCopy, bz})
+
+		if len(updates) >= batchSize {
+			updates = writeBuffered(store, updates)
+		}
+	}
+
+	if len(updates) > 0 {
+		writeBuffered(store, updates)
 	}
 }
 
 func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keeper) {
-	vs := k.GetAllInferenceValidationDetails(ctx)
-	for _, v := range vs {
-		v.EpochGroupId = v.EpochId
-	}
-}
+	store := keeper.PrefixStore(ctx, &k, []byte(types.InferenceValidationDetailsKeyPrefix))
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
 
-func renameInferenceEpochId(ctx context.Context, k keeper.Keeper) {
-	inferences := k.GetAllInference(ctx)
-	for _, inference := range inferences {
-		inference.EpochPocStartBlockHeight = inference.EpochGroupId
+	type kv struct {
+		key   []byte
+		value []byte
+	}
+	const batchSize = 1000
+	var updates []kvPair
+
+	for ; iterator.Valid(); iterator.Next() {
+		var vd types.InferenceValidationDetails
+		if err := proto.Unmarshal(iterator.Value(), &vd); err != nil {
+			k.LogError(UpgradeName+" - failed to unmarshal validation details", types.Upgrades, "err", err)
+			continue
+		}
+
+		vd.EpochGroupId = vd.EpochId
+
+		bz, err := proto.Marshal(&vd)
+		if err != nil {
+			k.LogError(UpgradeName+" - failed to marshal validation details", types.Upgrades, "err", err)
+			continue
+		}
+		keyCopy := append([]byte(nil), iterator.Key()...)
+		updates = append(updates, kvPair{keyCopy, bz})
+
+		if len(updates) >= batchSize {
+			updates = writeBuffered(store, updates)
+		}
+	}
+
+	if len(updates) > 0 {
+		writeBuffered(store, updates)
 	}
 }
 
 func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
-	// TODO: iterate over all active participants entries
-	for {
-		activeParticipantsList, found := k.GetActiveParticipants(ctx)
-		// TODO: what should we set here??
-		epochId, found := pocStartBlockHeightToEpochId[uint64(activeParticipantsList.PocStartBlockHeight)]
-		if !found {
-			k.LogError(UpgradeName+" - EpochId not found for ActiveParticipants", types.Upgrades,
-				"pocStartBlockHeight", activeParticipantsList.PocStartBlockHeight)
-			continue // or handle error
+	store := keeper.PrefixStore(ctx, &k, []byte(types.ActiveParticipantsKeyPrefix))
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	type kv struct {
+		key   []byte
+		value []byte
+	}
+	const batchSize = 1000
+	var updates []kvPair
+
+	for ; iterator.Valid(); iterator.Next() {
+		var ap types.ActiveParticipants
+		if err := proto.Unmarshal(iterator.Value(), &ap); err != nil {
+			k.LogError(UpgradeName+" - failed to unmarshal active participants", types.Upgrades, "err", err)
+			continue
 		}
-		activeParticipantsList.EpochId = epochId
-		k.SetActiveParticipants(ctx, activeParticipantsList)
+
+		epochId, ok := pocStartBlockHeightToEpochId[uint64(ap.PocStartBlockHeight)]
+		if !ok {
+			k.LogError(UpgradeName+" - EpochId not found for ActiveParticipants", types.Upgrades,
+				"pocStartBlockHeight", ap.PocStartBlockHeight)
+			continue
+		}
+		ap.EpochId = epochId
+
+		bz, err := proto.Marshal(&ap)
+		if err != nil {
+			k.LogError(UpgradeName+" - failed to marshal active participants", types.Upgrades, "err", err)
+			continue
+		}
+		keyCopy := append([]byte(nil), iterator.Key()...)
+		updates = append(updates, kvPair{keyCopy, bz})
+
+		if len(updates) >= batchSize {
+			updates = writeBuffered(store, updates)
+		}
+	}
+
+	if len(updates) > 0 {
+		writeBuffered(store, updates)
 	}
 }
