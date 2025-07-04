@@ -26,6 +26,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 	developer1 := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address()).String()
 	developer2 := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address()).String()
 
+	// Effective epoch = 1
 	inference1Developer1 := types.Inference{
 		InferenceId:          uuid.New().String(),
 		PromptTokenCount:     tokens,
@@ -59,7 +60,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 		Model:                    testModel2,
 		EndBlockTimestamp:        time.Now().Add(-1 * time.Second).UnixMilli(),
 		EpochPocStartBlockHeight: 0,
-		EpochId:                  epochId2,
+		EpochId:                  epochId1,
 		ActualCost:               5000,
 	}
 
@@ -119,7 +120,7 @@ func TestDeveloperStats_MultipleDevs_MultipleEpochs(t *testing.T) {
 			Timestamp: inference1Developer2.EndBlockTimestamp,
 			Inference: &types.InferenceStats{
 				InferenceId:       inference1Developer2.InferenceId,
-				EpochId:           inference2Developer1.EpochId,
+				EpochId:           inference1Developer2.EpochId,
 				Status:            inference1Developer2.Status,
 				TotalTokenCount:   inference1Developer2.PromptTokenCount + inference1Developer2.CompletionTokenCount,
 				Model:             inference1Developer2.Model,

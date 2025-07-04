@@ -139,6 +139,7 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 	byTimeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
 	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	k.LogInfo("GetSummaryLastNEpochs: fetched effectiveEpochIndex", types.Stat, "effectiveEpochIndex", effectiveEpochIndex)
 	if !found {
 		k.LogError("GetSummaryLastNEpochs. failed to get effective epoch index.", types.Stat)
 		return StatsSummary{}
