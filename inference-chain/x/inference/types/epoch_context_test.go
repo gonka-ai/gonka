@@ -17,6 +17,7 @@ func TestZeroEpoch(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
+		SetNewValidatorsDelay: 1,
 	}
 	initialBlockHeight := int64(1)
 	startOfPoc := int64(10)
@@ -34,6 +35,7 @@ func Test(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 20,
+		SetNewValidatorsDelay: 1,
 	}
 	epoch := types.Epoch{
 		Index:               5,
@@ -187,6 +189,7 @@ func TestPlain(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    2,
 		PocValidationDuration: 10,
+		SetNewValidatorsDelay: 1,
 	}
 	startOfPoc := int64(10)
 	epoch := types.Epoch{Index: 1, PocStartBlockHeight: startOfPoc}
@@ -234,6 +237,7 @@ func TestProdBug(t *testing.T) {
 		PocExchangeDuration:   1,
 		PocValidationDelay:    1,
 		PocValidationDuration: 4,
+		SetNewValidatorsDelay: 1,
 	}
 
 	epoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}

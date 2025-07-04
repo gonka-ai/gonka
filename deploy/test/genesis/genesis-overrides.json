@@ -29,6 +29,7 @@
           "poc_exchange_duration": "5",
           "poc_validation_delay": "5",
           "poc_validation_duration": "20",
+          "set_new_validators_delay": "20",
           "default_unit_of_compute_price": "100"
         }
       },

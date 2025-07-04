@@ -531,25 +531,6 @@ Each task includes:
 - **Where**: `inference-chain/x/inference/keeper/accountsettle.go`
 - **Dependencies**: 7.1
 
-### Section 8: Enhanced PoC Stages
-
-#### 8.1 PoC Stages Extension
-- **Task**: [ ] Add new PoC stages to stage definitions
-- **What**: Add "Model Loading Stage" and "End of Epoch" stages to PoC cycle
-- **Where**: `inference-chain/x/inference/module/poc_stages.go`
-- **Dependencies**: None
-
-#### 8.2 Next Epoch Ready Function
-- **Task**: [ ] Create OnNextEpochReady stage handler
-- **What**: Create `OnNextEpochReady` function for next epoch ready handling
-- **Where**: `inference-chain/x/inference/module/poc_stages.go`
-- **Dependencies**: 8.1
-
-#### 8.3 Orchestrator PoC Stage Handling
-- **Task**: [ ] Add new stage handling to orchestrator
-- **What**: Update `ProcessNewBlockEvent` to handle OnNextEpochReady and add `LoadModelsForNextEpoch`
-- **Where**: `decentralized-api/internal/poc/orchestrator.go`- **Dependencies**: 8.2
-
 ### Section 9: Testing and Integration
 
 #### 9.1 Unit Tests for Model Enhancement
@@ -619,9 +600,9 @@ Each task includes:
 - **Where**: `inference-chain/x/inference/module/module.go` - `setModelsForParticipants` function
 - **Dependencies**: 5.9, 5.10
 
-### Section 12: Validation Exchange Window Restructuring
+### Section 8: Validation Exchange Window Restructuring
 
-#### 12.1 Validation Exchange Window Timing Update
+#### 8.1 Validation Exchange Window Timing Update
 - **Task**: [x] Update validation exchange window end timing
 - **What**: Modify the validation exchange window to end at "End of PoC Validation" stage instead of "Set New Validators" stage. This will shorten the validation window to complete validation processing before the epoch formation phase begins.
 - **Where**: 
@@ -634,7 +615,7 @@ Each task includes:
   - All tests are now passing, confirming the ValidationExchangeWindow timing change works correctly.
   - The change successfully separates validation completion from epoch formation timing, allowing for cleaner stage separation.
 
-#### 12.2 New OnEndOfPoCValidation Stage Creation and Logic Migration
+#### 8.2 New OnEndOfPoCValidation Stage Creation and Logic Migration
 - **Task**: [x] Create onEndOfPoCValidationStage stage handler and move epoch formation logic
 - **What**: Create a new `onEndOfPoCValidationStage` stage handler and transfer the following functions and logic from `onSetNewValidatorsStage`:
   - Account settling (`SettleAccounts`)
@@ -663,7 +644,7 @@ Each task includes:
   - **All tests passing**: The module tests pass successfully, confirming the stage separation works correctly
   - **Clean separation achieved**: Epoch preparation now occurs at "End of PoC Validation" stage, creating clear separation of concerns
 
-#### 12.3 OnSetNewValidator Function Refactoring
+#### 8.3 OnSetNewValidator Function Refactoring
 - **Task**: [x] Refactor onSetNewValidatorsStage to focus only on validator switching
 - **What**: Modify the existing `onSetNewValidatorsStage` function to remove epoch formation logic and keep only:
   - `moveUpcomingToEffectiveGroup` call
@@ -680,7 +661,7 @@ Each task includes:
   - **Clean architecture**: The stage now has a single, well-defined purpose
   - **Maintains functionality**: All validator switching logic preserved and working correctly
 
-#### 12.4 EndBlock Stage Execution Integration
+#### 8.4 EndBlock Stage Execution Integration
 - **Task**: [x] Add onEndOfPoCValidationStage stage execution to AppModule.EndBlock
 - **What**: Integrate the new `onEndOfPoCValidationStage` stage into the `AppModule.EndBlock` execution flow:
   - Add stage detection logic for "End of PoC Validation" stage using `epochContext.IsEndOfPoCValidationStage(blockHeight)`
@@ -698,7 +679,7 @@ Each task includes:
   - **Error handling**: Maintained existing error handling patterns for consistency
   - **Documentation added**: Included detailed comments explaining the stage execution order and reasoning
 
-#### 12.5 Stage Transition Verification
+#### 8.5 Stage Transition Verification
 - **Task**: [x] Verify and test stage transition flow
 - **What**: Ensure the new stage flow works correctly:
   - Validate that "End of PoC Validation" stage triggers `onEndOfPoCValidationStage`
@@ -716,26 +697,30 @@ Each task includes:
   - **No functionality loss**: All original functionality preserved and working through the new stage separation
   - **Data flow confirmed**: Epoch formation data flows correctly from `onEndOfPoCValidationStage` to `onSetNewValidatorsStage`
 
-## Critical Dependencies Summary
-
-### Blocking Dependencies
-- Section 1 must complete before Section 2 (model validation requires enhanced model structure)
-- Section 3.1-3.3 must complete before Section 3.4-3.5 (API updates require epoch snapshot functionality)
-- Section 4.1-4.2 must complete before Section 4.3+ (MLNode tracking requires protobuf structures)
-- Section 5.1-5.2 must complete before Section 5.4+ (PoC tracking requires enhanced batch structure)
-
-### Parallel Work Opportunities
-- Sections 1-2 can be developed in parallel with Section 8 (PoC stages)
-- Section 6 can be developed independently once Section 4.3 is complete
-- Section 9 (testing) can begin incrementally as each section completes
-- Section 10 (documentation) can be prepared in parallel with development
-
-## Estimated Completion Timeline
-- **Sections 1-2**: 5-7 days (foundational model enhancements)
-- **Sections 3-4**: 7-10 days (epoch snapshotting system) 
-- **Sections 5-6**: 5-7 days (PoC tracking and incentives)
-- **Sections 7-8**: 8-12 days (uptime management system)
-- **Sections 9-10**: 5-7 days (testing and documentation)
-- **Section 12**: 4-6 days (validation exchange window restructuring - alternative to Section 8)
-
-**Total Estimated Timeline: 30-43 days** 
+#### 8.6 Configurable SetNewValidators Stage Delay
+- **Task**: [x] Add configurable delay parameter for SetNewValidators stage timing
+- **What**: Replace hardcoded delay of 1 block with configurable `SetNewValidatorsDelay` parameter:
+  - Add `set_new_validators_delay` field to EpochParams protobuf message
+  - Update `GetSetNewValidatorsStage()` to use `p.SetNewValidatorsDelay` instead of hardcoded `1`
+  - Set default value to `1` in all test configurations (including testermint)
+  - Set production value to `80` in real genesis configurations for model loading time
+  - Update all configuration files and regenerate protobuf files
+- **Where**: 
+  - `inference-chain/proto/inference/inference/params.proto` - add new field
+  - `inference-chain/x/inference/types/epoch_params.go` - update GetSetNewValidatorsStage()
+  - `inference-chain/x/inference/types/params.go` - update DefaultParams()
+  - `testermint/src/main/kotlin/data/AppExport.kt` - add field to data class
+  - `testermint/src/main/kotlin/Main.kt` - add field to configuration
+  - Genesis configuration files - set production value to 80
+- **Dependencies**: 8.5
+- **Why**: Provides configurable time between epoch formation completion and validator switching to allow API nodes sufficient time for model loading and preparation
+- **Result**:
+  - **Successfully added `set_new_validators_delay` field**: Added to both EpochParams and EpochParamsV1 protobuf messages with proper field ordering (before `default_unit_of_compute_price`)
+  - **Updated Go code**: Modified `GetSetNewValidatorsStage()` to use `p.SetNewValidatorsDelay` instead of hardcoded `1`, and added field to `DefaultParams()` with value `1`
+  - **Updated testermint configuration**: Added field to both the data class and configuration with default value `1`
+  - **Updated genesis configurations**: 
+    - Test genesis: `set_new_validators_delay: "1"` (default)
+    - Production genesis: `set_new_validators_delay: "80"` (production value)
+  - **Fixed test compatibility**: Updated all test functions in `epoch_context_test.go` to include the new field
+  - **All tests passing**: Both build and test suites pass successfully
+  - **Backward compatibility**: Default value of `1` maintains existing behavior for test environments

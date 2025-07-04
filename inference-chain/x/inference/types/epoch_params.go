@@ -47,7 +47,7 @@ func (p *EpochParams) GetEndOfPoCValidationStage() int64 {
 }
 
 func (p *EpochParams) GetSetNewValidatorsStage() int64 {
-	return p.GetEndOfPoCValidationStage() + 1
+	return p.GetEndOfPoCValidationStage() + p.SetNewValidatorsDelay
 }
 
 func (p *EpochParams) GetClaimMoneyStage() int64 {

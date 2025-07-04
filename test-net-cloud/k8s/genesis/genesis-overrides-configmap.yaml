@@ -35,6 +35,7 @@ data:
               "poc_exchange_duration": "5",
               "poc_validation_delay": "5",
               "poc_validation_duration": "10",
+              "set_new_validators_delay": "1",
               "default_unit_of_compute_price": "100"
             }
           },

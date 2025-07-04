@@ -1129,7 +1129,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
 
 	// 1. Get the parent epoch group to find all subgroup models
-	parentGroupResp, err := b.chainBridge.GetCurrentEpochGroupData()
+	parentGroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(uint64(epochState.LatestEpoch.PocStartBlockHeight), "")
 	if err != nil {
 		logging.Error("Failed to get parent epoch group", types.Nodes, "error", err)
 		return err

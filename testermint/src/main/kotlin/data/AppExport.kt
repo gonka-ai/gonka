@@ -77,6 +77,7 @@ data class EpochParams(
     val pocExchangeDuration: Long,
     val pocValidationDelay: Long,
     val pocValidationDuration: Long,
+    val setNewValidatorsDelay: Long,
 )
 
 data class Decimal(
