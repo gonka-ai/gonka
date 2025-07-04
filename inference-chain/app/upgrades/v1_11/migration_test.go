@@ -25,21 +25,33 @@ func TestEpochMigration(t *testing.T) {
 		return uint64(i+1) * 300
 	}
 
-	mocks.ExpectAnyCreateGroupWithPolicyCall().AnyTimes()
-
 	// 1.a Create epoch groups and sub-groups
+	nGroups := uint64(1)
 	rootHeights := make([]uint64, rootEGCount)
 	for i := 0; i < rootEGCount; i++ {
 		h := dummyHeight(i)
 		rootHeights[i] = h
 		eg, err := k.CreateEpochGroup(sdkCtx, h, uint64(0))
 		require.NoError(t, err)
+		mocks.ExpectCreateGroupWithPolicyCall(sdkCtx, nGroups)
+		nGroups++
 		err = eg.CreateGroup(sdkCtx)
 		require.NoError(t, err, "test-set-up: Failed to create epoch group for height %d", h)
 
+		ap := types.ActiveParticipants{
+			EpochGroupId:        eg.GroupData.EpochGroupId,
+			PocStartBlockHeight: int64(h),
+			Participants:        nil,
+		}
+		k.SetActiveParticipantsV1(sdkCtx, ap)
+
+		mocks.ExpectCreateGroupWithPolicyCall(sdkCtx, nGroups)
+		nGroups++
 		_, err = eg.CreateSubGroup(sdkCtx, "model1")
 		require.NoError(t, err, "test-set-up: Failed to create sub group for height %d", h)
 		if i > rootEGCount/2 {
+			mocks.ExpectCreateGroupWithPolicyCall(sdkCtx, nGroups)
+			nGroups++
 			_, err = eg.CreateSubGroup(sdkCtx, "model2")
 			require.NoError(t, err, "test-set-up: Failed to create second group for height %d", h)
 		}
@@ -65,19 +77,7 @@ func TestEpochMigration(t *testing.T) {
 		k.SetInferenceValidationDetails(sdkCtx, vd)
 	}
 
-	// 1.e Active participants lists for first 1000 root epochs
-	for i := 0; i < activeParticipants; i++ {
-		egIdx := rootHeights[i]
-		ap := types.ActiveParticipants{
-			EpochGroupId:        egIdx,
-			PocStartBlockHeight: int64(egIdx),
-			Participants:        nil,
-		}
-		k.SetActiveParticipantsV1(sdkCtx, ap)
-	}
-
 	// ----- 2. Run migration helpers --------------------------------------
-
 	mapping := createEpochs(sdkCtx, k)
 	setEpochIdToInferences(sdkCtx, k, mapping)
 	renameInferenceValidationDetailsEpochId(sdkCtx, k)

@@ -99,3 +99,7 @@ func (k Keeper) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interf
 func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
 	k.Logger().Debug(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
+
+func (k Keeper) Codec() codec.BinaryCodec {
+	return k.cdc
+}

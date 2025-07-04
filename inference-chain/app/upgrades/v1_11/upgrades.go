@@ -8,7 +8,6 @@ import (
 	"cosmossdk.io/store/prefix"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
-	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -23,7 +22,9 @@ Changes description:
   a. Deprecated epoch_group_id, which was actually the PocStartBlockHeight.
   b. Added epoch_id, which is the EpochId from Epoch.
   c. Added epoch_poc_start_block_height, which is the PocStartBlockHeight from EpochGroupData.
-4. InferenceValidationDetails: TODO
+4. InferenceValidationDetails:
+  a. Deprecated epoch_id, which was actually the epoch_group_id (the thing created by group module)
+  b. Added epoch_group_id, which is the EpochId from Epoch.
 5. ActiveParticipants: TODO
 */
 
@@ -129,7 +130,7 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 
 	for ; iterator.Valid(); iterator.Next() {
 		var inf types.Inference
-		if err := proto.Unmarshal(iterator.Value(), &inf); err != nil {
+		if err := k.Codec().Unmarshal(iterator.Value(), &inf); err != nil {
 			k.LogError(UpgradeName+" - failed to unmarshal inference", types.Upgrades, "err", err)
 			continue
 		}
@@ -145,7 +146,7 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 		inf.EpochId = epochId
 		inf.EpochPocStartBlockHeight = inf.EpochGroupId // field rename
 
-		bz, err := proto.Marshal(&inf)
+		bz, err := k.Codec().Marshal(&inf)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal inference", types.Upgrades, "err", err)
 			continue
@@ -177,14 +178,14 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 
 	for ; iterator.Valid(); iterator.Next() {
 		var vd types.InferenceValidationDetails
-		if err := proto.Unmarshal(iterator.Value(), &vd); err != nil {
+		if err := k.Codec().Unmarshal(iterator.Value(), &vd); err != nil {
 			k.LogError(UpgradeName+" - failed to unmarshal validation details", types.Upgrades, "err", err)
 			continue
 		}
 
 		vd.EpochGroupId = vd.EpochId
 
-		bz, err := proto.Marshal(&vd)
+		bz, err := k.Codec().Marshal(&vd)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal validation details", types.Upgrades, "err", err)
 			continue
@@ -216,7 +217,7 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 
 	for ; iterator.Valid(); iterator.Next() {
 		var ap types.ActiveParticipants
-		if err := proto.Unmarshal(iterator.Value(), &ap); err != nil {
+		if err := k.Codec().Unmarshal(iterator.Value(), &ap); err != nil {
 			k.LogError(UpgradeName+" - failed to unmarshal active participants", types.Upgrades, "err", err)
 			continue
 		}
@@ -229,7 +230,7 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 		}
 		ap.EpochId = epochId
 
-		bz, err := proto.Marshal(&ap)
+		bz, err := k.Codec().Marshal(&ap)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal active participants", types.Upgrades, "err", err)
 			continue
