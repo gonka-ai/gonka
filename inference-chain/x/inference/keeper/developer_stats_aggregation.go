@@ -16,12 +16,16 @@ type StatsSummary struct {
 }
 
 func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
-	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
-	if !found {
-		k.LogError("SetDeveloperStats. failed to get effective epoch index for inference", types.Stat, "inference_id", inference.InferenceId)
-		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
+	epochId := inference.EpochId
+	if epochId == 0 {
+		effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+		if !found {
+			k.LogError("SetDeveloperStats. failed to get effective epoch index for inference", types.Stat, "inference_id", inference.InferenceId)
+			return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
+		}
+		epochId = effectiveEpoch.Index
 	}
-	epochId := effectiveEpoch.Index
+
 	k.LogInfo("SetDeveloperStats: got stat", types.Stat,
 		"inference_id", inference.InferenceId,
 		"inference_status", inference.Status.String(),

@@ -293,6 +293,7 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		tokens     = uint64(10)
 		epochId1   = uint64(1)
 		epochId2   = uint64(2)
+		epochId3   = uint64(3)
 	)
 
 	t.Run("inferences with zero start_timestamp and same end_timestamp, epoch and developer", func(t *testing.T) {
@@ -404,10 +405,13 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 		assert.Empty(t, stat)
 	})
 
+	// In case we received only FinishInference transaction,
+	//  we won't know who the developer is
 	t.Run("inference without developer address", func(t *testing.T) {
 		keeper, ctx := keepertest.InferenceKeeper(t)
 		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId1, PocStartBlockHeight: int64(epochId1 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId1)
+		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
+		keeper.SetEffectiveEpochIndex(ctx, epochId3)
 
 		inference := types.Inference{
 			InferenceId:              uuid.New().String(),
@@ -445,9 +449,6 @@ func TestDeveloperStats_OneDev(t *testing.T) {
 			TokensUsed:     int64(inference2.PromptTokenCount + inference2.CompletionTokenCount),
 			ActualCost:     inference2.ActualCost,
 		}
-
-		keeper.SetEpoch(ctx, &types.Epoch{Index: epochId2, PocStartBlockHeight: int64(epochId2 * 10)})
-		keeper.SetEffectiveEpochIndex(ctx, epochId2)
 
 		summary := keeper.GetSummaryLastNEpochs(ctx, 1)
 		assert.Equal(t, expectedSummary, summary)
