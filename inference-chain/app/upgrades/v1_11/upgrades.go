@@ -122,14 +122,11 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 	iterator := store.Iterator(nil, nil)
 	defer iterator.Close()
 
-	// We cannot mutate the store while iterating, so collect updates first.
-	type kv struct {
-		key   []byte
-		value []byte
-	}
 	const batchSize = 1000
 	var updates []kvPair
 
+	i := 0
+	skipped := 0
 	for ; iterator.Valid(); iterator.Next() {
 		var inf types.Inference
 		if err := k.Codec().Unmarshal(iterator.Value(), &inf); err != nil {
@@ -142,6 +139,7 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 			k.LogError(UpgradeName+" - EpochId not found for Inference", types.Upgrades,
 				"inferenceId", inf.InferenceId,
 				"epochGroupId", inf.EpochGroupId)
+			skipped++
 			continue
 		}
 
@@ -151,10 +149,13 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 		bz, err := k.Codec().Marshal(&inf)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal inference", types.Upgrades, "err", err)
+			skipped++
 			continue
 		}
 		keyCopy := append([]byte(nil), iterator.Key()...)
 		updates = append(updates, kvPair{keyCopy, bz})
+
+		i++
 
 		if len(updates) >= batchSize {
 			updates = writeBuffered(store, updates)
@@ -164,6 +165,10 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 	if len(updates) > 0 {
 		writeBuffered(store, updates)
 	}
+
+	k.LogInfo(UpgradeName+" - set EpochId to Inferences", types.Upgrades,
+		"processed", i,
+		"skipped", skipped)
 }
 
 func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keeper) {
@@ -178,10 +183,13 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 	const batchSize = 1000
 	var updates []kvPair
 
+	i := 0
+	skipped := 0
 	for ; iterator.Valid(); iterator.Next() {
 		var vd types.InferenceValidationDetails
 		if err := k.Codec().Unmarshal(iterator.Value(), &vd); err != nil {
 			k.LogError(UpgradeName+" - failed to unmarshal validation details", types.Upgrades, "err", err)
+			skipped++
 			continue
 		}
 
@@ -190,11 +198,13 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 		bz, err := k.Codec().Marshal(&vd)
 		if err != nil {
 			k.LogError(UpgradeName+" - failed to marshal validation details", types.Upgrades, "err", err)
+			skipped++
 			continue
 		}
 		keyCopy := append([]byte(nil), iterator.Key()...)
 		updates = append(updates, kvPair{keyCopy, bz})
 
+		i++
 		if len(updates) >= batchSize {
 			updates = writeBuffered(store, updates)
 		}
@@ -203,6 +213,10 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 	if len(updates) > 0 {
 		writeBuffered(store, updates)
 	}
+
+	k.LogInfo(""+UpgradeName+" - renamed InferenceValidationDetails EpochId to EpochGroupId", types.Upgrades,
+		"processed", i,
+		"skipped", skipped)
 }
 
 func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
@@ -210,10 +224,6 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 	iterator := store.Iterator(nil, nil)
 	defer iterator.Close()
 
-	type kv struct {
-		key   []byte
-		value []byte
-	}
 	const batchSize = 1000
 	var updates []kvPair
 

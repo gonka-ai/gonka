@@ -1,7 +1,9 @@
 package v1_11
 
 import (
+	"context"
 	"fmt"
+	"github.com/productscience/inference/x/inference/keeper"
 	"testing"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -93,25 +95,39 @@ func TestEpochMigration(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, epochId, eg.EpochId)
 
-		ap, ok := k.GetActiveParticipantsV1(sdkCtx, epochId)
+		ap, ok := k.GetActiveParticipants(sdkCtx, epochId)
 		require.True(t, ok)
 		require.Equal(t, mapping[height], ap.EpochId)
+		require.Equal(t, height, eg.PocStartBlockHeight)
 	}
 	eff, ok := k.GetEffectiveEpochIndex(sdkCtx)
 	require.True(t, ok)
 	require.Equal(t, uint64(rootEGCount), eff)
 
 	// Spot-check a few inferences & validation details
-	checkIdx := []string{"inf-0", fmt.Sprintf("inf-%d", inferenceCount-1)}
-	for _, id := range checkIdx {
-		inf, ok := k.GetInference(sdkCtx, id)
-		require.True(t, ok)
-		require.Equal(t, inf.EpochGroupId, inf.EpochPocStartBlockHeight)
-		require.Equal(t, mapping[inf.EpochGroupId], inf.EpochId)
-	}
+	assertInference(t, sdkCtx, k, mapping)
 
 	vds := k.GetAllInferenceValidationDetails(sdkCtx)
+	require.Equal(t, validationCount, len(vds))
 	for _, v := range vds {
 		require.Equal(t, v.EpochId, v.EpochGroupId)
+	}
+}
+
+func assertInference(t *testing.T, ctx context.Context, k keeper.Keeper, mapping map[uint64]uint64) {
+	store := keeper.PrefixStore(ctx, &k, []byte(types.InferenceKeyPrefix))
+	iterator := store.Iterator(nil, nil)
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		var inf types.Inference
+		k.Codec().MustUnmarshal(iterator.Value(), &inf)
+
+		require.Equal(t, inf.EpochGroupId, inf.EpochPocStartBlockHeight)
+
+		epochId, ok := mapping[inf.EpochGroupId]
+		require.True(t, ok)
+
+		require.Equal(t, epochId, inf.EpochId, "Inference %s has incorrect EpochId", inf.InferenceId)
 	}
 }
