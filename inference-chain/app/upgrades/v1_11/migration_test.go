@@ -81,6 +81,7 @@ func TestEpochMigration(t *testing.T) {
 	setEpochIdToInferences(sdkCtx, k, mapping)
 	renameInferenceValidationDetailsEpochId(sdkCtx, k)
 	renameActiveParticipantsEpochId(sdkCtx, k, mapping)
+	validateRootEpochSpacing(sdkCtx, k)
 
 	// ----- 3. Assertions --------------------------------------------------
 

@@ -61,8 +61,72 @@ func CreateUpgradeHandler(
 		renameInferenceValidationDetailsEpochId(ctx, k)
 		renameActiveParticipantsEpochId(ctx, k, pocStartBlockHeightToEpochId)
 
+		validateRootEpochSpacing(ctx, k)
+
 		return vm, nil
 	}
+}
+
+// ---------------- Root epoch validation -----------------------
+
+// validateRootEpochSpacing checks that all root epochs (Index>0) have unique PoC
+// start heights and logs the diffs between consecutive epochs.
+func validateRootEpochSpacing(ctx context.Context, k keeper.Keeper) {
+	store := keeper.PrefixStore(ctx, &k, []byte(types.EpochKeyPrefix))
+	iter := store.Iterator(nil, nil)
+	defer iter.Close()
+
+	var heights []int64
+	dupMap := make(map[int64]struct{})
+	dupFound := false
+
+	for ; iter.Valid(); iter.Next() {
+		var ep types.Epoch
+		if err := k.Codec().Unmarshal(iter.Value(), &ep); err != nil {
+			continue // corrupted entry – ignore for validation purposes
+		}
+		if ep.Index == 0 {
+			// genesis epoch – skip
+			continue
+		}
+		h := ep.PocStartBlockHeight
+		if _, exists := dupMap[h]; exists {
+			dupFound = true
+		}
+		dupMap[h] = struct{}{}
+		heights = append(heights, h)
+	}
+
+	if len(heights) == 0 {
+		return
+	}
+
+	sort.Slice(heights, func(i, j int) bool { return heights[i] < heights[j] })
+
+	// compute diffs
+	diffs := make([]int64, 0, len(heights)-1)
+	for i := 1; i < len(heights); i++ {
+		diffs = append(diffs, heights[i]-heights[i-1])
+	}
+
+	even := true
+	firstDiff := diffs[0]
+	for _, d := range diffs[1:] {
+		if d != firstDiff {
+			even = false
+			break
+		}
+	}
+
+	tag := fmt.Sprintf("%s[migration-validation] root-epoch-spacing", UpgradeName)
+
+	if dupFound {
+		k.LogError(tag+" duplicates detected", types.Upgrades, "count", len(heights), "duplicates", true)
+	} else {
+		k.LogInfo(tag+" uniqueness OK", types.Upgrades, "count", len(heights))
+	}
+
+	k.LogInfo(tag, types.Upgrades, "evenly_spaced", even, "first_diff", firstDiff)
 }
 
 func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
