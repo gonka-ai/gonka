@@ -8,14 +8,14 @@ data:
       "app_state": {
         "gov": {
           "params": {
-            "voting_period": "20m0s",
+            "voting_period": "4m0s",
             "min_deposit": [
               {
                 "denom": "nicoin",
                 "amount": "25_000_000"
               }
             ],
-            "expedited_voting_period": "10m0s",
+            "expedited_voting_period": "2m0s",
             "expedited_min_deposit": [
               {
                 "denom": "nicoin",
@@ -28,7 +28,7 @@ data:
         "inference": {
           "params": {
             "epochParams": {
-              "epoch_length": "200",
+              "epoch_length": "300",
               "epoch_multiplier": "1",
               "epoch_shift": "180",
               "poc_stage_duration": "30",
