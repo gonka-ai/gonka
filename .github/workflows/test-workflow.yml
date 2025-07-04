@@ -32,27 +32,8 @@ on:
         description: 'Whether to use matrix strategy for parallel execution'
 
 jobs:
-  run-tests:
+  build-images:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        test_group: 
-          - ValidationTests
-          - InferenceAccountingTests
-          - NodeManagementTests
-          - TokenomicsTests
-          - TrainingTests
-          - GovernanceTests
-          - ParticipantTests
-          - StreamingInferenceTests
-          - MultiModelTests
-          - UnitOfComputeTests
-          - NodeAdminStateTests
-          - LargePayloadPocTest
-          - UpgradeTests
-          - KubernetesTests
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -89,6 +70,80 @@ jobs:
         if: ${{ inputs.enable_upgrades }}
         run: sudo make build-for-upgrade-tests
 
+      - name: Save Docker Images
+        run: |
+          mkdir -p docker-images
+          docker save -o docker-images/inference-chain.tar inference-chain:latest || true
+          docker save -o docker-images/decentralized-api.tar decentralized-api:latest || true
+          docker save -o docker-images/inference-mock-server.tar inference-mock-server:latest || true
+          # Compress images to save storage space
+          gzip docker-images/*.tar || true
+
+      - name: Upload Docker Images
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+          retention-days: 1
+
+  run-tests:
+    needs: build-images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test_group: 
+          - ValidationTests
+          - InferenceAccountingTests
+          - NodeManagementTests
+          - TokenomicsTests
+          - TrainingTests
+          - GovernanceTests
+          - ParticipantTests
+          - StreamingInferenceTests
+          - MultiModelTests
+          - UnitOfComputeTests
+          - NodeAdminStateTests
+          - LargePayloadPocTest
+          - UpgradeTests
+          - KubernetesTests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+
+      - name: Set up Docker (Latest Version)
+        uses: docker/setup-docker-action@v4
+        with:
+          version: 'latest'
+
+      - name: Download Docker Images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+
+      - name: Load Docker Images
+        run: |
+          # Decompress first
+          gunzip docker-images/*.tar.gz || true
+          docker load -i docker-images/inference-chain.tar || true
+          docker load -i docker-images/decentralized-api.tar || true
+          docker load -i docker-images/inference-mock-server.tar || true
+          
+      - name: Install Make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make
+          
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '19'
+
       - name: Start test chain
         working-directory: local-test-net
         run: sudo ./launch.sh
@@ -115,6 +170,7 @@ jobs:
         with:
           name: test-logs-${{ matrix.test_group }}
           path: ./testermint/logs
+          retention-days: 7  # Keep test logs for 1 week only
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1

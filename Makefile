@@ -45,10 +45,10 @@ check-docker:
 TESTS ?= "*"
 
 run-tests:
-	@cd testermint && ./gradlew test --tests "$(TESTS)" -DexcludeTags=unstable,exclude
+	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DexcludeTags=unstable,exclude
 
 run-sanity:
-	@cd testermint && ./gradlew test --tests "$(TESTS)" -DincludeTags=sanity
+	@cd testermint && ./gradlew :test --tests "$(TESTS)" -DincludeTags=sanity
 
 test-blockchain: check-docker run-blockchain-tests
 
