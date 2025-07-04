@@ -16,15 +16,18 @@ type StatsSummary struct {
 }
 
 func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found {
+		k.LogError("SetDeveloperStats. failed to get effective epoch index for inference", types.Stat, "inference_id", inference.InferenceId)
+		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
+	}
+	epochId := effectiveEpoch.Index
 	k.LogInfo("SetDeveloperStats: got stat", types.Stat,
 		"inference_id", inference.InferenceId,
 		"inference_status", inference.Status.String(),
 		"developer", inference.RequestedBy,
-		"poc_block_height", inference.EpochPocStartBlockHeight)
-	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
-	if !found {
-		return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
-	}
+		"poc_block_height", inference.EpochPocStartBlockHeight,
+		"epoch_id", epochId)
 
 	tokens := inference.CompletionTokenCount + inference.PromptTokenCount
 	inferenceTime := inference.EndBlockTimestamp
@@ -41,12 +44,12 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 		ActualCostInCoins: inference.ActualCost,
 	}
 
-	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, effectiveEpoch.Index)
+	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, epochId)
 	if err != nil {
 		return err
 	}
 	k.setInferenceStatsByModel(ctx, inference.RequestedBy, inferenceStats, inferenceTime)
-	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, effectiveEpoch.Index, inferencePrevEpochId)
+	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, epochId, inferencePrevEpochId)
 	return nil
 }
 
