@@ -24,7 +24,7 @@ Changes description:
   c. Added epoch_poc_start_block_height, which is the PocStartBlockHeight from EpochGroupData.
 4. InferenceValidationDetails:
   a. Deprecated epoch_id, which was actually the epoch_group_id (the thing created by group module)
-  b. Added epoch_group_id, which is the EpochId from Epoch.
+  b. Added epoch_group_id, which is basically a rename of epoch_id to match the naming convention.
 5. ActiveParticipants:
   a. Deprecated epoch_group_id (the thing created by group module). It was also THE KEY of the entity in the KV storage.
   b. Added epoch_id, which is the new KEY. The migration includes key changes.
