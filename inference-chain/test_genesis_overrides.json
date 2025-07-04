@@ -60,9 +60,9 @@
       "model_list": [
         {
           "proposed_by": "genesis",
-          "id": "Qwen/Qwen2-72B-Instruct",
+          "id": "Qwen/QwQ-32B",
           "units_of_compute_per_token": "1000",
-          "hf_repo": "Qwen/Qwen2-72B-Instruct",
+          "hf_repo": "Qwen/QwQ-32B",
           "hf_commit": "976055f8c83f394f35dbd3ab09a285a984907bd0",
           "model_args": [
             "--quantization",

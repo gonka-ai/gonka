@@ -71,7 +71,7 @@ Each task includes:
 - **Where**: `inference-chain/x/inference/module/genesis.go`
 - **Result**:
   - Updated `genesis_test.go` to include a test case for models with the new fields.
-  - Added the "Qwen/Qwen2-72B-Instruct" and "Qwen/Qwen2.5-7B-Instruct" models to all `genesis-overrides.json` files.
+  - Added the "Qwen/QwQ-32B" and "Qwen/Qwen2.5-7B-Instruct" models to all `genesis-overrides.json` files.
   - The `inference-chain` build and tests were successful after the changes.
 - **Dependencies**: 1.1, 1.2
 
