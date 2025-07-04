@@ -135,9 +135,18 @@ func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
 	epochGroupData := k.GetAllEpochGroupData(ctx)
 	k.LogInfo(UpgradeName+" - queried all epochGroupData", types.Upgrades, "len(epochGroupData)", len(epochGroupData))
 	rootEpochGroups := make([]*types.EpochGroupData, 0)
+	zeroEpochIsFound := false
 	for _, epochData := range epochGroupData {
 		if epochData.ModelId == "" {
 			rootEpochGroups = append(rootEpochGroups, &epochData)
+
+			if epochData.PocStartBlockHeight == 0 {
+				if zeroEpochIsFound {
+					k.LogWarn(UpgradeName+" - found multiple root epochs with PocStartBlockHeight=0", types.Upgrades)
+				}
+
+				zeroEpochIsFound = true
+			}
 		}
 	}
 	k.LogInfo(UpgradeName+" - filtered root epoch groups", types.Upgrades, "len(rootEpochGroups)", len(rootEpochGroups))
@@ -149,7 +158,13 @@ func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
 	startBlockHeightToEpochId := make(map[uint64]uint64)
 	var lastEpochIndex uint64
 	for i, epochGroup := range rootEpochGroups {
-		epochId := uint64(i + 1)
+		var epochId uint64
+		if zeroEpochIsFound {
+			epochId = uint64(i)
+		} else {
+			epochId = uint64(i + 1)
+		}
+
 		lastEpochIndex = epochId
 
 		k.LogInfo(UpgradeName+" - processing epoch group. "+

@@ -22,7 +22,7 @@ func TestEpochMigration(t *testing.T) {
 	)
 
 	dummyHeight := func(i int) uint64 {
-		return uint64(i+1) * 300
+		return uint64(i) * 300
 	}
 
 	// 1.a Create epoch groups and sub-groups
@@ -88,8 +88,8 @@ func TestEpochMigration(t *testing.T) {
 	// ----- 3. Assertions --------------------------------------------------
 
 	// Epoch objects exist & effective index is last one
-	for idx, height := range rootHeights {
-		epochId := uint64(idx + 1)
+	for i, height := range rootHeights {
+		epochId := uint64(i)
 		epoch, ok := k.GetEpoch(sdkCtx, epochId)
 		require.True(t, ok)
 		require.Equal(t, int64(height), epoch.PocStartBlockHeight)
@@ -105,7 +105,7 @@ func TestEpochMigration(t *testing.T) {
 	}
 	eff, ok := k.GetEffectiveEpochIndex(sdkCtx)
 	require.True(t, ok)
-	require.Equal(t, uint64(rootEGCount), eff)
+	require.Equal(t, uint64(rootEGCount)-1, eff)
 
 	// Spot-check a few inferences & validation details
 	assertInference(t, sdkCtx, k, mapping)
