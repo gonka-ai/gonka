@@ -17,7 +17,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address $NODE_URL
 
-export GONKA_ADDRESS="gonka1h733t2w8tl2nwncgykle3knt7qluynm8vcd59u"
+export GONKA_ADDRESS="gonka1lsjfl0ra2fnrvjctmlzzjcgr8t3ek8sj06pc7p"
 
 # View it
 "$INFERENCED_BINARY" keys list
