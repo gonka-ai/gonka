@@ -27,7 +27,7 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge_transaction.proto";
-import  "inference/inference/developer.proto";
+import  "inference/inference/stats_developer.proto";
 import "inference/inference/epoch.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -158,11 +158,12 @@ service Query {
 
   }
 
-  // Queries a list of InferenceValidationDetails items.
+  // BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
   rpc InferenceValidationDetails    (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
 
   }
+  // Queries a list of InferenceValidationDetails items.
   rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
 
@@ -458,6 +459,7 @@ message PoCBatchesWithParticipants {
 
 message QueryGetCurrentEpochRequest {}
 
+// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
 }

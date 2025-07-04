@@ -597,7 +597,7 @@ type UnitOfComputePriceProposal struct {
 	Participant           string `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
 	Price                 uint64 `protobuf:"varint,2,opt,name=price,proto3" json:"price,omitempty"`
 	ProposedAtBlockHeight uint64 `protobuf:"varint,3,opt,name=proposed_at_block_height,json=proposedAtBlockHeight,proto3" json:"proposed_at_block_height,omitempty"`
-	ProposedAtEpoch       uint64 `protobuf:"varint,4,opt,name=proposed_at_epoch,json=proposedAtEpoch,proto3" json:"proposed_at_epoch,omitempty"`
+	ProposedAtEpoch       uint64 `protobuf:"varint,4,opt,name=proposed_at_epoch,json=proposedAtEpoch,proto3" json:"proposed_at_epoch,omitempty"` // Legit epoch ID
 }
 
 func (x *UnitOfComputePriceProposal) Reset() {

@@ -91,12 +91,12 @@ func TestGenesisState_Validate(t *testing.T) {
 				},
 				InferenceValidationDetailsList: []types.InferenceValidationDetails{
 					{
-						EpochId:     0,
-						InferenceId: "0",
+						EpochGroupId: 0,
+						InferenceId:  "0",
 					},
 					{
-						EpochId:     1,
-						InferenceId: "1",
+						EpochGroupId: 1,
+						InferenceId:  "1",
 					},
 				},
 				EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
@@ -228,12 +228,12 @@ func TestGenesisState_Validate(t *testing.T) {
 			genState: &types.GenesisState{
 				InferenceValidationDetailsList: []types.InferenceValidationDetails{
 					{
-						EpochId:     0,
-						InferenceId: "0",
+						EpochGroupId: 0,
+						InferenceId:  "0",
 					},
 					{
-						EpochId:     0,
-						InferenceId: "0",
+						EpochGroupId: 0,
+						InferenceId:  "0",
 					},
 				},
 			},

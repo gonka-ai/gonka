@@ -339,10 +339,13 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 	return eg.createNewEpochSubGroup(ctx, modelId)
 }
 
+// BOOKMARK: new epoch group creation. Do we need to set epochId here?
 func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	subGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
 		ModelId:             modelId,
+		EpochGroupId:        eg.GroupData.EpochGroupId,
+		EpochId:             eg.GroupData.EpochId,
 	}
 
 	// Create a new EpochGroup for the sub-group

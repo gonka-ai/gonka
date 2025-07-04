@@ -132,13 +132,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 }
 
 func (k msgServer) addInferenceToEpochGroupValidations(ctx sdk.Context, msg *types.MsgValidation, inference types.Inference) {
-	epochGroupValidations, validationsFound := k.GetEpochGroupValidations(ctx, msg.Creator, inference.EpochGroupId)
+	epochGroupValidations, validationsFound := k.GetEpochGroupValidations(ctx, msg.Creator, inference.EpochPocStartBlockHeight)
 	if !validationsFound {
 		epochGroupValidations = types.EpochGroupValidations{
-			Participant: msg.Creator, PocStartBlockHeight: inference.EpochGroupId,
+			Participant: msg.Creator, PocStartBlockHeight: inference.EpochPocStartBlockHeight,
 		}
 	}
-	k.LogInfo("Adding inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochGroupId)
+	k.LogInfo("Adding inference to epoch group validations", types.Validation, "inferenceId", msg.InferenceId, "validator", msg.Creator, "height", inference.EpochPocStartBlockHeight)
 	epochGroupValidations.ValidatedInferences = append(epochGroupValidations.ValidatedInferences, msg.InferenceId)
 	k.SetEpochGroupValidations(ctx, epochGroupValidations)
 }

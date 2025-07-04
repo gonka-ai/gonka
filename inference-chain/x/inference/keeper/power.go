@@ -46,20 +46,7 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelI
 	return k.epochGroupFromData(data), nil
 }
 
-func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
-	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
-	if !found {
-		data = types.EpochGroupData{
-			PocStartBlockHeight: pocStartHeight,
-			ModelId:             modelId,
-		}
-		k.SetEpochGroupData(ctx, data)
-	}
-
-	return k.epochGroupFromData(data), nil
-}
-
-func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64) (*epochgroup.EpochGroup, error) {
+func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epochId uint64) (*epochgroup.EpochGroup, error) {
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight, "")
 	if found {
 		k.LogError("CreateEpochGroup: Root epoch group data already exists", types.EpochGroup, "pocStartHeight", pocStartHeight)
@@ -68,6 +55,7 @@ func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64) (*e
 		data = types.EpochGroupData{
 			PocStartBlockHeight: pocStartHeight,
 			ModelId:             "",
+			EpochId:             epochId,
 		}
 		k.SetEpochGroupData(ctx, data)
 	}

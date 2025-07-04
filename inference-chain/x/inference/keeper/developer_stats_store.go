@@ -53,7 +53,7 @@ func (k Keeper) setOrUpdateInferenceStatByTime(ctx context.Context, developer st
 		statsByTime.EpochId = epochId
 		statsByTime.Inference.Status = infStats.Status
 		statsByTime.Inference.TotalTokenCount = infStats.TotalTokenCount
-		statsByTime.Inference.EpochPocBlockHeight = infStats.EpochPocBlockHeight
+		statsByTime.Inference.EpochId = infStats.EpochId
 		statsByTime.Inference.ActualCostInCoins = infStats.ActualCostInCoins
 	} else {
 		k.LogInfo("time key exists, record DO NOT exist", types.Stat, "inference_id", infStats.InferenceId, "developer", developer)

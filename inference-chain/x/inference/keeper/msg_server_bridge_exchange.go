@@ -50,7 +50,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		return nil, fmt.Errorf("unable to get current epoch group: %v", error)
 	}
 
-	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochGroup.GroupData.EpochGroupId)
+	activeParticipants, found := k.GetActiveParticipantsV1(ctx, currentEpochGroup.GroupData.EpochGroupId)
 
 	if !found {
 		return nil, fmt.Errorf("no active participants found for current epoch")

@@ -582,7 +582,7 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	// PRTODO: implement
+	// TODO: implement
 	command.Response <- true
 }
 

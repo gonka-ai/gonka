@@ -150,7 +150,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
 // To avoid wrong/empty versions, the initial version should be set to 1.
-func (AppModule) ConsensusVersion() uint64 { return 2 }
+func (AppModule) ConsensusVersion() uint64 { return 3 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 // The begin block implementation is optional.
@@ -237,7 +237,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.SetEpoch(ctx, upcomingEpoch)
 
 		am.LogInfo("NewPocStart", types.Stages, "blockHeight", blockHeight)
-		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight))
+		newGroup, err := am.keeper.CreateEpochGroup(ctx, uint64(blockHeight), upcomingEpoch.Index)
 		if err != nil {
 			am.LogError("Unable to create epoch group", types.EpochGroup, "error", err.Error())
 			return err
@@ -271,7 +271,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 func createNewEpoch(prevEpoch types.Epoch, blockHeight int64) *types.Epoch {
 	return &types.Epoch{
 		Index:               getNextEpochIndex(prevEpoch),
-		PocStartBlockHeight: int64(blockHeight),
+		PocStartBlockHeight: blockHeight,
 	}
 }
 
@@ -315,12 +315,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 		"len(activeParticipants)", len(activeParticipants))
 
-	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
-		Participants:        activeParticipants,
-		EpochGroupId:        upcomingEpoch.Index,
-		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
-		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
-		EffectiveBlockHeight: upcomingEpoch.EffectiveBlockHeight,
+	am.keeper.SetActiveParticipantsV1(ctx, types.ActiveParticipants{
+		Participants:         activeParticipants,
+		EpochGroupId:         upcomingEpoch.Index,
+		EpochId:              upcomingEpoch.Index,
+		PocStartBlockHeight:  upcomingEpoch.PocStartBlockHeight,
+		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
 	})
 

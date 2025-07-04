@@ -32,7 +32,8 @@ func TestMsgServer_StartInference(t *testing.T) {
 	)
 
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochGroupId: epochId, EffectiveBlockHeight: epochId})
+	k.SetEpoch(ctx, &types.Epoch{Index: epochId, PocStartBlockHeight: epochId * 10})
+	k.SetEffectiveEpochIndex(ctx, epochId)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
 		Creator: testutil.Creator,
