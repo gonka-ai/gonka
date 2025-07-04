@@ -166,9 +166,13 @@ func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockH
 		writeBuffered(store, updates)
 	}
 
+	total := i + skipped
 	k.LogInfo(UpgradeName+" - set EpochId to Inferences", types.Upgrades,
 		"processed", i,
 		"skipped", skipped)
+
+	// validation
+	validateCount(ctx, k, []byte(types.InferenceKeyPrefix), total, "inferences")
 }
 
 func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keeper) {
@@ -214,9 +218,13 @@ func renameInferenceValidationDetailsEpochId(ctx context.Context, k keeper.Keepe
 		writeBuffered(store, updates)
 	}
 
-	k.LogInfo(""+UpgradeName+" - renamed InferenceValidationDetails EpochId to EpochGroupId", types.Upgrades,
+	total := i + skipped
+	k.LogInfo(UpgradeName+" - renamed InferenceValidationDetails EpochId to EpochGroupId", types.Upgrades,
 		"processed", i,
 		"skipped", skipped)
+
+	// validation
+	validateCount(ctx, k, []byte(types.InferenceValidationDetailsKeyPrefix), total, "validationDetails")
 }
 
 func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
@@ -259,4 +267,27 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 	if len(updates) > 0 {
 		writeBuffered(store, updates)
 	}
+
+	// validation – just count all current ActiveParticipants keys
+	validateCount(ctx, k, []byte(types.ActiveParticipantsKeyPrefix), -1, "activeParticipants")
+}
+
+func validateCount(ctx context.Context, k keeper.Keeper, keyPrefix []byte, expected int, label string) {
+	store := keeper.PrefixStore(ctx, &k, keyPrefix)
+	iter := store.Iterator(nil, nil)
+	defer iter.Close()
+
+	actual := 0
+	for ; iter.Valid(); iter.Next() {
+		actual++
+	}
+
+	if expected == actual {
+		k.LogInfo(fmt.Sprintf("%s[migration-validation] %s count: SUCCESS", UpgradeName, label), types.Upgrades,
+			"expected", expected, "actual", actual)
+	} else {
+		k.LogInfo(fmt.Sprintf("%s[migration-validation] %s count: FAILURE", UpgradeName, label), types.Upgrades,
+			"expected", expected, "actual", actual)
+	}
+
 }
