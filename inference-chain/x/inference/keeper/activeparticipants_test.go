@@ -24,7 +24,7 @@ func createNActiveParticipants(keeper keeper.Keeper, ctx context.Context, n int)
 		items[i].PocStartBlockHeight = int64(i * 100)
 		items[i].EffectiveBlockHeight = int64(i*100 + 10)
 		items[i].CreatedAtBlockHeight = int64(i*100 - 10)
-		keeper.SetActiveParticipants(ctx, items[i])
+		keeper.SetActiveParticipantsV1(ctx, items[i])
 	}
 	return items
 }
@@ -33,7 +33,7 @@ func TestActiveParticipantsGet(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNActiveParticipants(keeper, ctx, 10)
 	for _, item := range items {
-		rst, found := keeper.GetActiveParticipants(ctx, item.EpochGroupId)
+		rst, found := keeper.GetActiveParticipantsV1(ctx, item.EpochGroupId)
 		require.True(t, found)
 		require.Equal(t,
 			nullify.Fill(&item),
@@ -44,7 +44,7 @@ func TestActiveParticipantsGet(t *testing.T) {
 
 func TestActiveParticipantsGetNotFound(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
-	_, found := keeper.GetActiveParticipants(ctx, 999)
+	_, found := keeper.GetActiveParticipantsV1(ctx, 999)
 	require.False(t, found)
 }
 
@@ -72,10 +72,10 @@ func TestSetActiveParticipants(t *testing.T) {
 		CreatedAtBlockHeight: 90,
 	}
 
-	keeper.SetActiveParticipants(ctx, participants)
+	keeper.SetActiveParticipantsV1(ctx, participants)
 
 	// Retrieve and verify
-	retrieved, found := keeper.GetActiveParticipants(ctx, 1)
+	retrieved, found := keeper.GetActiveParticipantsV1(ctx, 1)
 	require.True(t, found)
 	require.Equal(t, 2, len(retrieved.Participants))
 
@@ -95,9 +95,9 @@ func TestSetActiveParticipants(t *testing.T) {
 		CreatedAtBlockHeight: retrieved.CreatedAtBlockHeight,
 	}
 
-	keeper.SetActiveParticipants(ctx, updatedParticipants)
+	keeper.SetActiveParticipantsV1(ctx, updatedParticipants)
 
-	retrieved, found = keeper.GetActiveParticipants(ctx, 1)
+	retrieved, found = keeper.GetActiveParticipantsV1(ctx, 1)
 	require.True(t, found)
 	require.Equal(t, 3, len(retrieved.Participants))
 }

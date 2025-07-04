@@ -315,7 +315,7 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 		"len(activeParticipants)", len(activeParticipants))
 
-	am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+	am.keeper.SetActiveParticipantsV1(ctx, types.ActiveParticipants{
 		Participants:         activeParticipants,
 		EpochGroupId:         upcomingEpoch.Index,
 		EpochId:              upcomingEpoch.Index,

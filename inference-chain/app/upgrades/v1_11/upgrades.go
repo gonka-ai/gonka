@@ -13,6 +13,14 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+/*
+Changes description:
+
+1. Added Epoch entity, now for every root epoch group (modelId == "") an epoch is created.
+   The EpochId is now set in the EpochGroupData. EpochGroupData is linked to Epoch by PocStartBlockHeight.
+2. -
+*/
+
 // kvPair is a small helper type for buffered writes.
 type kvPair struct {
 	key   []byte

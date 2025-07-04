@@ -7,7 +7,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.ActiveParticipants) {
+func (k Keeper) SetActiveParticipantsV1(ctx context.Context, participants types.ActiveParticipants) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte{})
 
@@ -17,7 +17,7 @@ func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.Ac
 	store.Set(key, b)
 }
 
-func (k Keeper) GetActiveParticipants(ctx context.Context, epoch uint64) (val types.ActiveParticipants, found bool) {
+func (k Keeper) GetActiveParticipantsV1(ctx context.Context, epoch uint64) (val types.ActiveParticipants, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte{})
 
