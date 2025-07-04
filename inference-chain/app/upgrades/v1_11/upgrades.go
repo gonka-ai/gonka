@@ -16,9 +16,15 @@ import (
 /*
 Changes description:
 
-1. Added Epoch entity, now for every root epoch group (modelId == "") an epoch is created.
-   The EpochId is now set in the EpochGroupData. EpochGroupData is linked to Epoch by PocStartBlockHeight.
-2. -
+1. Epoch: Added the entity, now for every root epoch group (modelId == "") an epoch is created.
+   EpochGroupData is linked to Epoch by PocStartBlockHeight.
+2. EpochGroupData: added EpochId field to link it to Epoch.
+3. Inference:
+  a. Deprecated epoch_group_id, which was actually the PocStartBlockHeight.
+  b. Added epoch_id, which is the EpochId from Epoch.
+  c. Added epoch_poc_start_block_height, which is the PocStartBlockHeight from EpochGroupData.
+4. InferenceValidationDetails: TODO
+5. ActiveParticipants: TODO
 */
 
 // kvPair is a small helper type for buffered writes.
