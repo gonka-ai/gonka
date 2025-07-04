@@ -2,9 +2,10 @@ package types_test
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestZeroEpoch(t *testing.T) {
@@ -138,7 +139,7 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	// We exchange until the isSetNewValidatorsStage, not sure if it's the right way though
+	// Validation exchange window now closes at EndOfPoCValidation stage, not SetNewValidators stage
 	require.True(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsEndOfPoCValidationStage(i))
 	i++
@@ -147,7 +148,8 @@ func test(t *testing.T, epochParams types.EpochParams, initialBlockHeight int64,
 	require.Equal(t, getEpochId(initialEpoch)+1, ec.EpochIndex)
 	require.Equal(t, types.InferencePhase, ec.GetCurrentPhase(i))
 	require.False(t, ec.IsPoCExchangeWindow(i))
-	require.True(t, ec.IsValidationExchangeWindow(i))
+	// Validation exchange window is now closed at SetNewValidators stage
+	require.False(t, ec.IsValidationExchangeWindow(i))
 	require.True(t, ec.IsSetNewValidatorsStage(i))
 	i++
 

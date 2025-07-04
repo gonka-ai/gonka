@@ -1120,6 +1120,10 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		return nil // No change, no need to update
 	}
 
+	// Update the broker's last known state
+	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+	b.lastEpochPhase = epochState.CurrentPhase
+
 	logging.Info("Epoch or phase change detected, updating node data with epoch info.", types.Nodes,
 		"old_epoch", b.lastEpochIndex, "new_epoch", epochState.LatestEpoch.EpochIndex,
 		"old_phase", b.lastEpochPhase, "new_phase", epochState.CurrentPhase)
@@ -1131,7 +1135,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		return err
 	}
 	if parentGroupResp == nil || parentGroupResp.EpochGroupData.SubGroupModels == nil {
-		logging.Warn("Parent epoch group data or its models are nil", types.Nodes)
+		logging.Warn("Parent epoch group data or its models are nil", types.Nodes, "epoch_index", epochState.LatestEpoch.EpochIndex, "epoch_poc_start_block_height", epochState.LatestEpoch.PocStartBlockHeight, "epoch_group_data_poc_start_block_height", parentGroupResp.EpochGroupData.PocStartBlockHeight)
 		return nil
 	}
 
@@ -1177,10 +1181,6 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 			}
 		}
 	}
-
-	// Update the broker's last known state
-	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
-	b.lastEpochPhase = epochState.CurrentPhase
 
 	return nil
 }

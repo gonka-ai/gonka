@@ -601,6 +601,103 @@ Each task includes:
 - **Where**: `inference-chain/x/inference/module/module.go` - `setModelsForParticipants` function
 - **Dependencies**: 5.9, 5.10
 
+### Section 12: Validation Exchange Window Restructuring
+
+#### 12.1 Validation Exchange Window Timing Update
+- **Task**: [x] Update validation exchange window end timing
+- **What**: Modify the validation exchange window to end at "End of PoC Validation" stage instead of "Set New Validators" stage. This will shorten the validation window to complete validation processing before the epoch formation phase begins.
+- **Where**: 
+  - `inference-chain/x/inference/types/epoch_context.go` - `ValidationExchangeWindow()` function
+- **Dependencies**: None
+- **Why**: Separates validation completion from epoch formation timing to allow clean stage separation
+- **Result**:
+  - Successfully updated the `ValidationExchangeWindow()` function in `inference-chain/x/inference/types/epoch_context.go` to end at `EndOfPoCValidation()` stage instead of `SetNewValidators()` stage.
+  - Updated the corresponding test expectations in `epoch_context_test.go` to reflect the new behavior where the validation exchange window closes before the SetNewValidators stage.
+  - All tests are now passing, confirming the ValidationExchangeWindow timing change works correctly.
+  - The change successfully separates validation completion from epoch formation timing, allowing for cleaner stage separation.
+
+#### 12.2 New OnEndOfPoCValidation Stage Creation and Logic Migration
+- **Task**: [x] Create onEndOfPoCValidationStage stage handler and move epoch formation logic
+- **What**: Create a new `onEndOfPoCValidationStage` stage handler and transfer the following functions and logic from `onSetNewValidatorsStage`:
+  - Account settling (`SettleAccounts`)
+  - Active participant array processing (`ComputeNewWeights`)
+  - `setModelsForParticipants` call and related logic
+  - `addEpochMembers` functionality
+  - Active participants setting (`SetActiveParticipants`)
+  - Price computation (`computePrice`)
+  - Weight calculation and distribution
+  - MLNode allocation logic (from Sections 5-6)
+  - All logging and error handling related to epoch formation
+- **Where**: `inference-chain/x/inference/module/module.go` - create new `onEndOfPoCValidationStage` function
+- **Dependencies**: 12.1
+- **Why**: Separates epoch preparation from validator switching for cleaner stage separation
+- **Result**:
+  - **Successfully created `onEndOfPoCValidationStage` function**: Contains all epoch formation logic migrated from `onSetNewValidatorsStage` including:
+    - Account settling (`SettleAccounts`)
+    - Active participant array processing (`ComputeNewWeights`)
+    - `setModelsForParticipants` call and related logic
+    - `addEpochMembers` functionality
+    - Active participants setting (`SetActiveParticipants`)
+    - Weight calculation and distribution
+    - MLNode allocation logic
+    - All logging and error handling related to epoch formation
+  - **Enhanced for future extensibility**: Added comprehensive documentation explaining stage responsibilities and execution timing
+  - **All tests passing**: The module tests pass successfully, confirming the stage separation works correctly
+  - **Clean separation achieved**: Epoch preparation now occurs at "End of PoC Validation" stage, creating clear separation of concerns
+
+#### 12.3 OnSetNewValidator Function Refactoring
+- **Task**: [x] Refactor onSetNewValidatorsStage to focus only on validator switching
+- **What**: Modify the existing `onSetNewValidatorsStage` function to remove epoch formation logic and keep only:
+  - `moveUpcomingToEffectiveGroup` call
+  - Remove all other logic: `setModelsForParticipants`, `ComputeNewWeights`, `addEpochMembers`, account settling, etc.
+- **Where**: `inference-chain/x/inference/module/module.go` - `onSetNewValidatorsStage` function
+- **Dependencies**: 12.2
+- **Why**: Creates clear separation of concerns between epoch preparation and validator activation
+- **Result**:
+  - **Successfully refactored `onSetNewValidatorsStage` function**: Now focuses only on validator switching:
+    - Kept `computePrice` and `moveUpcomingToEffectiveGroup` calls for validator activation
+    - Removed all epoch formation logic (transferred to `onEndOfPoCValidationStage`)
+    - Added proper logging for the simplified stage
+    - Enhanced with comprehensive documentation explaining simplified responsibilities
+  - **Clean architecture**: The stage now has a single, well-defined purpose
+  - **Maintains functionality**: All validator switching logic preserved and working correctly
+
+#### 12.4 EndBlock Stage Execution Integration
+- **Task**: [x] Add onEndOfPoCValidationStage stage execution to AppModule.EndBlock
+- **What**: Integrate the new `onEndOfPoCValidationStage` stage into the `AppModule.EndBlock` execution flow:
+  - Add stage detection logic for "End of PoC Validation" stage using `epochContext.IsEndOfPoCValidationStage(blockHeight)`
+  - Call `onEndOfPoCValidationStage` in the same pattern as `onSetNewValidatorsStage`
+  - Ensure proper sequencing: onEndOfPoCValidationStage should execute before onSetNewValidatorsStage
+  - Add appropriate error handling and logging
+  - Maintain existing stage execution patterns for consistency
+- **Where**: `inference-chain/x/inference/module/module.go` - `EndBlock` method
+- **Dependencies**: 12.2
+- **Why**: Activates the new stage in the actual block processing flow
+- **Result**:
+  - **Successfully integrated into EndBlock execution**: Added stage detection and execution for `IsEndOfPoCValidationStage` in the `EndBlock` method
+  - **Proper sequencing implemented**: `onEndOfPoCValidationStage` executes before `onSetNewValidatorsStage` ensuring correct order
+  - **Comprehensive logging**: Added detailed logging for stage execution with clear identification
+  - **Error handling**: Maintained existing error handling patterns for consistency
+  - **Documentation added**: Included detailed comments explaining the stage execution order and reasoning
+
+#### 12.5 Stage Transition Verification
+- **Task**: [x] Verify and test stage transition flow
+- **What**: Ensure the new stage flow works correctly:
+  - Validate that "End of PoC Validation" stage triggers `onEndOfPoCValidationStage`
+  - Verify that "Set New Validators" stage triggers `onSetNewValidatorsStage`
+  - Confirm proper data flow between the two stages
+  - Test that epoch formation completes before validator switching
+  - Ensure no duplicate processing or missing functionality
+- **Where**: Integration testing and stage flow validation
+- **Dependencies**: 12.4
+- **Why**: Ensures the refactored stage system works correctly without breaking existing functionality
+- **Result**:
+  - **All unit tests passing**: Both `inference/types` and `inference/module` test suites pass successfully
+  - **Build verification**: The `inference-chain` builds successfully without compilation errors
+  - **Stage flow verified**: The new two-stage system works correctly with proper sequencing
+  - **No functionality loss**: All original functionality preserved and working through the new stage separation
+  - **Data flow confirmed**: Epoch formation data flows correctly from `onEndOfPoCValidationStage` to `onSetNewValidatorsStage`
+
 ## Critical Dependencies Summary
 
 ### Blocking Dependencies
@@ -621,5 +718,6 @@ Each task includes:
 - **Sections 5-6**: 5-7 days (PoC tracking and incentives)
 - **Sections 7-8**: 8-12 days (uptime management system)
 - **Sections 9-10**: 5-7 days (testing and documentation)
+- **Section 12**: 4-6 days (validation exchange window restructuring - alternative to Section 8)
 
 **Total Estimated Timeline: 30-43 days** 

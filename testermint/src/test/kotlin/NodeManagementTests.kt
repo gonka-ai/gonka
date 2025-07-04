@@ -23,7 +23,7 @@ class NodeManagementTests : TestermintTest() {
         val node = genesis.api.addNode(InferenceNode(
             host = "http://localhost:8080",
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -45,7 +45,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -71,7 +71,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),
@@ -82,7 +82,7 @@ class NodeManagementTests : TestermintTest() {
             pocPort = 100,
             inferencePort = 200,
             models = mapOf(
-                        "model1" to ModelConfig(
+                        "Qwen/Qwen2.5-7B-Instruct" to ModelConfig(
                             args = emptyList()
                         )
                     ),

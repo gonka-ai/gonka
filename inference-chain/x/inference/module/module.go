@@ -225,6 +225,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 	}
 
+	// Stage execution order for epoch transitions:
+	// 1. IsEndOfPoCValidationStage: Complete all epoch formation (onEndOfPoCValidationStage)
+	// 2. IsSetNewValidatorsStage: Switch validators and activate epoch (onSetNewValidatorsStage)
+	// This separation ensures clean boundaries between epoch preparation and validator switching
+	// and allow time for api nodes to load models on ml nodes.
+
+	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
+		am.LogInfo("onEndOfPoCValidationStage start", types.Stages, "blockHeight", blockHeight)
+		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
+	}
+
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
 		am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
 		am.onSetNewValidatorsStage(ctx, blockHeight, blockTime)
@@ -278,27 +289,37 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
 
-func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+// onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
+// This stage is responsible for:
+// - Account settling from the previous epoch
+// - Computing new weights based on PoC results
+// - Setting models for participants (MLNode allocation)
+// - Registering top miners
+// - Setting active participants for the upcoming epoch
+// - Adding epoch members to the upcoming epoch group
+// This stage executes at IsEndOfPoCValidationStage(blockHeight) and must complete
+// before validator switching occurs in onSetNewValidatorsStage.
+func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) {
 	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	if !found {
-		am.LogError("onSetNewValidatorsStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
+		am.LogError("onEndOfPoCValidationStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return
 	}
 
 	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
+		am.LogError("onEndOfPoCValidationStage: Unable to get upcoming epoch group", types.EpochGroup)
 		return
 	}
 
 	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
 	if activeParticipants == nil {
-		am.LogError("onSetNewValidatorsStage: computeResult == nil && activeParticipants == nil", types.PoC)
+		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
 		return
 	}
 
@@ -306,11 +327,11 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
+		am.LogError("onEndOfPoCValidationStage: Unable to register top miners", types.Tokenomics, "error", err.Error())
 		return
 	}
 
-	am.LogInfo("onSetNewValidatorsStage: computed new weights", types.Stages,
+	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 		"len(activeParticipants)", len(activeParticipants))
 
@@ -325,15 +346,43 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
 	if err != nil {
-		am.LogError("onSetNewValidatorsStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
+		am.LogError("onEndOfPoCValidationStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
 			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
 		return
 	}
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
+}
+
+// onSetNewValidatorsStage handles validator switching and epoch group activation.
+// This stage is responsible for:
+// - Computing unit of compute price for the upcoming epoch
+// - Moving the upcoming epoch group to effective status
+// - Switching the active validator set
+// - Setting the effective epoch index
+// This stage executes at IsSetNewValidatorsStage(blockHeight) and should run after
+// all epoch formation logic has completed in onEndOfPoCValidationStage.
+// The stage focuses solely on validator switching, with all epoch preparation
+// handled by the previous stage for clean separation of concerns.
+func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int64, blockTime int64) {
+	am.LogInfo("onSetNewValidatorsStage start", types.Stages, "blockHeight", blockHeight)
+
+	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcomingEpoch == nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get upcoming epoch group", types.EpochGroup)
+		return
+	}
+
+	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
+	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
+			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
+		return
+	}
 
 	unitOfComputePrice, err := am.computePrice(ctx, *upcomingEpoch, upcomingEg)
 	if err != nil {
+		am.LogError("onSetNewValidatorsStage: Unable to compute price", types.Pricing, "error", err.Error())
 		return
 	}
 

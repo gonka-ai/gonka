@@ -28,7 +28,7 @@ class MultiModelTests : TestermintTest() {
     private fun setSecondModel(
         cluster: LocalCluster,
         genesis: LocalInferencePair,
-        newModelName: String = "Qwen/Qwen2.5-7B-Instruct",
+        newModelName: String = "Qwen/QwQ-32B",
         joinModels: Int = 2,
     ): Pair<String, List<LocalInferencePair>> {
         val secondModelPairs = cluster.joinPairs.take(joinModels) + genesis
