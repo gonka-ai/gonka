@@ -60,7 +60,6 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		return err
 	}
 
-	existingInference.EpochGroupId = uint64(effectiveEpoch.PocStartBlockHeight)
 	existingInference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
 	existingInference.EpochId = effectiveEpoch.Index
 	currentEpochGroup.GroupData.NumberOfRequests++
