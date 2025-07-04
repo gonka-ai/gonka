@@ -12,13 +12,10 @@ import (
 func TestEpochMigration(t *testing.T) {
 	k, sdkCtx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
-	// ----- 1. Seed data --------------------------------------------------
-
 	const (
-		rootEGCount        = 1000
-		inferenceCount     = 10000
-		validationCount    = 10000
-		activeParticipants = 1000
+		rootEGCount     = 1000
+		inferenceCount  = 10000
+		validationCount = 10000
 	)
 
 	dummyHeight := func(i int) uint64 {
@@ -87,14 +84,18 @@ func TestEpochMigration(t *testing.T) {
 
 	// Epoch objects exist & effective index is last one
 	for idx, height := range rootHeights {
-		epochID := uint64(idx + 1)
-		epoch, ok := k.GetEpoch(sdkCtx, epochID)
+		epochId := uint64(idx + 1)
+		epoch, ok := k.GetEpoch(sdkCtx, epochId)
 		require.True(t, ok)
 		require.Equal(t, int64(height), epoch.PocStartBlockHeight)
 
 		eg, ok := k.GetEpochGroupData(sdkCtx, height, "")
 		require.True(t, ok)
-		require.Equal(t, epochID, eg.EpochId)
+		require.Equal(t, epochId, eg.EpochId)
+
+		ap, ok := k.GetActiveParticipantsV1(sdkCtx, epochId)
+		require.True(t, ok)
+		require.Equal(t, mapping[height], ap.EpochId)
 	}
 	eff, ok := k.GetEffectiveEpochIndex(sdkCtx)
 	require.True(t, ok)
@@ -112,12 +113,5 @@ func TestEpochMigration(t *testing.T) {
 	vds := k.GetAllInferenceValidationDetails(sdkCtx)
 	for _, v := range vds {
 		require.Equal(t, v.EpochId, v.EpochGroupId)
-	}
-
-	// Active participants updated
-	for _, h := range rootHeights[:10] { // sample first 10
-		ap, ok := k.GetActiveParticipantsV1(sdkCtx, h)
-		require.True(t, ok)
-		require.Equal(t, mapping[h], ap.EpochId)
 	}
 }

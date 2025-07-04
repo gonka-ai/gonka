@@ -235,8 +235,9 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 			k.LogError(UpgradeName+" - failed to marshal active participants", types.Upgrades, "err", err)
 			continue
 		}
-		keyCopy := append([]byte(nil), iterator.Key()...)
-		updates = append(updates, kvPair{keyCopy, bz})
+
+		newKey := types.ActiveParticipantsKey(epochId)
+		updates = append(updates, kvPair{newKey, bz})
 
 		if len(updates) >= batchSize {
 			updates = writeBuffered(store, updates)
