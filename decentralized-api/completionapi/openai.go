@@ -47,11 +47,10 @@ type Logprob struct {
 type Usage struct {
 	PromptTokens     uint64 `json:"prompt_tokens"`
 	CompletionTokens uint64 `json:"completion_tokens"`
-	TotalTokens      uint64 `json:"total_tokens"`
 }
 
 func (u *Usage) IsEmpty() bool {
-	return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0
+	return u.PromptTokens == 0 && u.CompletionTokens == 0
 }
 
 const DataPrefix = "data: "

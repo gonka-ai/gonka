@@ -1,7 +1,7 @@
 [
   {
     "id": "wiremock",
-    "host": "genesis-wiremock",
+    "host": "join1-mock-server",
     "inference_port": 8080,
     "poc_port": 8080,
     "max_concurrent": 10,
@@ -15,12 +15,8 @@
     },
     "hardware": [
       {
-        "type": "A100",
-        "count": 1
-      },
-      {
-        "type": "T4",
-        "count": 2
+        "type": "v5e",
+        "count": 80
       }
     ]
   }

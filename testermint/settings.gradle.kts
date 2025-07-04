@@ -3,3 +3,4 @@ plugins {
 }
 rootProject.name = "testermint"
 
+include("mock_server")

@@ -1,3 +1,8 @@
+import com.productscience.*
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import com.productscience.getK8sInferencePairs
 import com.productscience.inferenceConfig
 import com.productscience.inferenceRequestObject
@@ -11,6 +16,8 @@ import java.io.File
 import java.net.URL
 import java.net.URLEncoder
 import java.time.Duration
+import java.util.concurrent.Executors
+import kotlin.random.Random
 
 @Tag("unstable")
 class KubernetesTests : TestermintTest() {
@@ -23,6 +30,43 @@ class KubernetesTests : TestermintTest() {
             println(govParams)
             val nodes = genesis.api.getNodes()
             println(nodes)
+        }
+    }
+
+    @Test
+    fun `spam interrupted requests`() {
+        getK8sInferencePairs(inferenceConfig).use { k8pairs ->
+            val maxConcurrentRequests = 100
+            val totalRequests = 100
+            val genesis = k8pairs.pairs.first { it.name == "genesis" }
+            logSection("Making interrupted streaming inference")
+            val limitedDispatcher = Executors.newFixedThreadPool(maxConcurrentRequests).asCoroutineDispatcher()
+
+            runBlocking {
+                val requests = List(totalRequests) { i ->
+                    async(limitedDispatcher) {
+                        org.tinylog.kotlin.Logger.info("Starting request $i")
+                        makeInterruptedStreamingInferenceRequest(
+                            genesis,
+                            inferenceRequestStreamObject.toJson(),
+                            Random.nextInt(80),
+                            check = false
+                        )
+                    }
+                }
+                requests.awaitAll()
+            }
+            logSection("Waiting for next claim rewards")
+            genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+            logSection("Recording aftermath")
+            Thread.sleep(Duration.ofMinutes(20))
+
+        }
+    }
+    @Test
+    fun listenToK8s() {
+        getK8sInferencePairs(inferenceConfig).use {
+            Thread.sleep(Duration.ofMinutes(90))
         }
     }
 

@@ -8,15 +8,30 @@ import com.github.tomakehurst.wiremock.client.WireMock.post
 import com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo
 import com.github.tomakehurst.wiremock.http.RequestMethod
 import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder
+import com.github.tomakehurst.wiremock.stubbing.StubMapping
 import com.productscience.data.OpenAIResponse
-import kotlin.time.Duration
+import java.time.Duration
 
-class InferenceMock(port: Int, val name: String) {
+interface IInferenceMock {
+    fun setInferenceResponse(response: String, delay: Duration = Duration.ZERO, streamDelay: Duration = Duration.ZERO, segment: String = "", model: String? = null): StubMapping?
+    fun setInferenceResponse(
+        openAIResponse: OpenAIResponse,
+        delay: Duration = Duration.ZERO,
+        streamDelay: Duration = Duration.ZERO,
+        segment: String = "",
+        model: String? = null
+    ): StubMapping?
+
+    fun setPocResponse(weight: Long, scenarioName: String = "ModelState")
+    fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState")
+    fun getLastInferenceRequest(): InferenceRequestPayload?
+}
+
+class InferenceMock(port: Int, val name: String) : IInferenceMock {
     private val mockClient = WireMock(port)
     fun givenThat(builder: MappingBuilder) =
         mockClient.register(builder)
-
-    fun getLastInferenceRequest(): InferenceRequestPayload? {
+    override fun getLastInferenceRequest(): InferenceRequestPayload? {
         val requests = mockClient.find(RequestPatternBuilder(RequestMethod.POST, urlEqualTo("/v1/chat/completions")))
         if (requests.isEmpty()) {
             return null
@@ -24,8 +39,7 @@ class InferenceMock(port: Int, val name: String) {
         val lastRequest = requests.last()
         return openAiJson.fromJson(lastRequest.bodyAsString, InferenceRequestPayload::class.java)
     }
-
-    fun setInferenceResponse(response: String, delay: java.time.Duration = java.time.Duration.ZERO, segment: String = "", model: String? = null) =
+    override fun setInferenceResponse(response: String, delay: Duration, streamDelay: Duration, segment: String, model: String?) =
         this.givenThat(
             post(urlEqualTo("$segment/v1/chat/completions"))
                 .apply {
@@ -41,17 +55,20 @@ class InferenceMock(port: Int, val name: String) {
                 )
         )
 
-    fun setInferenceResponse(
+    override fun setInferenceResponse(
         openAIResponse: OpenAIResponse,
-        delay: java.time.Duration = java.time.Duration.ZERO,
-        segment: String = "",
-        model: String? = null
-    ) =
+        delay: Duration,
+        streamDelay: Duration,
+        segment: String,
+        model: String?
+    ): StubMapping? =
         this.setInferenceResponse(
-            openAiJson.toJson(openAIResponse), delay, segment)
+            openAiJson.toJson(openAIResponse), delay, streamDelay, segment, model)
 
-    fun setPocResponse(weight: Long, scenarioName: String = "ModelState") {
+    override fun setPocResponse(weight: Long, scenarioName: String) {
+        // Generate 'weight' number of nonces
         val nonces = (1..weight).toList()
+        // Generate distribution values evenly spaced from 0.0 to 1.0
         val dist = nonces.map { it.toDouble() / weight }
         val body = """
             {
@@ -87,8 +104,10 @@ class InferenceMock(port: Int, val name: String) {
 
     }
 
-    fun setPocValidationResponse(weight: Long, scenarioName: String = "ModelState") {
+    override fun setPocValidationResponse(weight: Long, scenarioName: String) {
+        // Generate 'weight' number of nonces
         val nonces = (1..weight).toList()
+        // Generate distribution values evenly spaced from 0.0 to 1.0
         val dist = nonces.map { it.toDouble() / weight }
         val callbackBody = """
             {

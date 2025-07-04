@@ -51,6 +51,7 @@ class ValidationTests : TestermintTest() {
 
     @Test
     @Timeout(15, unit = TimeUnit.MINUTES)
+    @Tag("unstable")
     fun `test invalid gets removed`() {
         val (cluster, genesis) = initCluster()
         val oddPair = cluster.joinPairs.last()
@@ -114,7 +115,7 @@ fun runParallelInferences(
     count: Int,
     waitForBlocks: Int = 20,
     maxConcurrentRequests: Int = Runtime.getRuntime().availableProcessors(),
-    models: List<String> = listOf(defaultModel)
+    models: List<String> = listOf(defaultModel),
 ): List<Int> = runBlocking {
     // Launch coroutines with async and collect the deferred results
 

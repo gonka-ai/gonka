@@ -19,14 +19,20 @@ ENV GOOS=${GOOS} \
     # Override the wasmvm library path to use our musl version
     LD_LIBRARY_PATH=/lib
 
-RUN apk add --no-cache make gcc musl-dev git
+RUN apk add --no-cache make gcc musl-dev git patchelf
 
 # Use the musl libc version of wasmvm and create a symlink for the linker
-RUN wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.x86_64.a \
-    && echo "e660a38efb2930b34ee6f6b0bb12730adccb040b6ab701b8f82f34453a426ae7 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
-    && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
-    # Remove the glibc version from the Go module cache
-    && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.x86_64.so
+RUN if [ "$GOARCH" = "arm64" ]; then \
+        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.aarch64.a \
+        && echo "e78b224c15964817a3b75a40e59882b4d0e06fd055b39514d61646689cef8c6e /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
+        && ln -s /lib/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.aarch64.so; \
+    else \
+        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v1.5.2/libwasmvm_muslc.x86_64.a \
+        && echo "e660a38efb2930b34ee6f6b0bb12730adccb040b6ab701b8f82f34453a426ae7 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
+        && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a \
+        && rm -f /go/pkg/mod/github.com/\!cosm\!wasm/wasmvm@v1.5.2/internal/api/libwasmvm.x86_64.so; \
+    fi
 
 COPY inference-chain/ /app/inference-chain
 
@@ -43,13 +49,17 @@ COPY decentralized-api/. .
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go build -mod=readonly -tags muslc -ldflags "$LDFLAGS" \
-    -o ./build/dapi
-
+    -o ./build/dapi \
+    && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.dapi/cosmovisor/current' ./build/dapi
+RUN mkdir /build_output
 ################################################################################
 # Binary Exporter stage (for --output optimization)
 ################################################################################
 FROM scratch AS binary-exporter
-COPY --from=builder /app/decentralized-api/build/dapi /decentralized-api
+# Copy all required files to a flat structure
+COPY --from=builder /app/decentralized-api/build/dapi /build_output/decentralized-api
+COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
+COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
 ################################################################################
 # Final image
@@ -77,7 +87,7 @@ COPY --from=builder /app/decentralized-api/build/dapi /usr/bin/decentralized-api
 COPY ./decentralized-api/scripts/init-docker.sh /root/init-docker.sh
 COPY ./decentralized-api/config-prod.yaml /root/api-config.yaml
 COPY ./cosmovisor/v1.7.2/${GOOS}-${GOARCH}/cosmovisor /usr/bin/cosmovisor
-COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.x86_64.a
+COPY --from=builder /lib/libwasmvm_muslc.*.a /lib/
 
 ENV API_CONFIG_PATH=/root/api-config.yaml
 

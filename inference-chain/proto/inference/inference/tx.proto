@@ -77,6 +77,7 @@ message MsgStartInference {
   string assigned_to    = 8;
   string node_version   = 9;
   uint64 max_tokens     = 10;
+  uint64 prompt_token_count = 11;
 }
 
 message MsgStartInferenceResponse {
