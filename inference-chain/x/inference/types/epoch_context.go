@@ -207,7 +207,7 @@ func (ec *EpochContext) ValidationExchangeWindow() EpochExchangeWindow {
 	}
 
 	return EpochExchangeWindow{
-		Start: ec.StartOfPoCValidation() + 1, // open interval (start, end]
+		Start: ec.StartOfPoCValidation() + 1, // closed interval [start, end]
 		End:   ec.SetNewValidators(),
 	}
 }
