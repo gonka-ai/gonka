@@ -23,7 +23,7 @@ func (s *Server) postVerifyProof(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	dataKey := string(types.ActiveParticipantsFullKey(uint64(proofVerificationRequest.Epoch)))
+	dataKey := string(types.ActiveParticipantsFullKeyV1(uint64(proofVerificationRequest.Epoch)))
 	verKey := "/inference/" + url.PathEscape(dataKey)
 
 	appHash, err := hex.DecodeString(proofVerificationRequest.AppHash)

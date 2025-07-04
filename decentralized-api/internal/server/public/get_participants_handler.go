@@ -143,7 +143,7 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
 
-	dataKey := string(types.ActiveParticipantsFullKey(epoch))
+	dataKey := string(types.ActiveParticipantsFullKeyV1(epoch))
 	verKey := "/inference/" + url.PathEscape(dataKey)
 	// verKey2 := string(result.Response.Key)
 	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
@@ -214,7 +214,7 @@ func (s *Server) getAllParticipants(ctx echo.Context) error {
 }
 
 func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, epoch uint64) (*coretypes.ResultABCIQuery, error) {
-	dataKey := string(types.ActiveParticipantsFullKey(epoch))
+	dataKey := string(types.ActiveParticipantsFullKeyV1(epoch))
 	result, err := cosmos_client.QueryByKey(rpcClient, "inference", dataKey)
 	if err != nil {
 		logging.Error("Failed to query active participants. Req 1", types.Participants, "error", err)
