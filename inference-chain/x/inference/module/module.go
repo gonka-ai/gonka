@@ -2,8 +2,11 @@ package inference
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -323,7 +326,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	am.setModelsForParticipants(ctx, activeParticipants)
+	am.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)
 	if err != nil {
@@ -600,7 +603,7 @@ func (am AppModule) LogDebug(msg string, subSystem types.SubSystem, keyvals ...i
 	am.keeper.Logger().Debug(msg, kvWithSubsystem...)
 }
 
-func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant) {
+func (am AppModule) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
 	// TODO: We may need to populate throughput in MLNodeInfo using the model's ThroughputPerNonce
 	// This would ensure consistent throughput calculations based on governance model parameters
 	// rather than relying on hardware node declarations alone.
@@ -629,6 +632,12 @@ func (am AppModule) setModelsForParticipants(ctx context.Context, participants [
 
 		// Handle legacy PoC weight distribution for batches without NodeId
 		originalMLNodes = am.distributeLegacyWeight(originalMLNodes, hardwareNodes)
+
+		// Set PRE_POC_SLOT to true and POC_SLOT to true for all MLNodes
+		for _, mlNode := range originalMLNodes {
+			// Initialize timeslot allocation vector: [PRE_POC_SLOT=true, POC_SLOT=true]
+			mlNode.TimeslotAllocation = []bool{true, true} // index 0=PRE_POC_SLOT, index 1=POC_SLOT
+		}
 
 		// Track which MLNodes have been assigned
 		assignedMLNodes := make(map[string]bool)
@@ -674,6 +683,98 @@ func (am AppModule) setModelsForParticipants(ctx context.Context, participants [
 		// Update participant with reorganized MLNode arrays and supported models
 		p.MlNodes = newMLNodeArrays
 		p.Models = supportedModels
+
+		// Task 6.2.2: Apply 50% weight allocation logic
+		am.apply50PercentWeightAllocation(upcomingEpoch, p, supportedModels)
+	}
+}
+
+// apply50PercentWeightAllocation implements the 50% weight allocation logic for PoC slots
+func (am AppModule) apply50PercentWeightAllocation(upcomingEpoch types.Epoch, participant *types.ActiveParticipant, supportedModels []string) {
+	// Create deterministic random seed from epoch ID and participant address
+	seed := fmt.Sprintf("%d_%s", upcomingEpoch.Index, participant.Index)
+	hash := sha256.Sum256([]byte(seed))
+
+	// Use first 8 bytes of hash as int64 seed
+	seedInt := int64(binary.BigEndian.Uint64(hash[:8]))
+
+	// Create random generator with deterministic seed
+	rng := rand.New(rand.NewSource(seedInt))
+
+	// Create shuffled model indices for deterministic random order
+	modelIndices := make([]int, len(supportedModels))
+	for i := range modelIndices {
+		modelIndices[i] = i
+	}
+	rng.Shuffle(len(modelIndices), func(i, j int) {
+		modelIndices[i], modelIndices[j] = modelIndices[j], modelIndices[i]
+	})
+
+	// Track remainder weight from previous models
+	remainderWeight := int64(0)
+
+	// Iterate through models in random but deterministic order
+	for _, modelIdx := range modelIndices {
+		if modelIdx >= len(participant.MlNodes) {
+			continue // Skip if model index is out of bounds
+		}
+
+		modelMLNodes := participant.MlNodes[modelIdx].MlNodes
+		if len(modelMLNodes) == 0 {
+			continue
+		}
+
+		// Calculate total PoC weight of MLNodes with POC_SLOT = true
+		totalPoCWeight := int64(0)
+		for _, mlNode := range modelMLNodes {
+			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // index 1 = POC_SLOT
+				totalPoCWeight += mlNode.PocWeight
+			}
+		}
+
+		// Subtract remainder from previous model
+		totalPoCWeight -= remainderWeight
+		if totalPoCWeight <= 0 {
+			remainderWeight = -totalPoCWeight // Carry forward negative as positive remainder
+			continue
+		}
+
+		// Target: mark nodes to false until we reach <50% PoC weight
+		targetWeight := totalPoCWeight / 2 // This gives us <50% (we want to keep less than 50%)
+		currentWeight := totalPoCWeight
+		newRemainder := int64(0)
+
+		// Mark nodes POC_SLOT to false until we reach target
+		for _, mlNode := range modelMLNodes {
+			if len(mlNode.TimeslotAllocation) <= 1 {
+				continue
+			}
+
+			if mlNode.TimeslotAllocation[1] && currentWeight > targetWeight { // POC_SLOT is true
+				if currentWeight-mlNode.PocWeight >= targetWeight {
+					// We can mark this node to false and still be above target
+					mlNode.TimeslotAllocation[1] = false // Set POC_SLOT to false
+					currentWeight -= mlNode.PocWeight
+				} else {
+					// Marking this node would put us below target
+					// Calculate remainder (what we marked above 50%)
+					newRemainder = currentWeight - targetWeight
+					break
+				}
+			}
+		}
+
+		// Update remainder for next model
+		remainderWeight = newRemainder
+
+		am.LogDebug("Applied 50% weight allocation for model", types.EpochGroup,
+			"participantIndex", participant.Index,
+			"modelIdx", modelIdx,
+			"modelId", supportedModels[modelIdx],
+			"totalPoCWeight", totalPoCWeight,
+			"targetWeight", targetWeight,
+			"finalWeight", currentWeight,
+			"remainder", newRemainder)
 	}
 }
 

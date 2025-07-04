@@ -433,31 +433,49 @@ Each task includes:
 ### Section 6: MLNode Uptime Management System
 
 #### 6.1 MLNode Allocation Protobuf Types
-- **Task**: [~] Create timeslot allocation protobuf types
+- **Task**: [x] Create timeslot allocation protobuf types
 - **What**: Create enum for PRE_POC_SLOT, POC_SLOT and timeslot allocation structures. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (add enum to existing epoch_group_data.proto)
 - **Dependencies**: None
+- **Result**: 
+  - Added `TimeslotType` enum with `PRE_POC_SLOT = 0` and `POC_SLOT = 1` to `inference-chain/proto/inference/inference/epoch_group_data.proto`.
+  - Successfully regenerated protobuf Go files using `ignite generate proto-go`.
 
 #### 6.2 MLNode Timeslot Fields
-- **Task**: [~] Add timeslot allocation to MLNodeInfo
+- **Task**: [x] Add timeslot allocation to MLNodeInfo
 - **What**: Add `timeslot_allocation` (repeated boolean) field to MLNodeInfo. **Note**: Use `ignite generate proto-go` to regenerate protobuf files.
 - **Where**: `inference-chain/x/inference/types/epoch_group_data.pb.go` (update to existing MLNodeInfo)
 - **Dependencies**: 6.1, 4.1
+- **Result**:
+  - Added `repeated bool timeslot_allocation = 4;` field to the `MLNodeInfo` message in `epoch_group_data.proto`.
+  - Successfully regenerated protobuf Go files to include the new field.
 
 #### 6.2.1 Model-Based MLNode Distribution in setModelsForParticipants
-- **Task**: [~] Timeslots initial allocation in MLNode
+- **Task**: [x] Timeslots initial allocation in MLNode
 - **What**: Modify `setModelsForParticipants` to:
   - Add MLNode only for first model of corresponding hardware node
   - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `true` for the MLNode
 - **Where**: `inference-chain/x/inference/module/module.go`
 - **Dependencies**: 6.2
+- **Result**:
+  - Enhanced `setModelsForParticipants` function to initialize timeslot allocation for MLNodes.
+  - For each hardware node, added logic to initialize `TimeslotAllocation = []bool{true, true}` where index 0 = PRE_POC_SLOT and index 1 = POC_SLOT.
+  - Simple and clean implementation that sets both timeslot values to `true` initially for all MLNodes.
 
 #### 6.2.2 Model-Based MLNode Distribution in setModelsForParticipants
-- **Task**: [~] POC 50% of nodes allocation
+- **Task**: [x] POC 50% of nodes allocation
 - **What**: Modify `setModelsForParticipants` to:
   - After allocating nodes per participant, for each participant, iterate through models, for each model calculate total PoC weight of the MLNodes with `POC_SLOT` set to `true` (PoC weight of that participant for that model), and mark nodes `POC_SLOT` to `false` until we reach <50% PoC weight of that participant for that model. Before switching to the next model, take the "remainder" (what we marked above 50%), and subtract the remainder from total PoC weight for the next model, so that we need to switch fewer MLNodes to `false` potentially. When iterating through the models, iterate in random but deterministic order with seed of epoch ID and participant address.
 - **Where**: `inference-chain/x/inference/module/module.go`
 - **Dependencies**: 6.2.1
+- **Result**:
+  - Created `apply50PercentWeightAllocation` function that implements the 50% weight allocation logic for PoC slots.
+  - Added deterministic random seed generation using epoch ID and participant address with SHA256 hashing.
+  - Implemented model iteration in random but deterministic order using the generated seed.
+  - Added remainder weight tracking system that carries over excess weight to subsequent models for optimal allocation.
+  - Enhanced `setModelsForParticipants` function signature to accept `upcomingEpoch` parameter for proper seed generation.
+  - Added comprehensive logging for debugging the weight allocation process.
+  - The `inference-chain` build was successful after all changes.
 
 #### 6.2.3 API Node POC_SLOT Enforcement
 - **Task**: [ ] Prevent ML nodes from switching to PoC when POC_SLOT is true

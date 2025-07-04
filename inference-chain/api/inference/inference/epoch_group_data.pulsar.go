@@ -2628,11 +2628,58 @@ func (x *fastReflection_SeedSignature) ProtoMethods() *protoiface.Methods {
 	}
 }
 
+var _ protoreflect.List = (*_MLNodeInfo_4_list)(nil)
+
+type _MLNodeInfo_4_list struct {
+	list *[]bool
+}
+
+func (x *_MLNodeInfo_4_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_MLNodeInfo_4_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfBool((*x.list)[i])
+}
+
+func (x *_MLNodeInfo_4_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Bool()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_MLNodeInfo_4_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Bool()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_MLNodeInfo_4_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message MLNodeInfo at list field TimeslotAllocation as it is not of Message kind"))
+}
+
+func (x *_MLNodeInfo_4_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_MLNodeInfo_4_list) NewElement() protoreflect.Value {
+	v := false
+	return protoreflect.ValueOfBool(v)
+}
+
+func (x *_MLNodeInfo_4_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_MLNodeInfo            protoreflect.MessageDescriptor
-	fd_MLNodeInfo_node_id    protoreflect.FieldDescriptor
-	fd_MLNodeInfo_throughput protoreflect.FieldDescriptor
-	fd_MLNodeInfo_poc_weight protoreflect.FieldDescriptor
+	md_MLNodeInfo                     protoreflect.MessageDescriptor
+	fd_MLNodeInfo_node_id             protoreflect.FieldDescriptor
+	fd_MLNodeInfo_throughput          protoreflect.FieldDescriptor
+	fd_MLNodeInfo_poc_weight          protoreflect.FieldDescriptor
+	fd_MLNodeInfo_timeslot_allocation protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -2641,6 +2688,7 @@ func init() {
 	fd_MLNodeInfo_node_id = md_MLNodeInfo.Fields().ByName("node_id")
 	fd_MLNodeInfo_throughput = md_MLNodeInfo.Fields().ByName("throughput")
 	fd_MLNodeInfo_poc_weight = md_MLNodeInfo.Fields().ByName("poc_weight")
+	fd_MLNodeInfo_timeslot_allocation = md_MLNodeInfo.Fields().ByName("timeslot_allocation")
 }
 
 var _ protoreflect.Message = (*fastReflection_MLNodeInfo)(nil)
@@ -2726,6 +2774,12 @@ func (x *fastReflection_MLNodeInfo) Range(f func(protoreflect.FieldDescriptor, p
 			return
 		}
 	}
+	if len(x.TimeslotAllocation) != 0 {
+		value := protoreflect.ValueOfList(&_MLNodeInfo_4_list{list: &x.TimeslotAllocation})
+		if !f(fd_MLNodeInfo_timeslot_allocation, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -2747,6 +2801,8 @@ func (x *fastReflection_MLNodeInfo) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.Throughput != int64(0)
 	case "inference.inference.MLNodeInfo.poc_weight":
 		return x.PocWeight != int64(0)
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		return len(x.TimeslotAllocation) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MLNodeInfo"))
@@ -2769,6 +2825,8 @@ func (x *fastReflection_MLNodeInfo) Clear(fd protoreflect.FieldDescriptor) {
 		x.Throughput = int64(0)
 	case "inference.inference.MLNodeInfo.poc_weight":
 		x.PocWeight = int64(0)
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		x.TimeslotAllocation = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MLNodeInfo"))
@@ -2794,6 +2852,12 @@ func (x *fastReflection_MLNodeInfo) Get(descriptor protoreflect.FieldDescriptor)
 	case "inference.inference.MLNodeInfo.poc_weight":
 		value := x.PocWeight
 		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		if len(x.TimeslotAllocation) == 0 {
+			return protoreflect.ValueOfList(&_MLNodeInfo_4_list{})
+		}
+		listValue := &_MLNodeInfo_4_list{list: &x.TimeslotAllocation}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MLNodeInfo"))
@@ -2820,6 +2884,10 @@ func (x *fastReflection_MLNodeInfo) Set(fd protoreflect.FieldDescriptor, value p
 		x.Throughput = value.Int()
 	case "inference.inference.MLNodeInfo.poc_weight":
 		x.PocWeight = value.Int()
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		lv := value.List()
+		clv := lv.(*_MLNodeInfo_4_list)
+		x.TimeslotAllocation = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MLNodeInfo"))
@@ -2840,6 +2908,12 @@ func (x *fastReflection_MLNodeInfo) Set(fd protoreflect.FieldDescriptor, value p
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_MLNodeInfo) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		if x.TimeslotAllocation == nil {
+			x.TimeslotAllocation = []bool{}
+		}
+		value := &_MLNodeInfo_4_list{list: &x.TimeslotAllocation}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.MLNodeInfo.node_id":
 		panic(fmt.Errorf("field node_id of message inference.inference.MLNodeInfo is not mutable"))
 	case "inference.inference.MLNodeInfo.throughput":
@@ -2865,6 +2939,9 @@ func (x *fastReflection_MLNodeInfo) NewField(fd protoreflect.FieldDescriptor) pr
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.MLNodeInfo.poc_weight":
 		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.MLNodeInfo.timeslot_allocation":
+		list := []bool{}
+		return protoreflect.ValueOfList(&_MLNodeInfo_4_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.MLNodeInfo"))
@@ -2944,6 +3021,9 @@ func (x *fastReflection_MLNodeInfo) ProtoMethods() *protoiface.Methods {
 		if x.PocWeight != 0 {
 			n += 1 + runtime.Sov(uint64(x.PocWeight))
 		}
+		if len(x.TimeslotAllocation) > 0 {
+			n += 1 + runtime.Sov(uint64(len(x.TimeslotAllocation))) + len(x.TimeslotAllocation)*1
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -2972,6 +3052,19 @@ func (x *fastReflection_MLNodeInfo) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.TimeslotAllocation) > 0 {
+			for iNdEx := len(x.TimeslotAllocation) - 1; iNdEx >= 0; iNdEx-- {
+				i--
+				if x.TimeslotAllocation[iNdEx] {
+					dAtA[i] = 1
+				} else {
+					dAtA[i] = 0
+				}
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.TimeslotAllocation)))
+			i--
+			dAtA[i] = 0x22
 		}
 		if x.PocWeight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocWeight))
@@ -3109,6 +3202,76 @@ func (x *fastReflection_MLNodeInfo) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 4:
+				if wireType == 0 {
+					var v int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					x.TimeslotAllocation = append(x.TimeslotAllocation, bool(v != 0))
+				} else if wireType == 2 {
+					var packedLen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						packedLen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if packedLen < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					postIndex := iNdEx + packedLen
+					if postIndex < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					if postIndex > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					var elementCount int
+					elementCount = packedLen
+					if elementCount != 0 && len(x.TimeslotAllocation) == 0 {
+						x.TimeslotAllocation = make([]bool, 0, elementCount)
+					}
+					for iNdEx < postIndex {
+						var v int
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							v |= int(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						x.TimeslotAllocation = append(x.TimeslotAllocation, bool(v != 0))
+					}
+				} else {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TimeslotAllocation", wireType)
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -3156,6 +3319,53 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// Enum for timeslot types
+type TimeslotType int32
+
+const (
+	TimeslotType_PRE_POC_SLOT TimeslotType = 0
+	TimeslotType_POC_SLOT     TimeslotType = 1
+)
+
+// Enum value maps for TimeslotType.
+var (
+	TimeslotType_name = map[int32]string{
+		0: "PRE_POC_SLOT",
+		1: "POC_SLOT",
+	}
+	TimeslotType_value = map[string]int32{
+		"PRE_POC_SLOT": 0,
+		"POC_SLOT":     1,
+	}
+)
+
+func (x TimeslotType) Enum() *TimeslotType {
+	p := new(TimeslotType)
+	*p = x
+	return p
+}
+
+func (x TimeslotType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TimeslotType) Descriptor() protoreflect.EnumDescriptor {
+	return file_inference_inference_epoch_group_data_proto_enumTypes[0].Descriptor()
+}
+
+func (TimeslotType) Type() protoreflect.EnumType {
+	return &file_inference_inference_epoch_group_data_proto_enumTypes[0]
+}
+
+func (x TimeslotType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TimeslotType.Descriptor instead.
+func (TimeslotType) EnumDescriptor() ([]byte, []int) {
+	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{0}
+}
 
 // These top two values are uint64s because they are IDs, not numerical values.
 type EpochGroupData struct {
@@ -3425,9 +3635,10 @@ type MLNodeInfo struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	NodeId     string `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Throughput int64  `protobuf:"varint,2,opt,name=throughput,proto3" json:"throughput,omitempty"`
-	PocWeight  int64  `protobuf:"varint,3,opt,name=poc_weight,json=pocWeight,proto3" json:"poc_weight,omitempty"`
+	NodeId             string `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Throughput         int64  `protobuf:"varint,2,opt,name=throughput,proto3" json:"throughput,omitempty"`
+	PocWeight          int64  `protobuf:"varint,3,opt,name=poc_weight,json=pocWeight,proto3" json:"poc_weight,omitempty"`
+	TimeslotAllocation []bool `protobuf:"varint,4,rep,packed,name=timeslot_allocation,json=timeslotAllocation,proto3" json:"timeslot_allocation,omitempty"`
 }
 
 func (x *MLNodeInfo) Reset() {
@@ -3469,6 +3680,13 @@ func (x *MLNodeInfo) GetPocWeight() int64 {
 		return x.PocWeight
 	}
 	return 0
+}
+
+func (x *MLNodeInfo) GetTimeslotAllocation() []bool {
+	if x != nil {
+		return x.TimeslotAllocation
+	}
+	return nil
 }
 
 var File_inference_inference_epoch_group_data_proto protoreflect.FileDescriptor
@@ -3555,26 +3773,32 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62,
 	0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67,
 	0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x69,
-	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x64, 0x0a, 0x0a, 0x4d, 0x4c, 0x4e, 0x6f, 0x64,
-	0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x1e,
-	0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x12, 0x1d,
-	0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01,
-	0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x42, 0xc1, 0x01,
-	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68,
-	0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01,
-	0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61,
-	0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47,
-	0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x95, 0x01, 0x0a, 0x0a, 0x4d, 0x4c, 0x4e, 0x6f,
+	0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69,
+	0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12,
+	0x1e, 0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x12,
+	0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x2f,
+	0x0a, 0x13, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x63,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x03, 0x28, 0x08, 0x52, 0x12, 0x74, 0x69, 0x6d,
+	0x65, 0x73, 0x6c, 0x6f, 0x74, 0x41, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2a,
+	0x2e, 0x0a, 0x0c, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x54, 0x79, 0x70, 0x65, 0x12,
+	0x10, 0x0a, 0x0c, 0x50, 0x52, 0x45, 0x5f, 0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10,
+	0x00, 0x12, 0x0c, 0x0a, 0x08, 0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x01, 0x42,
+	0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f,
+	0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f,
+	0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f,
+	0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02,
+	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -3589,21 +3813,23 @@ func file_inference_inference_epoch_group_data_proto_rawDescGZIP() []byte {
 	return file_inference_inference_epoch_group_data_proto_rawDescData
 }
 
+var file_inference_inference_epoch_group_data_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_inference_inference_epoch_group_data_proto_goTypes = []interface{}{
-	(*EpochGroupData)(nil),   // 0: inference.inference.EpochGroupData
-	(*ValidationWeight)(nil), // 1: inference.inference.ValidationWeight
-	(*SeedSignature)(nil),    // 2: inference.inference.SeedSignature
-	(*MLNodeInfo)(nil),       // 3: inference.inference.MLNodeInfo
-	(*ValidationParams)(nil), // 4: inference.inference.ValidationParams
-	(*Model)(nil),            // 5: inference.inference.Model
+	(TimeslotType)(0),        // 0: inference.inference.TimeslotType
+	(*EpochGroupData)(nil),   // 1: inference.inference.EpochGroupData
+	(*ValidationWeight)(nil), // 2: inference.inference.ValidationWeight
+	(*SeedSignature)(nil),    // 3: inference.inference.SeedSignature
+	(*MLNodeInfo)(nil),       // 4: inference.inference.MLNodeInfo
+	(*ValidationParams)(nil), // 5: inference.inference.ValidationParams
+	(*Model)(nil),            // 6: inference.inference.Model
 }
 var file_inference_inference_epoch_group_data_proto_depIdxs = []int32{
-	2, // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
-	1, // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
-	4, // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
-	5, // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
-	3, // 4: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
+	3, // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
+	2, // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
+	5, // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
+	6, // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
+	4, // 4: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name
@@ -3674,13 +3900,14 @@ func file_inference_inference_epoch_group_data_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_epoch_group_data_proto_rawDesc,
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_inference_inference_epoch_group_data_proto_goTypes,
 		DependencyIndexes: file_inference_inference_epoch_group_data_proto_depIdxs,
+		EnumInfos:         file_inference_inference_epoch_group_data_proto_enumTypes,
 		MessageInfos:      file_inference_inference_epoch_group_data_proto_msgTypes,
 	}.Build()
 	File_inference_inference_epoch_group_data_proto = out.File
