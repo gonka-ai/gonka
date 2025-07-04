@@ -56,6 +56,8 @@ func CreateUpgradeHandler(
 		}
 		fmt.Printf("OrderMigrations: %v\n", mm.OrderMigrations)
 		pocStartBlockHeightToEpochId := createEpochs(ctx, k)
+		// Propagate the newly assigned EpochId to all sub-groups (modelId != "").
+		propagateEpochIdToSubGroups(ctx, k, pocStartBlockHeightToEpochId)
 		setEpochIdToInferences(ctx, k, pocStartBlockHeightToEpochId)
 
 		renameInferenceValidationDetailsEpochId(ctx, k)
@@ -178,6 +180,38 @@ func createEpochs(ctx context.Context, k keeper.Keeper) map[uint64]uint64 {
 	k.SetEpoch(ctx, genesisEpoch)
 
 	return startBlockHeightToEpochId
+}
+
+// propagateEpochIdToSubGroups copies the EpochId of each root epoch group to all its
+// sub-groups (where ModelId != ""). A sub-group is uniquely identified by the same
+// PocStartBlockHeight as the root plus a non-empty ModelId.
+// It uses the mapping[PoCStartBlockHeight]→EpochId produced by createEpochs.
+func propagateEpochIdToSubGroups(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {
+	all := k.GetAllEpochGroupData(ctx)
+	updated := 0
+	skipped := 0
+	for _, eg := range all {
+		if eg.ModelId == "" {
+			// root group – already updated in createEpochs
+			continue
+		}
+		epochId, ok := pocStartBlockHeightToEpochId[eg.PocStartBlockHeight]
+		if !ok {
+			k.LogError(UpgradeName+" - EpochId not found for sub-group", types.Upgrades,
+				"pocStartBlockHeight", eg.PocStartBlockHeight, "modelId", eg.ModelId)
+			skipped++
+			continue
+		}
+		if eg.EpochId == epochId {
+			continue // already correct
+		}
+		eg.EpochId = epochId
+		k.SetEpochGroupData(ctx, eg)
+		updated++
+	}
+
+	k.LogInfo(UpgradeName+" - propagated EpochId to sub-groups", types.Upgrades,
+		"updated", updated, "skipped", skipped)
 }
 
 func setEpochIdToInferences(ctx context.Context, k keeper.Keeper, pocStartBlockHeightToEpochId map[uint64]uint64) {

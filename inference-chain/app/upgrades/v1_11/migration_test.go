@@ -3,8 +3,9 @@ package v1_11
 import (
 	"context"
 	"fmt"
-	"github.com/productscience/inference/x/inference/keeper"
 	"testing"
+
+	"github.com/productscience/inference/x/inference/keeper"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -78,6 +79,7 @@ func TestEpochMigration(t *testing.T) {
 
 	// ----- 2. Run migration helpers --------------------------------------
 	mapping := createEpochs(sdkCtx, k)
+	propagateEpochIdToSubGroups(sdkCtx, k, mapping)
 	setEpochIdToInferences(sdkCtx, k, mapping)
 	renameInferenceValidationDetailsEpochId(sdkCtx, k)
 	renameActiveParticipantsEpochId(sdkCtx, k, mapping)
@@ -112,6 +114,17 @@ func TestEpochMigration(t *testing.T) {
 	require.Equal(t, validationCount, len(vds))
 	for _, v := range vds {
 		require.Equal(t, v.EpochId, v.EpochGroupId)
+	}
+
+	// Verify that all sub-groups received the correct EpochId
+	allEGs := k.GetAllEpochGroupData(sdkCtx)
+	for _, egd := range allEGs {
+		if egd.ModelId == "" {
+			continue // root handled above
+		}
+		expectedId, ok := mapping[egd.PocStartBlockHeight]
+		require.True(t, ok)
+		require.Equal(t, expectedId, egd.EpochId, "Sub-group at height %d, model %s has incorrect EpochId", egd.PocStartBlockHeight, egd.ModelId)
 	}
 }
 
