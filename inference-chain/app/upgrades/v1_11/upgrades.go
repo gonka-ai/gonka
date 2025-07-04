@@ -25,7 +25,9 @@ Changes description:
 4. InferenceValidationDetails:
   a. Deprecated epoch_id, which was actually the epoch_group_id (the thing created by group module)
   b. Added epoch_group_id, which is the EpochId from Epoch.
-5. ActiveParticipants: TODO
+5. ActiveParticipants:
+  a. Deprecated epoch_group_id (the thing created by group module). It was also THE KEY of the entity in the KV storage.
+  b. Added epoch_id, which is the new KEY. The migration includes key changes.
 */
 
 // kvPair is a small helper type for buffered writes.
