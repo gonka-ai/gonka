@@ -42,6 +42,7 @@ define DOCKER_BUILD
 
 	@DOCKER_BUILDKIT=1 \
 	docker build \
+		--load \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \

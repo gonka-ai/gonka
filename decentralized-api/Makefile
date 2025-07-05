@@ -20,7 +20,9 @@ define DOCKER_BUILD
 	@echo "    	BUILD_FLAGS: $(BUILD_FLAGS)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@docker build \
+	@DOCKER_BUILDKIT=1 \
+	docker build \
+		--load \
 		--platform $(PLATFORM) \
 		--build-arg BUILD_FLAGS="$(BUILD_FLAGS)" \
 		--build-arg GOOS=$(GOOS) \
