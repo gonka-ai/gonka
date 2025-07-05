@@ -120,25 +120,25 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		"activeParticipants", activeParticipants)
 
 	block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
-	if err != nil {
+	if err != nil || block == nil {
 		logging.Error("Failed to get block", types.Participants, "error", err)
 		return nil, err
 	}
 
 	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
 	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
-	if err != nil {
+	if err != nil || blockP1 == nil {
 		logging.Error("Failed to get block + 1", types.Participants, "error", err)
 	}
 
 	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
 	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
-	if err != nil {
+	if err != nil || blockM1 == nil {
 		logging.Error("Failed to get block - 1", types.Participants, "error", err)
 	}
 
 	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
-	if err != nil {
+	if err != nil || vals == nil {
 		logging.Error("Failed to get validators", types.Participants, "error", err)
 		return nil, err
 	}
