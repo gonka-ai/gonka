@@ -7,6 +7,11 @@ import (
 	"decentralized-api/merkleproof"
 	"encoding/base64"
 	"encoding/hex"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
 	"github.com/cometbft/cometbft/crypto/tmhash"
 	rpcclient "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -15,10 +20,6 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 )
 
 func (s *Server) getInferenceParticipantByAddress(c echo.Context) error {
@@ -224,11 +225,20 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		return nil, err
 	}
 
+	logging.Info("[PARTICIPANTS-DEBUG] Raw active participants query result", types.Participants,
+		"epoch", epoch,
+		"value_bytes", len(result.Response.Value))
+
 	var activeParticipants types.ActiveParticipants
 	if err := cdc.Unmarshal(result.Response.Value, &activeParticipants); err != nil {
 		logging.Error("Failed to unmarshal active participant. Req 1", types.Participants, "error", err)
 		return nil, err
 	}
+
+	logging.Info("[PARTICIPANTS-DEBUG] Unmarshalled ActiveParticipants", types.Participants,
+		"epoch", epoch,
+		"created_at_block_height", activeParticipants.CreatedAtBlockHeight,
+		"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
 	blockHeight := activeParticipants.CreatedAtBlockHeight
 	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
