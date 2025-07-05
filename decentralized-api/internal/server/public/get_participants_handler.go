@@ -128,15 +128,13 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
 	blockP1, err := rpcClient.Block(context.Background(), &heightP1)
 	if err != nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
-		return nil, err
+		logging.Error("Failed to get block + 1", types.Participants, "error", err)
 	}
 
 	heightM1 := activeParticipants.CreatedAtBlockHeight - 1
 	blockM1, err := rpcClient.Block(context.Background(), &heightM1)
 	if err != nil {
-		logging.Error("Failed to get block", types.Participants, "error", err)
-		return nil, err
+		logging.Error("Failed to get block - 1", types.Participants, "error", err)
 	}
 
 	vals, err := rpcClient.Validators(context.Background(), &activeParticipants.CreatedAtBlockHeight, nil, nil)
@@ -242,14 +240,20 @@ func queryActiveParticipants(rpcClient *rpcclient.HTTP, cdc *codec.ProtoCodec, e
 		"created_at_block_height", activeParticipants.CreatedAtBlockHeight,
 		"effective_block_height", activeParticipants.EffectiveBlockHeight)
 
-	blockHeight := activeParticipants.CreatedAtBlockHeight
-	result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
-	if err != nil {
-		logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
-		return nil, err
-	}
+	// We disable the second query with proof for now, because:
+	// 1. Data migration happened, and we can't validate pre-migration records recursively;
+	//    they are now signed by the validators active during the epoch.
+	// 2. The implemented proof system has a bug anyway and needs to be revisited
+	return result, nil
 
-	return result, err
+	/*	blockHeight := activeParticipants.CreatedAtBlockHeight
+		result, err = cosmos_client.QueryByKeyWithOptions(rpcClient, "inference", dataKey, blockHeight, true)
+		if err != nil {
+			logging.Error("Failed to query active participant. Req 2", types.Participants, "error", err)
+			return nil, err
+		}
+
+		return result, err*/
 }
 
 func pubKeyToAddress3(pubKey string) (string, error) {
