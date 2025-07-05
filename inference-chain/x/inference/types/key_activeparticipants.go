@@ -6,11 +6,8 @@ import (
 )
 
 const ActiveParticipantsKeyPrefixV1 = "ActiveParticipants/"
-const ActiveParticipantsKeyPrefix = "ActiveParticipants/value"
+const ActiveParticipantsKeyPrefix = "ActiveParticipants/value/"
 
-// TODO [CHAIN-RELAUNCH]:
-//  1. Start using EpochId as the key
-//  2. Marshall it to bigendian for sortability
 func ActiveParticipantsFullKeyV1(epochGroupId uint64) []byte {
 	var key []byte
 
