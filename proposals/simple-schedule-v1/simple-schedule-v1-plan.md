@@ -456,27 +456,31 @@ Each task includes:
 - **Task**: [x] Timeslots initial allocation in MLNode
 - **What**: Modify `setModelsForParticipants` to:
   - Add MLNode only for first model of corresponding hardware node
-  - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `true` for the MLNode
+  - Set `PRE_POC_SLOT` to `true` and `POC_SLOT` to `false` for the MLNode (default to mining PoC)
 - **Where**: `inference-chain/x/inference/module/module.go`
 - **Dependencies**: 6.2
 - **Result**:
   - Enhanced `setModelsForParticipants` function to initialize timeslot allocation for MLNodes.
-  - For each hardware node, added logic to initialize `TimeslotAllocation = []bool{true, true}` where index 0 = PRE_POC_SLOT and index 1 = POC_SLOT.
-  - Simple and clean implementation that sets both timeslot values to `true` initially for all MLNodes.
+  - For each MLNode in `originalMLNodes`, added logic to initialize `TimeslotAllocation = []bool{true, false}` where index 0 = PRE_POC_SLOT and index 1 = POC_SLOT.
+  - Default behavior: all MLNodes start mining PoC (`POC_SLOT = false`) unless specifically allocated to inference service.
 
 #### 6.2.2 Model-Based MLNode Distribution in setModelsForParticipants
-- **Task**: [x] POC 50% of nodes allocation
+- **Task**: [x] 50% node allocation for inference service
 - **What**: Modify `setModelsForParticipants` to:
-  - After allocating nodes per participant, for each participant, iterate through models, for each model calculate total PoC weight of the MLNodes with `POC_SLOT` set to `true` (PoC weight of that participant for that model), and mark nodes `POC_SLOT` to `false` until we reach <50% PoC weight of that participant for that model. Before switching to the next model, take the "remainder" (what we marked above 50%), and subtract the remainder from total PoC weight for the next model, so that we need to switch fewer MLNodes to `false` potentially. When iterating through the models, iterate in random but deterministic order with seed of epoch ID and participant address.
+  - After allocating nodes per participant, for each participant, iterate through each model separately
+  - For each model, shuffle MLNode indices deterministically using epoch ID + participant address + model ID as seed
+  - Set `POC_SLOT` to `true` (serve inference) for up to 50% of nodes per model using floor rounding (`totalNodes / 2`)
+  - This ensures at least 50% of nodes mine PoC (`POC_SLOT = false`) and at most 50% serve inference (`POC_SLOT = true`)
+  - Process each model independently with its own deterministic shuffle order
 - **Where**: `inference-chain/x/inference/module/module.go`
 - **Dependencies**: 6.2.1
 - **Result**:
-  - Created `apply50PercentWeightAllocation` function that implements the 50% weight allocation logic for PoC slots.
-  - Added deterministic random seed generation using epoch ID and participant address with SHA256 hashing.
-  - Implemented model iteration in random but deterministic order using the generated seed.
-  - Added remainder weight tracking system that carries over excess weight to subsequent models for optimal allocation.
+  - Created `apply50PercentWeightAllocation` function that implements the 50% node allocation logic for PoC slots.
+  - Added deterministic random seed generation using epoch ID, participant address, and model ID with SHA256 hashing.
+  - Implemented per-model processing with independent deterministic shuffling for each model.
+  - Used floor rounding (`totalNodes / 2`) to ensure at least 50% of nodes mine PoC.
   - Enhanced `setModelsForParticipants` function signature to accept `upcomingEpoch` parameter for proper seed generation.
-  - Added comprehensive logging for debugging the weight allocation process.
+  - Added comprehensive logging for debugging the node allocation process.
   - The `inference-chain` build was successful after all changes.
 
 #### 6.2.3 API Node POC_SLOT Enforcement
@@ -498,15 +502,31 @@ Each task includes:
 - **Dependencies**: 6.2.2
 
 #### 6.3 PoC Weight Preservation System
-- **Task**: [ ] Implement weight preservation for inference-serving MLNodes
-- **What**: Enhance weight transition system to preserve weights from previous epoch for MLNodes that continue inference service during PoC:
-  - Create `PreserveInferenceNodeWeights` function that takes old and new `ActiveParticipant` arrays
-  - Iterate through old `ActiveParticipant` MLNodes to find nodes with `POC_SLOT = true`
-  - For each inference-serving MLNode, copy its weight to the corresponding MLNode in new `ActiveParticipant`
-  - Ensure preserved weights are properly integrated with new PoC mining weights
-  - Call this function after `setModelsForParticipants` in `onSetNewValidatorsStage`
-- **Where**: `inference-chain/x/inference/module/module.go` - new function called from `onSetNewValidatorsStage`
+- **Task**: [x] Implement weight preservation for inference-serving MLNodes during weight calculation
+- **What**: Enhance `ComputeNewWeights` to preserve weights from previous epoch for MLNodes that continue inference service during PoC:
+  - Access previous epoch group data to identify MLNodes with `POC_SLOT = true` from the previous epoch
+  - For each inference-serving MLNode, create `ActiveParticipant` entries with preserved weights from previous epoch
+  - Merge these preserved-weight participants with new PoC mining participants from current epoch batches
+  - Ensure proper weight integration and no duplicate participant handling
+  - Add `GetPreviousEpochMLNodesWithInferenceAllocation` helper function to query previous epoch group data
+  - Call this logic within `ComputeNewWeights` before processing current epoch PoC batches
+- **Where**: `inference-chain/x/inference/module/chainvalidation.go` - enhance `ComputeNewWeights` function
 - **Dependencies**: 6.2.3
+- **Why**: Option 2 approach ensures all weight decisions happen in one place during the weight calculation phase, fitting naturally with the existing epoch transition flow
+- **Result**:
+  - **Enhanced `ComputeNewWeights` function**: Implemented comprehensive 5-step weight preservation system:
+    - **Step 1**: Get preserved weights from inference-serving MLNodes using `GetPreviousEpochMLNodesWithInferenceAllocation`
+    - **Step 2**: Filter out PoC batches from inference-serving nodes to prevent double participation
+    - **Step 3**: Add seeds for preserved participants if available
+    - **Step 4**: Calculate PoC mining participants (excluding inference-serving nodes)
+    - **Step 5**: Merge preserved participants with PoC mining participants with proper weight combination
+  - **Added `GetPreviousEpochMLNodesWithInferenceAllocation` function**: Retrieves MLNodes with `POC_SLOT = true` from current epoch (about to end) and creates preserved `ActiveParticipant` objects with original weights
+  - **Added helper functions**: `getInferenceServingNodeIds`, `filterPoCBatchesFromInferenceNodes`, `findParticipantByAddress`, and `mergeMLNodeArrays` for comprehensive weight preservation logic
+  - **Prevented double participation**: Inference-serving nodes cannot submit PoC batches while serving inference, ensuring clean separation of duties
+  - **Seamless merging**: Participants can have both preserved weights (from inference service) and new PoC mining weights, which are properly combined
+  - **Backward compatibility**: System handles first epoch and edge cases gracefully
+  - **Comprehensive logging**: Added detailed logging for debugging and monitoring the weight preservation process
+  - The `inference-chain` build was successful after all changes
 
 #### 6.4 Throughput Vector Fields
 - **Task**: [ ] Add throughput vectors to EpochGroupData

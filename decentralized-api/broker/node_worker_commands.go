@@ -72,7 +72,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	if err == nil && state.State == mlnodeclient.MlNodeState_POW {
 		powStatus, powErr := worker.mlClient.GetPowStatus(ctx)
 		if powErr == nil && powStatus.Status == mlnodeclient.POW_GENERATING {
-			logging.Info("Node already in PoC generating state", types.PoC, "node_id", worker.nodeId)
+			logging.Info("[StartPoCNodeCommand] Node already in PoC generating state", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_POC
 			result.FinalPocStatus = PocStatusGenerating
@@ -83,7 +83,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 	// Stop node if needed
 	if state != nil && state.State != mlnodeclient.MlNodeState_STOPPED {
 		if err := worker.mlClient.Stop(ctx); err != nil {
-			logging.Error("Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+			logging.Error("[StartPoCNodeCommand] Failed to stop node for PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 			result.Succeeded = false
 			result.Error = err.Error()
 			result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -97,7 +97,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 		worker.node.Node.NodeNum, c.BlockHash, c.CallbackUrl,
 	)
 	if err := worker.mlClient.InitGenerate(ctx, dto); err != nil {
-		logging.Error("Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
+		logging.Error("[StartPoCNodeCommand] Failed to start PoC", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
@@ -105,7 +105,7 @@ func (c StartPoCNodeCommand) Execute(ctx context.Context, worker *NodeWorker) No
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_POC
 		result.FinalPocStatus = PocStatusGenerating
-		logging.Info("Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
+		logging.Info("[StartPoCNodeCommand] Successfully started PoC on node", types.PoC, "node_id", worker.nodeId)
 	}
 	return result
 }

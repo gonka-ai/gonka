@@ -89,6 +89,7 @@ func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.Epo
 
 		// Check if node should continue inference based on POC_SLOT
 		if node.State.ShouldContinueInference() {
+			logging.Info("[StartPocCommand] Node should continue inference", types.PoC, "node_id", node.Node.Id)
 			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 				return true
 			}
@@ -184,6 +185,7 @@ func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase
 
 		// Check if node should continue inference based on POC_SLOT
 		if node.State.ShouldContinueInference() {
+			logging.Info("[InitValidateCommand] Node should continue inference", types.PoC, "node_id", node.Node.Id)
 			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 				return true
 			}

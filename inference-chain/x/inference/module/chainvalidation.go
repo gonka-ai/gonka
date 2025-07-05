@@ -42,23 +42,7 @@ func NewWeightCalculator(
 }
 
 // getCurrentValidatorWeights gets the active participants for the previous epoch and returns a map of weights
-func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochIndex uint64) (map[string]int64, error) {
-	/*	if epochIndex <= 1 {
-			return nil, nil
-		}
-		if epochIndex <= 1 {
-			currentValidators, err := am.keeper.Staking.GetAllValidators(ctx)
-			if err != nil {
-				am.LogError("getCurrentValidatorWeights: Error getting current validators in first epoch group", types.PoC, "error", err)
-				return nil, err
-			}
-			weights := make(map[string]int64)
-			for _, validator := range currentValidators {
-				weights[validator.OperatorAddress] = validator.Tokens.Int64()
-			}
-			return weights, nil
-		}*/
-
+func (am AppModule) getCurrentValidatorWeights(ctx context.Context) (map[string]int64, error) {
 	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		am.LogError("getCurrentValidatorWeights: Error getting current epoch group", types.PoC, "error", err)
@@ -83,14 +67,115 @@ func (am AppModule) getCurrentValidatorWeights(ctx context.Context, epochIndex u
 	return weights, nil
 }
 
+// GetPreviousEpochMLNodesWithInferenceAllocation retrieves MLNodes from the previous epoch that have POC_SLOT = true (inference allocation)
+// and returns a map of participant addresses to their ActiveParticipant objects with preserved weights
+func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.Context, upcomingEpoch types.Epoch) map[string]*types.ActiveParticipant {
+	preservedParticipants := make(map[string]*types.ActiveParticipant)
+
+	// Skip for first epoch or if we can't get current epoch (which is about to end)
+	if upcomingEpoch.Index <= 1 {
+		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Skipping for first epoch", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+		return preservedParticipants
+	}
+
+	// Get current epoch group data (the epoch that's about to end)
+	// At this point in the flow, we're still in the current epoch - the transition happens later in onSetNewValidatorsStage
+	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
+		return preservedParticipants
+	}
+
+	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
+		"currentEpochGroupId", currentEpochGroup.GroupData.EpochGroupId,
+		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight)
+
+	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
+	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
+		participantAddress := validationWeight.MemberAddress
+
+		// Check if any MLNode has POC_SLOT = true (index 1 in TimeslotAllocation)
+		var inferenceMLNodes []*types.MLNodeInfo
+		for _, mlNode := range validationWeight.MlNodes {
+			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
+				// Copy the MLNode info with preserved weight
+				preservedMLNode := &types.MLNodeInfo{
+					NodeId:             mlNode.NodeId,
+					Throughput:         mlNode.Throughput,
+					PocWeight:          mlNode.PocWeight,    // Preserve the weight from current epoch
+					TimeslotAllocation: []bool{true, false}, // Reset to default for new epoch
+				}
+				inferenceMLNodes = append(inferenceMLNodes, preservedMLNode)
+
+				am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Found inference-serving MLNode", types.PoC,
+					"participantAddress", participantAddress,
+					"nodeId", mlNode.NodeId,
+					"preservedWeight", mlNode.PocWeight)
+			}
+		}
+
+		// If we found inference-serving MLNodes for this participant, create ActiveParticipant
+		if len(inferenceMLNodes) > 0 {
+			// Get participant details
+			participant, found := am.keeper.GetParticipant(ctx, participantAddress)
+			if !found {
+				am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Participant not found", types.PoC,
+					"participantAddress", participantAddress)
+				continue
+			}
+
+			// Calculate total weight from preserved MLNodes
+			totalWeight := int64(0)
+			for _, mlNode := range inferenceMLNodes {
+				totalWeight += mlNode.PocWeight
+			}
+
+			// Create the double repeated structure with all MLNodes in the first array (index 0)
+			firstMLNodeArray := &types.ModelMLNodes{
+				MlNodes: inferenceMLNodes,
+			}
+			modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
+
+			// Create ActiveParticipant with preserved weights
+			activeParticipant := &types.ActiveParticipant{
+				Index:        participant.Address,
+				ValidatorKey: participant.ValidatorKey,
+				Weight:       totalWeight,
+				InferenceUrl: participant.InferenceUrl,
+				Seed:         nil,               // Will be set later if available
+				Models:       make([]string, 0), // Will be populated by setModelsForParticipants
+				MlNodes:      modelMLNodesArray,
+			}
+
+			preservedParticipants[participantAddress] = activeParticipant
+
+			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
+				"participantAddress", participantAddress,
+				"totalWeight", totalWeight,
+				"numMLNodes", len(inferenceMLNodes))
+		}
+	}
+
+	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Summary", types.PoC,
+		"totalPreservedParticipants", len(preservedParticipants))
+
+	return preservedParticipants
+}
+
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
 	epochStartBlockHeight := upcomingEpoch.PocStartBlockHeight
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
+	// STEP 1: Get preserved weights from inference-serving MLNodes in current epoch
+	preservedParticipants := am.GetPreviousEpochMLNodesWithInferenceAllocation(ctx, upcomingEpoch)
+	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
+		"numPreservedParticipants", len(preservedParticipants))
+
 	// Get current active participants weights
-	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx, upcomingEpoch.Index)
+	currentValidatorWeights, err := am.getCurrentValidatorWeights(ctx)
 	am.LogInfo("ComputeNewWeights: Retrieved current validator weights", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
@@ -104,7 +189,8 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		return nil
 	}
 
-	originalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
+	// STEP 2: Get PoC batches and filter out batches from inference-serving nodes
+	allOriginalBatches, err := am.keeper.GetPoCBatchesByStage(ctx, epochStartBlockHeight)
 	if err != nil {
 		am.LogError("ComputeNewWeights: Error getting batches by PoC stage", types.PoC,
 			"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -113,10 +199,19 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		return nil
 	}
 
-	am.LogInfo("ComputeNewWeights: Retrieved original batches", types.PoC,
+	// Build a set of inference-serving node IDs that should be excluded from PoC mining
+	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
+	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
+		"inferenceServingNodeIds", inferenceServingNodeIds)
+
+	// Filter out PoC batches from inference-serving nodes
+	originalBatches := am.filterPoCBatchesFromInferenceNodes(allOriginalBatches, inferenceServingNodeIds)
+
+	am.LogInfo("ComputeNewWeights: Filtered PoC batches", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(batches)", len(originalBatches))
+		"originalBatchesCount", len(allOriginalBatches),
+		"filteredBatchesCount", len(originalBatches))
 
 	validations, err := am.keeper.GetPoCValidationByStage(ctx, epochStartBlockHeight)
 	if err != nil {
@@ -170,7 +265,20 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		seeds[participantAddress] = seed
 	}
 
-	// Create a WeightCalculator and use it to calculate the new weights
+	// STEP 3: Add seeds for preserved participants if they have submitted seeds
+	for participantAddress, preservedParticipant := range preservedParticipants {
+		if seed, found := am.keeper.GetRandomSeed(ctx, epochStartBlockHeight, participantAddress); found {
+			preservedParticipant.Seed = &seed
+			seeds[participantAddress] = seed
+			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
+				"participantAddress", participantAddress)
+		} else {
+			am.LogWarn("ComputeNewWeights: No seed found for preserved participant", types.PoC,
+				"participantAddress", participantAddress)
+		}
+	}
+
+	// STEP 4: Create WeightCalculator and calculate PoC mining participants (excluding inference-serving nodes)
 	calculator := NewWeightCalculator(
 		currentValidatorWeights,
 		originalBatches,
@@ -180,7 +288,108 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		epochStartBlockHeight,
 		am,
 	)
-	return calculator.Calculate()
+	pocMiningParticipants := calculator.Calculate()
+
+	// STEP 5: Merge preserved participants with PoC mining participants
+	var allActiveParticipants []*types.ActiveParticipant
+
+	// Add preserved participants first
+	for participantAddress, preservedParticipant := range preservedParticipants {
+		// Check if this participant also has PoC mining activity
+		if pocParticipant := findParticipantByAddress(pocMiningParticipants, participantAddress); pocParticipant != nil {
+			// Merge: combine weights and MLNodes from both sources
+			combinedWeight := preservedParticipant.Weight + pocParticipant.Weight
+			combinedMLNodes := mergeMLNodeArrays(preservedParticipant.MlNodes, pocParticipant.MlNodes)
+
+			mergedParticipant := &types.ActiveParticipant{
+				Index:        participantAddress,
+				ValidatorKey: preservedParticipant.ValidatorKey,
+				Weight:       combinedWeight,
+				InferenceUrl: preservedParticipant.InferenceUrl,
+				Seed:         pocParticipant.Seed, // Use PoC participant's seed
+				Models:       make([]string, 0),   // Will be populated by setModelsForParticipants
+				MlNodes:      combinedMLNodes,
+			}
+
+			allActiveParticipants = append(allActiveParticipants, mergedParticipant)
+
+			am.LogInfo("ComputeNewWeights: Merged preserved and PoC participant", types.PoC,
+				"participantAddress", participantAddress,
+				"preservedWeight", preservedParticipant.Weight,
+				"pocWeight", pocParticipant.Weight,
+				"combinedWeight", combinedWeight)
+		} else {
+			// Only preserved participant (no PoC mining activity)
+			allActiveParticipants = append(allActiveParticipants, preservedParticipant)
+
+			am.LogInfo("ComputeNewWeights: Added preserved-only participant", types.PoC,
+				"participantAddress", participantAddress,
+				"preservedWeight", preservedParticipant.Weight)
+		}
+	}
+
+	// Add remaining PoC mining participants that weren't already merged
+	for _, pocParticipant := range pocMiningParticipants {
+		if _, alreadyPreserved := preservedParticipants[pocParticipant.Index]; !alreadyPreserved {
+			allActiveParticipants = append(allActiveParticipants, pocParticipant)
+
+			am.LogInfo("ComputeNewWeights: Added PoC-only participant", types.PoC,
+				"participantAddress", pocParticipant.Index,
+				"pocWeight", pocParticipant.Weight)
+		}
+	}
+
+	am.LogInfo("ComputeNewWeights: Final summary", types.PoC,
+		"preservedParticipants", len(preservedParticipants),
+		"pocMiningParticipants", len(pocMiningParticipants),
+		"totalActiveParticipants", len(allActiveParticipants))
+
+	return allActiveParticipants
+}
+
+// Helper function to find participant by address in a slice
+func findParticipantByAddress(participants []*types.ActiveParticipant, address string) *types.ActiveParticipant {
+	for _, participant := range participants {
+		if participant.Index == address {
+			return participant
+		}
+	}
+	return nil
+}
+
+// Helper function to merge MLNode arrays from preserved and PoC participants
+func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*types.ModelMLNodes {
+	if len(preservedMLNodes) == 0 {
+		return pocMLNodes
+	}
+	if len(pocMLNodes) == 0 {
+		return preservedMLNodes
+	}
+
+	// Merge the first arrays (index 0) which contain all MLNodes before model assignment
+	var mergedMLNodes []*types.MLNodeInfo
+
+	// Add preserved MLNodes first
+	if len(preservedMLNodes) > 0 && preservedMLNodes[0] != nil {
+		mergedMLNodes = append(mergedMLNodes, preservedMLNodes[0].MlNodes...)
+	}
+
+	// Add PoC MLNodes, avoiding duplicates by NodeId
+	if len(pocMLNodes) > 0 && pocMLNodes[0] != nil {
+		existingNodeIds := make(map[string]bool)
+		for _, mlNode := range mergedMLNodes {
+			existingNodeIds[mlNode.NodeId] = true
+		}
+
+		for _, pocMLNode := range pocMLNodes[0].MlNodes {
+			if !existingNodeIds[pocMLNode.NodeId] {
+				mergedMLNodes = append(mergedMLNodes, pocMLNode)
+			}
+		}
+	}
+
+	// Return merged array in the first position
+	return []*types.ModelMLNodes{{MlNodes: mergedMLNodes}}
 }
 
 // Calculate computes the new weights for active participants based on the data in the WeightCalculator
@@ -380,4 +589,72 @@ func calculateValidationOutcome(currentValidatorsSet map[string]int64, validatio
 		ValidWeight:   validWeight,
 		InvalidWeight: invalidWeight,
 	}
+}
+
+// getInferenceServingNodeIds returns a set of node IDs that have POC_SLOT = true in the current epoch
+func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]bool {
+	inferenceServingNodeIds := make(map[string]bool)
+
+	// Skip for first epoch
+	if upcomingEpoch.Index <= 1 {
+		return inferenceServingNodeIds
+	}
+
+	// Get current epoch group data
+	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil {
+		am.LogError("getInferenceServingNodeIds: Unable to get current epoch group", types.PoC, "error", err.Error())
+		return inferenceServingNodeIds
+	}
+
+	// Find all nodes with POC_SLOT = true
+	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
+		for _, mlNode := range validationWeight.MlNodes {
+			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
+				inferenceServingNodeIds[mlNode.NodeId] = true
+				am.LogInfo("getInferenceServingNodeIds: Found inference-serving node", types.PoC,
+					"nodeId", mlNode.NodeId,
+					"participantAddress", validationWeight.MemberAddress)
+			}
+		}
+	}
+
+	return inferenceServingNodeIds
+}
+
+// filterPoCBatchesFromInferenceNodes removes PoC batches from nodes that should be serving inference
+func (am AppModule) filterPoCBatchesFromInferenceNodes(allBatches map[string][]types.PoCBatch, inferenceServingNodeIds map[string]bool) map[string][]types.PoCBatch {
+	filteredBatches := make(map[string][]types.PoCBatch)
+	excludedBatchCount := 0
+
+	for participantAddress, batches := range allBatches {
+		var validBatches []types.PoCBatch
+
+		for _, batch := range batches {
+			// Check if this batch is from an inference-serving node
+			if inferenceServingNodeIds[batch.NodeId] {
+				// Exclude this batch - the node should have been serving inference, not mining PoC
+				excludedBatchCount++
+				am.LogWarn("filterPoCBatchesFromInferenceNodes: Excluding PoC batch from inference-serving node", types.PoC,
+					"participantAddress", participantAddress,
+					"nodeId", batch.NodeId,
+					"batchNonceCount", len(batch.Nonces))
+			} else {
+				// Include this batch - it's from a legitimate PoC mining node
+				validBatches = append(validBatches, batch)
+			}
+		}
+
+		// Only include participant if they have valid batches remaining
+		if len(validBatches) > 0 {
+			filteredBatches[participantAddress] = validBatches
+		}
+	}
+
+	am.LogInfo("filterPoCBatchesFromInferenceNodes: Summary", types.PoC,
+		"excludedBatchCount", excludedBatchCount,
+		"originalParticipants", len(allBatches),
+		"filteredParticipants", len(filteredBatches))
+
+	return filteredBatches
 }

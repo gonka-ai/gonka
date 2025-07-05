@@ -633,10 +633,10 @@ func (am AppModule) setModelsForParticipants(ctx context.Context, participants [
 		// Handle legacy PoC weight distribution for batches without NodeId
 		originalMLNodes = am.distributeLegacyWeight(originalMLNodes, hardwareNodes)
 
-		// Set PRE_POC_SLOT to true and POC_SLOT to true for all MLNodes
+		// Set PRE_POC_SLOT to true and POC_SLOT to false for all MLNodes (default to mining PoC)
 		for _, mlNode := range originalMLNodes {
-			// Initialize timeslot allocation vector: [PRE_POC_SLOT=true, POC_SLOT=true]
-			mlNode.TimeslotAllocation = []bool{true, true} // index 0=PRE_POC_SLOT, index 1=POC_SLOT
+			// Initialize timeslot allocation vector: [PRE_POC_SLOT=true, POC_SLOT=false]
+			mlNode.TimeslotAllocation = []bool{true, false} // index 0=PRE_POC_SLOT, index 1=POC_SLOT
 		}
 
 		// Track which MLNodes have been assigned
@@ -689,32 +689,11 @@ func (am AppModule) setModelsForParticipants(ctx context.Context, participants [
 	}
 }
 
-// apply50PercentWeightAllocation implements the 50% weight allocation logic for PoC slots
+// apply50PercentWeightAllocation implements the 50% node allocation logic for PoC slots
+// For each model, at most 50% of nodes (with floor rounding) will serve inference
 func (am AppModule) apply50PercentWeightAllocation(upcomingEpoch types.Epoch, participant *types.ActiveParticipant, supportedModels []string) {
-	// Create deterministic random seed from epoch ID and participant address
-	seed := fmt.Sprintf("%d_%s", upcomingEpoch.Index, participant.Index)
-	hash := sha256.Sum256([]byte(seed))
-
-	// Use first 8 bytes of hash as int64 seed
-	seedInt := int64(binary.BigEndian.Uint64(hash[:8]))
-
-	// Create random generator with deterministic seed
-	rng := rand.New(rand.NewSource(seedInt))
-
-	// Create shuffled model indices for deterministic random order
-	modelIndices := make([]int, len(supportedModels))
-	for i := range modelIndices {
-		modelIndices[i] = i
-	}
-	rng.Shuffle(len(modelIndices), func(i, j int) {
-		modelIndices[i], modelIndices[j] = modelIndices[j], modelIndices[i]
-	})
-
-	// Track remainder weight from previous models
-	remainderWeight := int64(0)
-
-	// Iterate through models in random but deterministic order
-	for _, modelIdx := range modelIndices {
+	// Process each model separately
+	for modelIdx, modelId := range supportedModels {
 		if modelIdx >= len(participant.MlNodes) {
 			continue // Skip if model index is out of bounds
 		}
@@ -724,57 +703,45 @@ func (am AppModule) apply50PercentWeightAllocation(upcomingEpoch types.Epoch, pa
 			continue
 		}
 
-		// Calculate total PoC weight of MLNodes with POC_SLOT = true
-		totalPoCWeight := int64(0)
-		for _, mlNode := range modelMLNodes {
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // index 1 = POC_SLOT
-				totalPoCWeight += mlNode.PocWeight
+		// Create deterministic random seed from epoch ID, participant address, and model ID
+		seed := fmt.Sprintf("%d_%s_%s", upcomingEpoch.Index, participant.Index, modelId)
+		hash := sha256.Sum256([]byte(seed))
+		seedInt := int64(binary.BigEndian.Uint64(hash[:8]))
+
+		// Create random generator with deterministic seed for this model
+		rng := rand.New(rand.NewSource(seedInt))
+
+		// Create shuffled node indices for deterministic random order
+		nodeIndices := make([]int, len(modelMLNodes))
+		for i := range nodeIndices {
+			nodeIndices[i] = i
+		}
+		rng.Shuffle(len(nodeIndices), func(i, j int) {
+			nodeIndices[i], nodeIndices[j] = nodeIndices[j], nodeIndices[i]
+		})
+
+		// Calculate how many nodes can serve inference (at most 50% with floor rounding)
+		totalNodes := len(modelMLNodes)
+		nodesToInference := totalNodes / 2 // This gives us floor(totalNodes / 2)
+
+		// Set POC_SLOT to true for the first nodesToInference shuffled nodes
+		for i := 0; i < nodesToInference && i < len(nodeIndices); i++ {
+			nodeIdx := nodeIndices[i]
+			mlNode := modelMLNodes[nodeIdx]
+
+			if len(mlNode.TimeslotAllocation) > 1 {
+				mlNode.TimeslotAllocation[1] = true // Set POC_SLOT to true (serve inference)
 			}
 		}
 
-		// Subtract remainder from previous model
-		totalPoCWeight -= remainderWeight
-		if totalPoCWeight <= 0 {
-			remainderWeight = -totalPoCWeight // Carry forward negative as positive remainder
-			continue
-		}
-
-		// Target: mark nodes to false until we reach <50% PoC weight
-		targetWeight := totalPoCWeight / 2 // This gives us <50% (we want to keep less than 50%)
-		currentWeight := totalPoCWeight
-		newRemainder := int64(0)
-
-		// Mark nodes POC_SLOT to false until we reach target
-		for _, mlNode := range modelMLNodes {
-			if len(mlNode.TimeslotAllocation) <= 1 {
-				continue
-			}
-
-			if mlNode.TimeslotAllocation[1] && currentWeight > targetWeight { // POC_SLOT is true
-				if currentWeight-mlNode.PocWeight >= targetWeight {
-					// We can mark this node to false and still be above target
-					mlNode.TimeslotAllocation[1] = false // Set POC_SLOT to false
-					currentWeight -= mlNode.PocWeight
-				} else {
-					// Marking this node would put us below target
-					// Calculate remainder (what we marked above 50%)
-					newRemainder = currentWeight - targetWeight
-					break
-				}
-			}
-		}
-
-		// Update remainder for next model
-		remainderWeight = newRemainder
-
-		am.LogDebug("Applied 50% weight allocation for model", types.EpochGroup,
+		// Log the allocation for debugging
+		am.LogDebug("Applied 50% node allocation for model", types.EpochGroup,
 			"participantIndex", participant.Index,
 			"modelIdx", modelIdx,
-			"modelId", supportedModels[modelIdx],
-			"totalPoCWeight", totalPoCWeight,
-			"targetWeight", targetWeight,
-			"finalWeight", currentWeight,
-			"remainder", newRemainder)
+			"modelId", modelId,
+			"totalNodes", totalNodes,
+			"nodesToInference", nodesToInference,
+			"nodesToPoC", totalNodes-nodesToInference)
 	}
 }
 
