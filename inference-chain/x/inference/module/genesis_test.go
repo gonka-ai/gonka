@@ -3,9 +3,6 @@ package inference_test
 import (
 	"testing"
 
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"go.uber.org/mock/gomock"
-
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/nullify"
 	inference "github.com/productscience/inference/x/inference/module"
@@ -22,10 +19,12 @@ func TestGenesis(t *testing.T) {
 
 		InferenceList: []types.Inference{
 			{
-				Index: "0",
+				Index:       "0",
+				InferenceId: "0",
 			},
 			{
-				Index: "1",
+				Index:       "1",
+				InferenceId: "1",
 			},
 		},
 		ParticipantList: []types.Participant{
@@ -34,14 +33,6 @@ func TestGenesis(t *testing.T) {
 			},
 			{
 				Index: "1",
-			},
-		},
-		EpochGroupDataList: []types.EpochGroupData{
-			{
-				PocStartBlockHeight: 0,
-			},
-			{
-				PocStartBlockHeight: 1,
 			},
 		},
 		SettleAmountList: []types.SettleAmount{
@@ -88,12 +79,12 @@ func TestGenesis(t *testing.T) {
 		},
 		InferenceValidationDetailsList: []types.InferenceValidationDetails{
 			{
-				EpochId:     0,
-				InferenceId: "0",
+				EpochGroupId: 0,
+				InferenceId:  "0",
 			},
 			{
-				EpochId:     1,
-				InferenceId: "1",
+				EpochGroupId: 1,
+				InferenceId:  "1",
 			},
 		},
 		EpochPerformanceSummaryList: []types.EpochPerformanceSummary{
@@ -118,24 +109,8 @@ func TestGenesis(t *testing.T) {
 	}
 
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
-	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
-	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
-	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
-	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
-		Base: types.BaseCoin,
-		DenomUnits: []*banktypes.DenomUnit{
-			{
-				Denom:    types.BaseCoin,
-				Exponent: 0,
-			},
-			{
-				Denom:    types.NativeCoin,
-				Exponent: 9,
-			},
-		},
-	}, true)
+
+	mocks.StubForInitGenesis(ctx)
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)

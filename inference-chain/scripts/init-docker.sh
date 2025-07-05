@@ -62,6 +62,16 @@ SNAPSHOT_INTERVAL="${SNAPSHOT_INTERVAL:-10}"
 SNAPSHOT_KEEP_RECENT="${SNAPSHOT_KEEP_RECENT:-5}"
 TRUSTED_BLOCK_PERIOD="${TRUSTED_BLOCK_PERIOD:-2}"
 
+update_configs_for_explorer() {
+  if [ "${WITH_EXPLORER:-}" = true ]; then
+    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
+
+    "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
+  else
+    echo "Skipping config changes for explorer"
+  fi
+}
+
 ###############################################################################
 # Detect first run
 ###############################################################################
@@ -86,9 +96,12 @@ if $FIRST_RUN; then
   kv client keyring-backend "$KEYRING_BACKEND"
   kv app minimum-gas-prices "0${COIN_DENOM}"
 
+  update_configs_for_explorer
+
   GENESIS_FILE="$STATE_DIR/config/genesis.json"
   output=$("$APP_NAME" download-genesis "$SEED_NODE_RPC_URL" "$GENESIS_FILE" 2>&1)
   echo "$output" | filter_cw20_code
+
 
   run "$APP_NAME" keys add "$KEY_NAME" \
        --keyring-backend "$KEYRING_BACKEND" --keyring-dir "$STATE_DIR"
@@ -147,6 +160,8 @@ if [ -n "${TMKMS_PORT-}" ]; then
     -e "s|^priv_validator_state_file *=|# priv_validator_state_file =|" \
     "$STATE_DIR/config/config.toml"
 fi
+
+update_configs_for_explorer
 
 ###############################################################################
 # Cosmovisor bootstrap (one-time)

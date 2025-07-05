@@ -1,16 +1,18 @@
 package mlnodeclient
 
 import (
+	"context"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
-	"github.com/productscience/inference/x/inference/training"
-	"github.com/productscience/inference/x/inference/types"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/productscience/inference/x/inference/training"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
@@ -138,7 +140,7 @@ const (
 	defaultTrainingBasePort   = "10001"
 )
 
-func (api *Client) StartTraining(taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
+func (api *Client) StartTraining(ctx context.Context, taskId uint64, participant string, nodeId string, masterNodeAddr string, rank int, worldSize int) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
@@ -165,7 +167,7 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 	}
 
 	logging.Info("Starting training with", types.Training, "trainEnv", trainEnv)
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, body)
+	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, body)
 	if err != nil {
 		return err
 	}
@@ -173,13 +175,13 @@ func (api *Client) StartTraining(taskId uint64, participant string, nodeId strin
 	return nil
 }
 
-func (api *Client) GetTrainingStatus() error {
+func (api *Client) GetTrainingStatus(ctx context.Context) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, trainStartPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendGetRequest(&api.client, requestUrl)
+	_, err = utils.SendGetRequest(ctx, &api.client, requestUrl)
 	if err != nil {
 		return err
 	}
@@ -187,13 +189,13 @@ func (api *Client) GetTrainingStatus() error {
 	return nil
 }
 
-func (api *Client) Stop() error {
+func (api *Client) Stop(ctx context.Context) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, stopPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, nil)
+	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
 	if err != nil {
 		return err
 	}
@@ -214,13 +216,13 @@ type StateResponse struct {
 	State MLNodeState `json:"state"`
 }
 
-func (api *Client) NodeState() (*StateResponse, error) {
+func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {
 	requestURL, err := url.JoinPath(api.pocUrl, nodeStatePath)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -255,13 +257,13 @@ type PowStatusResponse struct {
 	IsModelInitialized bool     `json:"is_model_initialized"`
 }
 
-func (api *Client) GetPowStatus() (*PowStatusResponse, error) {
+func (api *Client) GetPowStatus(ctx context.Context) (*PowStatusResponse, error) {
 	requestURL, err := url.JoinPath(api.pocUrl, powStatusPath)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -279,13 +281,13 @@ func (api *Client) GetPowStatus() (*PowStatusResponse, error) {
 	return &powResp, nil
 }
 
-func (api *Client) InferenceHealth() (bool, error) {
+func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
 	requestURL, err := url.JoinPath(api.inferenceUrl, "/health")
 	if err != nil {
 		return false, err
 	}
 
-	resp, err := utils.SendGetRequest(&api.client, requestURL)
+	resp, err := utils.SendGetRequest(ctx, &api.client, requestURL)
 	if err != nil {
 		return false, err
 	}
@@ -304,7 +306,7 @@ type inferenceUpDto struct {
 	Args  []string `json:"additional_args"`
 }
 
-func (api *Client) InferenceUp(model string, args []string) error {
+func (api *Client) InferenceUp(ctx context.Context, model string, args []string) error {
 	inferenceUpUrl, err := url.JoinPath(api.pocUrl, inferenceUpPath)
 	if err != nil {
 		return err
@@ -318,7 +320,7 @@ func (api *Client) InferenceUp(model string, args []string) error {
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	_, err = utils.SendPostJsonRequest(&api.client, inferenceUpUrl, dto)
+	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
 	}

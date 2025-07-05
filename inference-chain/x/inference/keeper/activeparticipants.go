@@ -7,21 +7,21 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.ActiveParticipants) {
+func (k Keeper) SetActiveParticipantsV1(ctx context.Context, participants types.ActiveParticipants) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte{})
 
-	key := types.ActiveParticipantsFullKey(participants.EpochGroupId)
+	key := types.ActiveParticipantsFullKeyV1(participants.EpochGroupId)
 
 	b := k.cdc.MustMarshal(&participants)
 	store.Set(key, b)
 }
 
-func (k Keeper) GetActiveParticipants(ctx context.Context, epoch uint64) (val types.ActiveParticipants, found bool) {
+func (k Keeper) GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool) {
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, []byte{})
 
-	key := types.ActiveParticipantsFullKey(epoch)
+	key := types.ActiveParticipantsFullKey(epochId)
 
 	b := store.Get(key)
 	if b == nil {
@@ -32,10 +32,12 @@ func (k Keeper) GetActiveParticipants(ctx context.Context, epoch uint64) (val ty
 	return val, true
 }
 
-func (k Keeper) GetParticipantCounter(ctx context.Context, epoch uint64) uint32 {
-	activeParticipants, ok := k.GetActiveParticipants(ctx, epoch)
-	if !ok {
-		return 0
-	}
-	return uint32(len(activeParticipants.Participants))
+func (k Keeper) SetActiveParticipants(ctx context.Context, participants types.ActiveParticipants) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+
+	key := types.ActiveParticipantsFullKey(participants.EpochId)
+
+	b := k.cdc.MustMarshal(&participants)
+	store.Set(key, b)
 }

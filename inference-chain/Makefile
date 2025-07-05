@@ -111,32 +111,20 @@ build-for-upgrade:
 	@echo "--> clearing out ../public-html/v2/inferenced"
 	@rm -rf ../public-html/v2/inferenced/*
 	@mkdir -p ../public-html/v2/inferenced
-	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./output/inferenced ../public-html/v2/inferenced/inferenced-amd64
-	@echo "--> zipping inferenced binary"
-# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-amd64
-	@zip -X -j ../public-html/v2/inferenced/inferenced-amd64.zip ../public-html/v2/inferenced/inferenced-amd64
+	@echo "--> copying built inferenced binary and dependencies to ../public-html/v2/inferenced/"
+	@cp ./output/build_output/* ../public-html/v2/inferenced/
+	@echo "--> zipping inferenced binary with dependencies"
+	# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
+	@TZ=UTC find ../public-html/v2/inferenced -type f -exec touch -t 200001010000 {} \;
+	@cd ../public-html/v2/inferenced && zip -X -r inferenced-amd64.zip .
 	@echo "--> generating shasum for inferenced-amd64.zip"
 	@shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip
 	@echo "--> appending to ../public-html/v2/checksums.txt"
 	@echo "inferenced-amd64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-amd64.zip)" >> ../public-html/v2/checksums.txt
 
+# Disabled ARM builds as requested
 build-for-upgrade-arm:
-	@mkdir -p build
-	@echo "--> building inferenced for ARM64 using direct Go cross-compilation"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(ldflags)" -o ./build/inferenced-arm64 ./cmd/inferenced/main.go
-	@mkdir -p ../public-html/v2/inferenced
-	@echo "--> copying built inferenced binary to ../public-html/v2/inferenced/inferenced"
-	@cp ./build/inferenced-arm64 ../public-html/v2/inferenced/inferenced-arm64
-	@echo "--> zipping inferenced binary"
-# We set the timestamp to a const and strip metadata in zip so we have a reproduceable checksum
-	@TZ=UTC touch -t 200001010000 ../public-html/v2/inferenced/inferenced-arm64
-	@zip -X -j ../public-html/v2/inferenced/inferenced-arm64.zip ../public-html/v2/inferenced/inferenced-arm64
-	@echo "--> generating shasum for inferenced-arm64.zip"
-	@shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip
-	@echo "--> appending to ../public-html/v2/checksums.txt"
-	@echo "inferenced-arm64.zip $(shasum -a 256 ../public-html/v2/inferenced/inferenced-arm64.zip)" >> ../public-html/v2/checksums.txt
+	@echo "ARM builds disabled"
 
 #################################################
 # CROSS-COMPILATION SECTION

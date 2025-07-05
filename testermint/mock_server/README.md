@@ -39,13 +39,13 @@ A Dockerfile is provided in the root directory of the project. To build and run 
 1. Build the Docker image:
 
 ```bash
-docker build -t mock-server .
+docker build -t inference-mock-server .
 ```
 
 2. Run the Docker container:
 
 ```bash
-docker run -p 8080:8080 mock-server
+docker run -p 8080:8080 inference-mock-server
 ```
 
 This will start the server and expose it on port 8080 of your host machine.
@@ -55,6 +55,7 @@ This will start the server and expose it on port 8080 of your host machine.
 ### State Management Endpoints
 - `/status` - Returns a simple status response with version and timestamp
 - `GET /api/v1/state` - Returns the current state of the model
+- `GET /api/v1/pow/status` - Returns the current status for PoC subprocess
 - `POST /api/v1/pow/init/generate` - Generates POC and transitions to POW state
 - `POST /api/v1/pow/init/validate` - Validates POC (requires POW state)
 - `POST /api/v1/pow/validate` - Validates POC batch (requires POW state)
@@ -82,6 +83,20 @@ The server maintains a state machine with the following states:
 - `INFERENCE` - Inference state
 - `TRAIN` - Training state
 - `STOPPED` - Stopped state
+
+The `POW` stage has the following substates:
+
+- `POW_IDLE`
+- `POW_NO_CONTROLLER`
+- `POW_LOADING`
+- `POW_GENERATING`
+- `POW_VALIDATING`
+- `POW_STOPPED`
+- `POW_MIXED`
+
+Only 3 are used actually: `POW_GENERATING`, `POW_VALIDATING` and `POW_STOPPED`.
+
+Others are defined here because they may be returned by the real server.
 
 ## Webhook Support
 

@@ -422,6 +422,6 @@ func confirmAvailability(client *http.Client, participantUrl string, taskId uint
 		TrainingTaskId: taskId,
 		NodeIds:        nodeIds,
 	}
-	_, err := utils.SendPostJsonRequest(client, url, payload)
+	_, err := utils.SendPostJsonRequest(context.Background(), client, url, payload)
 	return err
 }

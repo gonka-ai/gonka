@@ -1,9 +1,15 @@
 package keeper
 
 import (
+	"context"
+	"fmt"
+	"testing"
+
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/slog"
-	"testing"
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/store"
@@ -20,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/inference/keeper"
+	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -40,6 +47,65 @@ type InferenceMocks struct {
 	AccountKeeper *MockAccountKeeper
 	GroupKeeper   *MockGroupMessageKeeper
 	StakingKeeper *MockStakingKeeper
+}
+
+func (mocks *InferenceMocks) StubForInitGenesis(ctx context.Context) {
+	// Enable duplicate denom registration tolerance for tests that call InitGenesis
+	inference.IgnoreDuplicateDenomRegistration = true
+	mocks.StubForInitGenesisWithValidators(ctx, []stakingtypes.Validator{})
+}
+
+func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Context, validators []stakingtypes.Validator) {
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.TopRewardPoolAccName)
+	mocks.AccountKeeper.EXPECT().GetModuleAccount(ctx, types.PreProgrammedSaleAccName)
+	// Kind of pointless to test the exact amount of coins minted, it'd just be a repeat of the code
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.TopRewardPoolAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().MintCoins(ctx, types.PreProgrammedSaleAccName, gomock.Any())
+	mocks.BankKeeper.EXPECT().GetDenomMetaData(ctx, types.BaseCoin).Return(banktypes.Metadata{
+		Base: types.BaseCoin,
+		DenomUnits: []*banktypes.DenomUnit{
+			{
+				Denom:    types.BaseCoin,
+				Exponent: 0,
+			},
+			{
+				Denom:    types.NativeCoin,
+				Exponent: 9,
+			},
+		},
+	}, true)
+
+	mocks.ExpectCreateGroupWithPolicyCall(ctx, 1)
+	// Actually can just return any as well
+	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil).
+		AnyTimes()
+	mocks.GroupKeeper.EXPECT().UpdateGroupMembers(ctx, gomock.Any()).
+		Return(&group.MsgUpdateGroupMembersResponse{}, nil).
+		AnyTimes()
+
+	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return(validators, nil).
+		Times(1)
+}
+
+func (mocks *InferenceMocks) ExpectCreateGroupWithPolicyCall(ctx context.Context, groupId uint64) {
+	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            groupId,
+		GroupPolicyAddress: fmt.Sprintf("group-policy-address-%d", groupId),
+	}, nil).Times(1)
+}
+
+func (mocks *InferenceMocks) ExpectAnyCreateGroupWithPolicyCall() *gomock.Call {
+	return mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(gomock.Any(), gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            0,
+		GroupPolicyAddress: "group-policy-address",
+	}, nil).Times(1)
+}
+
+func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {
+	return types.GenesisState{
+		Params:            types.DefaultParams(),
+		GenesisOnlyParams: types.DefaultGenesisOnlyParams(),
+	}
 }
 
 func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, InferenceMocks) {

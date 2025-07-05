@@ -27,6 +27,8 @@ import "inference/inference/hardware_node.proto";
 import "inference/inference/partial_upgrade.proto";
 import "inference/inference/network_node.proto";
 import "inference/inference/bridge_transaction.proto";
+import  "inference/inference/stats_developer.proto";
+import "inference/inference/epoch.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -74,15 +76,14 @@ service Query {
   // Queries a list of EpochGroupData items.
   rpc EpochGroupData    (QueryGetEpochGroupDataRequest) returns (QueryGetEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data/{poc_start_block_height}";
-
   }
+
   rpc EpochGroupDataAll (QueryAllEpochGroupDataRequest) returns (QueryAllEpochGroupDataResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_group_data";
-
   }
 
   // Queries a list of SettleAmount items.
-  rpc SettleAmount    (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
+  rpc SettleAmount  (QueryGetSettleAmountRequest) returns (QueryGetSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount/{participant}";
 
   }
@@ -157,11 +158,12 @@ service Query {
 
   }
 
-  // Queries a list of InferenceValidationDetails items.
+  // BE CAREFUL, epoch_id in the request body meand epoch_group_id!!
   rpc InferenceValidationDetails    (QueryGetInferenceValidationDetailsRequest) returns (QueryGetInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details/{epochId}/{inferenceId}";
 
   }
+  // Queries a list of InferenceValidationDetails items.
   rpc InferenceValidationDetailsAll (QueryAllInferenceValidationDetailsRequest) returns (QueryAllInferenceValidationDetailsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/inference_validation_details";
 
@@ -178,9 +180,9 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary/{epochStartHeight}/{participantId}";
 
   }
+
   rpc EpochPerformanceSummaryAll (QueryAllEpochPerformanceSummaryRequest) returns (QueryAllEpochPerformanceSummaryResponse) {
     option (google.api.http).get = "/productscience/inference/inference/epoch_performance_summary";
-
   }
 
   // Queries a list of TrainingTask items.
@@ -225,6 +227,46 @@ service Query {
 
   }
 
+  rpc GetParticipantsFullStats (QueryParticipantsFullStatsRequest)
+      returns (QueryParticipantsFullStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants_stats";
+  }
+
+  rpc StatsByTimePeriodByDeveloper(QueryStatsByTimePeriodByDeveloperRequest)
+      returns (QueryStatsByTimePeriodByDeveloperResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_time";
+  }
+
+  rpc StatsByDeveloperAndEpochsBackwards(QueryStatsByDeveloperAndEpochBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/{developer}/stats_by_epochs_backwards";
+  }
+
+  rpc CountParticipants(QueryCountAllParticipantsRequest)
+      returns (QueryCountAllParticipantsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/participants/count";
+  }
+
+  rpc DebugStatsDeveloperStats(QueryDebugStatsRequest)
+      returns (QueryDebugStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/debug/developer/all_stats";
+  }
+
+  rpc InferencesAndTokensStatsByEpochsBackwards(QueryInferencesAndTokensStatsByEpochsBackwardsRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/developer/stats_by_epochs_backwards";
+  }
+
+  rpc InferencesAndTokensStatsByTimePeriod(QueryInferencesAndTokensStatsByTimePeriodRequest)
+      returns (QueryInferencesAndTokensStatsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/all_stats_by_time";
+  }
+
+  rpc InferencesAndTokensStatsByModels(QueryInferencesAndTokensStatsByModelsRequest)
+      returns (QueryInferencesAndTokensStatsByModelsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/models_stats_by_time";
+  }
+
   // Queries a list of GetMinimumValidationAverage items.
   rpc GetMinimumValidationAverage (QueryGetMinimumValidationAverageRequest) returns (QueryGetMinimumValidationAverageResponse) {
     option (google.api.http).get = "/productscience/inference/inference/get_minimum_validation_average";
@@ -234,7 +276,6 @@ service Query {
   // Queries a list of InProgressTrainingTasks items.
   rpc InProgressTrainingTasks (QueryInProgressTrainingTasksRequest) returns (QueryInProgressTrainingTasksResponse) {
     option (google.api.http).get = "/productscience/inference/inference/in_progress_training_tasks";
-
   }
 
   // Queries a list of PartialUpgrade items.
@@ -279,6 +320,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/training_alive_nodes";
 
   }
+
+  // Queries a list of EpochInfo items.
+  rpc EpochInfo (QueryEpochInfoRequest) returns (QueryEpochInfoResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/epoch_info";
+
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -303,8 +350,8 @@ message QueryAllInferenceRequest {
 }
 
 message QueryAllInferenceResponse {
-  repeated Inference                              inference  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  repeated Inference                              inference = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetParticipantRequest {
@@ -320,9 +367,9 @@ message QueryAllParticipantRequest {
 }
 
 message QueryAllParticipantResponse {
-  repeated Participant                            participant  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination   = 2;
-           int64                                  block_height = 3;
+  repeated Participant                            participant = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  int64                                  block_height = 3;
 }
 
 message QueryInferenceParticipantRequest {
@@ -330,7 +377,7 @@ message QueryInferenceParticipantRequest {
 }
 
 message QueryInferenceParticipantResponse {
-  string pubkey  = 1;
+  string pubkey = 1;
   int64  balance = 2;
 }
 
@@ -357,7 +404,7 @@ message QueryAllEpochGroupDataRequest {
 
 message QueryAllEpochGroupDataResponse {
   repeated EpochGroupData                         epoch_group_data = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination       = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetSettleAmountRequest {
@@ -374,11 +421,11 @@ message QueryAllSettleAmountRequest {
 
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination    = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetEpochGroupValidationsRequest {
-  string participant            = 1;
+  string participant = 1;
   uint64 poc_start_block_height = 2;
 }
 
@@ -392,7 +439,7 @@ message QueryAllEpochGroupValidationsRequest {
 
 message QueryAllEpochGroupValidationsResponse {
   repeated EpochGroupValidations                  epoch_group_validations = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination              = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryPocBatchesForStageRequest {
@@ -404,14 +451,15 @@ message QueryPocBatchesForStageResponse {
 }
 
 message PoCBatchesWithParticipants {
-           string   participant = 1;
-           string   pub_key     = 2;
-           string   hex_pub_key = 3;
-  repeated PoCBatch poc_batch   = 4 [(gogoproto.nullable) = false];
+  string   participant = 1;
+  string   pub_key = 2;
+  string   hex_pub_key = 3;
+  repeated PoCBatch poc_batch = 4 [(gogoproto.nullable) = false];
 }
 
 message QueryGetCurrentEpochRequest {}
 
+// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
 }
@@ -428,12 +476,18 @@ message QueryGetUnitOfComputePriceProposalRequest {
 
 message QueryGetUnitOfComputePriceProposalResponse {
   UnitOfComputePriceProposal proposal = 1;
-  uint64                     default  = 2;
+  uint64                     default = 2;
 }
 
 message QueryCurrentEpochGroupDataRequest {}
 
 message QueryCurrentEpochGroupDataResponse {
+  EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryPreviousEpochGroupDataRequest {}
+
+message QueryPreviousEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
 }
 
@@ -456,13 +510,13 @@ message QueryAllTopMinerRequest {
 }
 
 message QueryAllTopMinerResponse {
-  repeated TopMiner                               top_miner  = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination = 2;
+  repeated TopMiner                               top_miner = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetInferenceTimeoutRequest {
   uint64 expirationHeight = 1;
-  string inferenceId      = 2;
+  string inferenceId = 2;
 }
 
 message QueryGetInferenceTimeoutResponse {
@@ -475,11 +529,11 @@ message QueryAllInferenceTimeoutRequest {
 
 message QueryAllInferenceTimeoutResponse {
   repeated InferenceTimeout                       inference_timeout = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination        = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetInferenceValidationDetailsRequest {
-  uint64 epochId     = 1;
+  uint64 epochId = 1;
   string inferenceId = 2;
 }
 
@@ -493,24 +547,24 @@ message QueryAllInferenceValidationDetailsRequest {
 
 message QueryAllInferenceValidationDetailsResponse {
   repeated InferenceValidationDetails             inferenceValidationDetails = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination                 = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryGetInferenceValidationParametersRequest {
-  repeated string ids       = 1;
-           string requester = 2;
+  repeated string ids = 1;
+  string requester = 2;
 }
 
 message QueryGetInferenceValidationParametersResponse {
-           uint64                     validator_power = 1;
-           uint64                     current_height  = 2;
-  repeated InferenceValidationDetails details         = 3;
-           ValidationParams           parameters      = 4;
+  uint64                     validator_power = 1;
+  uint64                     current_height = 2;
+  repeated InferenceValidationDetails details = 3;
+  ValidationParams           parameters = 4;
 }
 
 message QueryGetEpochPerformanceSummaryRequest {
   uint64 epochStartHeight = 1;
-  string participantId    = 2;
+  string participantId = 2;
 }
 
 message QueryGetEpochPerformanceSummaryResponse {
@@ -523,7 +577,7 @@ message QueryAllEpochPerformanceSummaryRequest {
 
 message QueryAllEpochPerformanceSummaryResponse {
   repeated EpochPerformanceSummary                epochPerformanceSummary = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination              = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryTrainingTaskRequest {
@@ -565,7 +619,7 @@ message QueryGetParticipantCurrentStatsRequest {
 }
 
 message QueryGetParticipantCurrentStatsResponse {
-  uint64 weight     = 1;
+  uint64 weight = 1;
   int32  reputation = 2;
 }
 
@@ -573,22 +627,104 @@ message QueryGetAllParticipantCurrentStatsRequest {}
 
 message QueryGetAllParticipantCurrentStatsResponse {
   repeated ParticipantCurrentStats participant_current_stats = 1;
-           int64                   block_height              = 2;
-           int64                   epoch_id                  = 3;
+  int64                   block_height = 2;
+  int64                   epoch_id = 3;
 }
 
 message ParticipantCurrentStats {
   string participant_id = 1;
-  uint64 weight         = 2;
-  int32  reputation     = 3;
+  uint64 weight = 2;
+  int32  reputation = 3;
+}
+
+message ParticipantFullStats {
+  string account_address = 1;
+  string operator_address = 2;
+  int32  reputation = 3;
+  uint64 earned_coins_current_epoch = 4;
+  uint64 rewarded_coins_latest_epoch = 5;
+  uint32 epochs_completed = 6;
+}
+
+message QueryParticipantsFullStatsRequest {}
+
+message QueryParticipantsFullStatsResponse {
+  repeated ParticipantFullStats participants_stats = 1;
+}
+
+message QueryStatsByTimePeriodByDeveloperRequest {
+  string developer = 1;
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryStatsByTimePeriodByDeveloperResponse {
+  repeated DeveloperStatsByTime stats = 1;
+}
+
+message QueryStatsByDeveloperAndEpochBackwardsRequest {
+  string developer = 1;
+  int32 epochs_n = 2;
+}
+
+message QueryInferencesAndTokensStatsByEpochsBackwardsRequest {
+  int32 epochs_n = 1;
+}
+
+message QueryInferencesAndTokensStatsByTimePeriodRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsRequest {
+  int64 time_from = 2;
+  int64 time_to = 3;
+}
+
+message ModelStats {
+  string model = 1;
+  int64 ai_tokens = 2;
+  int32 inferences = 3;
+}
+
+message QueryInferencesAndTokensStatsByModelsResponse {
+  repeated ModelStats stats_models = 1;
+}
+
+message QueryInferencesAndTokensStatsResponse {
+  int64 ai_tokens = 1;
+  int32 inferences = 2;
+  int64 actual_inferences_cost = 3;
+}
+
+message QueryCountAllParticipantsRequest {}
+message QueryCountAllParticipantsResponse {
+  int64 total = 1;
+}
+
+message QueryDebugStatsRequest {}
+
+message QueryDebugStatsResponse {
+  message TemporaryTimeStat {
+    string developer = 1;
+    repeated DeveloperStatsByTime stats = 2;
+  }
+
+  message TemporaryEpochStat {
+    string developer = 1;
+    repeated DeveloperStatsByEpoch stats = 2;
+  }
+
+  repeated TemporaryTimeStat stats_by_time = 1;
+  repeated TemporaryEpochStat stats_by_epoch = 2;
 }
 
 message QueryGetMinimumValidationAverageRequest {}
 
 message QueryGetMinimumValidationAverageResponse {
-  uint64 traffic_basis              = 1;
+  uint64 traffic_basis = 1;
   string minimum_validation_average = 2;
-  uint64 block_height               = 3;
+  uint64 block_height = 3;
 }
 
 message QueryInProgressTrainingTasksRequest {}
@@ -611,12 +747,12 @@ message QueryAllPartialUpgradeRequest {
 
 message QueryAllPartialUpgradeResponse {
   repeated PartialUpgrade                         partialUpgrade = 1 [(gogoproto.nullable) = false];
-           cosmos.base.query.v1beta1.PageResponse pagination     = 2;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }
 
 message QueryTrainingKvRecordRequest {
-  uint64 taskId      = 1;
-  string key         = 2;
+  uint64 taskId = 1;
+  string key = 2;
 }
 
 message QueryTrainingKvRecordResponse {
@@ -624,7 +760,7 @@ message QueryTrainingKvRecordResponse {
 }
 
 message QueryListTrainingKvRecordKeysRequest {
-  uint64 taskId      = 1;
+  uint64 taskId = 1;
 }
 
 message QueryListTrainingKvRecordKeysResponse {
@@ -664,4 +800,12 @@ message QueryAllBridgeTransactionsRequest {
 message QueryAllBridgeTransactionsResponse {
   repeated BridgeTransaction bridgeTransactions = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryEpochInfoRequest {}
+
+message QueryEpochInfoResponse {
+  int64 block_height = 1;
+  Params params = 2 [(gogoproto.nullable) = false];
+  Epoch latest_epoch = 3 [(gogoproto.nullable) = false];
 }
