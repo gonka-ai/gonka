@@ -64,10 +64,15 @@ jobs:
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
-        run: sudo make build-docker
+        run: |
+          sudo make build-docker
+          echo "=== Images immediately after build ==="
+          docker images | head -20
 
       - name: Ensure Latest Tags
         run: |
+          echo "=== Images before tagging ==="
+          docker images | head -20
           # Get the version tag that was created
           VERSION=$(git describe --always)
           echo "Creating :latest tags for version: $VERSION"
