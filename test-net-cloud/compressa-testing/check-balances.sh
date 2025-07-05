@@ -5,8 +5,8 @@ set -euo pipefail
 # Configuration – edit these three lines if you need to.
 ###############################################################################
 HOST="34.9.136.116:30000"            # API host, e.g. "34.9.17.182:1317"
-INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"   # Path or name of your inferenced binary
-REQUESTER_ADDRESS="gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl"    # Extra address to include
+INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"   # inferenced cmd
+REQUESTER_ADDRESS="gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl"    # extra address
 ###############################################################################
 
 echo "=== balance-fetch script starting ===" >&2
@@ -15,9 +15,14 @@ echo "INFERENCED_BINARY=$INFERENCED_BINARY" >&2
 echo "REQUESTER_ADDRESS=$REQUESTER_ADDRESS" >&2
 echo "====================================" >&2
 
+# ---------- NEW: make sure balances/ dir exists ----------
+OUTDIR="balances"
+mkdir -p "$OUTDIR"
+# ---------------------------------------------------------
+
 # Timestamp → “5-may-14:15”  (BSD `date` on macOS understands %-d / %-H / %-M)
 TIMESTAMP=$(date '+%-d-%b-%H:%M' | tr '[:upper:]' '[:lower:]')
-OUTFILE="balances-${TIMESTAMP}.json"
+OUTFILE="${OUTDIR}/balances-${TIMESTAMP}.json"
 echo "Output file will be: $OUTFILE" >&2
 
 ###############################################################################
@@ -29,9 +34,8 @@ PARTICIPANT_JSON=$(curl -sf "http://${HOST}/v1/epochs/current/participants") \
 
 ###############################################################################
 # 2. Extract addresses
-#    We populate a normal shell array without readarray/mapfile.
 ###############################################################################
-ADDRESSES=()                                                  # empty array
+ADDRESSES=()
 while IFS= read -r line; do
   ADDRESSES+=("$line")
 done < <(echo "$PARTICIPANT_JSON" | jq -r '.active_participants.participants[].index')
