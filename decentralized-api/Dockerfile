@@ -45,10 +45,10 @@ RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
 
 COPY decentralized-api/. .
 
-# ARG LDFLAGS
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
-    go build -mod=readonly -tags muslc -ldflags "$LDFLAGS" \
+    # Use BUILD_FLAGS coming from the Makefile (e.g. "-ldflags '-X ...'") so that versioning info is embedded
+    go build -mod=readonly -tags muslc ${BUILD_FLAGS} \
     -o ./build/dapi \
     && patchelf --set-rpath '$ORIGIN:$ORIGIN/current:/root/.dapi/cosmovisor/current' ./build/dapi
 RUN mkdir /build_output
