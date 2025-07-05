@@ -47,8 +47,8 @@ jobs:
 
       - name: Verify Docker Installation
         run: |
-          docker --version
-          docker compose version
+          sudo docker --version
+          sudo docker compose version
           
       - name: Install Make
         run: |
@@ -67,32 +67,16 @@ jobs:
         run: |
           sudo make build-docker
           echo "=== Images immediately after build ==="
-          docker images | head -20
-
-      - name: Ensure Latest Tags
-        run: |
-          echo "=== Images before tagging ==="
-          docker images | head -20
-          # Get the version tag that was created
-          VERSION=$(git describe --always)
-          echo "Creating :latest tags for version: $VERSION"
-          
-          # Create :latest tags manually since SET_LATEST=1 isn't working in CI
-          docker tag ghcr.io/product-science/inferenced:$VERSION ghcr.io/product-science/inferenced:latest
-          docker tag ghcr.io/product-science/api:$VERSION ghcr.io/product-science/api:latest
-          docker tag inference-mock-server inference-mock-server:latest
-          
-          echo "Verifying tags:"
-          docker images | grep -E "(ghcr.io/product-science|inference-mock-server)"
+          sudo docker images | head -20
 
       - name: Save Docker Images
         run: |
           mkdir -p docker-images
-          docker save -o docker-images/inference-chain.tar ghcr.io/product-science/inferenced:latest
-          docker save -o docker-images/decentralized-api.tar ghcr.io/product-science/api:latest
-          docker save -o docker-images/inference-mock-server.tar inference-mock-server
+          sudo docker save -o docker-images/inference-chain.tar ghcr.io/product-science/inferenced:latest
+          sudo docker save -o docker-images/decentralized-api.tar ghcr.io/product-science/api:latest
+          sudo docker save -o docker-images/inference-mock-server.tar inference-mock-server
           # Compress images to save storage space
-          gzip docker-images/*.tar
+          sudo gzip docker-images/*.tar
           echo "=== Created files ==="
           ls -la docker-images/
 
@@ -145,14 +129,14 @@ jobs:
       - name: Load Docker Images
         run: |
           # Decompress first
-          gunzip docker-images/*.tar.gz || true
+          sudo gunzip docker-images/*.tar.gz || true
           # Load images with :latest tags
-          docker load -i docker-images/inference-chain.tar || true
-          docker load -i docker-images/decentralized-api.tar || true
-          docker load -i docker-images/inference-mock-server.tar || true
+          sudo docker load -i docker-images/inference-chain.tar || true
+          sudo docker load -i docker-images/decentralized-api.tar || true
+          sudo docker load -i docker-images/inference-mock-server.tar || true
           # Tag images with names expected by tests (without :latest)
-          docker tag ghcr.io/product-science/inferenced:latest ghcr.io/product-science/inferenced || true
-          docker tag ghcr.io/product-science/api:latest ghcr.io/product-science/api || true
+          sudo docker tag ghcr.io/product-science/inferenced:latest ghcr.io/product-science/inferenced || true
+          sudo docker tag ghcr.io/product-science/api:latest ghcr.io/product-science/api || true
           # Mock server already has no :latest tag, so no additional tagging needed
 
       - name: Install Make
