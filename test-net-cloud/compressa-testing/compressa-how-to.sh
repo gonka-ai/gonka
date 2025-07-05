@@ -48,4 +48,4 @@ kubectl -n genesis exec node-0 -- inferenced query inference list-inference --ou
 
 kubectl -n genesis exec node-0 -- inferenced query inference params --output json
 
-kubectl -n genesis exec node-0 -- inferenced query bank balances gonka1va4hlpg929n6hhg4wc8hl0g9yp4nheqxm6k9wr --output json
+kubectl -n genesis exec node-0 -- inferenced query bank balances gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl --output json
