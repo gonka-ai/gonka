@@ -81,6 +81,7 @@ func validateRootEpochSpacing(ctx context.Context, k keeper.Keeper) {
 	var heights []int64
 	dupMap := make(map[int64]struct{})
 	dupFound := false
+	genesisEpochFound := 0
 
 	for ; iter.Valid(); iter.Next() {
 		var ep types.Epoch
@@ -88,6 +89,7 @@ func validateRootEpochSpacing(ctx context.Context, k keeper.Keeper) {
 			continue // corrupted entry – ignore for validation purposes
 		}
 		if ep.Index == 0 {
+			genesisEpochFound++
 			// genesis epoch – skip
 			continue
 		}
@@ -124,8 +126,10 @@ func validateRootEpochSpacing(ctx context.Context, k keeper.Keeper) {
 
 	if dupFound {
 		k.LogError(tag+" duplicates detected", types.Upgrades, "count", len(heights), "duplicates", true)
+	} else if genesisEpochFound > 1 {
+		k.LogError(tag+" multiple genesis epochs found", types.Upgrades, "count", len(heights), "genesisEpochs", genesisEpochFound)
 	} else {
-		k.LogInfo(tag+" uniqueness OK", types.Upgrades, "count", len(heights))
+		k.LogInfo(tag+" uniqueness OK", types.Upgrades, "count", len(heights)+genesisEpochFound)
 	}
 
 	k.LogInfo(tag, types.Upgrades, "evenly_spaced", even, "first_diff", firstDiff)
