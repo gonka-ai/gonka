@@ -6,7 +6,14 @@ set -euo pipefail
 ###############################################################################
 HOST="34.9.136.116:30000"            # API host, e.g. "34.9.17.182:1317"
 INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"   # inferenced cmd
-REQUESTER_ADDRESS="gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl"    # extra address
+if [ -z "${GONKA_ADDRESS}" ]; then
+  REQUESTER_ADDRESS="gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl"
+  echo "Warning: GONKA_ADDRESS is not set. Using default address: $REQUESTER_ADDRESS" >&2
+else
+  REQUESTER_ADDRESS="$GONKA_ADDRESS"  # address to query balance for
+  echo "Using GONKA_ADDRESS: $REQUESTER_ADDRESS" >&2
+fi
+   # extra address
 ###############################################################################
 
 echo "=== balance-fetch script starting ===" >&2

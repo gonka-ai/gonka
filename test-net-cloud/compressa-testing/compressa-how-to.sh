@@ -37,12 +37,18 @@ echo "$GONKA_PRIVATE_KEY"
 # 4. Download: https://github.com/product-science/inference-ignite/blob/main/mlnode/packages/benchmarks/resources/config.yml
 #    No need to change anything inside the config.yml file.
 
+export GONKA_ADDRESS
+./check-balances.sh
+
 compressa-perf measure-from-yaml \
   --private_key_hex "$GONKA_PRIVATE_KEY" \
   --account_address "$GONKA_ADDRESS" \
   --node_url $NODE_URL \
   config.yml \
   --model_name Qwen/Qwen2.5-7B-Instruct
+
+export GONKA_ADDRESS
+./check-balances.sh
 
 kubectl -n genesis exec node-0 -- inferenced query inference list-inference --output json
 
