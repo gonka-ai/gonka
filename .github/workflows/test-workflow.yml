@@ -47,8 +47,8 @@ jobs:
 
       - name: Verify Docker Installation
         run: |
-          sudo docker --version
-          sudo docker compose version
+          docker --version
+          docker compose version
           
       - name: Install Make
         run: |
@@ -74,9 +74,11 @@ jobs:
           mkdir -p docker-images
           sudo docker save -o docker-images/inference-chain.tar ghcr.io/product-science/inferenced:latest
           sudo docker save -o docker-images/decentralized-api.tar ghcr.io/product-science/api:latest
-          sudo docker save -o docker-images/inference-mock-server.tar inference-mock-server
+          sudo docker save -o docker-images/inference-mock-server.tar inference-mock-server:latest
           # Compress images to save storage space
           sudo gzip docker-images/*.tar
+          # Fix ownership so upload-artifact can access files
+          sudo chown -R $USER:$USER docker-images/
           echo "=== Created files ==="
           ls -la docker-images/
 
@@ -134,10 +136,6 @@ jobs:
           sudo docker load -i docker-images/inference-chain.tar || true
           sudo docker load -i docker-images/decentralized-api.tar || true
           sudo docker load -i docker-images/inference-mock-server.tar || true
-          # Tag images with names expected by tests (without :latest)
-          sudo docker tag ghcr.io/product-science/inferenced:latest ghcr.io/product-science/inferenced || true
-          sudo docker tag ghcr.io/product-science/api:latest ghcr.io/product-science/api || true
-          # Mock server already has no :latest tag, so no additional tagging needed
 
       - name: Install Make
         run: |
