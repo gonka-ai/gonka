@@ -114,6 +114,9 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		logging.Error("Failed to unmarshal active participant", types.Participants, "error", err)
 		return nil, err
 	}
+	logging.Info("Active participants retrieved", types.Participants,
+		"epoch", epoch,
+		"activeParticipants", activeParticipants)
 
 	block, err := rpcClient.Block(context.Background(), &activeParticipants.CreatedAtBlockHeight)
 	if err != nil {
