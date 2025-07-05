@@ -60,6 +60,38 @@ services:
     networks:
       - chain-public
 
+  bridge-node:
+    container_name: ${KEY_NAME}-bridge
+    image:
+      ghcr.io/product-science/bridge-ethereum:latest
+    ports:
+      - "${GETH_HTTP_PORT:-8545}:8545"  # Geth HTTP
+      - "${GETH_WS_PORT:-8546}:8546"    # Geth WebSocket
+      - "${GETH_AUTH_PORT:-8551}:8551"  # Geth Auth RPC
+      - "${PRYSM_RPC_PORT:-4000}:4000"  # Prysm RPC
+      - "${PRYSM_GRPC_PORT:-3500}:3500" # Prysm gRPC Gateway
+    volumes:
+      - ./prod-local/${KEY_NAME}/ethereum/geth:/data/geth
+      - ./prod-local/${KEY_NAME}/ethereum/prysm:/data/prysm
+      - ./prod-local/${KEY_NAME}/ethereum/jwt:/data/jwt
+      - ./prod-local/${KEY_NAME}/ethereum/logs:/var/log
+      - ./temp/persistent-db:/persistent-db
+    environment:
+      - GETH_DATA_DIR=/data/geth
+      - PRYSM_DATA_DIR=/data/prysm
+      - JWT_SECRET_PATH=/data/jwt/jwt.hex
+      - BRIDGE_API_URL=http://${KEY_NAME}-api:9000/v1/bridge/block
+      - BRIDGE_CONTRACT=${BRIDGE_CONTRACT:-0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852}
+      - BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.info}
+      - PERSISTENT_DB_DIR=/persistent-db
+      - DEBUG=true
+      # Copy start.sh content instead of mounting the file
+      - START_SCRIPT_PATH=/usr/local/bin/start.sh
+    networks:
+      - chain-public
+    depends_on:
+      - api
+
 networks:
   chain-public:
     name: chain-public
