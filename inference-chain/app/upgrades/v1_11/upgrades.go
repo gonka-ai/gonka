@@ -363,6 +363,12 @@ func renameActiveParticipantsEpochId(ctx context.Context, k keeper.Keeper, pocSt
 			continue
 		}
 
+		if ap.CreatedAtBlockHeight == 0 {
+			k.LogWarn(UpgradeName+" - AP has zero CreatedAtBlockHeight", types.Upgrades,
+				"PocStartBlockHeight", ap.PocStartBlockHeight,
+				"EpochGroupId", ap.EpochGroupId)
+		}
+
 		epochId, ok := pocStartBlockHeightToEpochId[uint64(ap.PocStartBlockHeight)]
 		if !ok {
 			k.LogError(UpgradeName+" - EpochId not found for ActiveParticipants", types.Upgrades,
