@@ -24,6 +24,7 @@ const (
 	Stages          = 18
 	Balances        = 19
 	Stat            = 20
+	Testing         = 255
 )
 
 func (s SubSystem) String() string {
@@ -68,6 +69,8 @@ func (s SubSystem) String() string {
 		return "Balances"
 	case Stat:
 		return "Stat"
+	case Testing:
+		return "Testing"
 	default:
 		return "Unknown"
 	}

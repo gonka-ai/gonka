@@ -6,7 +6,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 	"strconv"
 	"time"
 )
@@ -19,6 +21,40 @@ type EpochMember struct {
 	SeedSignature string
 	Reputation    int64
 	Models        []string
+}
+
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
+	return EpochMember{
+		Address:       p.Index,
+		Weight:        p.Weight,
+		Pubkey:        p.ValidatorKey,
+		SeedSignature: p.Seed.Signature,
+		Reputation:    reputation,
+		Models:        p.Models,
+	}
+}
+
+func NewEpochMemberFromStakingValidator(
+	validator stakingtypes.Validator,
+) (*EpochMember, error) {
+	accAddr, err := utils.OperatorAddressToAccAddress(validator.OperatorAddress)
+	if err != nil {
+		return nil, err
+	}
+	println("Val Address for genesis.", "opAddr", validator.OperatorAddress, "accAddr", accAddr)
+
+	// FIXME: it's definitely a wrong way to get the pubkey
+	pubKey := validator.ConsensusPubkey.String()
+	println("PUBKEY for genesis validator is", pubKey)
+
+	return &EpochMember{
+		Address:       accAddr,
+		Weight:        validator.Tokens.Int64(),
+		Pubkey:        pubKey,
+		SeedSignature: "", // TODO: do we need this for genesis epoch?
+		Reputation:    1,
+		Models:        []string{}, // FIXME: populate with genesis models? Create model sub-groups?
+	}, nil
 }
 
 type EpochGroup struct {
@@ -303,10 +339,13 @@ func (eg *EpochGroup) CreateSubGroup(ctx context.Context, modelId string) (*Epoc
 	return eg.createNewEpochSubGroup(ctx, modelId)
 }
 
+// BOOKMARK: new epoch group creation. Do we need to set epochId here?
 func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	subGroupData := &types.EpochGroupData{
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
 		ModelId:             modelId,
+		EpochGroupId:        eg.GroupData.EpochGroupId,
+		EpochId:             eg.GroupData.EpochId,
 	}
 
 	// Create a new EpochGroup for the sub-group

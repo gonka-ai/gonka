@@ -32,9 +32,9 @@ func GenerateGenesis(mockContracts bool) *GenesisState {
 		EpochPerformanceSummaryList:    []EpochPerformanceSummary{},
 		PartialUpgradeList:             []PartialUpgrade{},
 		// this line is used by starport scaffolding # genesis/types/default
-		Params:                         DefaultParams(),
-		GenesisOnlyParams:              DefaultGenesisOnlyParams(),
-		CosmWasmParams:                 contractsParams,
+		Params:            DefaultParams(),
+		GenesisOnlyParams: DefaultGenesisOnlyParams(),
+		CosmWasmParams:    contractsParams,
 	}
 }
 
@@ -123,7 +123,7 @@ func (gs GenesisState) Validate() error {
 	inferenceValidationDetailsIndexMap := make(map[string]struct{})
 
 	for _, elem := range gs.InferenceValidationDetailsList {
-		index := string(InferenceValidationDetailsKey(elem.EpochId, elem.InferenceId))
+		index := string(InferenceValidationDetailsKey(elem.EpochGroupId, elem.InferenceId))
 		if _, ok := inferenceValidationDetailsIndexMap[index]; ok {
 			return fmt.Errorf("duplicated index for inferenceValidationDetails")
 		}

@@ -32,6 +32,7 @@ func NewServer(
 	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
 		e:                e,
 		nodeBroker:       nodeBroker,
@@ -82,6 +83,7 @@ func NewServer(
 	g.GET("bridge/status", s.getBridgeStatus)
 
 
+	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	return s
 }

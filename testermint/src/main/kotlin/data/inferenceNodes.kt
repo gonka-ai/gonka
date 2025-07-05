@@ -17,9 +17,20 @@ data class InferenceNode(
 data class NodeState(
     val lockCount: Int,
     val operational: Boolean,
-    val failureReason: String
+    val failureReason: String,
+    val adminState: AdminState? = null
+)
+
+data class AdminState(
+    val enabled: Boolean,
+    val epoch: ULong
 )
 
 data class ModelConfig(
     val args: List<String>
+)
+
+data class NodeAdminStateResponse(
+    val message: String,
+    val nodeId: String
 )

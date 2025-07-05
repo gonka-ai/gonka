@@ -1,0 +1,72 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "POW",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "GENERATING"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "POW_VALIDATE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "VALIDATING"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "INFERENCE",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "IDLE"
+        }
+      }
+    },
+    {
+      "scenarioName": "ModelState",
+      "requiredScenarioState": "STOPPED",
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/pow/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "status": "IDLE"
+        }
+      }
+    }
+  ]
+}
