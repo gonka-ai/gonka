@@ -161,7 +161,7 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		ActiveParticipants:      activeParticipants,
 		Addresses:               addresses,
 		ActiveParticipantsBytes: activeParticipantsBytes,
-		ProofOps:                *result.Response.ProofOps,
+		ProofOps:                result.Response.ProofOps,
 		Validators:              vals.Validators,
 		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
 	}, nil
