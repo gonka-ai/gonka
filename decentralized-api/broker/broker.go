@@ -388,6 +388,10 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 
 func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Error("getLeastBusyNode. Cannot get least busy node, epoch state is empty", types.Nodes)
+		return nil
+	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -710,8 +714,8 @@ func (b *Broker) reconcilerLoop() {
 
 func (b *Broker) reconcileIfSynced(triggerMsg string) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
-	if !epochPhaseInfo.IsSynced {
-		logging.Warn("Reconciliation triggered while epoch phase info is not synced", types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+	if epochPhaseInfo.IsNilOrNotSynced() {
+		logging.Warn("Reconciliation triggered while epoch phase info is not synced. Skipping", types.Nodes)
 		return
 	}
 
@@ -1014,53 +1018,4 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
-}
-
-func (b *Broker) updateNodeResult(command UpdateNodeResultCommand) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	node, exists := b.nodes[command.NodeId]
-	if !exists {
-		logging.Warn("Received result for unknown node", types.Nodes, "node_id", command.NodeId)
-		command.Response <- false
-		return
-	}
-
-	// For logging and debugging purposes
-	blockHeight := b.phaseTracker.GetCurrentEpochState().CurrentBlock.Height
-
-	// Critical safety check
-	if node.State.ReconcileInfo == nil ||
-		node.State.ReconcileInfo.Status != command.Result.OriginalTarget ||
-		(node.State.ReconcileInfo.Status == types.HardwareNodeStatus_POC && node.State.ReconcileInfo.PocStatus != command.Result.OriginalPocTarget) {
-		logging.Info("Ignoring stale result for node", types.Nodes,
-			"node_id", command.NodeId,
-			"original_target", command.Result.OriginalTarget,
-			"original_poc_target", command.Result.OriginalPocTarget,
-			"current_reconciling_target", node.State.ReconcileInfo.Status,
-			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
-			"blockHeight", blockHeight)
-		command.Response <- false
-		return
-	}
-
-	// Update state
-	logging.Info("Finalizing state transition for node", types.Nodes,
-		"node_id", command.NodeId,
-		"from_status", node.State.CurrentStatus,
-		"to_status", command.Result.FinalStatus,
-		"from_poc_status", node.State.PocCurrentStatus,
-		"to_poc_status", command.Result.FinalPocStatus,
-		"succeeded", command.Result.Succeeded,
-		"blockHeight", blockHeight)
-
-	node.State.UpdateStatusWithPocStatusNow(command.Result.FinalStatus, command.Result.FinalPocStatus)
-	node.State.ReconcileInfo = nil
-	node.State.cancelInFlightTask = nil
-	if !command.Result.Succeeded {
-		node.State.FailureReason = command.Result.Error
-	}
-
-	command.Response <- true
 }

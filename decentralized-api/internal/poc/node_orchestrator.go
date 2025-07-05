@@ -82,6 +82,12 @@ func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUr
 func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
 	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
 	epochState := o.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		logging.Error("ValidateReceivedBatches. Current epoch state is nil", types.PoC,
+			"startOfValStageHeight", startOfValStageHeight)
+		return
+	}
+
 	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
 	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
 	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,

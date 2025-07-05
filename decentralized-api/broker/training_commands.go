@@ -30,6 +30,13 @@ func (c StartTrainingCommand) GetResponseChannelCapacity() int {
 
 func (c StartTrainingCommand) Execute(broker *Broker) {
 	epochState := broker.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Error("StartTrainingCommand executed with nil or not synced epoch state", types.Training,
+			"epoch_state", epochState)
+		c.Response <- false
+		return
+	}
+
 	if epochState.CurrentPhase != types.InferencePhase {
 		logging.Error("StartTrainingCommand executed in wrong phase", types.Training,
 			"current_phase", epochState.CurrentPhase, "expected_phase", types.InferencePhase)

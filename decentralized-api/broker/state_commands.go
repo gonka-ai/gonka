@@ -28,6 +28,10 @@ func (c StartPocCommand) GetResponseChannelCapacity() int {
 
 func (c StartPocCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Warn("StartPocCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
+		return
+	}
 
 	if epochState.CurrentPhase != types.PoCGeneratePhase {
 		logging.Warn("StartPocCommand: skipping outdated command execution. current phase isn't PoCGeneratePhase", types.PoC,
@@ -103,19 +107,23 @@ func (c InitValidateCommand) GetResponseChannelCapacity() int {
 }
 
 func (c InitValidateCommand) Execute(b *Broker) {
-	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Warn("InitValidateCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
+		return
+	}
 
-	if epochPhaseInfo.CurrentPhase != types.PoCValidatePhase &&
+	if epochState.CurrentPhase != types.PoCValidatePhase &&
 		// FIXME: A bit too wide, it should be PoCGenerateWindDownPhase AND after poc end,
 		//  but we rely on node dispatcher to not send it too early
 		//  if we want to be 100% sure we should check based on block height
 		//  by adding some additional methods for getting block height stage cutoffs for current epoch
-		epochPhaseInfo.CurrentPhase != types.PoCGenerateWindDownPhase {
+		epochState.CurrentPhase != types.PoCGenerateWindDownPhase {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. current phase isn't PoCValidatePhase", types.PoC,
-			"current_phase", epochPhaseInfo.CurrentPhase,
-			"current_block_height", epochPhaseInfo.CurrentBlock.Height,
-			"epoch_index", epochPhaseInfo.LatestEpoch.EpochIndex,
-			"epoch_start_block_height", epochPhaseInfo.LatestEpoch.PocStartBlockHeight)
+			"current_phase", epochState.CurrentPhase,
+			"current_block_height", epochState.CurrentBlock.Height,
+			"epoch_index", epochState.LatestEpoch.EpochIndex,
+			"epoch_start_block_height", epochState.LatestEpoch.PocStartBlockHeight)
 		return
 	}
 
@@ -124,7 +132,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		b.TriggerReconciliation()
 	}()
 
-	if !c.shouldMutateState(b, epochPhaseInfo) {
+	if !c.shouldMutateState(b, epochState) {
 		logging.Info("InitValidateCommand: all nodes already have the desired intended status", types.PoC)
 		return
 	}
@@ -132,13 +140,13 @@ func (c InitValidateCommand) Execute(b *Broker) {
 	b.mu.Lock()
 	for _, node := range b.nodes {
 		// Check if node should be operational based on admin state
-		if !node.State.ShouldBeOperational(epochPhaseInfo.LatestEpoch.EpochIndex, epochPhaseInfo.CurrentPhase) {
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node", types.PoC,
 				"node_id", node.Node.Id,
 				"admin_enabled", node.State.AdminState.Enabled,
 				"admin_epoch", node.State.AdminState.Epoch,
-				"current_epoch", epochPhaseInfo,
-				"current_phase", epochPhaseInfo.CurrentPhase)
+				"current_epoch", epochState,
+				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_POC
@@ -185,6 +193,10 @@ func (c InferenceUpAllCommand) GetResponseChannelCapacity() int {
 
 func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. epoch state is nil or not synced", types.Nodes)
+		return
+	}
 
 	if epochState.CurrentPhase != types.InferencePhase &&
 		// FIXME: same as in InitValidateCommand, ideally we should check based on block height

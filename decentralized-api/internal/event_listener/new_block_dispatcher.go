@@ -168,6 +168,13 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// TODO: can we add the state to the block event? As a future optimization?
 	d.phaseTracker.Update(blockInfo, &networkInfo.LatestEpoch, &networkInfo.EpochParams, networkInfo.IsSynced)
 	epochState := d.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		logging.Error("[ILLEGAL_STATE]: Epoch state is nil right after an update call to phase tracker. "+
+			"Skip block processing", types.Stages,
+			"blockHeight", blockInfo.Height, "isSynced", networkInfo.IsSynced)
+		return nil
+	}
+
 	logging.Info("[new-block-dispatcher] Current epoch state.", types.Stages,
 		"blockHeight", epochState.CurrentBlock.Height,
 		"epoch", epochState.LatestEpoch.EpochIndex,
