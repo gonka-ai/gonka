@@ -63,7 +63,7 @@ Chain <> Participant's API Node <> Participant's ML Nodes
 **Completely new implementations:**
 - 🆕 **Sprint_Seed_2 generation & timing**: New epoch stage with 1-minute delay after Sprint_Seed_1, then seed distribution
 - 🆕 **Model loading window**: 1-minute buffer to ensure all nodes (including 16-core CPUs with RTX 3090) complete 400M-parameter model initialization from deterministic seed
-- 🆕 **Merkle tree library**: Replace `cosmossdk.io/store/rootmulti` (blockchain-specific) with `github.com/ComposableFi/go-merkle-trees` or `github.com/arriqaaq/merkletree`
+- 🆕 **Merkle tree library**: Use `github.com/ComposableFi/go-merkle-trees` or `github.com/arriqaaq/merkletree`
 - 🆕 **Merkle tree construction**: (a) incremental per-node trees, (b) meta-tree over node roots, (c) proof generation that concatenates paths
 - 🆕 **L2-norm extraction**: `torch.linalg.norm(output_vector)` computation
 
