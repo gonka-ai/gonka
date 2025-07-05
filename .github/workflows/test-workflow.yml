@@ -89,6 +89,21 @@ jobs:
           path: docker-images/
           retention-days: 1
 
+      - name: Make Upgrade Build
+        if: ${{ inputs.enable_upgrades }}
+        run: |
+          sudo make build-for-upgrade-tests
+          # Fix ownership of upgrade build files
+          sudo chown -R $USER:$USER public-html/ || true
+
+      - name: Upload Upgrade Build Files
+        if: ${{ inputs.enable_upgrades }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-build-files
+          path: public-html/
+          retention-days: 1
+
   run-tests:
     needs: build-images
     runs-on: ubuntu-latest
@@ -148,9 +163,13 @@ jobs:
           distribution: 'temurin'
           java-version: '19'
 
-      - name: Make Upgrade Build
+      - name: Download Upgrade Build Files
         if: ${{ inputs.enable_upgrades }}
-        run: sudo make build-for-upgrade-tests
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: upgrade-build-files
+          path: ./
 
       - name: Start test chain
         working-directory: local-test-net
