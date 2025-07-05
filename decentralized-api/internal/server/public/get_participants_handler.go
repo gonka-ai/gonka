@@ -143,23 +143,11 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		return nil, err
 	}
 
+	if result.Response.ProofOps != nil {
+		s.verifyProof(epoch, result, block)
+	}
+
 	activeParticipantsBytes := hex.EncodeToString(result.Response.Value)
-
-	dataKey := types.ActiveParticipantsFullKey(epoch)
-	// Build the key path used by proof verification. We percent-encode the raw
-	// binary key so the path is a valid UTF-8/URL string.
-	verKey := "/inference/" + url.PathEscape(string(dataKey))
-	// verKey2 := string(result.Response.Key)
-	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
-	err = merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
-	if err != nil {
-		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
-	}
-
-	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
-	if err != nil {
-		logging.Info("VerifyUsingMerkleProof failed", types.Participants, "error", err)
-	}
 
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
@@ -177,6 +165,24 @@ func (s *Server) getParticipants(epoch uint64) (*ActiveParticipantWithProof, err
 		Validators:              vals.Validators,
 		Block:                   []*comettypes.Block{block.Block, blockM1.Block, blockP1.Block},
 	}, nil
+}
+
+func (s *Server) verifyProof(epoch uint64, result *coretypes.ResultABCIQuery, block *coretypes.ResultBlock) {
+	dataKey := types.ActiveParticipantsFullKey(epoch)
+	// Build the key path used by proof verification. We percent-encode the raw
+	// binary key so the path is a valid UTF-8/URL string.
+	verKey := "/inference/" + url.PathEscape(string(dataKey))
+	// verKey2 := string(result.Response.Key)
+	logging.Info("Attempting verification", types.Participants, "verKey", verKey)
+	err := merkleproof.VerifyUsingProofRt(result.Response.ProofOps, block.Block.AppHash, verKey, result.Response.Value)
+	if err != nil {
+		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
+	}
+
+	err = merkleproof.VerifyUsingMerkleProof(result.Response.ProofOps, block.Block.AppHash, "inference", string(dataKey), result.Response.Value)
+	if err != nil {
+		logging.Info("VerifyUsingMerkleProof failed", types.Participants, "error", err)
+	}
 }
 
 func (s *Server) getAllParticipants(ctx echo.Context) error {
