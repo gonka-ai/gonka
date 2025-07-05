@@ -66,6 +66,20 @@ jobs:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
         run: sudo make build-docker
 
+      - name: Ensure Latest Tags
+        run: |
+          # Get the version tag that was created
+          VERSION=$(git describe --always)
+          echo "Creating :latest tags for version: $VERSION"
+          
+          # Create :latest tags manually since SET_LATEST=1 isn't working in CI
+          docker tag ghcr.io/product-science/inferenced:$VERSION ghcr.io/product-science/inferenced:latest
+          docker tag ghcr.io/product-science/api:$VERSION ghcr.io/product-science/api:latest
+          docker tag inference-mock-server inference-mock-server:latest
+          
+          echo "Verifying tags:"
+          docker images | grep -E "(ghcr.io/product-science|inference-mock-server)"
+
       - name: Save Docker Images
         run: |
           mkdir -p docker-images
