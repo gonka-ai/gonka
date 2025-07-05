@@ -46,7 +46,7 @@ echo "[" | tee "$OUTFILE"        # open JSON array
 FIRST=1
 for ADDR in "${ADDRESSES[@]}"; do
   echo "→ Querying balance for $ADDR" >&2
-  if BALANCE_JSON=$("$INFERENCED_BINARY" query bank balances "$ADDR" --output json); then
+  if BALANCE_JSON=$($INFERENCED_BINARY query bank balances "$ADDR" --output json); then
     [[ $FIRST -eq 0 ]] && echo "," | tee -a "$OUTFILE"
     FIRST=0
     echo "{\"address\":\"${ADDR}\",\"balance\":${BALANCE_JSON}}" | tee -a "$OUTFILE"
