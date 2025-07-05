@@ -59,6 +59,14 @@ func (c StartPocCommand) Execute(b *Broker) {
 				"current_epoch", epochState,
 				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else if node.State.ShouldContinueInference() {
+			// Node should continue inference service based on POC_SLOT allocation
+			// TODO: change logs to debug
+			logging.Info("Keeping node in inference service mode due to POC_SLOT allocation", types.PoC,
+				"node_id", node.Node.Id,
+				"current_epoch", epochState,
+				"current_phase", epochState.CurrentPhase)
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_POC
 			node.State.PocIntendedStatus = PocStatusGenerating
@@ -79,9 +87,16 @@ func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.Epo
 			return true
 		}
 
-		if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
-			node.State.PocIntendedStatus != PocStatusGenerating {
-			return true
+		// Check if node should continue inference based on POC_SLOT
+		if node.State.ShouldContinueInference() {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+				return true
+			}
+		} else {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+				node.State.PocIntendedStatus != PocStatusGenerating {
+				return true
+			}
 		}
 	}
 
@@ -140,6 +155,13 @@ func (c InitValidateCommand) Execute(b *Broker) {
 				"current_epoch", epochPhaseInfo,
 				"current_phase", epochPhaseInfo.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		} else if node.State.ShouldContinueInference() {
+			// Node should continue inference service based on POC_SLOT allocation
+			logging.Info("Keeping node in inference service mode due to POC_SLOT allocation", types.PoC,
+				"node_id", node.Node.Id,
+				"current_epoch", epochPhaseInfo,
+				"current_phase", epochPhaseInfo.CurrentPhase)
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 		} else {
 			node.State.IntendedStatus = types.HardwareNodeStatus_POC
 			node.State.PocIntendedStatus = PocStatusValidating
@@ -160,9 +182,16 @@ func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase
 			return true
 		}
 
-		if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
-			node.State.PocIntendedStatus != PocStatusValidating {
-			return true
+		// Check if node should continue inference based on POC_SLOT
+		if node.State.ShouldContinueInference() {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+				return true
+			}
+		} else {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+				node.State.PocIntendedStatus != PocStatusValidating {
+				return true
+			}
 		}
 	}
 

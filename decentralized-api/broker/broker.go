@@ -245,6 +245,22 @@ func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.E
 	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
 }
 
+// ShouldContinueInference checks if node should continue inference service
+// based on its POC_SLOT timeslot allocation. Returns true if POC_SLOT is set to true
+// for any model supported by this node.
+func (s *NodeState) ShouldContinueInference() bool {
+	// Check if any MLNode for this node has POC_SLOT set to true
+	for modelId, mlNodeInfo := range s.EpochMLNodes {
+		if len(mlNodeInfo.TimeslotAllocation) > 1 && mlNodeInfo.TimeslotAllocation[1] { // index 1 = POC_SLOT
+			logging.Debug("Node should continue inference service based on POC_SLOT allocation", types.PoC,
+				"model_id", modelId,
+				"poc_slot", mlNodeInfo.TimeslotAllocation[1])
+			return true
+		}
+	}
+	return false
+}
+
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
 	if adminState.Enabled {
 		if latestEpoch > adminState.Epoch {

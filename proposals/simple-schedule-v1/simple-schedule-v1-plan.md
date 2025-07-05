@@ -235,7 +235,9 @@ Each task includes:
 - **What**: Enhance `setModelsForParticipants` to snapshot hardware node configurations
 - **Where**: `inference-chain/x/inference/module/module.go`
 - **Result**:
-  - The necessary snapshotting logic was already implemented in `epochgroup.go` as part of task 4.3. The `updateEpochGroupWithNewMember` function, called during member addition, now handles the snapshotting of ML node configurations into the epoch data. No further changes were required.
+  - Enhanced `setModelsForParticipants` function to initialize timeslot allocation for MLNodes.
+  - For each MLNode in `originalMLNodes`, added logic to initialize `TimeslotAllocation = []bool{true, true}` where index 0 = PRE_POC_SLOT and index 1 = POC_SLOT.
+  - Simple and clean implementation that sets both timeslot values to `true` initially for all MLNodes.
 - **Dependencies**: 4.2, 4.3
 
 #### 4.5 API Node State MLNode Fields
@@ -478,7 +480,7 @@ Each task includes:
   - The `inference-chain` build was successful after all changes.
 
 #### 6.2.3 API Node POC_SLOT Enforcement
-- **Task**: [ ] Prevent ML nodes from switching to PoC when POC_SLOT is true
+- **Task**: [x] Prevent ML nodes from switching to PoC when POC_SLOT is true
 - **What**: Modify API node state command logic to check MLNode's POC_SLOT allocation before changing node states:
   - In `StartPocCommand.Execute`: Before switching a node to PoC mining, query epoch group data to get the node's timeslot allocation and check if `POC_SLOT` is `true`. If true, skip the PoC mining transition and keep the node in inference service mode.
   - In `InitValidateCommand.Execute`: Ensure validation state transitions respect POC_SLOT allocations for nodes that should continue inference service.
@@ -486,6 +488,13 @@ Each task includes:
   - Add helper function `shouldNodeContinueInference(nodeId string)` to query epoch MLNode info and check POC_SLOT status.
   - Log decisions for debugging and monitoring.
 - **Where**: `decentralized-api/broker/state_commands.go` in the Execute methods of `StartPocCommand`, `InitValidateCommand`, and `InferenceUpAllCommand`
+- **Result**:
+  - **Added `ShouldContinueInference()` method to `NodeState`**: Following the same clean pattern as `ShouldBeOperational()`, this method encapsulates POC_SLOT checking logic within the node state itself. It checks if any MLNode has `POC_SLOT` (index 1) set to `true` in the `TimeslotAllocation` array.
+  - **Enhanced `StartPocCommand.Execute`**: Before switching nodes to PoC mining, the command now calls `node.State.ShouldContinueInference()`. If `POC_SLOT` is `true`, the node stays in `HardwareNodeStatus_INFERENCE` mode instead of switching to PoC.
+  - **Enhanced `InitValidateCommand.Execute`**: Validation state transitions now respect POC_SLOT allocations. Nodes with `POC_SLOT = true` continue inference service during the validation phase using the same logic as StartPocCommand.
+  - **Verified `InferenceUpAllCommand.Execute`**: Confirmed no special POC_SLOT logic needed as this command already correctly handles nodes that should remain in inference mode.
+  - **Thorough Testing**: All `StartPocCommand` tests pass, including `TestStartPocCommand_Success`, `TestStartPocCommand_AlreadyInPoC`, and `TestStartPocCommand_AdminDisabled`.
+  - **Backward Compatibility**: Nodes without POC_SLOT data behave as before, ensuring existing functionality is preserved.
 - **Dependencies**: 6.2.2
 
 #### 6.3 PoC Weight Preservation System
