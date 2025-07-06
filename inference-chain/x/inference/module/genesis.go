@@ -176,51 +176,6 @@ func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight
 	}
 }
 
-func InitGenesisEpoch(ctx sdk.Context, k keeper.Keeper) {
-	genesisEpoch := &types.Epoch{
-		Index:                0,
-		PocStartBlockHeight:  0,
-		EffectiveBlockHeight: 0,
-	}
-	k.SetEpoch(ctx, genesisEpoch)
-	k.SetEffectiveEpochIndex(ctx, genesisEpoch.Index)
-
-	InitGenesisEpochGroup(ctx, k, uint64(genesisEpoch.PocStartBlockHeight))
-}
-
-func InitGenesisEpochGroup(ctx sdk.Context, k keeper.Keeper, pocStartBlockHeight uint64) {
-	epochGroup, err := k.CreateEpochGroup(ctx, pocStartBlockHeight)
-	if err != nil {
-		log.Panicf("[InitGenesisEpoch] CreateEpochGroup failed. err = %v", err)
-	}
-	err = epochGroup.CreateGroup(ctx)
-	if err != nil {
-		log.Panicf("[InitGenesisEpoch] epochGroup.CreateGroup failed. err = %v", err)
-	}
-
-	stakingValidators, err := k.Staking.GetAllValidators(ctx)
-	if err != nil {
-		log.Panicf("[InitGenesisEpoch] Staking.GetAllValidators failed. err = %v", err)
-	}
-
-	for _, validator := range stakingValidators {
-		member, err := epochgroup.NewEpochMemberFromStakingValidator(validator)
-		if err != nil || member == nil {
-			log.Panicf("[InitGenesisEpoch] NewEpochMemberFromStakingValidator failed. err = %v", err)
-		}
-
-		err = epochGroup.AddMember(ctx, *member)
-		if err != nil {
-			log.Panicf("[InitGenesisEpoch] epochGroup.AddMember failed. err = %v", err)
-		}
-	}
-
-	err = epochGroup.MarkUnchanged(ctx)
-	if err != nil {
-		log.Panicf("[InitGenesisEpoch] epochGroup.MarkUnchanged failed. err = %v", err)
-	}
-}
-
 func InitHoldingAccounts(ctx sdk.Context, k keeper.Keeper, state types.GenesisState) {
 
 	supplyDenom := state.GenesisOnlyParams.SupplyDenom
