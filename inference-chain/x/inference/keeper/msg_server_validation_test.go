@@ -15,6 +15,7 @@ import (
 )
 
 const INFERENCE_ID = "inferenceId"
+const MODEL_ID = "Qwen/QwQ-32B"
 
 func TestMsgServer_Validation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
@@ -27,6 +28,9 @@ func TestMsgServer_Validation(t *testing.T) {
 	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
 
 	createParticipants(t, ms, ctx)
+	model := &types.Model{Id: MODEL_ID}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, mocks, model)
 	createCompletedInference(t, ms, ctx, mocks)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
@@ -58,6 +62,9 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 
 	mocks.BankKeeper.ExpectAny(ctx)
 	createParticipants(t, ms, ctx)
+	model := &types.Model{Id: MODEL_ID}
+	k.SetModel(ctx, model)
+	StubModelSubgroup(t, ctx, k, mocks, model)
 	createCompletedInference(t, ms, ctx, mocks)
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
@@ -165,7 +172,6 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		Model:         "Qwen/QwQ-32B",
 	})
 	require.NoError(t, err)
-	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",

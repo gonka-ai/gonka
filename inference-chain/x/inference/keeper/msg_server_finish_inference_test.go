@@ -42,6 +42,14 @@ func advanceEpoch(ctx sdk.Context, k *keeper.Keeper, mocks *keeper2.InferenceMoc
 	return ctx, nil
 }
 
+func StubModelSubgroup(t *testing.T, ctx context.Context, k keeper.Keeper, mocks *keeper2.InferenceMocks, model *types.Model) {
+	eg, err := k.GetCurrentEpochGroup(ctx)
+	require.NoError(t, err)
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
+	_, err = eg.CreateSubGroup(ctx, model)
+	require.NoError(t, err)
+}
+
 func TestMsgServer_FinishInference(t *testing.T) {
 	const (
 		epochId  = 1
@@ -112,12 +120,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		t.Fatalf("Failed to advance epoch: %v", err)
 	}
 	require.Equal(t, newBlockHeight, ctx.BlockHeight())
-
-	eg, err := k.GetCurrentEpochGroup(ctx)
-	require.NoError(t, err)
-	mocks.ExpectAnyCreateGroupWithPolicyCall()
-	_, err = eg.CreateSubGroup(ctx, &model)
-	require.NoError(t, err)
+	StubModelSubgroup(t, ctx, k, mocks, &model)
 
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
