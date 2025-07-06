@@ -56,11 +56,16 @@ func TestMsgServer_FinishInference(t *testing.T) {
 
 	initialBlockHeight := int64(10)
 	ctx, err := advanceEpoch(ctx, &k, mocks, initialBlockHeight, epochId)
+
 	if err != nil {
 		t.Fatalf("Failed to advance epoch: %v", err)
 	}
 	require.Equal(t, initialBlockHeight, ctx.BlockHeight())
 	initialBlockTime := ctx.BlockTime().UnixMilli()
+
+	modelId := "model1"
+	model := types.Model{Id: modelId}
+	k.SetModel(ctx, &model)
 
 	MustAddParticipant(t, ms, ctx, testutil.Requester)
 	MustAddParticipant(t, ms, ctx, testutil.Creator)
@@ -74,7 +79,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		PromptPayload: "promptPayload",
 		RequestedBy:   testutil.Requester,
 		Creator:       testutil.Creator,
-		Model:         "model1",
+		Model:         modelId,
 	})
 	require.NoError(t, err)
 	savedInference, found := k.GetInference(ctx, inferenceId)
@@ -87,7 +92,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		PromptPayload:       "promptPayload",
 		RequestedBy:         testutil.Requester,
 		Status:              types.InferenceStatus_STARTED,
-		Model:               "model1",
+		Model:               modelId,
 		StartBlockHeight:    initialBlockHeight,
 		StartBlockTimestamp: ctx.BlockTime().UnixMilli(),
 		MaxTokens:           keeper.DefaultMaxTokens,
@@ -108,7 +113,12 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	}
 	require.Equal(t, newBlockHeight, ctx.BlockHeight())
 
+	eg, err := k.GetCurrentEpochGroup(ctx)
+	require.NoError(t, err)
 	mocks.ExpectAnyCreateGroupWithPolicyCall()
+	_, err = eg.CreateSubGroup(ctx, &model)
+	require.NoError(t, err)
+
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          inferenceId,
 		ResponseHash:         "responseHash",
@@ -135,7 +145,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 		EpochPocStartBlockHeight: uint64(newBlockHeight),
 		EpochId:                  epochId2,
 		ExecutedBy:               testutil.Executor,
-		Model:                    "model1",
+		Model:                    modelId,
 		StartBlockTimestamp:      initialBlockTime,
 		StartBlockHeight:         initialBlockHeight,
 		EndBlockTimestamp:        ctx.BlockTime().UnixMilli(),

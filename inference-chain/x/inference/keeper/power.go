@@ -46,15 +46,6 @@ func (k Keeper) GetEpochGroup(ctx context.Context, pocStartHeight uint64, modelI
 	return k.epochGroupFromData(data), nil
 }
 
-func (k Keeper) GetOrCreateEpochGroup(ctx context.Context, pocStartHeight uint64, modelId string) (*epochgroup.EpochGroup, error) {
-	data, found := k.GetEpochGroupData(ctx, pocStartHeight, modelId)
-	if !found {
-		return nil, types.ErrEpochGroupDataNotFound
-	}
-
-	return k.epochGroupFromData(data), nil
-}
-
 func (k Keeper) CreateEpochGroup(ctx context.Context, pocStartHeight uint64, epochId uint64) (*epochgroup.EpochGroup, error) {
 	data, found := k.GetEpochGroupData(ctx, pocStartHeight, "")
 	if found {

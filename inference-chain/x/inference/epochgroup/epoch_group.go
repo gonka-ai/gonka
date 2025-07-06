@@ -214,7 +214,7 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 	for _, modelId := range member.Models {
 		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", modelId, "address", member.Address)
 
-		subGroup, err := eg.GetOrCreateSubGroup(ctx, modelId)
+		subGroup, err := eg.getOrCreateSubGroup(ctx, modelId)
 		if err != nil {
 			eg.Logger.LogError("Error getting sub-group", types.EpochGroup, "error", err, "model", modelId)
 			continue
@@ -492,8 +492,8 @@ func (eg *EpochGroup) GetSubGroup(ctx context.Context, modelId string) (*EpochGr
 	return nil, types.ErrEpochGroupDataNotFound
 }
 
-// GetOrCreateSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
-func (eg *EpochGroup) GetOrCreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
+// getOrCreateSubGroup gets a sub-group for a specific model, creating it if it doesn't exist
+func (eg *EpochGroup) getOrCreateSubGroup(ctx context.Context, modelId string) (*EpochGroup, error) {
 	subGroup, err := eg.GetSubGroup(ctx, modelId)
 	if err == nil {
 		return subGroup, nil
