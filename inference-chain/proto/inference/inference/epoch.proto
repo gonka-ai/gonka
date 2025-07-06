@@ -6,5 +6,4 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 message Epoch {
   uint64 index  = 1;
   int64 poc_start_block_height = 2;
-  int64 effective_block_height = 3;
 }

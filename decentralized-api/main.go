@@ -133,7 +133,7 @@ func main() {
 	// Bridge external block queue
 	blockQueue := pserver.NewBlockQueue(recorder)
 
-	publicServer := pserver.NewServer(nodeBroker, config, recorder, trainingExecutor, blockQueue)
+	publicServer := pserver.NewServer(config.GetApiConfig().ExplorerUrl, nodeBroker, config, recorder, trainingExecutor, blockQueue)
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", config.GetApiConfig().MLServerPort)
@@ -146,7 +146,12 @@ func main() {
 	adminServer := adminserver.NewServer(recorder, nodeBroker, config)
 	adminServer.Start(addr)
 
-	addr = fmt.Sprintf(":%v", config.GetApiConfig().MlGrpcServerPort)
+	mlGrpcServerPort := config.GetApiConfig().MlGrpcServerPort
+	if mlGrpcServerPort == 0 {
+		mlGrpcServerPort = 9300
+		logging.Info("ml grpc server port not set, using default port 9300", types.Server)
+	}
+	addr = fmt.Sprintf(":%v", mlGrpcServerPort)
 	logging.Info("start training server on addr", types.Server, "addr", addr)
 	grpcServer := grpc.NewServer()
 	trainingServer := training.NewServer(recorder, trainingExecutor)

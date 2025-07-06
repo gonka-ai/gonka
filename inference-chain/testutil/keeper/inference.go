@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -74,10 +75,7 @@ func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Contex
 		},
 	}, true)
 
-	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
-		GroupId:            1,
-		GroupPolicyAddress: "group-policy-address",
-	}, nil)
+	mocks.ExpectCreateGroupWithPolicyCall(ctx, 1)
 	// Actually can just return any as well
 	mocks.GroupKeeper.EXPECT().UpdateGroupMetadata(ctx, gomock.Any()).Return(&group.MsgUpdateGroupMetadataResponse{}, nil).
 		AnyTimes()
@@ -87,6 +85,20 @@ func (mocks *InferenceMocks) StubForInitGenesisWithValidators(ctx context.Contex
 
 	mocks.StakingKeeper.EXPECT().GetAllValidators(ctx).Return(validators, nil).
 		Times(1)
+}
+
+func (mocks *InferenceMocks) ExpectCreateGroupWithPolicyCall(ctx context.Context, groupId uint64) {
+	mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(ctx, gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            groupId,
+		GroupPolicyAddress: fmt.Sprintf("group-policy-address-%d", groupId),
+	}, nil).Times(1)
+}
+
+func (mocks *InferenceMocks) ExpectAnyCreateGroupWithPolicyCall() *gomock.Call {
+	return mocks.GroupKeeper.EXPECT().CreateGroupWithPolicy(gomock.Any(), gomock.Any()).Return(&group.MsgCreateGroupWithPolicyResponse{
+		GroupId:            0,
+		GroupPolicyAddress: "group-policy-address",
+	}, nil).Times(1)
 }
 
 func (mocks *InferenceMocks) StubGenesisState() types.GenesisState {

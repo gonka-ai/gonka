@@ -19,6 +19,7 @@ func createNActiveParticipants(keeper keeper.Keeper, ctx context.Context, n int)
 	items := make([]types.ActiveParticipants, n)
 	for i := range items {
 		items[i].EpochGroupId = uint64(i)
+		items[i].EpochId = uint64(i)
 		items[i].Participants = []*types.ActiveParticipant{}
 		items[i].PocStartBlockHeight = int64(i * 100)
 		items[i].EffectiveBlockHeight = int64(i*100 + 10)
@@ -32,7 +33,7 @@ func TestActiveParticipantsGet(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNActiveParticipants(keeper, ctx, 10)
 	for _, item := range items {
-		rst, found := keeper.GetActiveParticipants(ctx, item.EpochGroupId)
+		rst, found := keeper.GetActiveParticipants(ctx, item.EpochId)
 		require.True(t, found)
 		require.Equal(t,
 			nullify.Fill(&item),
@@ -47,43 +48,13 @@ func TestActiveParticipantsGetNotFound(t *testing.T) {
 	require.False(t, found)
 }
 
-func TestGetParticipantCounter(t *testing.T) {
-	keeper, ctx := keepertest.InferenceKeeper(t)
-
-	// Test with no participants
-	count := keeper.GetParticipantCounter(ctx, 999)
-	require.Equal(t, uint32(0), count)
-
-	// Create active participants with different numbers of participants
-	for i := 0; i < 5; i++ {
-		participants := types.ActiveParticipants{
-			EpochGroupId: uint64(i),
-			Participants: make([]*types.ActiveParticipant, i),
-		}
-
-		// Fill the participants slice
-		for j := 0; j < i; j++ {
-			participants.Participants[j] = &types.ActiveParticipant{
-				Index:        strconv.Itoa(j),
-				ValidatorKey: "validator" + strconv.Itoa(j),
-				Weight:       int64(j * 10),
-			}
-		}
-
-		keeper.SetActiveParticipants(ctx, participants)
-
-		// Verify the count
-		count := keeper.GetParticipantCounter(ctx, uint64(i))
-		require.Equal(t, uint32(i), count)
-	}
-}
-
 func TestSetActiveParticipants(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 
 	// Create and set active participants
 	participants := types.ActiveParticipants{
 		EpochGroupId: 1,
+		EpochId:      1,
 		Participants: []*types.ActiveParticipant{
 			{
 				Index:        "0",
@@ -107,7 +78,6 @@ func TestSetActiveParticipants(t *testing.T) {
 	retrieved, found := keeper.GetActiveParticipants(ctx, 1)
 	require.True(t, found)
 	require.Equal(t, 2, len(retrieved.Participants))
-	require.Equal(t, uint32(2), keeper.GetParticipantCounter(ctx, 1))
 
 	// Update and verify
 	newParticipant := &types.ActiveParticipant{
@@ -117,6 +87,7 @@ func TestSetActiveParticipants(t *testing.T) {
 	}
 
 	updatedParticipants := types.ActiveParticipants{
+		EpochId:              1,
 		EpochGroupId:         1,
 		Participants:         append(retrieved.Participants, newParticipant),
 		PocStartBlockHeight:  retrieved.PocStartBlockHeight,
@@ -129,5 +100,4 @@ func TestSetActiveParticipants(t *testing.T) {
 	retrieved, found = keeper.GetActiveParticipants(ctx, 1)
 	require.True(t, found)
 	require.Equal(t, 3, len(retrieved.Participants))
-	require.Equal(t, uint32(3), keeper.GetParticipantCounter(ctx, 1))
 }

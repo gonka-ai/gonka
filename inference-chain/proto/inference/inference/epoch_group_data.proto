@@ -31,8 +31,9 @@ message EpochGroupData {
   string model_id = 14;
   // List of model IDs for sub EpochGroups, only used in parent EpochGroup
   repeated string sub_group_models = 15;
-  Model model_snapshot = 16;
-  int64 total_throughput = 17;
+  uint64 epoch_id = 16;
+  Model model_snapshot = 17;
+  int64 total_throughput = 18;
 }
 
 message ValidationWeight {
