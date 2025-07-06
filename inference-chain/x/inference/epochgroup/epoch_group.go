@@ -60,6 +60,40 @@ func NewEpochMemberFromStakingValidator(
 	}, nil
 }
 
+func NewEpochMemberFromActiveParticipant(p *types.ActiveParticipant, reputation int64) EpochMember {
+	return EpochMember{
+		Address:       p.Index,
+		Weight:        p.Weight,
+		Pubkey:        p.ValidatorKey,
+		SeedSignature: p.Seed.Signature,
+		Reputation:    reputation,
+		Models:        p.Models,
+	}
+}
+
+func NewEpochMemberFromStakingValidator(
+	validator stakingtypes.Validator,
+) (*EpochMember, error) {
+	accAddr, err := utils.OperatorAddressToAccAddress(validator.OperatorAddress)
+	if err != nil {
+		return nil, err
+	}
+	println("Val Address for genesis.", "opAddr", validator.OperatorAddress, "accAddr", accAddr)
+
+	// FIXME: it's definitely a wrong way to get the pubkey
+	pubKey := validator.ConsensusPubkey.String()
+	println("PUBKEY for genesis validator is", pubKey)
+
+	return &EpochMember{
+		Address:       accAddr,
+		Weight:        validator.Tokens.Int64(),
+		Pubkey:        pubKey,
+		SeedSignature: "", // TODO: do we need this for genesis epoch?
+		Reputation:    1,
+		Models:        []string{}, // FIXME: populate with genesis models? Create model sub-groups?
+	}, nil
+}
+
 type EpochGroup struct {
 	GroupKeeper        types.GroupMessageKeeper
 	ParticipantKeeper  types.ParticipantKeeper
@@ -406,6 +440,8 @@ func (eg *EpochGroup) createNewEpochSubGroup(ctx context.Context, model *types.M
 		PocStartBlockHeight: eg.GroupData.PocStartBlockHeight,
 		ModelId:             model.Id,
 		ModelSnapshot:       model,
+		EpochGroupId:        eg.GroupData.EpochGroupId,
+		EpochId:             eg.GroupData.EpochId,
 	}
 
 	// Create a new EpochGroup for the sub-group

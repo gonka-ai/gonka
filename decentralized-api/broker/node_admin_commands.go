@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+	"time"
 )
 
 type RegisterNode struct {

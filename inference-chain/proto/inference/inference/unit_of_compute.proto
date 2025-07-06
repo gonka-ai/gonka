@@ -7,5 +7,5 @@ message UnitOfComputePriceProposal {
   string participant = 1;
   uint64 price = 2;
   uint64 proposed_at_block_height = 3;
-  uint64 proposed_at_epoch = 4;
+  uint64 proposed_at_epoch = 4; // Legit epoch ID
 }

@@ -21,7 +21,7 @@ func TestZeroEpoch(t *testing.T) {
 	}
 	initialBlockHeight := int64(1)
 	startOfPoc := int64(10)
-	var initialEpoch = types.Epoch{Index: 0, PocStartBlockHeight: 0, EffectiveBlockHeight: 0}
+	var initialEpoch = types.Epoch{Index: 0, PocStartBlockHeight: 0}
 
 	test(t, epochParams, initialBlockHeight, startOfPoc, initialEpoch)
 }

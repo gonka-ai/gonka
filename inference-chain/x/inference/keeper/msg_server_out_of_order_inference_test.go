@@ -1,8 +1,8 @@
 package keeper_test
 
 import (
-	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/calculations"
+	inference "github.com/productscience/inference/x/inference/module"
 	"testing"
 
 	"github.com/productscience/inference/testutil"
@@ -40,6 +40,7 @@ func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	// First, try to finish an inference that hasn't been started yet
 	// With our fix, this should now succeed
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{

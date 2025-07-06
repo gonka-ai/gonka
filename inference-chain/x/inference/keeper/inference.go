@@ -17,6 +17,22 @@ func (k Keeper) SetInference(ctx context.Context, inference types.Inference) {
 	store.Set(types.InferenceKey(
 		inference.Index,
 	), b)
+
+	err := k.SetDeveloperStats(ctx, inference)
+	if err != nil {
+		k.LogError("error setting developer stat", types.Stat, "err", err)
+	} else {
+		k.LogInfo("updated developer stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy)
+	}
+}
+
+func (k Keeper) SetInferenceWithoutDevStatComputation(ctx context.Context, inference types.Inference) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceKeyPrefix))
+	b := k.cdc.MustMarshal(&inference)
+	store.Set(types.InferenceKey(
+		inference.Index,
+	), b)
 }
 
 // GetInference returns a inference from its index

@@ -1,0 +1,25 @@
+syntax = "proto3";
+package inference.inference;
+
+import "inference/inference/inference.proto";
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+message DeveloperStatsByEpoch {
+  uint64 epoch_id = 1;
+  repeated string inference_ids = 2;
+}
+
+message InferenceStats {
+  string inference_id = 1;
+  uint64 epoch_id = 2;
+  InferenceStatus status = 3;
+  uint64 total_token_count = 4;
+  string model = 5;
+  int64 actual_cost_in_coins = 6;
+}
+
+message DeveloperStatsByTime {
+  uint64 epoch_id = 1;
+  int64 timestamp = 2;
+  InferenceStats inference = 3;
+}

@@ -49,6 +49,10 @@ type EpochState struct {
 	IsSynced     bool
 }
 
+func (es *EpochState) IsNilOrNotSynced() bool {
+	return es == nil || !es.IsSynced
+}
+
 func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

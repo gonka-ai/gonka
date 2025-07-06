@@ -205,7 +205,13 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	}
 
 	// For logging and debugging purposes
-	blockHeight := b.phaseTracker.GetCurrentEpochState().CurrentBlock.Height
+	var blockHeight int64
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState != nil {
+		blockHeight = epochState.CurrentBlock.Height
+	} else {
+		logging.Warn("UpdateNodeResultCommand: epochState is nil!", types.Nodes, "node_id", c.NodeId)
+	}
 
 	// Critical safety check
 	if node.State.ReconcileInfo == nil {
