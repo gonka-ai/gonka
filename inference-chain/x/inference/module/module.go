@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"sort"
+
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/depinject"
@@ -22,7 +24,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
-	"sort"
 
 	// this line is used by starport scaffolding # 1
 
