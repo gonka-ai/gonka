@@ -202,10 +202,12 @@ jobs:
       - name: Publish Test Results
         uses: dorny/test-reporter@v1
         if: always()
+        continue-on-error: true
         with:
           name: ${{ inputs.test_name }} (${{ matrix.test_group }})
           path: ./testermint/build/test-results/**/*.xml
           reporter: java-junit
+          fail-on-error: false
 
       - name: Save Test Counts
         if: always()
@@ -229,8 +231,8 @@ jobs:
             done
           fi
           
-          # Save to file
-          echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped" > test-counts.txt
+          # Save to file with unique name
+          echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped" > test-counts-${{ matrix.test_group }}.txt
           echo "##[debug]${{ matrix.test_group }}: P=$PASSED, F=$FAILED, S=$SKIPPED"
 
       - name: Upload Test Counts
@@ -238,7 +240,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-counts-${{ matrix.test_group }}
-          path: test-counts.txt
+          path: test-counts-${{ matrix.test_group }}.txt
           retention-days: 1
 
   # Simple summary job
@@ -264,7 +266,10 @@ jobs:
           TOTAL_FAILED=0
           TOTAL_SKIPPED=0
           
-          for file in test-counts.txt*; do
+          echo "##[debug]Looking for test count files..."
+          ls -la test-counts-*.txt || echo "No test count files found"
+          
+          for file in test-counts-*.txt; do
             if [ -f "$file" ]; then
               content=$(cat "$file")
               echo "Processing: $content"
