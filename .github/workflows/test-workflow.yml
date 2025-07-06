@@ -118,6 +118,7 @@ jobs:
           - TrainingTests
           - GovernanceTests
           - ParticipantTests
+          - ParticipantTests2
           - StreamingInferenceTests
           - MultiModelTests
           - UnitOfComputeTests
@@ -199,6 +200,10 @@ jobs:
           path: ./testermint/logs
           retention-days: 7  # Keep test logs for 1 week only
 
+      - name: Install XML utilities
+        if: always()
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+
       - name: Publish Test Results
         uses: dorny/test-reporter@v1
         if: always()
@@ -216,6 +221,7 @@ jobs:
           PASSED=0
           FAILED=0
           SKIPPED=0
+          FAILED_TESTS=""
           
           if [ -d "./testermint/build/test-results/test" ]; then
             for xml in ./testermint/build/test-results/test/*.xml; do
@@ -227,13 +233,38 @@ jobs:
                 PASSED=$((PASSED + TESTS - FAILURES - SKIPS))
                 FAILED=$((FAILED + FAILURES))
                 SKIPPED=$((SKIPPED + SKIPS))
+                
+                # Extract failed test names
+                if [ "$FAILURES" -gt 0 ]; then
+                  # Find testcase elements with failure children
+                  FAILED_FROM_XML=$(xmllint --xpath "//testcase[failure]/@name" "$xml" 2>/dev/null | sed 's/name="//g' | sed 's/"//g' | tr '\n' ',' || echo "")
+                  if [ ! -z "$FAILED_FROM_XML" ]; then
+                    if [ -z "$FAILED_TESTS" ]; then
+                      FAILED_TESTS="$FAILED_FROM_XML"
+                    else
+                      FAILED_TESTS="$FAILED_TESTS$FAILED_FROM_XML"
+                    fi
+                  fi
+                fi
               fi
             done
           fi
           
+          # Clean up failed tests list (remove trailing comma)
+          FAILED_TESTS=$(echo "$FAILED_TESTS" | sed 's/,$//')
+          
           # Save to file with unique name
-          echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped" > test-counts-${{ matrix.test_group }}.txt
+          {
+            echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped"
+            if [ ! -z "$FAILED_TESTS" ]; then
+              echo "FAILED_TESTS: $FAILED_TESTS"
+            fi
+          } > test-counts-${{ matrix.test_group }}.txt
+          
           echo "##[debug]${{ matrix.test_group }}: P=$PASSED, F=$FAILED, S=$SKIPPED"
+          if [ ! -z "$FAILED_TESTS" ]; then
+            echo "##[debug]Failed tests: $FAILED_TESTS"
+          fi
 
       - name: Upload Test Counts
         if: always()
@@ -265,6 +296,7 @@ jobs:
           TOTAL_PASSED=0
           TOTAL_FAILED=0
           TOTAL_SKIPPED=0
+          ALL_FAILED_TESTS=""
           
           echo "##[debug]Looking for test count files..."
           ls -la test-counts-*.txt || echo "No test count files found"
@@ -274,11 +306,12 @@ jobs:
               content=$(cat "$file")
               echo "Processing: $content"
               
-              # Extract test group name and numbers
-              TEST_GROUP=$(echo "$content" | cut -d':' -f1)
-              PASSED=$(echo "$content" | grep -o '[0-9]* passed' | grep -o '[0-9]*')
-              FAILED=$(echo "$content" | grep -o '[0-9]* failed' | grep -o '[0-9]*')
-              SKIPPED=$(echo "$content" | grep -o '[0-9]* skipped' | grep -o '[0-9]*')
+              # Extract test group name and numbers from first line
+              first_line=$(echo "$content" | head -n1)
+              TEST_GROUP=$(echo "$first_line" | cut -d':' -f1)
+              PASSED=$(echo "$first_line" | grep -o '[0-9]* passed' | grep -o '[0-9]*')
+              FAILED=$(echo "$first_line" | grep -o '[0-9]* failed' | grep -o '[0-9]*')
+              SKIPPED=$(echo "$first_line" | grep -o '[0-9]* skipped' | grep -o '[0-9]*')
               
               # Add to table
               echo "| $TEST_GROUP | $PASSED | $FAILED | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
@@ -286,6 +319,18 @@ jobs:
               TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
               TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
               TOTAL_SKIPPED=$((TOTAL_SKIPPED + SKIPPED))
+              
+              # Extract failed test names if present
+              if grep -q "FAILED_TESTS:" "$file"; then
+                FAILED_TESTS=$(grep "FAILED_TESTS:" "$file" | cut -d':' -f2- | sed 's/^ *//')
+                if [ ! -z "$FAILED_TESTS" ]; then
+                  if [ -z "$ALL_FAILED_TESTS" ]; then
+                    ALL_FAILED_TESTS="**$TEST_GROUP:** $FAILED_TESTS"
+                  else
+                    ALL_FAILED_TESTS="$ALL_FAILED_TESTS\n**$TEST_GROUP:** $FAILED_TESTS"
+                  fi
+                fi
+              fi
               
               echo "##[debug]$TEST_GROUP: P=$PASSED, F=$FAILED, S=$SKIPPED"
             fi
@@ -303,6 +348,14 @@ jobs:
           else
             echo "## ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
             echo "**$TOTAL_FAILED test(s) failed out of $((TOTAL_PASSED + TOTAL_FAILED + TOTAL_SKIPPED)) total**" >> $GITHUB_STEP_SUMMARY
+            
+            # Add failed test details
+            if [ ! -z "$ALL_FAILED_TESTS" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 🔍 Failed Tests Details:" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo -e "$ALL_FAILED_TESTS" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
