@@ -76,7 +76,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 
 	modelEpochGroup, err := currentEpochGroup.GetSubGroup(ctx, existingInference.Model)
 	if err != nil {
-		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
+		k.LogError("Unable to get model Epoch Group", types.EpochGroup, "err", err)
 		return err
 	}
 

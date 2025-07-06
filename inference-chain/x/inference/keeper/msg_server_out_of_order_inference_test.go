@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// NEEDREVIEW: for some reason this test is failing when run with other tests, but works fine when run alone.
 func TestMsgServer_OutOfOrderInference(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
