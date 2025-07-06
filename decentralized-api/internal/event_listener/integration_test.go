@@ -221,6 +221,12 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			SubGroupModels:      []string{"test-model"},
 		},
 	}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "").Return(&types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			PocStartBlockHeight: 100,
+			SubGroupModels:      []string{"test-model"},
+		},
+	}, nil)
 	mockChainBridge.On("GetEpochGroupDataByModelId", mock.AnythingOfType("uint64"), "test-model").Return(&types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
 			ModelSnapshot: &types.Model{Id: "test-model"},

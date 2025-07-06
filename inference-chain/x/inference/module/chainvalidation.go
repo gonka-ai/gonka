@@ -87,7 +87,7 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		return preservedParticipants
 	}
 
-	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
+	am.LogDebug("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
 		"currentEpochGroupId", currentEpochGroup.GroupData.EpochGroupId,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight)
 
@@ -108,7 +108,7 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 				}
 				inferenceMLNodes = append(inferenceMLNodes, preservedMLNode)
 
-				am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Found inference-serving MLNode", types.PoC,
+				am.LogDebug("GetPreviousEpochMLNodesWithInferenceAllocation: Found inference-serving MLNode", types.PoC,
 					"participantAddress", participantAddress,
 					"nodeId", mlNode.NodeId,
 					"preservedWeight", mlNode.PocWeight)
@@ -651,7 +651,7 @@ func (am AppModule) filterPoCBatchesFromInferenceNodes(allBatches map[string][]t
 		}
 	}
 
-	am.LogInfo("filterPoCBatchesFromInferenceNodes: Summary", types.PoC,
+	am.LogDebug("filterPoCBatchesFromInferenceNodes: Summary", types.PoC,
 		"excludedBatchCount", excludedBatchCount,
 		"originalParticipants", len(allBatches),
 		"filteredParticipants", len(filteredBatches))

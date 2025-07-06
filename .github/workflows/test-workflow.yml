@@ -206,3 +206,102 @@ jobs:
           name: ${{ inputs.test_name }} (${{ matrix.test_group }})
           path: ./testermint/build/test-results/**/*.xml
           reporter: java-junit
+
+      - name: Save Test Counts
+        if: always()
+        run: |
+          # Count tests from XML files
+          PASSED=0
+          FAILED=0
+          SKIPPED=0
+          
+          if [ -d "./testermint/build/test-results/test" ]; then
+            for xml in ./testermint/build/test-results/test/*.xml; do
+              if [ -f "$xml" ]; then
+                TESTS=$(grep -o 'tests="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                FAILURES=$(grep -o 'failures="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                SKIPS=$(grep -o 'skipped="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
+                
+                PASSED=$((PASSED + TESTS - FAILURES - SKIPS))
+                FAILED=$((FAILED + FAILURES))
+                SKIPPED=$((SKIPPED + SKIPS))
+              fi
+            done
+          fi
+          
+          # Save to file
+          echo "${{ matrix.test_group }}: $PASSED passed, $FAILED failed, $SKIPPED skipped" > test-counts.txt
+          echo "##[debug]${{ matrix.test_group }}: P=$PASSED, F=$FAILED, S=$SKIPPED"
+
+      - name: Upload Test Counts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-counts-${{ matrix.test_group }}
+          path: test-counts.txt
+          retention-days: 1
+
+  # Simple summary job
+  test-summary:
+    needs: run-tests
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download All Test Counts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-counts-*
+          merge-multiple: true
+
+      - name: Aggregate Results
+        run: |
+          echo "# 📊 Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Group | Passed | Failed | Skipped |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          
+          TOTAL_PASSED=0
+          TOTAL_FAILED=0
+          TOTAL_SKIPPED=0
+          
+          for file in test-counts.txt*; do
+            if [ -f "$file" ]; then
+              content=$(cat "$file")
+              echo "Processing: $content"
+              
+              # Extract test group name and numbers
+              TEST_GROUP=$(echo "$content" | cut -d':' -f1)
+              PASSED=$(echo "$content" | grep -o '[0-9]* passed' | grep -o '[0-9]*')
+              FAILED=$(echo "$content" | grep -o '[0-9]* failed' | grep -o '[0-9]*')
+              SKIPPED=$(echo "$content" | grep -o '[0-9]* skipped' | grep -o '[0-9]*')
+              
+              # Add to table
+              echo "| $TEST_GROUP | $PASSED | $FAILED | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+              
+              TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
+              TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+              TOTAL_SKIPPED=$((TOTAL_SKIPPED + SKIPPED))
+              
+              echo "##[debug]$TEST_GROUP: P=$PASSED, F=$FAILED, S=$SKIPPED"
+            fi
+          done
+          
+          # Add totals row
+          echo "|------------|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **$TOTAL_PASSED** | **$TOTAL_FAILED** | **$TOTAL_SKIPPED** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add status indicator
+          if [ $TOTAL_FAILED -eq 0 ]; then
+            echo "## ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+            echo "**Total tests executed: $((TOTAL_PASSED + TOTAL_SKIPPED))**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+            echo "**$TOTAL_FAILED test(s) failed out of $((TOTAL_PASSED + TOTAL_FAILED + TOTAL_SKIPPED)) total**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Individual test reports are available in the Checks tab above*" >> $GITHUB_STEP_SUMMARY
+          
+          echo "##[debug]FINAL TOTALS: Passed=$TOTAL_PASSED, Failed=$TOTAL_FAILED, Skipped=$TOTAL_SKIPPED"

@@ -1,3 +1,7 @@
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestResult
+import groovy.lang.Closure
+
 plugins {
     kotlin("jvm") version "2.0.10"
 }
@@ -33,6 +37,10 @@ tasks.withType<JavaExec>().configureEach {
 }
 
 tasks.test {
+    filter {
+        isFailOnNoMatchingTests = false
+    }
+    
     outputs.upToDateWhen { false }
     useJUnitPlatform {
         val includeTags = System.getProperty("includeTags")
