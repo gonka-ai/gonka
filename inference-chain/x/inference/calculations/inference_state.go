@@ -57,6 +57,9 @@ func ProcessStartInference(
 		}
 	}
 	// Works if FinishInference came before
+	currentInference.RequestTimestamp = startMessage.RequestTimestamp
+	currentInference.TransferredBy = startMessage.Creator
+	currentInference.TransferSignature = startMessage.TransferSignature
 	currentInference.PromptHash = startMessage.PromptHash
 	currentInference.PromptPayload = startMessage.PromptPayload
 	if currentInference.PromptTokenCount == 0 {
@@ -123,6 +126,12 @@ func ProcessFinishInference(
 	if finishMessage.PromptTokenCount != 0 {
 		currentInference.PromptTokenCount = finishMessage.PromptTokenCount
 	}
+	// TODO: What if there are discrepancies between existing values and the ones in finishMessage?
+	currentInference.RequestTimestamp = finishMessage.RequestTimestamp
+	currentInference.TransferredBy = finishMessage.TransferredBy
+	currentInference.TransferSignature = finishMessage.TransferSignature
+	currentInference.ExecutionSignature = finishMessage.ExecutorSignature
+
 	currentInference.CompletionTokenCount = finishMessage.CompletionTokenCount
 	currentInference.ExecutedBy = finishMessage.ExecutedBy
 	currentInference.EndBlockHeight = blockContext.BlockHeight

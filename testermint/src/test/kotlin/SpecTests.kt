@@ -1,10 +1,5 @@
-import com.productscience.data.TopMinersResponse
-import com.productscience.data.spec
 import com.productscience.cosmosJson
-import com.productscience.data.Coin
-import com.productscience.data.CreatePartialUpgrade
-import com.productscience.data.Decimal
-import com.productscience.data.camelToSnake
+import com.productscience.data.*
 import com.productscience.gsonCamelCase
 import com.productscience.inferenceConfig
 import com.productscience.openAiJson
@@ -12,6 +7,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Duration
+import kotlin.math.cos
 
 @Tag("exclude")
 class DecimalTests {
@@ -55,6 +51,25 @@ class TxMessageSerializationTests {
     fun `duration`() {
         val duration = Duration.parse("PT48h0m0s")
         assertThat(duration.toDays()).isEqualTo(2)
+    }
+
+    @Test
+    fun `full transaction`() {
+        val transaction = Transaction(
+            body = TransactionBody(
+                messages = listOf(
+                    MsgStartInference(
+                        creator = "creator",
+                        inferenceId = "fjdsafdsa",
+                        promptHash = "",
+                        promptPayload = "test"
+                    )
+                ),
+                memo = "",
+                timeoutHeight = 0
+            )
+        )
+        println(cosmosJson.toJson(transaction))
     }
 }
 

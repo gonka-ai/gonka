@@ -43,5 +43,9 @@ message Inference {
   string assigned_to = 22;
   repeated string validated_by = 23;
   string node_version = 24;
+  string transferred_by = 25;
+  int64 request_timestamp = 26;
+  string transfer_signature = 27;
+  string execution_signature = 28;
 }
 

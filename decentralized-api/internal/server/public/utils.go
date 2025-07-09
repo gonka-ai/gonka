@@ -1,27 +1,25 @@
 package public
 
 import (
-	"decentralized-api/logging"
-	"encoding/base64"
-	"errors"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/calculations"
 )
 
-func validateRequestAgainstPubKey(request *ChatRequest, pubKey string) error {
-	logging.Debug("Checking key for request", types.Inferences, "pubkey", pubKey, "body", string(request.Body))
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKey)
-	if err != nil {
-		return err
+func validateTransferRequest(request *ChatRequest, devPubkey string) error {
+	components := calculations.SignatureComponents{
+		Payload:         string(request.Body),
+		Timestamp:       request.Timestamp,
+		TransferAddress: request.TransferAddress,
+		ExecutorAddress: "",
 	}
-	actualKey := secp256k1.PubKey{Key: pubKeyBytes}
-	// Not sure about decoding/encoding the actual key bytes
-	keyBytes, err := base64.StdEncoding.DecodeString(request.AuthKey)
+	return calculations.ValidateSignature(components, calculations.TransferAgent, devPubkey, request.AuthKey)
+}
 
-	valid := actualKey.VerifySignature(request.Body, keyBytes)
-	if !valid {
-		logging.Warn("Signature did not match pubkey", types.Inferences)
-		return errors.New("invalid signature")
+func validateExecuteRequest(request *ChatRequest, transferPubKey string, executorAddress string, transferSignature string) error {
+	components := calculations.SignatureComponents{
+		Payload:         string(request.Body),
+		Timestamp:       request.Timestamp,
+		TransferAddress: request.TransferAddress,
+		ExecutorAddress: executorAddress,
 	}
-	return nil
+	return calculations.ValidateSignature(components, calculations.ExecutorAgent, transferPubKey, transferSignature)
 }

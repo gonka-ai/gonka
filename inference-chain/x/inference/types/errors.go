@@ -34,4 +34,5 @@ var (
 	ErrCannotCreateSubGroupFromSubGroup        = sdkerrors.Register(ModuleName, 1123, "cannot create a sub-group from a sub-group")
 	ErrCannotGetSubGroupFromSubGroup           = sdkerrors.Register(ModuleName, 1124, "cannot get a sub-group from a sub-group")
 	ErrInferenceHasInvalidModel                = sdkerrors.Register(ModuleName, 1125, "inference has a model that has no sub-group")
+	ErrInvalidSignature                        = sdkerrors.Register(ModuleName, 1126, "invalid keys provided for StartInference")
 )

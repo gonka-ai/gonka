@@ -34,11 +34,13 @@ require (
 	cloud.google.com/go/iam v1.1.6 // indirect
 	cloud.google.com/go/storage v1.38.0 // indirect
 	cosmossdk.io/api v0.7.5 // indirect
+	cosmossdk.io/client/v2 v2.0.0-beta.1 // indirect
 	cosmossdk.io/collections v0.4.0 // indirect
 	cosmossdk.io/core v0.11.1 // indirect
 	cosmossdk.io/depinject v1.0.0 // indirect
 	cosmossdk.io/log v1.4.1 // indirect
 	cosmossdk.io/math v1.3.0 // indirect
+	cosmossdk.io/tools/confix v0.1.1 // indirect
 	cosmossdk.io/x/circuit v0.1.0 // indirect
 	cosmossdk.io/x/evidence v0.1.0 // indirect
 	cosmossdk.io/x/feegrant v0.1.0 // indirect
@@ -78,6 +80,8 @@ require (
 	github.com/cosmos/ibc-go/modules/capability v1.0.0 // indirect
 	github.com/cosmos/ics23/go v0.10.0 // indirect
 	github.com/cosmos/ledger-cosmos-go v0.13.3 // indirect
+	github.com/creachadair/atomicfile v0.3.1 // indirect
+	github.com/creachadair/tomledit v0.0.24 // indirect
 	github.com/danieljoos/wincred v1.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
@@ -160,6 +164,7 @@ require (
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a // indirect
 	github.com/oklog/run v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

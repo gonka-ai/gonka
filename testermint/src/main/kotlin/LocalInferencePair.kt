@@ -1,23 +1,10 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.ContainerPort
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
-import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
-import com.productscience.data.AppState
-import com.productscience.data.GovernanceMessage
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.PubKey
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Instant
@@ -181,15 +168,20 @@ data class LocalInferencePair(
         return this.mostRecentParams!!
     }
 
-    fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
-        val signature = node.signPayload(request, account)
+    fun makeInferenceRequest(
+        request: String,
+        account: String? = null,
+        timestamp: Long = Instant.now().toEpochMilli(),
+        taAddress: String = node.getAddress(),
+    ): OpenAIResponse {
+        val signature = node.signPayload(request,account, timestamp = timestamp, endpointAccount = taAddress)
         val address = node.getAddress()
-        return api.makeInferenceRequest(request, address, signature)
+        return api.makeInferenceRequest(request, address, signature, timestamp)
     }
 
     /**
      * Makes a streaming inference request that can be interrupted.
-     * 
+     *
      * @param request The request body as a string. The request should include "stream": true.
      * @param account The account to use for signing the payload (optional)
      * @return A StreamConnection object that can be used to read from the stream and interrupt it
@@ -217,8 +209,8 @@ data class LocalInferencePair(
             request
         }
 
-        val signature = node.signPayload(requestWithStream, account)
         val address = node.getAddress()
+        val signature = node.signPayload(requestWithStream, account, timestamp = Instant.now().toEpochMilli(), endpointAccount = address)
         return api.createInferenceStreamConnection(requestWithStream, address, signature)
     }
 
@@ -295,9 +287,17 @@ data class LocalInferencePair(
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
-    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+    fun submitMessage(message: TxMessage, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitMessage", true) {
+        submitTransaction(Transaction(TransactionBody(listOf(message), "", 0)), waitForProcessed)
+    }
+
+    fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitTransaction", true) {
+        submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
+    }
+
+
+    fun submitTransaction(json: String, waitForProcessed: Boolean = true): TxResponse {
         val start = Instant.now()
-        val json = this.node.getTransactionJson(args)
         val submittedTransaction = try {
             this.api.submitTransaction(json)
         } catch (e: FuelError) {
@@ -321,6 +321,10 @@ data class LocalInferencePair(
         } else {
             submittedTransaction
         }
+    }
+
+    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        return submitTransaction(this.node.getTransactionJson(args))
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
