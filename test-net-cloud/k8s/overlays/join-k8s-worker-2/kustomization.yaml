@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
 - ../../join
-- api-public-service.yaml
+- proxy-service.yaml
 - node-service.yaml
 
 patches:

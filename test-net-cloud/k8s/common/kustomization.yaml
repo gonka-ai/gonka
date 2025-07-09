@@ -2,8 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-- api-private-service.yaml
+- api-service.yaml
 - inference-service.yaml
+- proxy-deployment.yaml
+- explorer-deployment.yaml
+- explorer-service.yaml
 
 # Common ConfigMaps
 - node-configs/node-config-configmap.yaml

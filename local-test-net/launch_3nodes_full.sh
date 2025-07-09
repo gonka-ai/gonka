@@ -2,8 +2,7 @@
 # Proxy ports: genesis=80, join1=81, join2=82
 set -e
 
-# launch genesis node with explorer and proxy
-export EXPLORER_PORT=1317
+export REST_API_ACTIVE=true
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
@@ -49,10 +48,10 @@ export P2P_PORT=8201
 export PROXY_PORT=81
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export WITH_PROXY=true
+export PROXY_ACTIVE=true
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
-./launch_network_node.sh
+./launch_add_network_node.sh
 
 # join node 'join2' with proxy
 export KEY_NAME=join2
@@ -67,7 +66,7 @@ export P2P_PORT=8202
 export PROXY_PORT=82
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export WITH_PROXY=true
+export PROXY_ACTIVE=true
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
-./launch_network_node.sh 
+./launch_add_network_node.sh 

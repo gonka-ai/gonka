@@ -11,6 +11,7 @@ local-test-net/
 ├── docker-compose.join.yml      # Join network specific settings  
 ├── docker-compose.explorer.yml  # Adds blockchain explorer
 ├── docker-compose.proxy.yml     # Adds reverse proxy
+├── docker-compose.tmkms.yml     # Adds TMKMS security layer
 └── Makefile                     # Easy commands for common combinations
 ```
 
@@ -56,6 +57,12 @@ docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml -f docke
 - Single entry point on port 80
 - Health checks and dependency management
 
+### TMKMS Addon (`docker-compose.tmkms.yml`)
+- Adds Tendermint Key Management System for enhanced validator security
+- Separates consensus key signing from the validator node
+- Prevents double-signing attacks
+- Uses secure key generation mode for new validators
+
 ## Environment Variables
 
 Set these in your `.env` file or export them:
@@ -71,13 +78,14 @@ ML_SERVER_PORT=9100
 ADMIN_SERVER_PORT=9200
 ML_GRPC_SERVER_PORT=9300
 WIREMOCK_PORT=8080
+TMKMS_PORT=26658
 
 # For joining networks
 SEED_NODE_RPC_URL=http://seed-node:26657
 SEED_NODE_P2P_URL=seed-node:26656
 
 # Optional
-WITH_EXPLORER=true  # Enable/disable explorer features
+REST_API_ACTIVE=true  # Enable/disable REST API server
 ```
 
 ## Migration from Old Files
@@ -87,5 +95,6 @@ The old monolithic files are replaced by this modular system:
 - `docker-compose-local.yml` → `base.yml + join.yml`
 - `docker-compose-local-genesis.yml` → `base.yml + genesis.yml`  
 - `docker-compose-local-genesis-with-explorer.yml` → `base.yml + genesis.yml + explorer.yml + proxy.yml`
+- `docker-compose-local-tmkms.yml` → `base.yml + genesis.yml/join.yml + tmkms.yml`
 
 You can now create any combination you need! 
