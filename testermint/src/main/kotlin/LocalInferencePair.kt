@@ -171,7 +171,7 @@ data class LocalInferencePair(
     fun makeInferenceRequest(
         request: String,
         account: String? = null,
-        timestamp: Long = Instant.now().toEpochMilli(),
+        timestamp: Long = Instant.now().toEpochNanos(),
         taAddress: String = node.getAddress(),
     ): OpenAIResponse {
         val signature = node.signPayload(request,account, timestamp = timestamp, endpointAccount = taAddress)
@@ -488,4 +488,8 @@ data class ApplicationConfig(
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
+}
+
+fun Instant.toEpochNanos(): Long {
+    return this.epochSecond * 1_000_000_000 + this.nano.toLong()
 }

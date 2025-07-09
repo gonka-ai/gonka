@@ -2,12 +2,10 @@ import com.productscience.cosmosJson
 import com.productscience.data.*
 import com.productscience.gsonCamelCase
 import com.productscience.inferenceConfig
-import com.productscience.openAiJson
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Duration
-import kotlin.math.cos
 
 @Tag("exclude")
 class DecimalTests {
@@ -79,11 +77,11 @@ class SpecTests {
     @Test
     fun `test simple spec`() {
         val actual = Person("John", 25, "male", camelCasedValue = "test")
-        val failingSpec = spec<Person>{
+        val failingSpec = spec<Person> {
             this[Person::age] = 10
             this[Person::name] = "John"
         }
-        val passingSpec = spec<Person>{
+        val passingSpec = spec<Person> {
             this[Person::age] = 25
             this[Person::name] = "John"
         }
@@ -93,20 +91,22 @@ class SpecTests {
 
     @Test
     fun `output spec to json`() {
-        val spec = spec<Person>{
+        val spec = spec<Person> {
             this[Person::age] = 10
             this[Person::name] = "John"
         }
         val json = spec.toJson()
-        assertThat(json).isEqualTo("""{
+        assertThat(json).isEqualTo(
+            """{
             |  "age": 10,
             |  "name": "John"
-            |}""".trimMargin())
+            |}""".trimMargin()
+        )
     }
 
     @Test
     fun `output spec with snake_case`() {
-        val spec = spec<Person>{
+        val spec = spec<Person> {
             this[Person::camelCasedValue] = "test"
         }
         // Nice, huh? Trickier than it seemed, but totally works
@@ -123,10 +123,10 @@ class SpecTests {
 
     @Test
     fun `merge specs`() {
-        val spec1 = spec<Person>{
+        val spec1 = spec<Person> {
             this[Person::age] = 10
         }
-        val spec2 = spec<Person>{
+        val spec2 = spec<Person> {
             this[Person::name] = "John"
         }
         val merged = spec1.merge(spec2)
@@ -135,13 +135,13 @@ class SpecTests {
 
     @Test
     fun `merge nested`() {
-        val spec1 = spec<Nested>{
-            this[Nested::person] = spec<Person>{
+        val spec1 = spec<Nested> {
+            this[Nested::person] = spec<Person> {
                 this[Person::age] = 10
             }
         }
-        val spec2 = spec<Nested>{
-            this[Nested::person] = spec<Person>{
+        val spec2 = spec<Nested> {
+            this[Nested::person] = spec<Person> {
                 this[Person::name] = "John"
             }
         }
@@ -158,7 +158,7 @@ class SpecTests {
     @Test
     fun `invalid argument if type does not match`() {
         val result = runCatching {
-            val spec = spec<Person>{
+            val spec = spec<Person> {
                 this[Person::age] = "test"
             }
         }
@@ -236,7 +236,7 @@ class SpecTests {
     }
 }
 
-data class Nested(val group:String, val person:Person)
+data class Nested(val group: String, val person: Person)
 
 data class Person(val name: String, val age: Int, val gender: String, val camelCasedValue: String)
 
