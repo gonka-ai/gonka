@@ -223,102 +223,44 @@ jobs:
           SKIPPED=0
           FAILED_TESTS=""
           
-          echo "##[debug]Looking for XML files in: ./testermint/build/test-results/"
-          find ./testermint/build/test-results/ -name "*.xml" -type f | head -5
-          
           if [ -d "./testermint/build/test-results/test" ]; then
             for xml in ./testermint/build/test-results/test/*.xml; do
               if [ -f "$xml" ]; then
-                echo "##[debug]Processing XML file: $xml"
-                
                 TESTS=$(grep -o 'tests="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
                 FAILURES=$(grep -o 'failures="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
                 SKIPS=$(grep -o 'skipped="[0-9]*"' "$xml" | grep -o '[0-9]*' || echo "0")
-                
-                echo "##[debug]From $xml: Tests=$TESTS, Failures=$FAILURES, Skips=$SKIPS"
                 
                 PASSED=$((PASSED + TESTS - FAILURES - SKIPS))
                 FAILED=$((FAILED + FAILURES))
                 SKIPPED=$((SKIPPED + SKIPS))
                 
-                # Extract failed test names - try multiple approaches
+                # Extract detailed failed test names
                 if [ "$FAILURES" -gt 0 ]; then
-                  echo "##[debug]Found $FAILURES failures, extracting test names..."
-                  
-                  # Method 1: Try xmllint xpath
-                  FAILED_FROM_XML=$(xmllint --xpath "//testcase[failure]/@name" "$xml" 2>/dev/null | sed 's/name="//g' | sed 's/"//g' | tr '\n' ',' || echo "")
-                  
-                  # Method 2: Try grep for testcase with failure
-                  if [ -z "$FAILED_FROM_XML" ]; then
-                    FAILED_FROM_XML=$(grep -A1 '<testcase.*name=' "$xml" | grep -B1 '<failure' | grep 'testcase.*name=' | sed 's/.*name="\([^"]*\)".*/\1/' | tr '\n' ',' || echo "")
-                  fi
-                  
-                  # Method 3: Try simpler grep approach
-                  if [ -z "$FAILED_FROM_XML" ]; then
-                    FAILED_FROM_XML=$(grep '<testcase.*name=.*>' "$xml" | grep -v 'failure.*message=""' | sed 's/.*name="\([^"]*\)".*/\1/' | tr '\n' ',' || echo "")
-                  fi
-                  
-                  echo "##[debug]Extracted failed tests: '$FAILED_FROM_XML'"
-                  
-                  if [ ! -z "$FAILED_FROM_XML" ]; then
-                    if [ -z "$FAILED_TESTS" ]; then
-                      FAILED_TESTS="$FAILED_FROM_XML"
-                    else
-                      FAILED_TESTS="$FAILED_TESTS$FAILED_FROM_XML"
-                    fi
+                  # This is more robust against spaces in test names.
+                  # It extracts the attribute values by replacing quotes with newlines and filtering.
+                  FAILED_CLASSNAMES=$(xmllint --xpath "//testcase[failure]/@classname" "$xml" 2>/dev/null | tr '"' '\n' | grep -v 'classname=' | grep . || echo "")
+                  FAILED_NAMES=$(xmllint --xpath "//testcase[failure]/@name" "$xml" 2>/dev/null | tr '"' '\n' | grep -v 'name=' | grep . || echo "")
+
+                  # Combine them line-by-line, e.g., "com.example.Test > testMethod"
+                  # and then convert to a single comma-separated string.
+                  if [ -n "$FAILED_NAMES" ]; then
+                      FAILED_DETAILS_LINES=$(paste -d ' > ' <(echo "$FAILED_CLASSNAMES") <(echo "$FAILED_NAMES"))
+                      FAILED_FROM_XML=$(echo "$FAILED_DETAILS_LINES" | tr '\n' ',')
+                      
+                      if [ ! -z "$FAILED_FROM_XML" ]; then
+                        if [ -z "$FAILED_TESTS" ];
+                          then FAILED_TESTS="$FAILED_FROM_XML"
+                          else FAILED_TESTS="$FAILED_TESTS$FAILED_FROM_XML"
+                        fi
+                      fi
                   fi
                 fi
               fi
             done
-          fi
-          
-          # Also check for XML files in other common locations
-          for dir in "./testermint/build/test-results" "./testermint/build/reports/tests"; do
-            if [ -d "$dir" ]; then
-              echo "##[debug]Checking directory: $dir"
-              find "$dir" -name "*.xml" -exec echo "Found XML: {}" \;
-            fi
-          done
-          
-          # Fallback: Try to extract failed tests from console output/logs
-          if [ -z "$FAILED_TESTS" ] && [ $FAILED -gt 0 ]; then
-            echo "##[debug]XML parsing didn't find failed tests, trying log files..."
-            
-            # Look for test logs with failure patterns
-            for logdir in "./testermint/logs" "./testermint/build/reports" "."; do
-              if [ -d "$logdir" ]; then
-                # Pattern 1: "TestClass > testMethod() FAILED"
-                FAILED_FROM_LOGS=$(find "$logdir" -name "*.log" -o -name "*.out" -o -name "*.txt" | xargs grep -h "FAILED$" 2>/dev/null | sed 's/.*> \(.*\) FAILED$/\1/' | tr '\n' ',' || echo "")
-                
-                # Pattern 2: "TestClass.testMethod FAILED" 
-                if [ -z "$FAILED_FROM_LOGS" ]; then
-                  FAILED_FROM_LOGS=$(find "$logdir" -name "*.log" -o -name "*.out" -o -name "*.txt" | xargs grep -h "FAILED" 2>/dev/null | grep -o '[A-Za-z0-9_]*\.[A-Za-z0-9_]*.*FAILED' | sed 's/ FAILED$//' | tr '\n' ',' || echo "")
-                fi
-                
-                if [ ! -z "$FAILED_FROM_LOGS" ]; then
-                  echo "##[debug]Found failed tests in logs: '$FAILED_FROM_LOGS'"
-                  FAILED_TESTS="$FAILED_FROM_LOGS"
-                  break
-                fi
-              fi
-            done
-            
-            # Also try the uploaded test logs artifact area
-            if [ -z "$FAILED_TESTS" ]; then
-              echo "##[debug]Checking current directory for test output..."
-              # Look for any files containing test failure patterns
-              FAILED_FROM_OUTPUT=$(grep -r "FAILED$" . 2>/dev/null | head -10 | sed 's/.*> \(.*\) FAILED$/\1/' | tr '\n' ',' || echo "")
-              if [ ! -z "$FAILED_FROM_OUTPUT" ]; then
-                echo "##[debug]Found failed tests in current output: '$FAILED_FROM_OUTPUT'"
-                FAILED_TESTS="$FAILED_FROM_OUTPUT"
-              fi
-            fi
           fi
           
           # Clean up failed tests list (remove trailing comma)
           FAILED_TESTS=$(echo "$FAILED_TESTS" | sed 's/,$//')
-          
-          echo "##[debug]Final failed tests list: '$FAILED_TESTS'"
           
           # Save to file with unique name
           {
