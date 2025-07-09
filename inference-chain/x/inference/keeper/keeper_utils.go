@@ -5,6 +5,7 @@ import (
 	"cosmossdk.io/store/prefix"
 	"fmt"
 	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
 )
 
@@ -21,10 +22,36 @@ func PrefixStore(ctx context.Context, k *Keeper, keyPrefix []byte) *prefix.Store
 }
 
 func SetValue[T proto.Message](k Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) {
+	// For some reason IDE syntax highlighting shows it's OK,
+	// but I get a compiler error:
+	//   "invalid operation: object == nil (mismatched types T and untyped nil)"
+	/*	if object == nil {
+		k.LogError("SetValue called with nil object, returning", types.System)
+		return
+	}*/
+
 	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	store := prefix.NewStore(storeAdapter, keyPrefix)
 	b := k.cdc.MustMarshal(object)
 	store.Set(key, b)
+}
+
+func SetUint64Value(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte, value uint64) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+	b := sdk.Uint64ToBigEndian(value)
+	store.Set(key, b)
+}
+
+func GetUint64Value(k *Keeper, ctx context.Context, keyPrefix []byte, key []byte) (uint64, bool) {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, keyPrefix)
+	bz := store.Get(key)
+	if bz == nil {
+		return 0, false
+	}
+
+	return sdk.BigEndianToUint64(bz), true
 }
 
 func GetValue[T proto.Message](k *Keeper, ctx context.Context, object T, keyPrefix []byte, key []byte) (T, bool) {

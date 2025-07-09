@@ -3,6 +3,7 @@ package mlnode
 import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+
 	"github.com/labstack/echo/v4"
 )
 
@@ -14,6 +15,8 @@ type Server struct {
 // TODO breacking changes: url path, support on mlnode side
 func NewServer(recorder cosmos_client.CosmosMessageClient) *Server {
 	e := echo.New()
+
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
 	e.Use(middleware.LoggingMiddleware)
 	g := e.Group("/mlnode/v1/")
