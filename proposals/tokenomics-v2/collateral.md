@@ -50,3 +50,33 @@ Collateral is the economic guarantee of good behavior. It will be slashed under 
 2.  **Failure to Participate (Downtime)**: The network relies on active participation. If a participant fails to meet their duties for a certain period (e.g., has significant downtime and fails to participate in epochs), a small, predefined portion of their collateral will be slashed. This check will be implemented in the `EndBlocker` of the `x/inference` module, located in `inference-chain/x/inference/module/module.go`.
 
 Slashing ensures that only active, honest, and reliable participants can maintain significant weight and influence within the network. 
+
+## 3. Integration with the Staking Module via Hooks
+
+While the `x/inference` module will manage its own collateral and application-specific slashing logic, it must also react to consensus-level faults detected by the `x/slashing` module (e.g., a validator double-signing). To achieve this, the module will implement the `StakingHooks` interface and register itself with the staking keeper.
+
+This allows the collateral module to be notified of critical validator state changes and apply its own financial penalties in sync with the core consensus penalties.
+
+The following hooks will be implemented:
+
+### 3.1. `BeforeValidatorSlashed`
+*   **Trigger**: Called by the `x/staking` keeper after a validator has been confirmed to have committed a liveness (downtime) or Byzantine (double-signing) fault, but *before* the state change is finalized.
+*   **Action for Collateral Module**:
+    1.  The hook receives the address of the punished validator and the slash fraction.
+    2.  The module will look up the participant associated with this validator address.
+    3.  If a participant is found, the module will immediately slash their deposited collateral by the same fraction.
+    4.  This ensures that consensus-level faults result in the burning of real collateral from the `x/inference` module, maintaining network security.
+
+### 3.2. `AfterValidatorBeginUnbonding`
+*   **Trigger**: Called by the `x/staking` keeper the moment a validator's status changes from `BONDED` to `UNBONDING`. This happens when a validator is jailed for any reason or is kicked from the active set for having low power.
+*   **Action for Collateral Module**:
+    1.  The module will look up the participant associated with the validator.
+    2.  If found, the module can mirror this state change. For instance, it could prevent the participant from depositing more collateral or prevent them from using their collateral to gain weight until they become active again.
+    3.  This hook serves as a signal that the participant is inactive at the consensus level.
+
+### 3.3. `AfterValidatorBonded`
+*   **Trigger**: Called by the `x/staking` keeper whenever a validator enters the `BONDED` state. This occurs when a previously jailed validator is un-jailed and has enough power to rejoin the active set.
+*   **Action for Collateral Module**:
+    1.  The module will look up the participant associated with the validator.
+    2.  If found, the module can mark their collateral as fully active again.
+    3.  This hook signals that the participant is once again an active and trusted part of the consensus set, and their collateral can be used to its full effect. 
