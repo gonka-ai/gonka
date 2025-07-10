@@ -1,12 +1,15 @@
 package mlnodeclient
 
 import (
+	"context"
 	"decentralized-api/utils"
 	"net/url"
 )
 
 const (
-	InitGeneratePath = "/api/v1/pow/init/generate"
+	InitGeneratePath  = "/api/v1/pow/init/generate"
+	InitValidatePath  = "/api/v1/pow/init/validate"
+	ValidateBatchPath = "/api/v1/pow/validate"
 
 	DefaultRTarget        = 1.3971164020989417
 	DefaultBatchSize      = 100
@@ -97,13 +100,61 @@ var TestNetParams = Params{
 	SeqLen:           128,
 }
 
-func (api *Client) InitGenerate(dto InitDto) error {
+type ProofBatch struct {
+	PublicKey   string    `json:"public_key"`
+	BlockHash   string    `json:"block_hash"`
+	BlockHeight int64     `json:"block_height"`
+	Nonces      []int64   `json:"nonces"`
+	Dist        []float64 `json:"dist"`
+}
+
+type ValidatedBatch struct {
+	ProofBatch // Inherits from ProofBatch
+
+	// New fields
+	ReceivedDist      []float64 `json:"received_dist"`
+	RTarget           float64   `json:"r_target"`
+	FraudThreshold    float64   `json:"fraud_threshold"`
+	NInvalid          int64     `json:"n_invalid"`
+	ProbabilityHonest float64   `json:"probability_honest"`
+	FraudDetected     bool      `json:"fraud_detected"`
+}
+
+func (api *Client) InitGenerate(context context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, dto)
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *Client) InitValidate(context context.Context, dto InitDto) error {
+	requestUrl, err := url.JoinPath(api.pocUrl, InitValidatePath)
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *Client) ValidateBatch(context context.Context, batch ProofBatch) error {
+	requestUrl, err := url.JoinPath(api.pocUrl, ValidateBatchPath)
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, batch)
 	if err != nil {
 		return err
 	}

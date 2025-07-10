@@ -6,6 +6,11 @@ var _ binary.ByteOrder
 
 const (
 	// EpochGroupDataKeyPrefix is the prefix to retrieve all EpochGroupData
+	EpochGroupPrefix = "Epoch/group/" // For upcoming, effective, previous epoch groups. Probably should be deprecated since now we use Epochs for that
+	EpochKeyPrefix   = "Epoch/value/"
+
+	EpochPointersKeysPrefix = "Epoch/pointers/" // For effective, upcoming, previous epochs
+	EffectiveEpochKey       = "effective-epoch/value/"
 	EpochGroupDataKeyPrefix = "EpochGroupData/value/"
 )
 
@@ -23,4 +28,8 @@ func EpochGroupDataKey(
 	key = append(key, []byte(modelID)...)
 
 	return key
+}
+
+func EpochKey(epochIndex uint64) []byte {
+	return uintKey(epochIndex)
 }

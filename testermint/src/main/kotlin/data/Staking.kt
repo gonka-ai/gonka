@@ -21,6 +21,11 @@ data class StakeValidator(
     val minSelfDelegation: String
 )
 
+enum class StakeValidatorStatus(val value: Int) {
+    UNBONDING(2),
+    BONDED(3),
+}
+
 data class ConsensusPubkey(
     val type: String,
     val value: String

@@ -263,21 +263,21 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation
@@ -436,21 +436,21 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	// Setup inference validation details for the epoch
 	// These are the inferences that were executed in the epoch
 	inference1 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference1",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 50, // Medium reputation
 		TrafficBasis:       1000,
 	}
 	inference2 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference2",
 		ExecutorId:         "executor2",
 		ExecutorReputation: 0, // Low reputation
 		TrafficBasis:       1000,
 	}
 	inference3 := types.InferenceValidationDetails{
-		EpochId:            100,
+		EpochGroupId:       100,
 		InferenceId:        "inference3",
 		ExecutorId:         "executor1",
 		ExecutorReputation: 100, // High reputation

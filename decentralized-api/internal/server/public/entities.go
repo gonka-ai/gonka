@@ -54,7 +54,7 @@ type ActiveParticipantWithProof struct {
 	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
 	Addresses               []string                 `json:"addresses"`
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
-	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
+	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
 	Validators              []*comettypes.Validator  `json:"validators"`
 	Block                   []*comettypes.Block      `json:"block"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
@@ -115,14 +115,6 @@ type VerifyBlockRequest struct {
 type Validator struct {
 	PubKey      string `json:"pub_key"`
 	VotingPower int64  `json:"voting_power"`
-}
-
-type SubmitUnfundedNewParticipantDto struct {
-	Address      string `json:"address"`
-	Url          string `json:"url"`
-	ValidatorKey string `json:"validator_key"`
-	PubKey       string `json:"pub_key"`
-	WorkerKey    string `json:"worker_key"`
 }
 
 type UnitOfComputePriceProposalDto struct {

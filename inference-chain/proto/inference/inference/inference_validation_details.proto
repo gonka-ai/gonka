@@ -3,8 +3,10 @@ package inference.inference;
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
+// TODO [CHAIN-RELAUNCH]: probably epoch_id should now contain the actual epoch ID
+//   and we should use it as part of the key
 message InferenceValidationDetails {
-  uint64 epoch_id = 1;
+  uint64 epoch_id = 1; // DEPRECATED: same as #10, renamed to better reflect what it is
   string inference_id = 2;
   string executor_id = 3;
   int32 executor_reputation = 4;
@@ -12,4 +14,5 @@ message InferenceValidationDetails {
   uint64 executor_power = 6;
   string model = 7;
   uint64 total_power = 8;
+  uint64 epoch_group_id = 10; // The ID of the Group created by the GroupModule!
 }

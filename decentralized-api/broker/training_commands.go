@@ -2,6 +2,7 @@ package broker
 
 import (
 	"decentralized-api/logging"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -9,7 +10,7 @@ type StartTrainingCommand struct {
 	taskId            uint64
 	masterNodeAddress string
 	worldSize         int
-	nodeRanks         map[string]int
+	nodeRanks         map[string]int // Key is nodeId
 	Response          chan bool
 }
 
@@ -28,37 +29,51 @@ func (c StartTrainingCommand) GetResponseChannelCapacity() int {
 }
 
 func (c StartTrainingCommand) Execute(broker *Broker) {
-	for nodeId, rank := range c.nodeRanks {
+	epochState := broker.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Error("StartTrainingCommand executed with nil or not synced epoch state", types.Training,
+			"epoch_state", epochState)
+		c.Response <- false
+		return
+	}
+
+	if epochState.CurrentPhase != types.InferencePhase {
+		logging.Error("StartTrainingCommand executed in wrong phase", types.Training,
+			"current_phase", epochState.CurrentPhase, "expected_phase", types.InferencePhase)
+		c.Response <- false
+		return
+	}
+
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	for nodeId := range c.nodeRanks {
 		node, nodeFound := broker.nodes[nodeId]
 		if !nodeFound || node == nil {
-			logging.Error("Node not found or nil", types.Nodes, "node_id", nodeId, "nodeFound", nodeFound, "node == nil", node == nil)
-			c.Response <- false
-			return
+			logging.Error("Node not found or nil for training", types.Nodes,
+				"node_id", nodeId, "nodeFound", nodeFound, "node == nil", node == nil)
+			continue
+		}
+
+		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+			logging.Error("Selected disabled node for training", types.Nodes,
+				"node_id", nodeId,
+				"AdminState.Epoch", node.State.AdminState.Epoch,
+				"AdminState.Enabled", node.State.AdminState.Enabled,
+				"current_epoch", epochState.LatestEpoch.EpochIndex,
+				"current_phase", epochState.CurrentPhase)
+			continue
 		}
 
 		node.State.IntendedStatus = types.HardwareNodeStatus_TRAINING
-		node.State.TrainingTaskId = c.taskId
-
-		client := newNodeClient(&node.Node)
-
-		err := client.Stop()
-		if err != nil {
-			logging.Error("Error stopping training", types.Nodes, "error", err)
-			c.Response <- false
-			return
+		node.State.TrainingTask = &TrainingTaskPayload{
+			Id:             c.taskId,
+			MasterNodeAddr: c.masterNodeAddress,
+			NodeRanks:      c.nodeRanks,
+			WorldSize:      c.worldSize,
 		}
-
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-
-		err = client.StartTraining(c.taskId, broker.client.GetAddress(), nodeId, c.masterNodeAddress, rank, c.worldSize)
-		if err != nil {
-			logging.Error("Error starting training", types.Nodes, "error", err)
-			c.Response <- false
-			return
-		}
-
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_TRAINING)
 	}
+
+	broker.TriggerReconciliation()
 
 	c.Response <- true
 }
