@@ -67,6 +67,7 @@ func TestMsgServer_FinishInference(t *testing.T) {
 	MustAddParticipant(t, ms, ctx, testutil.Executor)
 	mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), gomock.Any(), types.ModuleName, gomock.Any())
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 	_, err = ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   inferenceId,

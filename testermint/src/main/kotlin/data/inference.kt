@@ -100,7 +100,8 @@ data class MsgStartInference(
     val maxTokens: Long = 0,
     val promptTokenCount: Long = 0,
     val requestTimestamp: Long = 0,
-    val transferSignature: String = ""
+    val transferSignature: String = "",
+    val originalPrompt: String = promptPayload,
 ) : TxMessage
 
 data class MsgFinishInference(
@@ -117,6 +118,6 @@ data class MsgFinishInference(
     val transferSignature: String = "",
     val executorSignature: String = "",
     val requestedBy: String = "",
-    val promptPayload: String = "",
+    val originalPrompt: String = "",
 ) : TxMessage
 

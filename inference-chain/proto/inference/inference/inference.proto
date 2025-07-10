@@ -49,5 +49,6 @@ message Inference {
   int64 request_timestamp = 28;
   string transfer_signature = 29;
   string execution_signature = 30;
+  string original_prompt = 31;
 }
 

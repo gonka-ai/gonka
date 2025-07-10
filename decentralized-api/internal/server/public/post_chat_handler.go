@@ -498,7 +498,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 
 	if s.recorder != nil {
 		// Calculate executor signature
-		executorSignature, err := s.calculateSignature(string(requestBody), request.Timestamp, request.TransferAddress, executorAddress, calculations.ExecutorAgent)
+		executorSignature, err := s.calculateSignature(string(request.Body), request.Timestamp, request.TransferAddress, executorAddress, calculations.ExecutorAgent)
 		if err != nil {
 			return err
 		}
@@ -516,7 +516,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 			ExecutorSignature:    executorSignature,
 			RequestTimestamp:     request.Timestamp,
 			RequestedBy:          request.RequesterAddress,
-			PromptPayload:        string(requestBody),
+			OriginalPrompt:       string(request.Body),
 		}
 
 		logging.Info("Submitting MsgFinishInference", types.Inferences, "inferenceId", inferenceId)
@@ -566,6 +566,7 @@ func createInferenceStartRequest(s *Server, request *ChatRequest, seed int32, in
 		MaxTokens:        uint64(maxTokens),
 		PromptTokenCount: uint64(promptTokenCount),
 		RequestTimestamp: request.Timestamp,
+		OriginalPrompt:   string(request.Body),
 	}
 
 	signature, err := s.calculateSignature(string(request.Body), request.Timestamp, request.TransferAddress, executor.Address, calculations.TransferAgent)

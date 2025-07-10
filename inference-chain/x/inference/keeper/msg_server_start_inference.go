@@ -131,7 +131,7 @@ func (k msgServer) processInferencePayments(
 
 func getSignatureComponents(msg *types.MsgStartInference) calculations.SignatureComponents {
 	return calculations.SignatureComponents{
-		Payload:         msg.PromptPayload,
+		Payload:         msg.OriginalPrompt,
 		Timestamp:       msg.RequestTimestamp,
 		TransferAddress: msg.Creator,
 		ExecutorAddress: msg.AssignedTo,

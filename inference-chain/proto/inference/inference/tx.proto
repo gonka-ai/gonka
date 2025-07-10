@@ -80,6 +80,7 @@ message MsgStartInference {
   uint64 prompt_token_count = 11;
   int64  request_timestamp = 12;
   string transfer_signature = 14;
+  string original_prompt = 15;
 }
 
 message MsgStartInferenceResponse {
@@ -100,7 +101,7 @@ message MsgFinishInference {
   string transfer_signature     = 10;
   string executor_signature     = 11;
   string requested_by           = 12;
-  string prompt_payload         = 13;
+  string original_prompt         = 13;
 }
 
 message MsgFinishInferenceResponse {

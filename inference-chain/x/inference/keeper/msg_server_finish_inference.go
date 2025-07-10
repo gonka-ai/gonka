@@ -86,7 +86,7 @@ func (k msgServer) verifyFinishKeys(ctx context.Context, msg *types.MsgFinishInf
 
 func getFinishSignatureComponents(msg *types.MsgFinishInference) calculations.SignatureComponents {
 	return calculations.SignatureComponents{
-		Payload:         msg.PromptPayload,
+		Payload:         msg.OriginalPrompt,
 		Timestamp:       msg.RequestTimestamp,
 		TransferAddress: msg.TransferredBy,
 		ExecutorAddress: msg.ExecutedBy,

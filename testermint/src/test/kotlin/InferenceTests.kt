@@ -12,6 +12,7 @@ import java.time.Instant
 class InferenceTests : TestermintTest() {
     @Test
     fun `valid inference`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -28,6 +29,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `wrong TA address`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(
@@ -163,6 +165,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `old timestamp`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().minusSeconds(20).toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -175,6 +178,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `repeated request rejected`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -282,6 +286,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor rejects duplicate requests`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -331,7 +336,7 @@ class InferenceTests : TestermintTest() {
             executorSignature = taSignature,
             transferredBy = genesisAddress,
             requestedBy = genesisAddress,
-            promptPayload = inferenceRequest,
+            originalPrompt = inferenceRequest,
         )
         val response = genesis.submitMessage(message)
         println(response)
