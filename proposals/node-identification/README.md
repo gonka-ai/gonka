@@ -57,21 +57,20 @@ The fix ensures correct validator lookup regardless of how the validator was cre
    // Instead of using consensus key address:
    // newValAddr, err := sdk.ValAddressFromHex(computeResult.ValidatorPubKey.Address().String())
    
-   // Use the provided operator address (account-based):
-   accAddr, err := sdk.AccAddressFromBech32(computeResult.OperatorAddress)
+   // Use the provided operator address directly (it's already a valoper address):
+   newValAddr, err := sdk.ValAddressFromBech32(computeResult.OperatorAddress)
    if err != nil {
        return nil, err
    }
-   newValAddr := sdk.ValAddress(accAddr)
    ```
 
-3. **Ensure `ComputeResult.OperatorAddress` contains account-derived validator address**:
+3. **Ensure `ComputeResult.OperatorAddress` contains validator operator address**:
    ```go
-   // In GetComputeResults, make sure OperatorAddress is account-based
+   // In GetComputeResults, convert account address to valoper address
    computeResults = append(computeResults, keeper.ComputeResult{
        Power:           getWeight(member),
        ValidatorPubKey: &pubKey,
-       OperatorAddress: sdk.ValAddress(member.Member.Address).String(), // Account-based valoper
+       OperatorAddress: sdk.ValAddress(member.Member.Address).String(), // Convert to valoper
    })
    ```
 
