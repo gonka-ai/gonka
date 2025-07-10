@@ -348,9 +348,11 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	requestOffset := time.Duration(lastHeightTime - request.Timestamp)
 	logging.Info("Request offset for executor", types.Inferences, "offset", requestOffset.String(), "lastHeightTime", lastHeightTime, "requestTimestamp", request.Timestamp)
 	if requestOffset > 10*time.Second {
+		logging.Warn("Request timestamp is too old", types.Inferences, "inferenceId", inferenceId, "offset", requestOffset.String())
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
 	}
 	if requestOffset < -10*time.Second {
+		logging.Warn("Request timestamp is in the future", types.Inferences, "inferenceId", inferenceId, "offset", requestOffset.String())
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
 	}
 

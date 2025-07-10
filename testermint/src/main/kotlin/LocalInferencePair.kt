@@ -221,8 +221,9 @@ data class LocalInferencePair(
         }
 
         val address = node.getAddress()
-        val signature = node.signPayload(requestWithStream, account, timestamp = Instant.now().toEpochMilli(), endpointAccount = address)
-        return api.createInferenceStreamConnection(requestWithStream, address, signature)
+        val timestamp = Instant.now().toEpochNanos()
+        val signature = node.signPayload(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
+        return api.createInferenceStreamConnection(requestWithStream, address, signature, timestamp)
     }
 
     fun getCurrentBlockHeight(): Long {

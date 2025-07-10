@@ -140,6 +140,7 @@ data class ApplicationAPI(
         request: String,
         address: String,
         signature: String,
+        timestamp: Long,
     ): StreamConnection =
         wrapLog("CreateInferenceStreamConnection", true) {
             val url = urlFor(SERVER_TYPE_PUBLIC)
@@ -147,7 +148,8 @@ data class ApplicationAPI(
                 url = "$url/v1/chat/completions",
                 address = address,
                 signature = signature,
-                jsonBody = request
+                jsonBody = request,
+                timestamp = timestamp
             )
         }
 
@@ -375,7 +377,7 @@ fun stream(url: String, address: String, signature: String, jsonBody: String): L
  * @param jsonBody The JSON request body
  * @return A StreamConnection object that can be used to read from the stream and interrupt it
  */
-fun createStreamConnection(url: String, address: String, signature: String, jsonBody: String): StreamConnection {
+fun createStreamConnection(url: String, address: String, signature: String, jsonBody: String, timestamp: Long): StreamConnection {
     // Set up the URL and connection
     val url = URL(url)
     val connection = url.openConnection() as HttpURLConnection
@@ -383,6 +385,7 @@ fun createStreamConnection(url: String, address: String, signature: String, json
     connection.setRequestProperty("X-Requester-Address", address)
     connection.setRequestProperty("Authorization", signature)
     connection.setRequestProperty("Content-Type", "application/json")
+    connection.setRequestProperty("X-Timestamp", timestamp.toString())
     connection.doOutput = true
 
     // Send the request body
