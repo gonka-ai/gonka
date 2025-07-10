@@ -188,7 +188,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address)
+            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
             assertThat(result).isNotNull
             var inference: InferencePayload? = null
             var tries = 0
@@ -220,7 +220,7 @@ class InferenceAccountingTests : TestermintTest() {
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester)
+                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getAddress())
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
