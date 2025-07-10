@@ -37,7 +37,8 @@ class TokenomicsTests : TestermintTest() {
         assertThat(topMiner2.address).isEqualTo(genesis.node.getAddress())
         assertThat(topMiner2.firstQualifiedStarted).isEqualTo(startTime)
         assertThat(topMiner2.lastQualifiedStarted).isEqualTo(startTime)
-        assertThat(topMiner2.qualifiedTime).isCloseTo(100, Offset.offset(3))
+        val epochLength = genesis.getParams().epochParams.epochLength
+        assertThat(topMiner2.qualifiedTime).isCloseTo(epochLength * 5, Offset.offset(3))
         assertThat(topMiner2.lastUpdatedTime).isEqualTo(startTime + topMiner2.qualifiedTime!!)
     }
 

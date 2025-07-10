@@ -6,8 +6,9 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/training"
-	"github.com/labstack/echo/v4"
 	"net/http"
+
+	"github.com/labstack/echo/v4"
 )
 
 type Server struct {
@@ -27,6 +28,7 @@ func NewServer(
 	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
 		e:                e,
 		nodeBroker:       nodeBroker,
@@ -68,6 +70,7 @@ func NewServer(
 	g.POST("bridge/block", s.postBlock)
 	g.GET("bridge/status", s.getBridgeStatus)
 
+	g.GET("epochs/:epoch", s.getEpochById)
 	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	return s
 }

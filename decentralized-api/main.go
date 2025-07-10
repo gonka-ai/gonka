@@ -4,20 +4,23 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/mlnodeclient"
+	"net"
+
 	"github.com/productscience/inference/api/inference/inference"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	"net"
 
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
-	"decentralized-api/participant_registration"
+	"decentralized-api/participant"
 	"decentralized-api/training"
 	"encoding/json"
 	"fmt"
@@ -29,7 +32,6 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 )
 
 func main() {
@@ -61,7 +63,7 @@ func main() {
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
 		context.Background(),
 		"gonka",
-		10,
+		20,
 		5*time.Second,
 		config,
 	)
@@ -69,7 +71,15 @@ func main() {
 		panic(err)
 	}
 
-	nodeBroker := broker.NewBroker(recorder)
+	chainPhaseTracker := chainphase.NewChainPhaseTracker()
+
+	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
+	if err != nil {
+		logging.Error("Failed to get participant info", types.Participants, "error", err)
+		return
+	}
+	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, config.GetChainNodeConfig().Url)
+	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, config.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{})
 	nodes := config.GetNodes()
 	for _, node := range nodes {
 		nodeBroker.LoadNodeToBroker(&node)
@@ -80,31 +90,25 @@ func main() {
 		logging.Error("Failed to get params", types.System, "error", err)
 		return
 	}
+	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
 
-	if err := participant_registration.RegisterParticipantIfNeeded(recorder, config, nodeBroker); err != nil {
+	if err := participant.RegisterParticipantIfNeeded(recorder, config); err != nil {
 		logging.Error("Failed to register participant", types.Participants, "error", err)
 		return
 	}
 
-	pubKey, err := recorder.Account.Record.GetPubKey()
-	if err != nil {
-		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
-		return
-	}
-	pubKeyString := utils.PubKeyToHexString(pubKey)
-
 	logging.Debug("Initializing PoC orchestrator",
 		types.PoC, "name", recorder.Account.Name,
-		"address", recorder.Address,
-		"pubkey", pubKeyString)
+		"address", participantInfo.GetAddress(),
+		"pubkey", participantInfo.GetPubKey())
 
-	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
-		pubKeyString,
+	nodePocOrchestrator := poc.NewNodePoCOrchestratorForCosmosChain(
+		participantInfo.GetPubKey(),
 		nodeBroker,
 		config.GetApiConfig().PoCCallbackUrl,
 		config.GetChainNodeConfig().Url,
 		recorder,
-		&params.Params,
+		chainPhaseTracker,
 	)
 	logging.Info("node PocOrchestrator orchestrator initialized", types.PoC, "nodePocOrchestrator", nodePocOrchestrator)
 
@@ -119,7 +123,7 @@ func main() {
 	trainingExecutor := training.NewExecutor(ctx, nodeBroker, recorder)
 
 	validator := validation.NewInferenceValidator(nodeBroker, config, recorder)
-	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, cancel)
+	listener := event_listener.NewEventListener(config, nodePocOrchestrator, nodeBroker, validator, *recorder, trainingExecutor, chainPhaseTracker, cancel)
 	// TODO: propagate trainingExecutor
 	go listener.Start(ctx)
 

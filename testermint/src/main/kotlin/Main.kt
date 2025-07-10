@@ -80,7 +80,7 @@ fun getInterruptedStreamingInferenceResult(
         .copy(model = modelName ?: baseObject.model)
     val payload = inferenceObject.toJson()
 
-    val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead)
+    val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead, checkFinished = true)
     val afterInference = highestFunded.api.getParticipants().also { Logger.info("After inference: $it") }
     return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
 }
@@ -222,10 +222,11 @@ private fun makeStreamingInferenceRequest(highestFunded: LocalInferencePair, pay
  * @return The inference payload
  */
 fun makeInterruptedStreamingInferenceRequest(
-    highestFunded: LocalInferencePair, 
+    highestFunded: LocalInferencePair,
     payload: String,
     maxLinesToRead: Int = 1,
-    check: Boolean = true,
+    checkStarted: Boolean = true,
+    checkFinished: Boolean = false,
 ): InferencePayload {
     highestFunded.waitForFirstValidators()
 
@@ -268,7 +269,7 @@ fun makeInterruptedStreamingInferenceRequest(
 
     logSection("Waiting for stream to complete")
     Thread.sleep(10000)
-    if (!check) {
+    if (!checkStarted && !checkFinished) {
         return InferencePayload.empty()
     }
     check(inferenceId != null) { "Failed to get inference ID from stream before interruption" }
@@ -281,7 +282,11 @@ fun makeInterruptedStreamingInferenceRequest(
         } catch (_: FuelError) {
             InferencePayload.empty()
         }
-    }.take(5).firstOrNull { it != null }
+    }
+        .take(5)
+        .firstOrNull {
+            it.inferenceId.isNotEmpty() && (!checkFinished || it.checkComplete())
+        }
 
     // Note: We don't check if the inference is complete, as it may not be due to interruption
     return inference ?: InferencePayload.empty()
@@ -415,7 +420,7 @@ val inferenceConfig = ApplicationConfig(
     genesisSpec = createSpec()
 )
 
-fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = spec {
+fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = spec {
     this[AppState::gov] = spec<GovState> {
         this[GovState::params] = spec<GovParams> {
             this[GovParams::votingPeriod] = Duration.ofSeconds(30)

@@ -104,10 +104,14 @@ class ResponseService {
         weight: Long,
         publicKey: String,
         blockHash: String,
-        blockHeight: Int
+        blockHeight: Int,
+        nodeNumber: Int,
     ): String {
         // Generate 'weight' number of nonces
-        val nonces = (1..weight).toList()
+        // nodeNumber makes sure nonces are unique in a multi-node setup
+        val start = (nodeNumber - 1) * weight + 1
+        val end = nodeNumber * weight
+        val nonces = (start..end).toList()
         // Generate distribution values evenly spaced from 0.0 to 1.0
         val dist = (1..weight).map { it.toDouble() / weight }
 

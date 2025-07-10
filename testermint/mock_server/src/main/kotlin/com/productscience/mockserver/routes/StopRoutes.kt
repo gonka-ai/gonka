@@ -5,6 +5,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.http.*
 import com.productscience.mockserver.model.ModelState
+import com.productscience.mockserver.model.PowState
 
 /**
  * Configures routes for stop-related endpoints.
@@ -14,6 +15,7 @@ fun Route.stopRoutes() {
     post("/api/v1/stop") {
         // Update the state to STOPPED
         ModelState.updateState(ModelState.STOPPED)
+        PowState.updateState(PowState.POW_STOPPED)
         
         // Respond with 200 OK
         call.respond(HttpStatusCode.OK)

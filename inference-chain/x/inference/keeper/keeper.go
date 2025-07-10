@@ -96,6 +96,11 @@ func (k Keeper) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interf
 	k.Logger().Warn(msg, append(keyvals, "subsystem", subSystem.String())...)
 }
 
-func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyvals ...interface{}) {
-	k.Logger().Debug(msg, append(keyvals, "subsystem", subSystem.String())...)
+func (k Keeper) LogDebug(msg string, subSystem types.SubSystem, keyVals ...interface{}) {
+	k.Logger().Debug(msg, append(keyVals, "subsystem", subSystem.String())...)
+}
+
+// Codec returns the binary codec used by the keeper.
+func (k Keeper) Codec() codec.BinaryCodec {
+	return k.cdc
 }

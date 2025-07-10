@@ -27,7 +27,7 @@
           "poc_stage_duration": "4",
           "poc_exchange_duration": "1",
           "poc_validation_delay": "1",
-          "poc_validation_duration": "2"
+          "poc_validation_duration": "4"
         },
         "validation_params": {
           "expiration_blocks": "10",

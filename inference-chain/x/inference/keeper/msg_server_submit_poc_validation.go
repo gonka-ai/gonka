@@ -16,15 +16,39 @@ func (k msgServer) SubmitPocValidation(goCtx context.Context, msg *types.MsgSubm
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 	epochParams := k.Keeper.GetParams(ctx).EpochParams
+	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
+	if !found {
+		k.LogError(PocFailureTag+"[SubmitPocValidation] Failed to get upcoming epoch", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
+			"currentBlockHeight", currentBlockHeight)
+		return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "[SubmitPocBatch] Failed to get upcoming epoch")
+	}
+	epochContext := types.NewEpochContext(*upcomingEpoch, *epochParams)
 
-	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocValidation] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocValidation] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
+	if !epochContext.IsStartOfPocStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"[SubmitPocValidation] message start block height doesn't match the upcoming epoch", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
+			"msg.PocStageStartBlockHeight", startBlockHeight,
+			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext", epochContext)
+		errMsg := fmt.Sprintf("[SubmitPocValidation] message start block height doesn't match the upcoming epoch. "+
+			"participant = %s. validatorParticipant = %s"+
+			"msg.PocStageStartBlockHeight = %d. epochContext.PocStartBlockHeight = %d. currentBlockHeight = %d",
+			msg.ParticipantAddress, msg.Creator, startBlockHeight, epochContext.PocStartBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !epochParams.IsValidationExchangeWindow(startBlockHeight, currentBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC, "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
+	if !epochContext.IsValidationExchangeWindow(currentBlockHeight) {
+		k.LogError(PocFailureTag+"[SubmitPocValidation] PoC validation exchange window is closed.", types.PoC,
+			"participant", msg.ParticipantAddress,
+			"validatorParticipant", msg.Creator,
+			"msg.BlockHeight", startBlockHeight,
+			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext", epochContext)
 		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
