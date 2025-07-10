@@ -29,7 +29,7 @@ func TestInferenceValidationDetailsQuerySingle(t *testing.T) {
 		{
 			desc: "First",
 			request: &types.QueryGetInferenceValidationDetailsRequest{
-				EpochId:     msgs[0].EpochId,
+				EpochId:     msgs[0].EpochGroupId,
 				InferenceId: msgs[0].InferenceId,
 			},
 			response: &types.QueryGetInferenceValidationDetailsResponse{InferenceValidationDetails: msgs[0]},
@@ -37,7 +37,7 @@ func TestInferenceValidationDetailsQuerySingle(t *testing.T) {
 		{
 			desc: "Second",
 			request: &types.QueryGetInferenceValidationDetailsRequest{
-				EpochId:     msgs[1].EpochId,
+				EpochId:     msgs[1].EpochGroupId,
 				InferenceId: msgs[1].InferenceId,
 			},
 			response: &types.QueryGetInferenceValidationDetailsResponse{InferenceValidationDetails: msgs[1]},

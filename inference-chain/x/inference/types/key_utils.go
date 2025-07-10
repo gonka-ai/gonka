@@ -1,11 +1,20 @@
 package types
 
-import "strconv"
+import sdk "github.com/cosmos/cosmos-sdk/types"
 
 func StringKey(id string) []byte {
 	var key []byte
 
 	idBytes := []byte(id)
+	key = append(key, idBytes...)
+	key = append(key, []byte("/")...)
+
+	return key
+}
+
+func uintKey(id uint64) []byte {
+	var key []byte
+	idBytes := sdk.Uint64ToBigEndian(id)
 	key = append(key, idBytes...)
 	key = append(key, []byte("/")...)
 
@@ -19,14 +28,4 @@ func stringsKey(ids ...string) []byte {
 		key = append(key, '/')
 	}
 	return key
-}
-
-func intKey(id int64) []byte {
-	idStr := strconv.FormatInt(id, 10)
-	return StringKey(idStr)
-}
-
-func uintKey(id uint64) []byte {
-	idStr := strconv.FormatUint(id, 10)
-	return StringKey(idStr)
 }

@@ -5,9 +5,10 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/logging"
 	"errors"
+	"net/http"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 func (s *Server) getNodes(ctx echo.Context) error {
@@ -42,7 +43,7 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 	nodes, err := nodeBroker.GetNodes()
 	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
-		node := *n.Node
+		node := n.Node
 
 		models := make(map[string]apiconfig.ModelConfig)
 		for model, cfg := range node.Models {
@@ -123,4 +124,70 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 	}
 
 	return *node, nil
+}
+
+// enableNode handles POST /admin/v1/nodes/:id/enable
+func (s *Server) enableNode(c echo.Context) error {
+	nodeId := c.Param("id")
+	if nodeId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "node id is required",
+		})
+	}
+
+	response := make(chan error, 2)
+	err := s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
+		NodeId:   nodeId,
+		Enabled:  true,
+		Response: response,
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "failed to queue command: " + err.Error(),
+		})
+	}
+
+	if err := <-response; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "node enabled successfully",
+		"node_id": nodeId,
+	})
+}
+
+// disableNode handles POST /admin/v1/nodes/:id/disable
+func (s *Server) disableNode(c echo.Context) error {
+	nodeId := c.Param("id")
+	if nodeId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "node id is required",
+		})
+	}
+
+	response := make(chan error, 2)
+	err := s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
+		NodeId:   nodeId,
+		Enabled:  false,
+		Response: response,
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "failed to queue command: " + err.Error(),
+		})
+	}
+
+	if err := <-response; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "node disabled successfully",
+		"node_id": nodeId,
+	})
 }

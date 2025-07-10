@@ -17,6 +17,9 @@ import com.productscience.inferenceRequest
 import com.productscience.inferenceRequestObject
 import com.productscience.initCluster
 import com.productscience.logSection
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
@@ -61,9 +64,19 @@ class InferenceAccountingTests : TestermintTest() {
             it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
         }
         val seed = Random.nextInt()
-        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
-        val lastRequest =
-            cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+
+        CoroutineScope(Dispatchers.Default).launch {
+            genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        }
+
+        var lastRequest: InferenceRequestPayload? = null
+        var attempts = 0
+        while (lastRequest == null && attempts < 5) {
+            Thread.sleep(Duration.ofSeconds(1))
+            attempts++
+            lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+        }
+
         assertThat(lastRequest).isNotNull
         assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
@@ -199,7 +212,6 @@ class InferenceAccountingTests : TestermintTest() {
 
     private fun getFailingInference(
         cluster: LocalCluster,
-        failingAddress: String,
         requestingNode: LocalInferencePair = cluster.genesis,
         requester: String? = cluster.genesis.node.getAddress(),
     ): List<InferencePayload> {
@@ -220,7 +232,7 @@ class InferenceAccountingTests : TestermintTest() {
                     val inferences = cluster.genesis.node.getInferences()
                     foundInference =
                         inferences.inference
-                            .firstOrNull { it.assignedTo == failingAddress && it.startBlockHeight >= currentBlock }
+                            .firstOrNull { it.startBlockHeight >= currentBlock }
                     if (tries++ > 5) {
                         error("Could not find inference after block $currentBlock")
                     }
@@ -236,7 +248,7 @@ class InferenceAccountingTests : TestermintTest() {
     fun `verify failed inference is refunded`() {
         val (localCluster, genesis) = initCluster()
         logSection("Waiting to clear claims")
-        genesis.waitForStage(EpochStage.END_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
         val timeoutsAtStart = genesis.node.getInferenceTimeouts()
@@ -280,9 +292,10 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
-            val failingAddress = localCluster.joinPairs.first().node.getAddress()
-            val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
+            localCluster.joinPairs.forEach {
+                it.mock?.setInferenceResponse("This is invalid json!!!")
+            }
+            val inferences = getFailingInference(localCluster, consumer.pair, consumer.address)
             val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
             val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
             logSection("Waiting for inference to expire")
@@ -317,7 +330,7 @@ fun verifySettledInferences(
     // More than just debugging, this forces the evaluation of the sequence
     val allInferences = inferences.toList()
     highestFunded.waitForStage(EpochStage.START_OF_POC)
-    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS)
+    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
 
     logSection("Verifying balance changes")
     val afterSettleParticipants = highestFunded.api.getParticipants()

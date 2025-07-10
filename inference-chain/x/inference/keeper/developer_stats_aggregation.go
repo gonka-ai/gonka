@@ -16,13 +16,23 @@ type StatsSummary struct {
 }
 
 func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference) error {
-	k.LogInfo("SetDeveloperStats: got stat", types.Stat, "inference_id", inference.InferenceId, "inference_status", inference.Status.String(), "developer", inference.RequestedBy, "poc_block_height", inference.EpochGroupId)
-	epoch, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		return err
+	epochId := inference.EpochId
+	if epochId == 0 {
+		effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+		if !found {
+			k.LogError("SetDeveloperStats. failed to get effective epoch index for inference", types.Stat, "inference_id", inference.InferenceId)
+			return types.ErrEffectiveEpochNotFound.Wrapf("SetDeveloperStats. failed to get effective epoch index for inference %s", inference.InferenceId)
+		}
+		epochId = effectiveEpoch.Index
 	}
 
-	currentEpochId := epoch.GroupData.EpochGroupId
+	k.LogInfo("SetDeveloperStats: got stat", types.Stat,
+		"inference_id", inference.InferenceId,
+		"inference_status", inference.Status.String(),
+		"developer", inference.RequestedBy,
+		"poc_block_height", inference.EpochPocStartBlockHeight,
+		"epoch_id", epochId)
+
 	tokens := inference.CompletionTokenCount + inference.PromptTokenCount
 	inferenceTime := inference.EndBlockTimestamp
 	if inferenceTime == 0 {
@@ -30,24 +40,24 @@ func (k Keeper) SetDeveloperStats(ctx context.Context, inference types.Inference
 	}
 
 	inferenceStats := types.InferenceStats{
-		EpochPocBlockHeight: inference.EpochGroupId,
-		InferenceId:         inference.InferenceId,
-		Status:              inference.Status,
-		TotalTokenCount:     tokens,
-		Model:               inference.Model,
-		ActualCostInCoins:   inference.ActualCost,
+		EpochId:           inference.EpochId,
+		InferenceId:       inference.InferenceId,
+		Status:            inference.Status,
+		TotalTokenCount:   tokens,
+		Model:             inference.Model,
+		ActualCostInCoins: inference.ActualCost,
 	}
 
-	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, currentEpochId)
+	inferencePrevEpochId, err := k.setOrUpdateInferenceStatByTime(ctx, inference.RequestedBy, inferenceStats, inferenceTime, epochId)
 	if err != nil {
 		return err
 	}
 	k.setInferenceStatsByModel(ctx, inference.RequestedBy, inferenceStats, inferenceTime)
-	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, currentEpochId, inferencePrevEpochId)
+	k.setOrUpdateInferenceStatsByEpoch(ctx, inference.RequestedBy, inferenceStats, epochId, inferencePrevEpochId)
 	return nil
 }
 
-// PRTODO: refactor it later (move ”getter' logic to store level)
+// TODO: refactor it later (move ”getter' logic to store level)
 func (k Keeper) GetDevelopersStatsByEpoch(ctx context.Context, developerAddr string, epochId uint64) (types.DeveloperStatsByEpoch, bool) {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	epochStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByEpoch))
@@ -128,14 +138,14 @@ func (k Keeper) GetSummaryLastNEpochs(ctx context.Context, n int) StatsSummary {
 	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByInference))
 	byTimeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
-	currentEpoch, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogError("error getting current group id", types.Stat, "err", err.Error())
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	k.LogInfo("GetSummaryLastNEpochs: fetched effectiveEpochIndex", types.Stat, "effectiveEpochIndex", effectiveEpochIndex)
+	if !found {
+		k.LogError("GetSummaryLastNEpochs. failed to get effective epoch index.", types.Stat)
 		return StatsSummary{}
 	}
-
-	epochIdFrom := currentEpoch.GroupData.EpochGroupId - uint64(n)
-	epochIdTo := currentEpoch.GroupData.EpochGroupId
+	epochIdFrom := effectiveEpochIndex - uint64(n)
+	epochIdTo := effectiveEpochIndex
 
 	iter := epochStore.Iterator(sdk.Uint64ToBigEndian(epochIdFrom), sdk.Uint64ToBigEndian(epochIdTo))
 	defer iter.Close()
@@ -182,14 +192,13 @@ func (k Keeper) GetSummaryLastNEpochsByDeveloper(ctx context.Context, developerA
 	byInferenceStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByInference))
 	byTimeStore := prefix.NewStore(store, types.KeyPrefix(StatsDevelopersByTime))
 
-	currentEpoch, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		k.LogError("error getting current group id", types.Stat, "err", err.Error())
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("GetSummaryLastNEpochsByDeveloper. failed to get effective epoch index.", types.Stat, "developerAddr", developerAddr)
 		return StatsSummary{}
 	}
-
-	epochIdFrom := currentEpoch.GroupData.EpochGroupId - uint64(n)
-	epochIdTo := currentEpoch.GroupData.EpochGroupId
+	epochIdFrom := effectiveEpochIndex - uint64(n)
+	epochIdTo := effectiveEpochIndex
 
 	iterator := epochStore.Iterator(sdk.Uint64ToBigEndian(epochIdFrom), sdk.Uint64ToBigEndian(epochIdTo))
 	defer iterator.Close()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/poc"
@@ -37,11 +38,12 @@ const (
 type EventListener struct {
 	nodeBroker          *broker.Broker
 	configManager       *apiconfig.ConfigManager
-	nodePocOrchestrator *poc.NodePoCOrchestrator
 	validator           *validation.InferenceValidator
 	transactionRecorder cosmosclient.InferenceCosmosClient
 	trainingExecutor    *training.Executor
 	nodeCaughtUp        atomic.Bool
+	phaseTracker        *chainphase.ChainPhaseTracker
+	dispatcher          *OnNewBlockDispatcher
 	cancelFunc          context.CancelFunc
 
 	ws *websocket.Conn
@@ -49,20 +51,32 @@ type EventListener struct {
 
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
-	nodePocOrchestrator *poc.NodePoCOrchestrator,
+	nodePocOrchestrator poc.NodePoCOrchestrator,
 	nodeBroker *broker.Broker,
 	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	trainingExecutor *training.Executor,
+	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
 ) *EventListener {
+	// Create the new block dispatcher
+	dispatcher := NewOnNewBlockDispatcherFromCosmosClient(
+		nodeBroker,
+		configManager,
+		nodePocOrchestrator,
+		&transactionRecorder,
+		phaseTracker,
+		DefaultReconciliationConfig,
+	)
+
 	return &EventListener{
 		nodeBroker:          nodeBroker,
 		transactionRecorder: transactionRecorder,
 		configManager:       configManager,
-		nodePocOrchestrator: nodePocOrchestrator,
 		validator:           validator,
 		trainingExecutor:    trainingExecutor,
+		phaseTracker:        phaseTracker,
+		dispatcher:          dispatcher,
 		cancelFunc:          cancelFunc,
 	}
 }
@@ -224,8 +238,10 @@ func (el *EventListener) startSyncStatusChecker() {
 			continue
 		}
 		// The node is "synced" if it's NOT catching up.
-		el.updateNodeSyncStatus(!status.SyncInfo.CatchingUp)
-		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", !status.SyncInfo.CatchingUp, "height", status.SyncInfo.LatestBlockHeight)
+		isSynced := !status.SyncInfo.CatchingUp
+		el.updateNodeSyncStatus(isSynced)
+		// Note: Sync status is now handled by the dispatcher during block processing
+		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", isSynced, "height", status.SyncInfo.LatestBlockHeight)
 	}
 }
 
@@ -242,10 +258,24 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 	switch event.Result.Data.Type {
 	case newBlockEventType:
 		logging.Debug("New block event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
-		if el.isNodeSynced() {
-			poc.ProcessNewBlockEvent(el.nodePocOrchestrator, event, el.transactionRecorder, el.configManager)
+
+		// Parse the event into NewBlockInfo
+		blockInfo, err := parseNewBlockInfo(event)
+		if err != nil {
+			logging.Error("Failed to parse new block info", types.EventProcessing, "error", err, "worker", workerName)
+			return
 		}
+
+		// Process using the new dispatcher
+		ctx := context.Background() // We could pass this from caller if needed
+		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
+		if err != nil {
+			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
+		}
+
+		// Still handle upgrade processing separately
 		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
+
 	case txEventType:
 		logging.Info("New Tx event received", types.EventProcessing, "type", event.Result.Data.Type, "worker", workerName)
 		el.handleMessage(event, workerName)
