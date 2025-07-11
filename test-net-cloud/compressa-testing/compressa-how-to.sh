@@ -4,6 +4,7 @@
 export ACCOUNT_NAME="test-account"
 # Url of the genesis k8s node API
 export NODE_URL="http://34.9.136.116:30000"
+# export NODE_URL="http://34.9.136.116:30010"
 export GONKA_ENDPOINTS=$NODE_URL/v1
 # export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
 # export INFERENCED_BINARY="inferenced"
