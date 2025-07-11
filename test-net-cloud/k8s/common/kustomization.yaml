@@ -7,3 +7,4 @@ resources:
 
 # Common ConfigMaps
 - node-configs/node-config-configmap.yaml
+- node-configs/node-config-configmap-genesis.yaml
