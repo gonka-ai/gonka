@@ -1,0 +1,25 @@
+# Run:
+# kubectl apply -f gpu-smoke-test.yaml
+# Logs:
+# kubectl logs -f job/gpu-smoke-test
+# Debug:
+# kubectl get pods -l job-name=gpu-smoke-test -o wide
+# kubectl describe pod <pod-name>
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-smoke-test
+spec:
+  backoffLimit: 0           # fail fast
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker-4   # pin to the new node
+      containers:
+        - name: nvidia-smi
+          image: nvidia/cuda:12.3.0-base-ubuntu22.04
+          command: ["nvidia-smi", "-L"]          # list visible GPUs
+          resources:
+            limits:
+              nvidia.com/gpu: "1"                # request a GPU
