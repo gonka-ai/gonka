@@ -298,7 +298,7 @@ func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Ms
 	}
 	response, err := c.Client.Context().BroadcastTxSync(txBytes)
 	if err == nil && response.Code == 0 {
-		logging.Info("Tx added to mempool", types.Messages, "factory_sequence", factory.Sequence())
+		logging.Info("Got SUCCESSFULL resp for tx from BroadcastTxSync", types.Messages, "tx.Hash", response.TxHash)
 		highestSequence = int64(factory.Sequence())
 	}
 	return response, err
