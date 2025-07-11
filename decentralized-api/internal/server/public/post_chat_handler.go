@@ -312,53 +312,9 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 
 func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w http.ResponseWriter) error {
 	inferenceId := request.InferenceId
-	queryClient := s.recorder.NewInferenceQueryClient()
-	dev, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	err := s.validateFullRequest(ctx, request)
 	if err != nil {
-		logging.Error("Failed to get inference requester", types.Inferences, "address", request.RequesterAddress, "error", err)
 		return err
-	}
-
-	transfer, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.TransferAddress})
-	if err != nil {
-		logging.Error("Failed to get transfer participant", types.Inferences, "address", request.TransferAddress, "error", err)
-		return err
-	}
-
-	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
-		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
-	}
-
-	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAddress(), request.TransferSignature); err != nil {
-		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
-	}
-
-	// Check if AuthKey has been used before for an executor request and validate timestamp
-	status, err := s.recorder.GetCosmosClient().Status(context.Background())
-	if err != nil {
-		logging.Error("Failed to get status", types.Inferences, "error", err)
-		return err
-	}
-	currentBlockHeight := status.SyncInfo.LatestBlockHeight
-	lastHeightTime := status.SyncInfo.LatestBlockTime.UnixNano()
-
-	// Validate timestamp
-	requestOffset := time.Duration(lastHeightTime - request.Timestamp)
-	logging.Info("Request offset for executor", types.Inferences, "offset", requestOffset.String(), "lastHeightTime", lastHeightTime, "requestTimestamp", request.Timestamp)
-	if requestOffset > 10*time.Second {
-		logging.Warn("Request timestamp is too old", types.Inferences, "inferenceId", inferenceId, "offset", requestOffset.String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
-	}
-	if requestOffset < -10*time.Second {
-		logging.Warn("Request timestamp is in the future", types.Inferences, "inferenceId", inferenceId, "offset", requestOffset.String())
-		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
-	}
-
-	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {
-		logging.Warn("AuthKey reuse detected for executor request", types.Inferences, "authKey", request.AuthKey)
-		return echo.NewHTTPError(http.StatusBadRequest, "AuthKey has already been used for an executor request")
 	}
 
 	seed, err := strconv.Atoi(request.Seed)
@@ -421,6 +377,65 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
 		return nil
+	}
+	return nil
+}
+
+func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) error {
+	queryClient := s.recorder.NewInferenceQueryClient()
+	dev, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	if err != nil {
+		logging.Error("Failed to get inference requester", types.Inferences, "address", request.RequesterAddress, "error", err)
+		return err
+	}
+
+	transfer, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.TransferAddress})
+	if err != nil {
+		logging.Error("Failed to get transfer participant", types.Inferences, "address", request.TransferAddress, "error", err)
+		return err
+	}
+
+	if err := validateTransferRequest(request, dev.Pubkey); err != nil {
+		logging.Error("Unable to validate request against PubKey", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
+	}
+
+	if err = validateExecuteRequest(request, transfer.Pubkey, s.recorder.GetAddress(), request.TransferSignature); err != nil {
+		logging.Error("Unable to validate request against TransferSignature", types.Inferences, "error", err)
+		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against TransferSignature:"+err.Error())
+	}
+
+	err = s.validateTimestampNonce(err, request)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
+	status, err := s.recorder.GetCosmosClient().Status(context.Background())
+	if err != nil {
+		logging.Error("Failed to get status", types.Inferences, "error", err)
+		return err
+	}
+
+	currentBlockHeight := status.SyncInfo.LatestBlockHeight
+	lastHeightTime := status.SyncInfo.LatestBlockTime.UnixNano()
+
+	requestOffset := time.Duration(lastHeightTime - request.Timestamp)
+	logging.Info("Request offset for executor", types.Inferences, "offset", requestOffset.String(), "lastHeightTime", lastHeightTime, "requestTimestamp", request.Timestamp)
+	if requestOffset > 10*time.Second {
+		logging.Warn("Request timestamp is too old", types.Inferences, "inferenceId", request.InferenceId, "offset", requestOffset.String())
+		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
+	}
+	if requestOffset < -10*time.Second {
+		logging.Warn("Request timestamp is in the future", types.Inferences, "inferenceId", request.InferenceId, "offset", requestOffset.String())
+		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
+	}
+
+	if checkAndRecordAuthKey(request.AuthKey, currentBlockHeight, ExecutorContext) {
+		logging.Warn("AuthKey reuse detected for executor request", types.Inferences, "authKey", request.AuthKey)
+		return echo.NewHTTPError(http.StatusBadRequest, "AuthKey has already been used for an executor request")
 	}
 	return nil
 }
