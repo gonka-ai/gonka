@@ -300,7 +300,12 @@ func (eg *EpochGroup) GetComputeResults(ctx context.Context) ([]keeper.ComputeRe
 		// The VALIDATOR key, never to be confused with the account key (which is a sekp256k1 key)
 		pubKey := ed25519.PubKey{Key: pubKeyBytes}
 
-		valOperatorAddr := sdk.ValAddress(member.Member.Address).String()
+		accAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+		if err != nil {
+			eg.Logger.LogError("Error decoding account address", types.EpochGroup, "error", err)
+			continue
+		}
+		valOperatorAddr := sdk.ValAddress(accAddr).String()
 
 		computeResults = append(computeResults, keeper.ComputeResult{
 			Power:           getWeight(member),

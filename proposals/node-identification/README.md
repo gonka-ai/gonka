@@ -48,7 +48,7 @@ Modified the function to handle both address types by checking:
 
 The fix ensures correct validator lookup regardless of how the validator was created.
 
-### Long-term Fix - [TODO] (After Testnet Restart)
+### Long-term Fix - [COMPLETED]
 
 1. **Use consistent addressing**: Always use account keys for validator operator addresses
 
