@@ -13,7 +13,7 @@ services:
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
       - WITH_EXPLORER=true
-      - DEBUG=true
+      - DEBUG=false
     networks:
       - chain-public
     ports:
@@ -47,7 +47,7 @@ services:
       - DAPI_CHAIN_NODE__IS_GENESIS=true
       - DAPI_API__EXPLORER_URL=http://explorer:5173
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DEBUG=true
+      - DEBUG=false
     networks:
       - chain-public
 

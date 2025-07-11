@@ -79,6 +79,7 @@ fun Route.responseRoutes(responseService: ResponseService) {
     post("/api/v1/responses/poc") {
         try {
             val request = call.receive<SetPocResponseRequest>()
+            logger.info("Received SetPocResponseRequest. weight: ${request.weight}, scenario: ${request.scenarioName}")
             responseService.setPocResponse(request.weight, request.scenarioName)
 
             call.respond(

@@ -13,7 +13,7 @@ services:
       - SYNC_WITH_SNAPSHOTS=${SYNC_WITH_SNAPSHOTS}
       - SNAPSHOT_INTERVAL=100
       - SNAPSHOT_KEEP_RECENT=5
-      - DEBUG=true
+      - DEBUG=false
     ports:
       - "${RPC_PORT}:26657"
       - "${P2P_PORT}:26656"
@@ -43,7 +43,7 @@ services:
       - DAPI_API__TEST_MODE=true
       - DAPI_CHAIN_NODE__SEED_API_URL=${SEED_API_URL}
       - NODE_CONFIG_PATH=/root/node_config.json
-      - DEBUG=true
+      - DEBUG=false
     networks:
       - chain-public
 

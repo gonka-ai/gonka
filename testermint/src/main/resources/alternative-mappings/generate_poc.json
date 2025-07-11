@@ -1,0 +1,29 @@
+{
+  "scenarioName": "ModelState",
+  "newScenarioState": "POW",
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/pow/init/generate"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": ""
+  },
+  "postServeActions": {
+    "webhook": {
+      "method": "POST",
+      "url": "{{jsonPath originalRequest.body '$.url'}}/generated",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "delay": {
+        "type": "fixed",
+        "milliseconds": 1000
+      },
+      "body": "{ \"public_key\": \"{{jsonPath originalRequest.body '$.public_key'}}\",\"block_hash\": \"{{jsonPath originalRequest.body '$.block_hash'}}\",\"block_height\": {{jsonPath originalRequest.body '$.block_height'}},\"nonces\": [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],\"dist\": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]}"
+    }
+  }
+}

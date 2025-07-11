@@ -33,3 +33,4 @@ prod-local/
 /local-test-net/node_payload_2.json
 /testermint/downloads/
 /testermint/logs/
+balances-*.json

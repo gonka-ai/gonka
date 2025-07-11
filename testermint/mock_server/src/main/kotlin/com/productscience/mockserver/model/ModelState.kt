@@ -34,3 +34,28 @@ enum class ModelState {
         }
     }
 }
+
+enum class PowState {
+    POW_IDLE,
+    POW_NO_CONTROLLER,
+    POW_LOADING,
+    POW_GENERATING,
+    POW_VALIDATING,
+    POW_STOPPED,
+    POW_MIXED;
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(PowState::class.java)
+        private var currentState: PowState = POW_STOPPED
+
+        fun getCurrentState(): PowState {
+            return currentState
+        }
+
+        fun updateState(newState: PowState) {
+            logger.debug("POW state changing from $currentState to $newState")
+            currentState = newState
+            logger.debug("POW state changed to $newState")
+        }
+    }
+}

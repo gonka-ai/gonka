@@ -15,7 +15,7 @@ func (k Keeper) SetInferenceValidationDetails(ctx context.Context, inferenceVali
 	store := prefix.NewStore(storeAdapter, types.KeyPrefix(types.InferenceValidationDetailsKeyPrefix))
 	b := k.cdc.MustMarshal(&inferenceValidationDetails)
 	store.Set(types.InferenceValidationDetailsKey(
-		inferenceValidationDetails.EpochId,
+		inferenceValidationDetails.EpochGroupId,
 		inferenceValidationDetails.InferenceId,
 	), b)
 }

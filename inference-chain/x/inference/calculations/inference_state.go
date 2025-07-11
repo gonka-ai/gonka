@@ -49,6 +49,8 @@ func ProcessStartInference(
 			startMessage.RequestedBy,
 			"model",
 			startMessage.Model,
+			"assignedTo",
+			startMessage.AssignedTo,
 		)
 		currentInference = &types.Inference{
 			Index:       startMessage.InferenceId,

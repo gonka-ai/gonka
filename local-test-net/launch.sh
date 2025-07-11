@@ -20,6 +20,14 @@ sed "s/{{KEY_NAME}}/$KEY_NAME/g" ../testermint/src/main/resources/alternative-ma
 if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
   cp -r ../public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
 fi
+export WIREMOCK_PORT_2=8089
+mkdir -p "./prod-local/wiremock-2/$KEY_NAME/mappings/"
+mkdir -p "./prod-local/wiremock-2/$KEY_NAME/__files/"
+cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock-2/$KEY_NAME/mappings/"
+cp ../testermint/src/main/resources/alternative-mappings/generate_poc.json "./prod-local/wiremock-2/$KEY_NAME/mappings/generate_poc.json"
+if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
+  cp -r ../public-html/* "./prod-local/wiremock-2/$KEY_NAME/__files/"
+fi
 
 echo "Starting genesis node"
 docker compose -p genesis -f docker-compose-local-genesis.yml up -d

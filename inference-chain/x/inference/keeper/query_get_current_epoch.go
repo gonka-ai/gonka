@@ -16,12 +16,13 @@ func (k Keeper) GetCurrentEpoch(goCtx context.Context, req *types.QueryGetCurren
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	epochGroup, err := k.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("GetCurrentEpoch: No effective epoch found", types.EpochGroup)
+		return nil, status.Error(codes.NotFound, "no effective epoch found")
 	}
 
 	return &types.QueryGetCurrentEpochResponse{
-		Epoch: epochGroup.GroupData.EpochGroupId,
+		Epoch: epochIndex,
 	}, nil
 }
