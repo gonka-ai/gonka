@@ -63,3 +63,6 @@ kubectl -n genesis exec node-0 -- inferenced query inference list-inference --ou
 kubectl -n genesis exec node-0 -- inferenced query inference params --output json
 
 kubectl -n genesis exec node-0 -- inferenced query bank balances gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl --output json
+
+# Tunnel to admin API, might be useful to check node status
+kubectl port-forward -n genesis svc/api-private 9200:9200
