@@ -12,3 +12,4 @@ patches:
 - path: api-deployment-patch.yaml
 - path: inference-deployment-patch.yaml
 - path: config-patch.yaml
+- path: node-config-patch.yaml
