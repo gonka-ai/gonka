@@ -62,7 +62,7 @@ func ProcessStartInference(
 	currentInference.PromptHash = startMessage.PromptHash
 	currentInference.PromptPayload = startMessage.PromptPayload
 	if currentInference.PromptTokenCount == 0 {
-		currentInference.PromptTokenCount = startMessage.PromptTokenCount
+		logger.LogWarn("PromptTokenCount is 0!", types.Inferences, "inferenceId", startMessage.InferenceId)
 	}
 	currentInference.RequestedBy = startMessage.RequestedBy
 	currentInference.Model = startMessage.Model
