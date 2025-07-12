@@ -7,6 +7,7 @@ import (
 	"decentralized-api/participant"
 	"errors"
 	"fmt"
+	"github.com/productscience/inference/testutil/keeper"
 	"strconv"
 	"testing"
 	"time"
@@ -211,9 +212,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	mockChainBridge.On("GetParticipantAddress").Return("some-address")
 	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil)
 	mockChainBridge.On("GetGovernanceModels").Return(&types.QueryModelsAllResponse{
-		Model: []types.Model{
-			{Id: "test-model"},
-		},
+		Model: keeper.GenesisModelsTestList(),
 	}, nil)
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(&types.QueryCurrentEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
@@ -296,7 +295,7 @@ func (setup *IntegrationTestSetup) addTestNode(nodeId string, port int) {
 		PoCPort:          port, // Use different ports to distinguish nodes
 		MaxConcurrent:    1,
 		Models: map[string]apiconfig.ModelConfig{
-			"test-model": {Args: []string{}},
+			keeper.GenesisModelsTest_QWQ: {Args: []string{}},
 		},
 		Hardware: []apiconfig.Hardware{
 			{Type: "GPU", Count: 1},
