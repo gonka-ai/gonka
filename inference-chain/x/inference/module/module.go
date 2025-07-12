@@ -612,7 +612,7 @@ func (am AppModule) setModelsForParticipants(ctx context.Context, participants [
 	am.LogInfo("Starting model and slot assignment for participants", types.EpochGroup, "flow_context", flowContext, "step", "start", "num_participants", len(participants), "epoch_index", upcomingEpoch.Index)
 
 	// Get governance models to iterate through
-	governanceModels, err := am.keeper.GetGovernanceModels(ctx)
+	governanceModels, err := am.keeper.GetGovernanceModelsSorted(ctx)
 	if err != nil {
 		am.LogError("setModelsForParticipants: Unable to get governance models", types.EpochGroup, "error", err.Error(), "flow_context", flowContext)
 		return
