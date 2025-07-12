@@ -34,7 +34,7 @@ gcloud compute instances add-access-config k8s-control-plane \
 # Now IP is 34.132.221.241
 
 # Create a simple VM for a worker node
-WORKER_INSTANCE_NAME="k8s-worker-3"
+WORKER_INSTANCE_NAME="k8s-worker-4"
 GCP_PROJECT="decentralized-ai"
 GCP_REGION="us-central1"
 GCP_ZONE="us-central1-a"
