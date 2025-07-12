@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"github.com/productscience/inference/x/inference/types"
 	"math/rand"
+	"slices"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type ModelAssigner struct {
@@ -75,7 +77,9 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		var supportedModels []string
 		var newMLNodeArrays []*types.ModelMLNodes
 
-		// For each governance model, pick the first available MLNode that supports it
+		supportedModelsByNode := supportedModelsByNode(hardwareNodes, governanceModels)
+
+		// For each governance model, pick the available MLNodes that have the model as first supported model
 		for _, model := range governanceModels {
 			ma.LogInfo("Attempting to assign ML node for model", types.EpochGroup, "flow_context", flowContext, "step", "model_assignment_loop", "participant_index", p.Index, "model_id", model.Id)
 			var modelMLNodes []*types.MLNodeInfo
@@ -87,12 +91,11 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 				}
 
 				// Check if this MLNode supports the current governance model
-				if nodeSupportsModel(hardwareNodes, mlNode.NodeId, model.Id) {
+				if slices.Contains(supportedModelsByNode[mlNode.NodeId], model.Id) {
 					ma.LogInfo("Found supporting and unassigned ML node for model", types.EpochGroup, "flow_context", flowContext, "step", "assign_node_to_model", "participant_index", p.Index, "model_id", model.Id, "node_id", mlNode.NodeId)
 					// Add this MLNode to the current model's array
 					modelMLNodes = append(modelMLNodes, mlNode)
 					assignedMLNodes[mlNode.NodeId] = true
-					break // Move to next governance model (only one MLNode per model)
 				}
 			}
 
@@ -294,17 +297,24 @@ func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeI
 	return newMLNodes
 }
 
-// Helper function to check if a specific MLNode supports a given model
-func nodeSupportsModel(hardwareNodes *types.HardwareNodes, nodeId string, modelId string) bool {
-	for _, node := range hardwareNodes.HardwareNodes {
-		if node.LocalId == nodeId {
-			for _, supportedModel := range node.Models {
-				if supportedModel == modelId {
-					return true
-				}
-			}
-			break
-		}
+// Helper function to create a map of modelId to supported models
+func supportedModelsByNode(hardwareNodes *types.HardwareNodes, governanceModels []*types.Model) map[string][]string {
+	governanceModelsMap := make(map[string]bool)
+	for _, model := range governanceModels {
+		governanceModelsMap[model.Id] = true
 	}
-	return false
+
+	supportedModelsByNode := make(map[string][]string)
+	for _, node := range hardwareNodes.HardwareNodes {
+		// keep only the models that are in the governanceModelsMap
+		supportedModels := make([]string, 0)
+		for _, model := range node.Models {
+			if governanceModelsMap[model] {
+				supportedModels = append(supportedModels, model)
+			}
+		}
+		supportedModelsByNode[node.LocalId] = supportedModels
+	}
+
+	return supportedModelsByNode
 }
