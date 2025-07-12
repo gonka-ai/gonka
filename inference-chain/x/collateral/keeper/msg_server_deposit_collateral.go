@@ -3,11 +3,9 @@ package keeper
 import (
 	"context"
 
-	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-
 	"github.com/productscience/inference/x/collateral/types"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDepositCollateral) (*types.MsgDepositCollateralResponse, error) {
@@ -16,38 +14,35 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	// Validate the participant address
 	participantAddr, err := sdk.AccAddressFromBech32(msg.Participant)
 	if err != nil {
-		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid participant address: %s", err)
+		return nil, err
 	}
 
-	// Transfer coins from participant to module account
+	// Ensure only base denomination is accepted
+	if msg.Amount.Denom != inferencetypes.BaseCoin {
+		return nil, types.ErrInvalidDenom.Wrapf("only %s denomination is accepted for collateral, got %s",
+			inferencetypes.BaseCoin, msg.Amount.Denom)
+	}
+
+	// Transfer tokens from the participant to the module account
 	err = k.bankEscrowKeeper.SendCoinsFromAccountToModule(ctx, participantAddr, types.ModuleName, sdk.NewCoins(msg.Amount))
 	if err != nil {
-		return nil, errorsmod.Wrapf(err, "failed to transfer collateral to module account")
+		return nil, err
 	}
 
-	// Get existing collateral (if any)
-	existingCollateral, found := k.GetCollateral(ctx, msg.Participant)
-
-	// Calculate new collateral amount
-	var newAmount sdk.Coin
-	if found && existingCollateral.Denom == msg.Amount.Denom {
-		// Add to existing collateral
-		newAmount = existingCollateral.Add(msg.Amount)
-	} else if found {
-		// Different denom - for now we'll reject this case
-		// In the future, we might support multiple denoms
-		return nil, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest,
-			"collateral denom mismatch: existing %s, depositing %s",
-			existingCollateral.Denom, msg.Amount.Denom)
+	// Get the current collateral (if any)
+	currentCollateral, found := k.GetCollateral(ctx, msg.Participant)
+	if found {
+		// Add to existing collateral (denom check not needed since we enforce single denom)
+		currentCollateral = currentCollateral.Add(msg.Amount)
 	} else {
 		// First deposit
-		newAmount = msg.Amount
+		currentCollateral = msg.Amount
 	}
 
-	// Store the updated collateral amount
-	k.SetCollateral(ctx, msg.Participant, newAmount)
+	// Store the updated collateral
+	k.SetCollateral(ctx, msg.Participant, currentCollateral)
 
-	// Emit event
+	// Emit deposit event
 	ctx.EventManager().EmitEvents(sdk.Events{
 		sdk.NewEvent(
 			types.EventTypeDepositCollateral,
@@ -59,7 +54,7 @@ func (k msgServer) DepositCollateral(goCtx context.Context, msg *types.MsgDeposi
 	k.Logger().Info("collateral deposited",
 		"participant", msg.Participant,
 		"amount", msg.Amount.String(),
-		"total", newAmount.String(),
+		"total_collateral", currentCollateral.String(),
 	)
 
 	return &types.MsgDepositCollateralResponse{}, nil

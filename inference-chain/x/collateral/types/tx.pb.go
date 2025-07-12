@@ -182,7 +182,8 @@ func (m *MsgDepositCollateral) GetAmount() types.Coin {
 	return types.Coin{}
 }
 
-// MsgDepositCollateralResponse defines the response for MsgDepositCollateral
+// MsgDepositCollateralResponse defines the response structure for executing a
+// MsgDepositCollateral message.
 type MsgDepositCollateralResponse struct {
 }
 
@@ -219,47 +220,156 @@ func (m *MsgDepositCollateralResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MsgDepositCollateralResponse proto.InternalMessageInfo
 
+// MsgWithdrawCollateral defines a message to withdraw collateral
+type MsgWithdrawCollateral struct {
+	// participant is the address withdrawing collateral
+	Participant string `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
+	// amount is the collateral to withdraw
+	Amount types.Coin `protobuf:"bytes,2,opt,name=amount,proto3" json:"amount"`
+}
+
+func (m *MsgWithdrawCollateral) Reset()         { *m = MsgWithdrawCollateral{} }
+func (m *MsgWithdrawCollateral) String() string { return proto.CompactTextString(m) }
+func (*MsgWithdrawCollateral) ProtoMessage()    {}
+func (*MsgWithdrawCollateral) Descriptor() ([]byte, []int) {
+	return fileDescriptor_e738e4a8b0fcc692, []int{4}
+}
+func (m *MsgWithdrawCollateral) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgWithdrawCollateral) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgWithdrawCollateral.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgWithdrawCollateral) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgWithdrawCollateral.Merge(m, src)
+}
+func (m *MsgWithdrawCollateral) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgWithdrawCollateral) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgWithdrawCollateral.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgWithdrawCollateral proto.InternalMessageInfo
+
+func (m *MsgWithdrawCollateral) GetParticipant() string {
+	if m != nil {
+		return m.Participant
+	}
+	return ""
+}
+
+func (m *MsgWithdrawCollateral) GetAmount() types.Coin {
+	if m != nil {
+		return m.Amount
+	}
+	return types.Coin{}
+}
+
+// MsgWithdrawCollateralResponse defines the response structure for executing a
+// MsgWithdrawCollateral message.
+type MsgWithdrawCollateralResponse struct {
+	// completion_epoch is the epoch when the withdrawal will complete
+	CompletionEpoch uint64 `protobuf:"varint,1,opt,name=completion_epoch,json=completionEpoch,proto3" json:"completion_epoch,omitempty"`
+}
+
+func (m *MsgWithdrawCollateralResponse) Reset()         { *m = MsgWithdrawCollateralResponse{} }
+func (m *MsgWithdrawCollateralResponse) String() string { return proto.CompactTextString(m) }
+func (*MsgWithdrawCollateralResponse) ProtoMessage()    {}
+func (*MsgWithdrawCollateralResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_e738e4a8b0fcc692, []int{5}
+}
+func (m *MsgWithdrawCollateralResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MsgWithdrawCollateralResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MsgWithdrawCollateralResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MsgWithdrawCollateralResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MsgWithdrawCollateralResponse.Merge(m, src)
+}
+func (m *MsgWithdrawCollateralResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *MsgWithdrawCollateralResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_MsgWithdrawCollateralResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MsgWithdrawCollateralResponse proto.InternalMessageInfo
+
+func (m *MsgWithdrawCollateralResponse) GetCompletionEpoch() uint64 {
+	if m != nil {
+		return m.CompletionEpoch
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*MsgUpdateParams)(nil), "inference.collateral.MsgUpdateParams")
 	proto.RegisterType((*MsgUpdateParamsResponse)(nil), "inference.collateral.MsgUpdateParamsResponse")
 	proto.RegisterType((*MsgDepositCollateral)(nil), "inference.collateral.MsgDepositCollateral")
 	proto.RegisterType((*MsgDepositCollateralResponse)(nil), "inference.collateral.MsgDepositCollateralResponse")
+	proto.RegisterType((*MsgWithdrawCollateral)(nil), "inference.collateral.MsgWithdrawCollateral")
+	proto.RegisterType((*MsgWithdrawCollateralResponse)(nil), "inference.collateral.MsgWithdrawCollateralResponse")
 }
 
 func init() { proto.RegisterFile("inference/collateral/tx.proto", fileDescriptor_e738e4a8b0fcc692) }
 
 var fileDescriptor_e738e4a8b0fcc692 = []byte{
-	// 477 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0x41, 0x6b, 0x13, 0x41,
-	0x14, 0xce, 0x28, 0x06, 0x32, 0x15, 0xa4, 0x4b, 0xa0, 0xc9, 0x52, 0xd7, 0x1a, 0x50, 0x4a, 0xa4,
-	0x3b, 0x24, 0x42, 0xc1, 0x20, 0xa8, 0xa9, 0xd7, 0x40, 0x89, 0x78, 0xf1, 0x22, 0x93, 0xdd, 0x71,
-	0x3b, 0x90, 0x9d, 0x37, 0xcc, 0x4c, 0x4a, 0x7b, 0x13, 0x8f, 0x9e, 0xfc, 0x19, 0x1e, 0x73, 0xf0,
-	0x2f, 0x08, 0x3d, 0x96, 0x9e, 0x3c, 0x89, 0x24, 0x87, 0xfc, 0x0d, 0xd9, 0x9d, 0x49, 0x93, 0x26,
-	0x1b, 0xda, 0xcb, 0xee, 0xce, 0xfb, 0xbe, 0xf7, 0xbe, 0xf7, 0x7d, 0xc3, 0xe2, 0xc7, 0x5c, 0x7c,
-	0x61, 0x8a, 0x89, 0x88, 0x91, 0x08, 0x86, 0x43, 0x6a, 0x98, 0xa2, 0x43, 0x62, 0xce, 0x42, 0xa9,
-	0xc0, 0x80, 0x57, 0xbd, 0x86, 0xc3, 0x05, 0xec, 0x6f, 0xd3, 0x94, 0x0b, 0x20, 0xf9, 0xd3, 0x12,
-	0xfd, 0x9d, 0x08, 0x74, 0x0a, 0x9a, 0xa4, 0x3a, 0x21, 0xa7, 0xad, 0xec, 0xe5, 0x80, 0xba, 0x05,
-	0x3e, 0xe7, 0x27, 0x62, 0x0f, 0x0e, 0xaa, 0x26, 0x90, 0x80, 0xad, 0x67, 0x5f, 0xae, 0xfa, 0xb4,
-	0x70, 0x23, 0x49, 0x15, 0x4d, 0xe7, 0x8d, 0x81, 0x13, 0x1b, 0x50, 0xcd, 0xc8, 0x69, 0x6b, 0xc0,
-	0x0c, 0x6d, 0x91, 0x08, 0xb8, 0xb0, 0x78, 0xe3, 0x37, 0xc2, 0x8f, 0x7a, 0x3a, 0xf9, 0x28, 0x63,
-	0x6a, 0xd8, 0x71, 0xde, 0xe9, 0x1d, 0xe2, 0x0a, 0x1d, 0x99, 0x13, 0x50, 0xdc, 0x9c, 0xd7, 0xd0,
-	0x1e, 0xda, 0xaf, 0x74, 0x6b, 0x57, 0xbf, 0x0e, 0xaa, 0x6e, 0xa3, 0x77, 0x71, 0xac, 0x98, 0xd6,
-	0x1f, 0x8c, 0xe2, 0x22, 0xe9, 0x2f, 0xa8, 0xde, 0x1b, 0x5c, 0xb6, 0xda, 0xb5, 0x7b, 0x7b, 0x68,
-	0x7f, 0xab, 0xbd, 0x1b, 0x16, 0x45, 0x12, 0x5a, 0x95, 0x6e, 0xe5, 0xe2, 0xef, 0x93, 0xd2, 0xcf,
-	0xd9, 0xb8, 0x89, 0xfa, 0xae, 0xad, 0xf3, 0xea, 0xdb, 0x6c, 0xdc, 0x5c, 0x0c, 0xfc, 0x3e, 0x1b,
-	0x37, 0x9f, 0x2f, 0x2c, 0x9e, 0x2d, 0x9b, 0x5c, 0xd9, 0xb9, 0x51, 0xc7, 0x3b, 0x2b, 0xa5, 0x3e,
-	0xd3, 0x12, 0x84, 0x66, 0x8d, 0x2b, 0x84, 0xab, 0x3d, 0x9d, 0xbc, 0x67, 0x12, 0x34, 0x37, 0x47,
-	0xd7, 0x33, 0xbc, 0x0e, 0xde, 0x92, 0x54, 0x19, 0x1e, 0x71, 0x49, 0x85, 0xb9, 0xd5, 0xe9, 0x32,
-	0xd9, 0x7b, 0x8d, 0xcb, 0x34, 0x85, 0x91, 0x30, 0xce, 0x6b, 0x3d, 0x74, 0x3d, 0x59, 0xd0, 0xa1,
-	0x0b, 0x3a, 0x3c, 0x02, 0x2e, 0x6e, 0x18, 0xb5, 0x3d, 0x9d, 0xb7, 0x99, 0xd1, 0xe5, 0x79, 0x99,
-	0xd5, 0x17, 0x9b, 0xad, 0xae, 0xed, 0xde, 0x08, 0xf0, 0x6e, 0x51, 0x7d, 0x6e, 0xba, 0x3d, 0x43,
-	0xf8, 0x7e, 0x4f, 0x27, 0x5e, 0x8c, 0x1f, 0xde, 0xb8, 0xdb, 0x67, 0xc5, 0x77, 0xb2, 0x92, 0x9d,
-	0x7f, 0x70, 0x27, 0xda, 0x5c, 0xcd, 0xd3, 0x78, 0x7b, 0x3d, 0xde, 0xe6, 0xc6, 0x19, 0x6b, 0x5c,
-	0xbf, 0x7d, 0x77, 0xee, 0x5c, 0xd4, 0x7f, 0xf0, 0x35, 0xcb, 0xb4, 0x7b, 0x7c, 0x31, 0x09, 0xd0,
-	0xe5, 0x24, 0x40, 0xff, 0x26, 0x01, 0xfa, 0x31, 0x0d, 0x4a, 0x97, 0xd3, 0xa0, 0xf4, 0x67, 0x1a,
-	0x94, 0x3e, 0x1d, 0x26, 0xdc, 0x9c, 0x8c, 0x06, 0x61, 0x04, 0x29, 0x91, 0x0a, 0xe2, 0x51, 0x64,
-	0x74, 0xc4, 0xf3, 0x80, 0x37, 0x44, 0x6d, 0xce, 0x25, 0xd3, 0x83, 0x72, 0xfe, 0x6b, 0xbc, 0xfc,
-	0x1f, 0x00, 0x00, 0xff, 0xff, 0xbc, 0x99, 0x23, 0xc6, 0xf1, 0x03, 0x00, 0x00,
+	// 557 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcc, 0x94, 0x4d, 0x6b, 0x13, 0x4f,
+	0x1c, 0xc7, 0x33, 0xfd, 0xff, 0x0d, 0x64, 0x2a, 0xd4, 0x2e, 0x91, 0x26, 0x4b, 0xbb, 0xd6, 0x80,
+	0x52, 0x53, 0xbb, 0x4b, 0x52, 0x28, 0x18, 0x04, 0x6d, 0xaa, 0x17, 0x21, 0x50, 0x22, 0x22, 0x78,
+	0x29, 0x93, 0xd9, 0x71, 0x33, 0x90, 0x9d, 0x19, 0x66, 0x26, 0xb1, 0xbd, 0x89, 0x47, 0x4f, 0xbe,
+	0x0c, 0x8f, 0x39, 0xf8, 0x16, 0x84, 0x1e, 0x4b, 0xf1, 0xe0, 0x49, 0x25, 0x39, 0xe4, 0x6d, 0xc8,
+	0x3e, 0xe4, 0xa1, 0xd9, 0x5d, 0xac, 0x37, 0x2f, 0xc9, 0xce, 0xef, 0xf7, 0xfd, 0x3d, 0x7c, 0x66,
+	0xbf, 0x2c, 0xdc, 0xa2, 0xec, 0x2d, 0x91, 0x84, 0x61, 0xe2, 0x60, 0xde, 0xeb, 0x21, 0x4d, 0x24,
+	0xea, 0x39, 0xfa, 0xd4, 0x16, 0x92, 0x6b, 0x6e, 0x14, 0x67, 0x69, 0x7b, 0x9e, 0x36, 0xd7, 0x91,
+	0x4f, 0x19, 0x77, 0xc2, 0xdf, 0x48, 0x68, 0x6e, 0x60, 0xae, 0x7c, 0xae, 0x1c, 0x5f, 0x79, 0xce,
+	0xa0, 0x16, 0xfc, 0xc5, 0x89, 0x72, 0x94, 0x38, 0x09, 0x4f, 0x4e, 0x74, 0x88, 0x53, 0x45, 0x8f,
+	0x7b, 0x3c, 0x8a, 0x07, 0x4f, 0x71, 0xf4, 0x6e, 0xea, 0x46, 0x02, 0x49, 0xe4, 0x4f, 0x0b, 0xad,
+	0x78, 0x58, 0x07, 0x29, 0xe2, 0x0c, 0x6a, 0x1d, 0xa2, 0x51, 0xcd, 0xc1, 0x9c, 0xb2, 0x28, 0x5f,
+	0xf9, 0x0a, 0xe0, 0x5a, 0x4b, 0x79, 0xaf, 0x84, 0x8b, 0x34, 0x39, 0x0e, 0x2b, 0x8d, 0x03, 0x58,
+	0x40, 0x7d, 0xdd, 0xe5, 0x92, 0xea, 0xb3, 0x12, 0xd8, 0x06, 0x3b, 0x85, 0x66, 0xe9, 0xf2, 0xcb,
+	0x5e, 0x31, 0xde, 0xe8, 0xd0, 0x75, 0x25, 0x51, 0xea, 0xa5, 0x96, 0x94, 0x79, 0xed, 0xb9, 0xd4,
+	0x78, 0x02, 0xf3, 0xd1, 0xec, 0xd2, 0xca, 0x36, 0xd8, 0x59, 0xad, 0x6f, 0xda, 0x69, 0x57, 0x62,
+	0x47, 0x53, 0x9a, 0x85, 0xf3, 0x1f, 0x77, 0x72, 0x9f, 0x27, 0xc3, 0x2a, 0x68, 0xc7, 0x65, 0x8d,
+	0x47, 0x1f, 0x26, 0xc3, 0xea, 0xbc, 0xe1, 0xc7, 0xc9, 0xb0, 0x7a, 0x7f, 0x8e, 0x78, 0xba, 0x08,
+	0xb9, 0xb4, 0x73, 0xa5, 0x0c, 0x37, 0x96, 0x42, 0x6d, 0xa2, 0x04, 0x67, 0x8a, 0x54, 0x2e, 0x01,
+	0x2c, 0xb6, 0x94, 0xf7, 0x8c, 0x08, 0xae, 0xa8, 0x3e, 0x9a, 0xf5, 0x30, 0x1a, 0x70, 0x55, 0x20,
+	0xa9, 0x29, 0xa6, 0x02, 0x31, 0xfd, 0x47, 0xd2, 0x45, 0xb1, 0xf1, 0x18, 0xe6, 0x91, 0xcf, 0xfb,
+	0x4c, 0xc7, 0xac, 0x65, 0x3b, 0xae, 0x09, 0x2e, 0xda, 0x8e, 0x2f, 0xda, 0x3e, 0xe2, 0x94, 0x5d,
+	0x01, 0x8d, 0x6a, 0x1a, 0x4f, 0x03, 0xd0, 0xc5, 0x7e, 0x01, 0xea, 0x6e, 0x36, 0x6a, 0x62, 0xf7,
+	0x8a, 0x05, 0x37, 0xd3, 0xe2, 0x33, 0xe8, 0x6f, 0x00, 0xde, 0x6e, 0x29, 0xef, 0x35, 0xd5, 0x5d,
+	0x57, 0xa2, 0x77, 0xff, 0x04, 0xf5, 0x61, 0x1a, 0xf5, 0xc3, 0x6c, 0xea, 0xe4, 0xf2, 0x95, 0x17,
+	0x70, 0x2b, 0x35, 0x31, 0xe5, 0x36, 0x1e, 0xc0, 0x5b, 0x98, 0xfb, 0xa2, 0x47, 0x34, 0xe5, 0xec,
+	0x84, 0x08, 0x8e, 0xbb, 0x21, 0xe2, 0xff, 0xed, 0xb5, 0x79, 0xfc, 0x79, 0x10, 0xae, 0xff, 0x5c,
+	0x81, 0xff, 0xb5, 0x94, 0x67, 0xb8, 0xf0, 0xe6, 0x15, 0xfb, 0xdf, 0x4b, 0xb7, 0xed, 0x92, 0xbd,
+	0xcc, 0xbd, 0x6b, 0xc9, 0x66, 0x8b, 0x29, 0xb8, 0x9e, 0x74, 0x60, 0x35, 0xb3, 0x47, 0x42, 0x6b,
+	0xd6, 0xaf, 0xaf, 0x9d, 0x0d, 0x1d, 0x40, 0x23, 0xc5, 0x01, 0xbb, 0x99, 0x9d, 0x92, 0x62, 0x73,
+	0xff, 0x2f, 0xc4, 0xd3, 0xb9, 0xe6, 0x8d, 0xf7, 0xc1, 0x8b, 0x6f, 0x1e, 0x9f, 0x8f, 0x2c, 0x70,
+	0x31, 0xb2, 0xc0, 0xaf, 0x91, 0x05, 0x3e, 0x8d, 0xad, 0xdc, 0xc5, 0xd8, 0xca, 0x7d, 0x1f, 0x5b,
+	0xb9, 0x37, 0x07, 0x1e, 0xd5, 0xdd, 0x7e, 0xc7, 0xc6, 0xdc, 0x77, 0x84, 0xe4, 0x6e, 0x1f, 0x6b,
+	0x85, 0x69, 0xe8, 0x82, 0x0c, 0x3f, 0xe8, 0x33, 0x41, 0x54, 0x27, 0x1f, 0x7e, 0xb5, 0xf6, 0x7f,
+	0x07, 0x00, 0x00, 0xff, 0xff, 0xa0, 0x12, 0x3f, 0x26, 0x8c, 0x05, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -277,8 +387,10 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// DepositCollateral deposits tokens as collateral for a participant
+	// DepositCollateral deposits collateral for the participant
 	DepositCollateral(ctx context.Context, in *MsgDepositCollateral, opts ...grpc.CallOption) (*MsgDepositCollateralResponse, error)
+	// WithdrawCollateral initiates withdrawal of collateral (subject to unbonding period)
+	WithdrawCollateral(ctx context.Context, in *MsgWithdrawCollateral, opts ...grpc.CallOption) (*MsgWithdrawCollateralResponse, error)
 }
 
 type msgClient struct {
@@ -307,13 +419,24 @@ func (c *msgClient) DepositCollateral(ctx context.Context, in *MsgDepositCollate
 	return out, nil
 }
 
+func (c *msgClient) WithdrawCollateral(ctx context.Context, in *MsgWithdrawCollateral, opts ...grpc.CallOption) (*MsgWithdrawCollateralResponse, error) {
+	out := new(MsgWithdrawCollateralResponse)
+	err := c.cc.Invoke(ctx, "/inference.collateral.Msg/WithdrawCollateral", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// DepositCollateral deposits tokens as collateral for a participant
+	// DepositCollateral deposits collateral for the participant
 	DepositCollateral(context.Context, *MsgDepositCollateral) (*MsgDepositCollateralResponse, error)
+	// WithdrawCollateral initiates withdrawal of collateral (subject to unbonding period)
+	WithdrawCollateral(context.Context, *MsgWithdrawCollateral) (*MsgWithdrawCollateralResponse, error)
 }
 
 // UnimplementedMsgServer can be embedded to have forward compatible implementations.
@@ -325,6 +448,9 @@ func (*UnimplementedMsgServer) UpdateParams(ctx context.Context, req *MsgUpdateP
 }
 func (*UnimplementedMsgServer) DepositCollateral(ctx context.Context, req *MsgDepositCollateral) (*MsgDepositCollateralResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DepositCollateral not implemented")
+}
+func (*UnimplementedMsgServer) WithdrawCollateral(ctx context.Context, req *MsgWithdrawCollateral) (*MsgWithdrawCollateralResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WithdrawCollateral not implemented")
 }
 
 func RegisterMsgServer(s grpc1.Server, srv MsgServer) {
@@ -367,6 +493,24 @@ func _Msg_DepositCollateral_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_WithdrawCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgWithdrawCollateral)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).WithdrawCollateral(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.collateral.Msg/WithdrawCollateral",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).WithdrawCollateral(ctx, req.(*MsgWithdrawCollateral))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Msg_serviceDesc = _Msg_serviceDesc
 var _Msg_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.collateral.Msg",
@@ -379,6 +523,10 @@ var _Msg_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DepositCollateral",
 			Handler:    _Msg_DepositCollateral_Handler,
+		},
+		{
+			MethodName: "WithdrawCollateral",
+			Handler:    _Msg_WithdrawCollateral_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -511,6 +659,74 @@ func (m *MsgDepositCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (int, e
 	return len(dAtA) - i, nil
 }
 
+func (m *MsgWithdrawCollateral) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgWithdrawCollateral) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgWithdrawCollateral) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Amount.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintTx(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x12
+	if len(m.Participant) > 0 {
+		i -= len(m.Participant)
+		copy(dAtA[i:], m.Participant)
+		i = encodeVarintTx(dAtA, i, uint64(len(m.Participant)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MsgWithdrawCollateralResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MsgWithdrawCollateralResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MsgWithdrawCollateralResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.CompletionEpoch != 0 {
+		i = encodeVarintTx(dAtA, i, uint64(m.CompletionEpoch))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintTx(dAtA []byte, offset int, v uint64) int {
 	offset -= sovTx(v)
 	base := offset
@@ -567,6 +783,33 @@ func (m *MsgDepositCollateralResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
+	return n
+}
+
+func (m *MsgWithdrawCollateral) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Participant)
+	if l > 0 {
+		n += 1 + l + sovTx(uint64(l))
+	}
+	l = m.Amount.Size()
+	n += 1 + l + sovTx(uint64(l))
+	return n
+}
+
+func (m *MsgWithdrawCollateralResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.CompletionEpoch != 0 {
+		n += 1 + sovTx(uint64(m.CompletionEpoch))
+	}
 	return n
 }
 
@@ -885,6 +1128,190 @@ func (m *MsgDepositCollateralResponse) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: MsgDepositCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgWithdrawCollateral) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgWithdrawCollateral: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgWithdrawCollateral: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Participant = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amount", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTx
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTx
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Amount.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipTx(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthTx
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MsgWithdrawCollateralResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowTx
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MsgWithdrawCollateralResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MsgWithdrawCollateralResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CompletionEpoch", wireType)
+			}
+			m.CompletionEpoch = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTx
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CompletionEpoch |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTx(dAtA[iNdEx:])

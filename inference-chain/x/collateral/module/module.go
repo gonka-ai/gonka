@@ -187,7 +187,6 @@ type ModuleInputs struct {
 	BankKeeper       types.BankKeeper
 	BankEscrowKeeper types.BankEscrowKeeper
 	StakingKeeper    types.StakingKeeper
-	InferenceKeeper  types.InferenceKeeper
 }
 
 type ModuleOutputs struct {
@@ -211,7 +210,6 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.BankKeeper,
 		in.BankEscrowKeeper,
 		in.StakingKeeper,
-		in.InferenceKeeper,
 	)
 	m := NewAppModule(
 		in.Cdc,

@@ -5,6 +5,7 @@ import "amino/amino.proto";
 import "gogoproto/gogo.proto";
 import "inference/collateral/params.proto";
 import "inference/collateral/collateral_balance.proto";
+import "inference/collateral/unbonding.proto";
 
 option go_package = "github.com/productscience/inference/x/collateral/types";
 
@@ -18,4 +19,7 @@ message GenesisState {
   
   // collateral_balance_list defines all the collateral balances at genesis
   repeated CollateralBalance collateral_balance_list = 2 [(gogoproto.nullable) = false];
+  
+  // unbonding_collateral_list defines all the unbonding collateral entries at genesis
+  repeated UnbondingCollateral unbonding_collateral_list = 3 [(gogoproto.nullable) = false];
 }

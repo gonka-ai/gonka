@@ -123,37 +123,81 @@ Each task includes:
 #### 1.5 Detailed Withdrawal and Unbonding Logic
 
 ##### 1.5.1 Define Unbonding Data Structures
-- **Task**: [ ] Define `UnbondingCollateral` data structures
-- **What**: Define a protobuf message for an unbonding entry. Implement a dual-indexed queue in the keeper store. One index should be `(CompletionEpoch, ParticipantAddress)` for efficient batch processing, and the other should be `(ParticipantAddress, CompletionEpoch)` for easy querying of a specific participant's unbonding collateral.
-- **Where**: `inference-chain/proto/inference/collateral/collateral.proto` (or similar new types file)
+- **Task**: [x] Define `UnbondingCollateral` data structures
+- **What**: Define a protobuf message for an unbonding entry. Implement a single-key storage approach in the keeper store using `(CompletionEpoch, ParticipantAddress)` format for efficient batch processing by epoch, with automatic aggregation for multiple withdrawals to the same epoch.
+- **Where**: `inference-chain/proto/inference/collateral/unbonding.proto` and `inference-chain/x/collateral/keeper/keeper.go`
 - **Dependencies**: 1.1
+- **Result**:
+  - Created `unbonding.proto` with `UnbondingCollateral` message containing participant, amount, and completion_epoch
+  - Implemented simplified single-key storage approach with format `unbonding/{completionEpoch}/{participantAddress}`
+  - Added keeper methods for unbonding management:
+    - `SetUnbondingCollateral()` - automatically aggregates if entry exists
+    - `GetUnbondingCollateral()` - retrieves specific entry
+    - `RemoveUnbondingCollateral()` - removes single entry
+    - `GetUnbondingByEpoch()` - efficient batch retrieval by epoch
+    - `RemoveUnbondingByEpoch()` - efficient batch removal by epoch
+    - `GetUnbondingByParticipant()` - queries all entries for a participant
+    - `GetAllUnbonding()` - for genesis export
+  - Updated genesis to handle unbonding entries import/export
+  - Successfully built the project
 
 ##### 1.5.2 Implement `MsgWithdrawCollateral`
-- **Task**: [ ] Implement `MsgWithdrawCollateral` to use the unbonding queue
+- **Task**: [x] Implement `MsgWithdrawCollateral` to use the unbonding queue
 - **What**: Implement the keeper logic for the `MsgWithdrawCollateral` message. This logic should not release funds but instead create an `UnbondingCollateral` entry. The completion epoch should be calculated as `latest_epoch + params.UnbondingPeriodEpochs`.
 - **Where**:
   - `inference-chain/proto/inference/collateral/tx.proto`
   - `inference-chain/x/collateral/keeper/msg_server_withdraw_collateral.go`
 - **Dependencies**: 1.3, 1.5.1
+- **Result**:
+  - Added `MsgWithdrawCollateral` and response to tx.proto
+  - Implemented withdrawal logic that creates unbonding entries instead of releasing funds
+  - Validates participant has sufficient collateral and matching denominations
+  - Enforces that all collateral deposits and withdrawals use the base denomination (`nicoin`)
+  - Calculates completion epoch using the collateral module's own internal epoch state
+  - Reduces active collateral and stores unbonding entry (aggregates if exists)
+  - Emits withdrawal event with completion epoch
+  - Created validation logic in msg_withdraw_collateral.go
+  - Added error types and event constants
+  - Registered messages in codec
+  - Followed inference module pattern using separate BankKeeper (read) and BankEscrowKeeper (write)
+  - Successfully built the project
 
 ##### 1.5.3 Implement Unbonding Queue Processing
-- **Task**: [ ] Create a function to process the unbonding queue
+- **Task**: [x] Create a function to process the unbonding queue
 - **What**: Create a new keeper function that iterates through all `UnbondingCollateral` entries for a given epoch and releases the funds back to the participants' spendable balances.
 - **Where**: `inference-chain/x/collateral/keeper/keeper.go`
 - **Dependencies**: 1.5.1
+- **Result**:
+  - Implemented `ProcessUnbondingQueue(ctx, completionEpoch)` in the keeper.
+  - The function gets all unbonding entries for the given epoch.
+  - It iterates through each entry, sending the collateral from the module account back to the participant.
+  - Emits a `process_withdrawal` event for each processed entry.
+  - Panics if the module account is underfunded, as this indicates a critical logic error.
+  - After processing all entries, it removes them from the queue using the `RemoveUnbondingByEpoch` batch-deletion function.
+  - Successfully built the project.
 
 ##### 1.5.4 Integrate Queue Processing into EndBlocker
-- **Task**: [ ] Add an `EndBlocker` to the `x/collateral` module to process withdrawals
-- **What**: The `x/collateral` module needs its own `EndBlocker`. At the appropriate time (after the `onSetNewValidators` stage), this `EndBlocker` will call the function to process the unbonding queue for the completed epoch.
-- **Where**: `inference-chain/x/collateral/module/module.go`
-- **Dependencies**: 1.5.3
+- **Task**: [x] Add an `EndBlocker` to the `x/collateral` module to process withdrawals
+- **Result**:
+  - Refactored the unbonding logic to be triggered by the `x/inference` module for better efficiency and correct timing.
+  - Removed the `EndBlocker` from the `x/collateral` module and created an exported `AdvanceEpoch(completedEpoch)` function.
+  - The `x/inference` module now calls the `collateralKeeper.AdvanceEpoch` function from within its `onSetNewValidatorsStage`, passing the completed epoch index.
+  - This removes the circular dependency between the modules and makes the `collateral` module a self-contained state machine.
+  - Successfully built the project with the new, more robust architecture.
 
 #### 1.6 Implement the `Slash` Function
-- **Task**: [ ] Implement the `Slash` function
+- **Task**: [x] Implement the `Slash` function
 - **What**: Create an exported `Slash` function. This function must penalize both *active* collateral and any collateral in the *unbonding queue* **proportionally** based on the slash fraction.
 - **Where**: `inference-chain/x/collateral/keeper/keeper.go`
 - **Why**: This centralizes the slashing logic, ensuring consistency.
 - **Dependencies**: 1.3, 1.5.1
+- **Result**:
+  - Implemented the `Slash(ctx, participantAddress, slashFraction)` function in the keeper.
+  - The function proportionally slashes both active collateral and any collateral in the unbonding queue.
+  - It correctly calculates the total amount to be slashed from all of a participant's holdings.
+  - After calculating the total, it burns the corresponding coins from the module account.
+  - It emits a `slash_collateral` event with the participant, total slashed amount, and the slash fraction.
+  - Successfully built the project.
 
 ### Section 2: Integration with `x/inference` Module
 

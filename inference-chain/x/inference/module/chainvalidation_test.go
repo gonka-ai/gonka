@@ -1,10 +1,11 @@
 package inference_test
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/utils"
 	"strconv"
 	"testing"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/utils"
 
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/x/group"
@@ -76,7 +77,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 		AnyTimes()
 
 	// Create AppModule with the keeper
-	am := inference.NewAppModule(nil, k, nil, nil, nil)
+	am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
 
 	// Set up batches
 	batch := types.PoCBatch{
@@ -403,7 +404,7 @@ func TestComputeNewWeights(t *testing.T) {
 			k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
 			// Create AppModule with the keeper
-			am := inference.NewAppModule(nil, k, nil, nil, nil)
+			am := inference.NewAppModule(nil, k, nil, nil, nil, nil)
 
 			// Setup state
 			tt.setupState(t, &k, ctx, &mocks)

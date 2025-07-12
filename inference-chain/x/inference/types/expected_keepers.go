@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -77,6 +78,11 @@ type ValidatorSet interface {
 type StakingKeeper interface {
 	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult) ([]types.Validator, error)
 	GetAllValidators(ctx context.Context) (validators []types.Validator, err error)
+}
+
+// CollateralKeeper defines the expected interface for the Collateral module.
+type CollateralKeeper interface {
+	AdvanceEpoch(ctx context.Context, completedEpoch uint64)
 }
 
 type ParticipantKeeper interface {

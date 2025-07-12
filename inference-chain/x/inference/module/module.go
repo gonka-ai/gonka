@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -22,7 +23,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
-	"sort"
 
 	// this line is used by starport scaffolding # 1
 
@@ -101,10 +101,11 @@ func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *r
 type AppModule struct {
 	AppModuleBasic
 
-	keeper         keeper.Keeper
-	accountKeeper  types.AccountKeeper
-	bankKeeper     types.BankKeeper
-	groupMsgServer types.GroupMessageKeeper
+	keeper           keeper.Keeper
+	accountKeeper    types.AccountKeeper
+	bankKeeper       types.BankKeeper
+	groupMsgServer   types.GroupMessageKeeper
+	collateralKeeper types.CollateralKeeper
 }
 
 func NewAppModule(
@@ -113,13 +114,15 @@ func NewAppModule(
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
 	groupMsgServer types.GroupMessageKeeper,
+	collateralKeeper types.CollateralKeeper,
 ) AppModule {
 	return AppModule{
-		AppModuleBasic: NewAppModuleBasic(cdc),
-		keeper:         keeper,
-		accountKeeper:  accountKeeper,
-		bankKeeper:     bankKeeper,
-		groupMsgServer: groupMsgServer,
+		AppModuleBasic:   NewAppModuleBasic(cdc),
+		keeper:           keeper,
+		accountKeeper:    accountKeeper,
+		bankKeeper:       bankKeeper,
+		groupMsgServer:   groupMsgServer,
+		collateralKeeper: collateralKeeper,
 	}
 }
 
@@ -284,6 +287,12 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 	if !found {
 		am.LogError("onSetNewValidatorsStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
 		return
+	}
+
+	// Signal to the collateral module that the epoch has advanced.
+	// This will trigger its internal unbonding queue processing.
+	if am.keeper.GetCollateralKeeper() != nil {
+		am.keeper.GetCollateralKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index)
 	}
 
 	err := am.keeper.SettleAccounts(ctx, uint64(effectiveEpoch.PocStartBlockHeight))
@@ -485,6 +494,7 @@ type ModuleInputs struct {
 	ValidatorSet     types.ValidatorSet
 	StakingKeeper    types.StakingKeeper
 	GroupServer      types.GroupMessageKeeper
+	CollateralKeeper types.CollateralKeeper
 	GetWasmKeeper    func() wasmkeeper.Keeper `optional:"true"`
 }
 
@@ -515,6 +525,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.StakingKeeper,
 		in.AccountKeeper,
 		in.GetWasmKeeper,
+		in.CollateralKeeper,
 	)
 
 	m := NewAppModule(
@@ -523,6 +534,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.BankKeeper,
 		in.GroupServer,
+		in.CollateralKeeper,
 	)
 
 	return ModuleOutputs{

@@ -26,6 +26,8 @@ type (
 		authority     string
 		AccountKeeper types.AccountKeeper
 		getWasmKeeper func() wasmkeeper.Keeper `optional:"true"`
+
+		collateralKeeper types.CollateralKeeper
 	}
 )
 
@@ -41,23 +43,25 @@ func NewKeeper(
 	staking types.StakingKeeper,
 	accountKeeper types.AccountKeeper,
 	getWasmKeeper func() wasmkeeper.Keeper,
+	collateralKeeper types.CollateralKeeper,
 ) Keeper {
 	if _, err := sdk.AccAddressFromBech32(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
 	return Keeper{
-		cdc:           cdc,
-		storeService:  storeService,
-		authority:     authority,
-		logger:        logger,
-		BankKeeper:    bank,
-		bankView:      bankView,
-		group:         group,
-		validatorSet:  validatorSet,
-		Staking:       staking,
-		AccountKeeper: accountKeeper,
-		getWasmKeeper: getWasmKeeper,
+		cdc:              cdc,
+		storeService:     storeService,
+		authority:        authority,
+		logger:           logger,
+		BankKeeper:       bank,
+		bankView:         bankView,
+		group:            group,
+		validatorSet:     validatorSet,
+		Staking:          staking,
+		AccountKeeper:    accountKeeper,
+		getWasmKeeper:    getWasmKeeper,
+		collateralKeeper: collateralKeeper,
 	}
 }
 
@@ -69,6 +73,11 @@ func (k Keeper) GetAuthority() string {
 // GetWasmKeeper returns the WASM keeper
 func (k Keeper) GetWasmKeeper() wasmkeeper.Keeper {
 	return k.getWasmKeeper()
+}
+
+// GetCollateralKeeper returns the collateral keeper.
+func (k Keeper) GetCollateralKeeper() types.CollateralKeeper {
+	return k.collateralKeeper
 }
 
 // Logger returns a module-specific logger.

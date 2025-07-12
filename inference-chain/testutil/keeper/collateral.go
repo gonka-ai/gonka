@@ -24,16 +24,16 @@ import (
 
 // CollateralMocks holds all the mock keepers for testing
 type CollateralMocks struct {
-	BankKeeper      *MockBankEscrowKeeper
-	StakingKeeper   types.StakingKeeper
-	InferenceKeeper types.InferenceKeeper
+	BankKeeper    *MockBankEscrowKeeper
+	StakingKeeper *MockStakingKeeper
 }
 
 func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
 	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+	stakingKeeper := NewMockStakingKeeper(ctrl)
 	// StakingKeeper and InferenceKeeper can be nil for basic tests
-	k, ctx := CollateralKeeperWithMock(t, bankKeeper, nil, nil)
+	k, ctx := CollateralKeeperWithMock(t, bankKeeper, stakingKeeper)
 
 	return k, ctx
 }
@@ -41,13 +41,13 @@ func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, CollateralMocks) {
 	ctrl := gomock.NewController(t)
 	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+	stakingKeeper := NewMockStakingKeeper(ctrl)
 
-	k, ctx := CollateralKeeperWithMock(t, bankKeeper, nil, nil)
+	k, ctx := CollateralKeeperWithMock(t, bankKeeper, stakingKeeper)
 
 	mocks := CollateralMocks{
-		BankKeeper:      bankKeeper,
-		StakingKeeper:   nil, // Will be needed for hooks implementation
-		InferenceKeeper: nil, // Empty interface, can be nil
+		BankKeeper:    bankKeeper,
+		StakingKeeper: stakingKeeper,
 	}
 
 	return k, ctx, mocks
@@ -56,8 +56,7 @@ func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, C
 func CollateralKeeperWithMock(
 	t testing.TB,
 	bankKeeper *MockBankEscrowKeeper,
-	stakingKeeper types.StakingKeeper,
-	inferenceKeeper types.InferenceKeeper,
+	stakingKeeper *MockStakingKeeper,
 ) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
@@ -78,7 +77,6 @@ func CollateralKeeperWithMock(
 		nil,
 		bankKeeper,
 		stakingKeeper,
-		inferenceKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

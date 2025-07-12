@@ -1,13 +1,14 @@
 package types
 
-// DONTCOVER
-
 import (
 	sdkerrors "cosmossdk.io/errors"
 )
 
 // x/collateral module sentinel errors
 var (
-	ErrInvalidSigner = sdkerrors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
-	ErrSample        = sdkerrors.Register(ModuleName, 1101, "sample error")
+	ErrNoCollateralFound      = sdkerrors.Register(ModuleName, 1100, "no collateral found")
+	ErrInsufficientCollateral = sdkerrors.Register(ModuleName, 1101, "insufficient collateral")
+	ErrInvalidDenom           = sdkerrors.Register(ModuleName, 1102, "invalid denomination")
+	ErrLatestEpochNotFound    = sdkerrors.Register(ModuleName, 1103, "latest epoch not found")
+	ErrInvalidSigner          = sdkerrors.Register(ModuleName, 1104, "expected gov account as only signer for proposal message")
 )

@@ -14,6 +14,11 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		k.SetCollateral(ctx, elem.Participant, elem.Amount)
 	}
 
+	// Set all the unbonding collateral entries
+	for _, elem := range genState.UnbondingCollateralList {
+		k.SetUnbondingCollateral(ctx, elem)
+	}
+
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -37,6 +42,9 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	}
 
 	genesis.CollateralBalanceList = collateralBalances
+
+	// Export all unbonding collateral entries
+	genesis.UnbondingCollateralList = k.GetAllUnbonding(ctx)
 
 	// this line is used by starport scaffolding # genesis/module/export
 
