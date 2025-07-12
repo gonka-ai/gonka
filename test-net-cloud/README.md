@@ -14,7 +14,7 @@ The initial state of the network is defined by a single **genesis participant**.
 *   **Location:** The primary blockchain node and API run on `k8s-worker-1`.
 *   **ML Nodes:**
     *   `Qwen/Qwen2.5-1.5B-Instruct` (runs on `k8s-worker-1`)
-    *   `Qwen/Qwen2.5-1.5B-Instruct` (runs on `k8s-worker-4`)
+    *   `Qwen/Qwen2.5-7B-Instruct` (runs on `k8s-worker-4`)
 
 ### Join Participants
 
@@ -30,4 +30,4 @@ After the genesis participant has initialized the network, other participants ca
     *   **k8s namespace:** `join-k8s-worker-3`
     *   **Location:** All components run on `k8s-worker-3`.
     *   **ML Nodes:**
-        *   `Qwen/Qwen2.5-7B-Instruct`
+        *   `Qwen/Qwen2.5-1.5B-Instruct`
