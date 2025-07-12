@@ -42,7 +42,7 @@ Each task includes:
 ### Section 1: `x/collateral` Module Scaffolding and Core Logic
 
 #### 1.1 Scaffold New Module
-- **Task**: [ ] Scaffold the new `x/collateral` module
+- **Task**: [x] Scaffold the new `x/collateral` module
 - **What**: Use `ignite scaffold module collateral --dep staking,inference` to create the basic structure for the new module. This will be the foundation for all collateral management logic.
 - **Where**: New directory `inference-chain/x/collateral`
 - **Dependencies**: None

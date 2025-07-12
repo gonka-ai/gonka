@@ -1,0 +1,17 @@
+syntax = "proto3";
+package inference.collateral;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "inference/collateral/params.proto";
+
+option go_package = "github.com/productscience/inference/x/collateral/types";
+
+// GenesisState defines the collateral module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}

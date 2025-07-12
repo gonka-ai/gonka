@@ -55,7 +55,10 @@ import (
 	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	collateralmodulev1 "github.com/productscience/inference/api/inference/collateral/module"
 	inferencemodulev1 "github.com/productscience/inference/api/inference/inference/module"
+	_ "github.com/productscience/inference/x/collateral/module" // import for side-effects
+	collateralmoduletypes "github.com/productscience/inference/x/collateral/types"
 	_ "github.com/productscience/inference/x/inference/module" // import for side-effects
 	inferencemoduletypes "github.com/productscience/inference/x/inference/types"
 	// this line is used by starport scaffolding # stargate/app/moduleImport
@@ -97,6 +100,7 @@ var (
 		// chain modules
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/initGenesis
 	}
 
@@ -123,6 +127,7 @@ var (
 		// chain modules
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/beginBlockers
 	}
 
@@ -143,6 +148,7 @@ var (
 		// chain modules
 		inferencemoduletypes.ModuleName,
 		wasmtypes.ModuleName,
+		collateralmoduletypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/endBlockers
 	}
 
@@ -307,6 +313,10 @@ var (
 			{
 				Name:   inferencemoduletypes.ModuleName,
 				Config: appconfig.WrapAny(&inferencemodulev1.Module{}),
+			},
+			{
+				Name:   collateralmoduletypes.ModuleName,
+				Config: appconfig.WrapAny(&collateralmodulev1.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},
