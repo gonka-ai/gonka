@@ -4,6 +4,7 @@
 export ACCOUNT_NAME="test-account"
 # Url of the genesis k8s node API
 export NODE_URL="http://34.9.136.116:30000"
+# export NODE_URL="http://34.9.136.116:30010"
 export GONKA_ENDPOINTS=$NODE_URL/v1
 # export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
 # export INFERENCED_BINARY="inferenced"
@@ -17,7 +18,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address $NODE_URL
 
-export GONKA_ADDRESS="gonka1p3qlcsajhm377lvvpaavf54s9fg0hjdtc8n2c7"
+export GONKA_ADDRESS="gonka1fmtvlapuncjqjugq9pu59k3h9wgwmlutww4ly5"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -46,6 +47,13 @@ compressa-perf measure-from-yaml \
   --node_url $NODE_URL \
   config.yml \
   --model_name Qwen/Qwen2.5-7B-Instruct
+
+compressa-perf measure-from-yaml \
+  --private_key_hex "$GONKA_PRIVATE_KEY" \
+  --account_address "$GONKA_ADDRESS" \
+  --node_url $NODE_URL \
+  config-2.yml \
+  --model_name Qwen/Qwen2.5-1.5B-Instruct
 
 export GONKA_ADDRESS
 ./check-balances.sh

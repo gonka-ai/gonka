@@ -70,4 +70,4 @@ spec:
           type: DirectoryOrCreate
       - name: node-config
         configMap:
-          name: node-config-cm 
+          name: node-config-cm-genesis

@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
 - api-private-service.yaml
 - inference-service.yaml
+- inference-service-2.yaml
 
 # Common ConfigMaps
 - node-configs/node-config-configmap.yaml
+- node-configs/node-config-configmap-genesis.yaml
