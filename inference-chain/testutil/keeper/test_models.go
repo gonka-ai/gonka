@@ -7,6 +7,7 @@ const (
 	GenesisModelsTest_QWEN = "Qwen/Qwen2.5-7B-Instruct"
 )
 
+// TODO: move somewhere else to avoid import issues
 var GenesisModelsTest = map[string]types.Model{
 	GenesisModelsTest_QWQ: {
 		ProposedBy:             "genesis",

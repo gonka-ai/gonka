@@ -110,3 +110,11 @@ func PointersToValues[T any](pointerSlice []*T) ([]T, error) {
 	}
 	return values, nil
 }
+
+func ValuesToPointers[T any](valueSlice []T) []*T {
+	pointerSlice := make([]*T, len(valueSlice))
+	for i, val := range valueSlice {
+		pointerSlice[i] = &val
+	}
+	return pointerSlice
+}
