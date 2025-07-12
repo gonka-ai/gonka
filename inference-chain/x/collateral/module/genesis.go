@@ -9,6 +9,11 @@ import (
 
 // InitGenesis initializes the module's state from a provided genesis state.
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) {
+	// Set all the collateral balances
+	for _, elem := range genState.CollateralBalanceList {
+		k.SetCollateral(ctx, elem.Participant, elem.Amount)
+	}
+
 	// this line is used by starport scaffolding # genesis/module/init
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		panic(err)
@@ -19,6 +24,19 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis := types.DefaultGenesis()
 	genesis.Params = k.GetParams(ctx)
+
+	// Export all collateral balances
+	collateralMap := k.GetAllCollateral(ctx)
+	collateralBalances := make([]types.CollateralBalance, 0, len(collateralMap))
+
+	for participant, amount := range collateralMap {
+		collateralBalances = append(collateralBalances, types.CollateralBalance{
+			Participant: participant,
+			Amount:      amount,
+		})
+	}
+
+	genesis.CollateralBalanceList = collateralBalances
 
 	// this line is used by starport scaffolding # genesis/module/export
 

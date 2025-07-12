@@ -16,12 +16,49 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/productscience/inference/x/collateral/keeper"
 	"github.com/productscience/inference/x/collateral/types"
 )
 
+// CollateralMocks holds all the mock keepers for testing
+type CollateralMocks struct {
+	BankKeeper      *MockBankEscrowKeeper
+	StakingKeeper   types.StakingKeeper
+	InferenceKeeper types.InferenceKeeper
+}
+
 func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
+	ctrl := gomock.NewController(t)
+	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+	// StakingKeeper and InferenceKeeper can be nil for basic tests
+	k, ctx := CollateralKeeperWithMock(t, bankKeeper, nil, nil)
+
+	return k, ctx
+}
+
+func CollateralKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, CollateralMocks) {
+	ctrl := gomock.NewController(t)
+	bankKeeper := NewMockBankEscrowKeeper(ctrl)
+
+	k, ctx := CollateralKeeperWithMock(t, bankKeeper, nil, nil)
+
+	mocks := CollateralMocks{
+		BankKeeper:      bankKeeper,
+		StakingKeeper:   nil, // Will be needed for hooks implementation
+		InferenceKeeper: nil, // Empty interface, can be nil
+	}
+
+	return k, ctx, mocks
+}
+
+func CollateralKeeperWithMock(
+	t testing.TB,
+	bankKeeper *MockBankEscrowKeeper,
+	stakingKeeper types.StakingKeeper,
+	inferenceKeeper types.InferenceKeeper,
+) (keeper.Keeper, sdk.Context) {
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 
 	db := dbm.NewMemDB()
@@ -39,7 +76,9 @@ func CollateralKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 		log.NewNopLogger(),
 		authority.String(),
 		nil,
-		nil,
+		bankKeeper,
+		stakingKeeper,
+		inferenceKeeper,
 	)
 
 	ctx := sdk.NewContext(stateStore, cmtproto.Header{}, false, log.NewNopLogger())

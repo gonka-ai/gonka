@@ -48,38 +48,77 @@ Each task includes:
 - **Dependencies**: None
 
 #### 1.2 Define Collateral Parameters
-- **Task**: [ ] Define collateral parameters and genesis state
+- **Task**: [x] Define collateral parameters and genesis state
 - **What**: Add `BaseWeightRatio`, `CollateralPerWeightUnit`, and `UnbondingPeriodEpochs` to the module's parameters. Define the `GenesisState` to initialize them. Set defaults of `0.2` for `BaseWeightRatio` and `1` for `UnbondingPeriodEpochs`.
 - **Where**:
   - `inference-chain/proto/inference/collateral/params.proto`
   - `inference-chain/proto/inference/collateral/genesis.proto`
 - **Why**: These parameters are crucial for the new weight calculation and need to be configurable via governance.
+- **Result**: 
+  - Added three parameters to `params.proto` using string fields with `LegacyDec` for decimal values
+  - Implemented parameter validation in `types/params.go` with defaults: BaseWeightRatio=0.2, CollateralPerWeightUnit=1, UnbondingPeriodEpochs=1
+  - Genesis state already properly wired to use default parameters
+  - Successfully built the inference chain with the new parameters
 
 #### 1.3 Implement Collateral Storage
-- **Task**: [ ] Implement collateral storage
+- **Task**: [x] Implement collateral storage
 - **What**: Create a keeper store to map participant addresses (string) to their collateral amounts (`sdk.Coin`). This will store the state of deposited collateral.
 - **Where**: `inference-chain/x/collateral/keeper/keeper.go`
 - **Dependencies**: 1.1
+- **Result**:
+  - Added `CollateralKey` store prefix and `GetCollateralKey()` helper in `types/keys.go`
+  - Added bank keeper to the keeper struct and expected keepers interface
+  - Implemented storage methods in keeper.go:
+    - `SetCollateral()` - stores participant collateral
+    - `GetCollateral()` - retrieves participant collateral with existence check
+    - `RemoveCollateral()` - removes collateral from store
+    - `GetAllCollateral()` - returns all collateral entries (for genesis export)
+  - Updated module initialization to pass bank keeper to the keeper
+  - Successfully built the project
 
 #### 1.4 Implement `MsgDepositCollateral`
-- **Task**: [ ] Implement `MsgDepositCollateral`
+- **Task**: [x] Implement `MsgDepositCollateral`
 - **What**: Define the `MsgDepositCollateral` message in protobuf and implement the keeper logic to handle deposits. This includes transferring tokens from the user to the `x/collateral` module account.
 - **Where**:
   - `inference-chain/proto/inference/collateral/tx.proto`
   - `inference-chain/x/collateral/keeper/msg_server_deposit_collateral.go`
 - **Dependencies**: 1.3
+- **Result**:
+  - Added `MsgDepositCollateral` message to tx.proto with participant address and amount fields
+  - Created `msg_server_deposit_collateral.go` implementing the deposit logic:
+    - Validates participant address
+    - Transfers tokens from participant to module account
+    - Handles adding to existing collateral or creating new entry
+    - Prevents mixing different denominations
+    - Emits deposit event with participant and amount
+  - Created `events.go` with event type and attribute constants
+  - Created `msg_deposit_collateral.go` with ValidateBasic() validation
+  - Successfully built the project
 
 #### 1.4a Implement Genesis Logic
-- **Task**: [ ] Implement Genesis Logic
+- **Task**: [x] Implement Genesis Logic
 - **What**: Verify that scaffolding correctly created `genesis.go` with `InitGenesis` and `ExportGenesis` functions.
 - **Where**: `inference-chain/x/collateral/module/genesis.go`
 - **Dependencies**: 1.2
+- **Result**:
+  - Created `collateral_balance.proto` defining CollateralBalance message type (following SettleAmount pattern from inference module)
+  - Updated `genesis.proto` to include `repeated CollateralBalance collateral_balance_list`
+  - Enhanced `InitGenesis` to restore all collateral balances from genesis state
+  - Enhanced `ExportGenesis` to export all collateral balances using `GetAllCollateral()`
+  - Successfully built the project
 
 #### 1.4b Verify Module Wiring and Permissions
-- **Task**: [ ] Verify Module Wiring and Permissions
+- **Task**: [x] Verify Module Wiring and Permissions
 - **What**: Verified that the scaffolding correctly wired the module into the `ModuleManager` and Begin/End blockers. Added the one missing piece: the module account permission in `moduleAccPerms`, which is required for the module to hold funds.
 - **Where**: `inference-chain/app/app_config.go`
 - **Dependencies**: 1.4a
+- **Result**:
+  - Verified module is properly included in genesis, begin blocker, and end blocker order
+  - Added module account permission with `Burner` capability for slashing functionality
+  - Fixed test keeper setup in `testutil/keeper/collateral.go` to use proper mocks 
+  following inference module pattern
+  - Fixed genesis test nil pointer issue by properly initializing Params in test
+  - All 422 tests passing, build and basic module integration verified successfully
 
 #### 1.5 Detailed Withdrawal and Unbonding Logic
 
