@@ -22,7 +22,7 @@ mock-server-build-docker:
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
 
-release: decentralized-api-release inference-chain-release tmkms-release
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
