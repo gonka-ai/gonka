@@ -37,9 +37,9 @@ spec:
         - name: NODE_CONFIG_PATH
           value: "/root/node_config.json"
         - name: DAPI_API__POC_CALLBACK_URL
-          value: "http://api-private:9100"
+          value: "http://api:9100"
         - name: DAPI_API__ML_GRPC_CALLBACK_ADDRESS
-          value: "api-private:9300"
+          value: "api:9300"
         - name: DAPI_API__PUBLIC_URL
           valueFrom:
             configMapKeyRef:

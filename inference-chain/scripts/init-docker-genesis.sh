@@ -32,13 +32,11 @@ CHAIN_ID="gonka-testnet-3"
 COIN_DENOM="nicoin"
 STATE_DIR="/root/.inference"
 
-update_configs_for_explorer() {
-  if [ "${WITH_EXPLORER:-}" = true ]; then
-    sed -i 's|^cors_allowed_origins *= *\[.*\]|cors_allowed_origins = ["*"]|' "$STATE_DIR/config/config.toml"
-
+update_configs() {
+  if [ "${REST_API_ACTIVE:-}" = true ]; then
     "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" app_overrides.toml
   else
-    echo "Skipping config changes for explorer"
+    echo "Skipping update node config"
   fi
 }
 
@@ -157,7 +155,7 @@ if [ -f "config_override.toml" ]; then
     $APP_NAME patch-toml "$STATE_DIR/config/config.toml" config_override.toml
 fi
 
-update_configs_for_explorer
+update_configs
 
 echo "Init for cosmovisor"
 cosmovisor init /usr/bin/inferenced || {

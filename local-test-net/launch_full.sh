@@ -1,7 +1,8 @@
-# This script runs 1 genesis node, which is used as seed node also, and 2 full nodes
+# This script runs 1 genesis node with explorer and proxy, and 2 join nodes with proxy
+# Proxy ports: genesis=80, join1=81, join2=82
 set -e
 
-# launch genesis node
+export REST_API_ACTIVE=true
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
@@ -13,6 +14,8 @@ export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
 export IS_GENESIS=true
 export WIREMOCK_PORT=8090
+export PROXY_PORT=80
+export DASHBOARD_PORT=5173  # Enable dashboard for proxy
 mkdir -p "./prod-local/wiremock/$KEY_NAME/mappings/"
 mkdir -p "./prod-local/wiremock/$KEY_NAME/__files/"
 cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock/$KEY_NAME/mappings/"
@@ -20,17 +23,9 @@ sed "s/{{KEY_NAME}}/$KEY_NAME/g" ../testermint/src/main/resources/alternative-ma
 if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
   cp -r ../public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
 fi
-export WIREMOCK_PORT_2=8089
-mkdir -p "./prod-local/wiremock-2/$KEY_NAME/mappings/"
-mkdir -p "./prod-local/wiremock-2/$KEY_NAME/__files/"
-cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock-2/$KEY_NAME/mappings/"
-cp ../testermint/src/main/resources/alternative-mappings/generate_poc.json "./prod-local/wiremock-2/$KEY_NAME/mappings/generate_poc.json"
-if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
-  cp -r ../public-html/* "./prod-local/wiremock-2/$KEY_NAME/__files/"
-fi
 
-echo "Starting genesis node"
-docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml up -d
+echo "Starting genesis node with explorer and proxy (port ${PROXY_PORT})"
+docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml -f docker-compose.explorer.yml -f docker-compose.proxy.yml up -d
 sleep 40
 
 # seed node parameters for both joining nodes
@@ -39,7 +34,7 @@ export SEED_NODE_RPC_URL="http://genesis-node:26657"
 export SEED_NODE_P2P_URL="http://genesis-node:26656"
 export IS_GENESIS=false
 
-# join node 'join1'
+# join node 'join1' with proxy
 export KEY_NAME=join1
 export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
@@ -50,11 +45,15 @@ export ML_GRPC_SERVER_PORT=9013
 export WIREMOCK_PORT=8091
 export RPC_PORT=8101
 export P2P_PORT=8201
+export PROXY_PORT=81
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
+export PROXY_ACTIVE=true
+# Don't set DASHBOARD_PORT for join nodes - they don't have explorer
+unset DASHBOARD_PORT
 ./launch_add_network_node.sh
 
-# join node 'join2'
+# join node 'join2' with proxy
 export KEY_NAME=join2
 export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
@@ -64,6 +63,10 @@ export ML_GRPC_SERVER_PORT=9023
 export WIREMOCK_PORT=8092
 export RPC_PORT=8102
 export P2P_PORT=8202
+export PROXY_PORT=82
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_add_network_node.sh
+export PROXY_ACTIVE=true
+# Don't set DASHBOARD_PORT for join nodes - they don't have explorer
+unset DASHBOARD_PORT
+./launch_add_network_node.sh 
