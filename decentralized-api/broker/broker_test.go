@@ -5,9 +5,10 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
-	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
+
+	"github.com/productscience/inference/x/inference/types"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
@@ -84,6 +85,8 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	queueMessage(t, broker, setStatusCommand)
 
 	<-setStatusCommand.Response
+
+	time.Sleep(10 * time.Millisecond)
 }
 
 func TestNodeRemoval(t *testing.T) {
