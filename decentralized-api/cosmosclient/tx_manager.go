@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	txsToSendTopic    = "txs_to_send"
-	txsToObserveTopic = "txs_to_observe"
+	TxsToSendTopic    = "txs_to_send"
+	TxsToObserveTopic = "txs_to_observe"
 
 	txObserverConsumer = "tx-observer"
 	txSenderConsumer   = "tx-sender"
@@ -47,7 +47,6 @@ type manager struct {
 	js     nats.JetStreamContext
 	ctx    context.Context
 	paused bool
-	cancel context.CancelFunc
 }
 
 func NewTxManager(client *cosmosclient.Client, account *cosmosaccount.Account, address string) TxManager {
@@ -77,7 +76,7 @@ func (m *manager) PutTxToSend(rawTx sdk.Msg) error {
 	if err != nil {
 		return err
 	}
-	_, err = m.js.Publish(txsToSendTopic, b)
+	_, err = m.js.Publish(TxsToSendTopic, b)
 	return err
 }
 
@@ -90,12 +89,12 @@ func (m *manager) putTxToObserve(rawTx sdk.Msg, txHash string, timeOutHeight uin
 	if err != nil {
 		return err
 	}
-	_, err = m.js.Publish(txsToObserveTopic, b)
+	_, err = m.js.Publish(TxsToObserveTopic, b)
 	return err
 }
 
 func (m *manager) SendTxs() error {
-	_, err := m.js.Subscribe(txsToSendTopic, func(msg *nats.Msg) {
+	_, err := m.js.Subscribe(TxsToSendTopic, func(msg *nats.Msg) {
 		if m.paused {
 			logging.Info("sending txs is paused", types.Messages)
 			return
@@ -148,7 +147,7 @@ func (m *manager) SendTxs() error {
 }
 
 func (m *manager) ObserveTxs() error {
-	_, err := m.js.Subscribe(txsToObserveTopic, func(msg *nats.Msg) {
+	_, err := m.js.Subscribe(TxsToObserveTopic, func(msg *nats.Msg) {
 		var tx txInfo
 		if err := json.Unmarshal(msg.Data, &tx); err != nil {
 			msg.Ack() // drop malformed
@@ -161,7 +160,7 @@ func (m *manager) ObserveTxs() error {
 			return
 		}
 
-		_, err = m.client.RPC.Tx(m.ctx, bz, false)
+		_, err = m.client.Context().Client.Tx(m.ctx, bz, false)
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				currentHeight, err := m.client.LatestBlockHeight(m.ctx)
@@ -198,7 +197,7 @@ func (m *manager) resumeSendTxs() {
 }
 
 func (m *manager) resendAllTxs() error {
-	sub, err := m.js.PullSubscribe("", txObserverConsumer, nats.Bind(txsToObserveTopic, txObserverConsumer))
+	sub, err := m.js.PullSubscribe("", txObserverConsumer, nats.Bind(TxsToObserveTopic, txObserverConsumer))
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,15 @@ type Config struct {
 	UpgradePlan        UpgradePlan           `koanf:"upgrade_plan"`
 	KeyConfig          KeyConfig             `koanf:"key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
+	Nats               NatsServerConfig      `koanf:"nats"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+}
+
+type NatsServerConfig struct {
+	Host       string `koanf:"host"`
+	Port       int    `koanf:"port"`
+	StorageDir string `koanf:"storage_dir"`
+	TestMode   bool   `koanf:"test_mode"`
 }
 
 type NodeVersionStack struct {

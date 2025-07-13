@@ -6,6 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/nats_server"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
@@ -56,6 +57,11 @@ func main() {
 
 	if config.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
+	natssrv := nats_server.NewServer(config.GetNatsConfig())
+	if err := natssrv.Start(); err != nil {
+		panic(err)
 	}
 
 	recorder, err := cosmosclient.NewInferenceCosmosClientWithRetry(
