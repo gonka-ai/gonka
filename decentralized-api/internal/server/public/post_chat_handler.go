@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
+	"decentralized-api/internal/timing"
 	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"encoding/json"
@@ -49,10 +50,17 @@ func (s *Server) postChat(ctx echo.Context) error {
 }
 
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
+	defer timing.TimeOperation("request_total")()
+
 	logging.Debug("GET inference participant for transfer", types.Inferences, "address", request.RequesterAddress)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
-	participant, err := queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+
+	// Fix: Only measure the actual participant query
+	participant, err := func() (*types.QueryInferenceParticipantResponse, error) {
+		defer timing.TimeOperation("blockchain_query_participant")()
+		return queryClient.InferenceParticipant(ctx.Request().Context(), &types.QueryInferenceParticipantRequest{Address: request.RequesterAddress})
+	}()
 	if err != nil {
 		logging.Error("Failed to get inference participant", types.Inferences, "address", request.RequesterAddress, "error", err)
 		return err
@@ -63,7 +71,10 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		promptText += message.Content + "\n"
 	}
 
-	promptTokenCount, err := s.getPromptTokenEstimation(promptText, request.OpenAiRequest.Model)
+	promptTokenCount, err := func() (int, error) {
+		defer timing.TimeOperation("prompt_token_estimation")()
+		return s.getPromptTokenEstimation(promptText, request.OpenAiRequest.Model)
+	}()
 
 	if err != nil {
 		logging.Error("Failed to get prompt token estimation", types.Inferences, "error", err)
@@ -91,6 +102,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 
 	go func() {
+		defer timing.TimeOperation("blockchain_start_inference_tx")()
 		logging.Debug("Starting inference", types.Inferences, "id", inferenceRequest.InferenceId)
 		if s.configManager.GetApiConfig().TestMode && request.OpenAiRequest.Seed == 8675309 {
 			time.Sleep(10 * time.Second)
@@ -115,31 +127,41 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		request.PubKey = participant.GetPubkey()
 
 		logging.Info("Execute request on same node, fill request with extra data", types.Inferences, "inferenceId", request.InferenceId, "seed", request.Seed, "pubKey", request.PubKey)
-		return s.handleExecutorRequest(request, ctx.Response().Writer)
+		return func() error {
+			defer timing.TimeOperation("ml_inference_execution")()
+			return s.handleExecutorRequest(request, ctx.Response().Writer)
+		}()
 	}
 
-	req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
-	if err != nil {
-		return err
-	}
+	// Measure HTTP request to external executor (ML inference)
+	err = func() error {
+		defer timing.TimeOperation("ml_inference_execution")()
 
-	// TODO use echo.Redirect?
-	req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
-	req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
-	req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
-	req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
-	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
+		req, err := http.NewRequest(http.MethodPost, executor.Url+"/v1/chat/completions", bytes.NewReader(request.Body))
+		if err != nil {
+			return err
+		}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
-		return err
-	}
-	defer resp.Body.Close()
+		// TODO use echo.Redirect?
+		req.Header.Set(utils.XInferenceIdHeader, inferenceUUID)
+		req.Header.Set(utils.XSeedHeader, strconv.Itoa(int(seed)))
+		req.Header.Set(utils.XPublicKeyHeader, participant.GetPubkey())
+		req.Header.Set(utils.AuthorizationHeader, request.AuthKey)
+		req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	logging.Info("Proxying response from executor", types.Inferences, "inferenceId", inferenceUUID)
-	proxyResponse(resp, ctx.Response().Writer, false, nil)
-	return nil
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
+			return err
+		}
+		defer resp.Body.Close()
+
+		logging.Info("Proxying response from executor", types.Inferences, "inferenceId", inferenceUUID)
+		proxyResponse(resp, ctx.Response().Writer, false, nil)
+		return nil
+	}()
+
+	return err
 }
 
 func (s *Server) getPromptTokenEstimation(text string, model string) (int, error) {
@@ -210,7 +232,12 @@ func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, erro
 
 func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWriter) error {
 	inferenceId := request.InferenceId
-	if err := validateRequestAgainstPubKey(request, request.PubKey); err != nil {
+
+	err := func() error {
+		defer timing.TimeOperation("executor_request_validation")()
+		return validateRequestAgainstPubKey(request, request.PubKey)
+	}()
+	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unable to validate request against PubKey:"+err.Error())
 	}
 
@@ -220,7 +247,10 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		return echo.ErrBadRequest
 	}
 
-	modifiedRequestBody, err := completionapi.ModifyRequestBody(request.Body, int32(seed))
+	modifiedRequestBody, err := func() (*completionapi.ModifiedRequest, error) {
+		defer timing.TimeOperation("request_body_modification")()
+		return completionapi.ModifyRequestBody(request.Body, int32(seed))
+	}()
 	if err != nil {
 		logging.Warn("Unable to modify request body", types.Inferences, "error", err)
 		return err
@@ -228,20 +258,24 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 
 	logging.Info("Attempting to lock node for inference", types.Inferences,
 		"inferenceId", inferenceId, "nodeVersion", s.configManager.GetCurrentNodeVersion())
-	resp, err := broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
-		logging.Info("Successfully acquired node lock for inference", types.Inferences,
-			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrl())
 
-		completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
-		if err != nil {
-			return nil, err
-		}
-		return http.Post(
-			completionsUrl,
-			request.Request.Header.Get("Content-Type"),
-			bytes.NewReader(modifiedRequestBody.NewBody),
-		)
-	})
+	resp, err := func() (*http.Response, error) {
+		defer timing.TimeOperation("ml_node_inference")()
+		return broker.LockNode(s.nodeBroker, request.OpenAiRequest.Model, s.configManager.GetCurrentNodeVersion(), func(node *broker.Node) (*http.Response, error) {
+			logging.Info("Successfully acquired node lock for inference", types.Inferences,
+				"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrl())
+
+			completionsUrl, err := url.JoinPath(node.InferenceUrl(), "/v1/chat/completions")
+			if err != nil {
+				return nil, err
+			}
+			return http.Post(
+				completionsUrl,
+				request.Request.Header.Get("Content-Type"),
+				bytes.NewReader(modifiedRequestBody.NewBody),
+			)
+		})
+	}()
 	if err != nil {
 		logging.Error("Failed to get response from inference node", types.Inferences,
 			"inferenceId", inferenceId, "error", err)
@@ -259,7 +293,11 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	logging.Debug("Proxying response from inference node", types.Inferences, "inferenceId", request.InferenceId)
-	proxyResponse(resp, w, true, responseProcessor)
+
+	func() {
+		defer timing.TimeOperation("response_proxy_processing")()
+		proxyResponse(resp, w, true, responseProcessor)
+	}()
 
 	logging.Debug("Processing response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	completionResponse, err := responseProcessor.GetResponse()
@@ -269,7 +307,10 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 		return err
 	}
 
-	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
+	err = func() error {
+		defer timing.TimeOperation("blockchain_finish_inference_tx")()
+		return s.sendInferenceTransaction(request.InferenceId, completionResponse, modifiedRequestBody.NewBody, s.configManager.GetChainNodeConfig().AccountName)
+	}()
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -280,6 +321,7 @@ func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWrit
 
 func (s *Server) getExecutorForRequest(ctx context.Context, model string) (*ExecutorDestination, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
+	defer timing.TimeOperation("blockchain_query_executor")()
 	response, err := queryClient.GetRandomExecutor(ctx, &types.QueryGetRandomExecutorRequest{
 		Model: model,
 	})
@@ -339,7 +381,7 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 		}
 	}
 
-	logging.Debug("Usage from response", types.Inferences, "usage", usage)
+	logging.Info("Usage from response", types.Inferences, "usage", usage)
 	bodyBytes, err := response.GetBodyBytes()
 	if err != nil || bodyBytes == nil {
 		logging.Error("Failed to get body bytes from response", types.Inferences, "error", err)
@@ -470,6 +512,8 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 
 // Check signature and available balance.
 func validateRequester(request *ChatRequest, requester *types.QueryInferenceParticipantResponse, promptTokenCount int) error {
+	defer timing.TimeOperation("request_validation")()
+
 	if requester == nil {
 		logging.Error("Inference participant not found", types.Inferences, "address", request.RequesterAddress)
 		return ErrInferenceParticipantNotFound
@@ -491,8 +535,8 @@ func validateRequester(request *ChatRequest, requester *types.QueryInferencePart
 	promptTokensCost := uint64(promptTokenCount) * uint64(calculations.PerTokenCost)
 
 	escrowNeeded := maxTokensCost + promptTokensCost
-	logging.Debug("Escrow needed (using estimation)", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
-	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
+	logging.Info("Escrow needed (using estimation)", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
+	logging.Info("Client balance", types.Inferences, "balance", requester.Balance)
 	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance
 	}
