@@ -18,7 +18,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka13h5qk3wqd0quye9qes54ucv9es4jzt2q76hsrd"
+export GONKA_ADDRESS="gonka1ftltg7m6cv668wxwpqnmev55fkhd9gmfl3np26"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -51,7 +51,7 @@ compressa-perf measure-from-yaml \
 compressa-perf measure-from-yaml \
   --private_key_hex "$GONKA_PRIVATE_KEY" \
   --account_address "$GONKA_ADDRESS" \
-  --node_url $NODE_URL/api \
+  --node_url $NODE_URL \
   config-2.yml \
   --model_name Qwen/Qwen2.5-1.5B-Instruct
 
