@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  labels:
+    app: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: ghcr-credentials
+      containers:
+      - name: proxy
+        image: proxy
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: API_PORT
+          value: "9000"
+        - name: CHAIN_RPC_PORT
+          value: "26657"
+        - name: CHAIN_API_PORT
+          value: "1317"
+        - name: CHAIN_GRPC_PORT
+          value: "9090"
+        - name: DASHBOARD_PORT
+          value: "5173"
+        # Service names for Kubernetes environment (no prefix)
+        - name: PROXY_ADD_NODE_PREFIX
+          value: "false"
+        - name: API_SERVICE_NAME
+          value: "api"  # Unified API service (all ports)
+        - name: NODE_SERVICE_NAME
+          value: "node"
+        - name: EXPLORER_SERVICE_NAME
+          value: "explorer"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"

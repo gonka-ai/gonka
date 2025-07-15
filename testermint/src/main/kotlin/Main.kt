@@ -492,9 +492,15 @@ data class InferenceRequestPayload(
     val stream: Boolean = false
 ) {
     fun toJson() = cosmosJson.toJson(this)
+
+    fun textLength(): Int {
+        var promptText = ""
+        for (message in messages) {
+            promptText += message.content + "\n"
+        }
+        return promptText.length
+    }
 }
-// Hardcoded for now
-const val inferenceRequestPromptTokens = 19
 val inferenceRequestObject = InferenceRequestPayload(
     model = "Qwen/Qwen2.5-7B-Instruct",
     temperature = 0.8,

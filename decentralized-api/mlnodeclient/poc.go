@@ -13,7 +13,7 @@ const (
 
 	DefaultRTarget        = 1.3971164020989417
 	DefaultBatchSize      = 100
-	DefaultFraudThreshold = 0.01
+	DefaultFraudThreshold = 0.045
 )
 
 type InitDto struct {

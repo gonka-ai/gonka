@@ -63,14 +63,14 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 		promptText += message.Content + "\n"
 	}
 
-	promptTokenCount, err := s.getPromptTokenCount(promptText, request.OpenAiRequest.Model)
+	promptTokenCount, err := s.getPromptTokenEstimation(promptText, request.OpenAiRequest.Model)
 
 	if err != nil {
-		logging.Error("Failed to get prompt token count", types.Inferences, "error", err)
+		logging.Error("Failed to get prompt token estimation", types.Inferences, "error", err)
 		return err
 	}
 
-	logging.Info("Prompt token count", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
+	logging.Info("Prompt token estimation", types.Inferences, "count", promptTokenCount, "model", request.OpenAiRequest.Model)
 
 	if err := validateRequester(request, participant, promptTokenCount); err != nil {
 		return err
@@ -142,6 +142,10 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	return nil
 }
 
+func (s *Server) getPromptTokenEstimation(text string, model string) (int, error) {
+	return len(text), nil
+}
+
 func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 	type tokenizeRequest struct {
 		Model  string `json:"model"`
@@ -188,6 +192,20 @@ func (s *Server) getPromptTokenCount(text string, model string) (int, error) {
 	}
 
 	return result.TokenCount, nil
+}
+
+func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, error) {
+	var openAiRequest OpenAiRequest
+	err := json.Unmarshal(requestBytes, &openAiRequest)
+	if err != nil {
+		return "", err
+	}
+
+	promptText := ""
+	for _, message := range openAiRequest.Messages {
+		promptText += message.Content + "\n"
+	}
+	return promptText, nil
 }
 
 func (s *Server) handleExecutorRequest(request *ChatRequest, w http.ResponseWriter) error {
@@ -302,6 +320,25 @@ func (s *Server) sendInferenceTransaction(inferenceId string, response completio
 		logging.Warn("Failed to get usage from response", types.Inferences, "error", err)
 		return err
 	}
+
+	// If streaming response doesn't have prompt tokens, get accurate count via tokenization
+	if usage.PromptTokens == 0 {
+		logging.Info("Streaming response missing prompt tokens, using tokenization", types.Inferences, "inferenceId", inferenceId)
+		promptText, err := s.extractPromptTextFromRequest(modifiedRequestBodyBytes)
+		if err != nil {
+			logging.Warn("Failed to extract prompt text for tokenization", types.Inferences, "error", err)
+		} else {
+			model, _ := response.GetModel()
+			actualPromptTokens, err := s.getPromptTokenCount(promptText, model)
+			if err != nil {
+				logging.Warn("Failed to get actual prompt token count", types.Inferences, "error", err)
+			} else {
+				logging.Info("Updated prompt tokens via tokenization", types.Inferences, "inferenceId", inferenceId, "tokens", actualPromptTokens)
+				usage.PromptTokens = uint64(actualPromptTokens)
+			}
+		}
+	}
+
 	logging.Debug("Usage from response", types.Inferences, "usage", usage)
 	bodyBytes, err := response.GetBodyBytes()
 	if err != nil || bodyBytes == nil {
@@ -447,14 +484,14 @@ func validateRequester(request *ChatRequest, requester *types.QueryInferencePart
 		request.OpenAiRequest.MaxTokens = keeper.DefaultMaxTokens
 	}
 
-	// Calculate escrow needed based on both max tokens and prompt token count
+	// Calculate escrow needed based on both max tokens and prompt token estimation
 	maxTokensCost := uint64(request.OpenAiRequest.MaxTokens) * uint64(calculations.PerTokenCost)
 
-	// Use the promptTokenCount parameter that was passed in
+	// Use the promptTokenCount parameter that was passed in (estimation for escrow)
 	promptTokensCost := uint64(promptTokenCount) * uint64(calculations.PerTokenCost)
 
 	escrowNeeded := maxTokensCost + promptTokensCost
-	logging.Debug("Escrow needed", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
+	logging.Debug("Escrow needed (using estimation)", types.Inferences, "escrowNeeded", escrowNeeded, "maxTokensCost", maxTokensCost, "promptTokensCost", promptTokensCost)
 	logging.Debug("Client balance", types.Inferences, "balance", requester.Balance)
 	if requester.Balance < int64(escrowNeeded) {
 		return ErrInsufficientBalance

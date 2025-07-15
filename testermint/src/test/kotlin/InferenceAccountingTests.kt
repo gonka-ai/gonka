@@ -42,13 +42,26 @@ class InferenceAccountingTests : TestermintTest() {
     fun `test with maximum tokens`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(cluster, inferenceRequestObject.copy(maxCompletionTokens = 100), 119L * DEFAULT_TOKEN_COST, 100)
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(cluster, inferenceRequestObject.copy(maxTokens = 100), 119L * DEFAULT_TOKEN_COST, 100)
+        val maxCompletionTokens = 100
+        verifyEscrow(
+            cluster,
+            inferenceRequestObject.copy(maxCompletionTokens = maxCompletionTokens),
+            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            maxCompletionTokens
+        )
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         verifyEscrow(
-            cluster, inferenceRequestObject,
-            (DEFAULT_TOKENS + 19) * DEFAULT_TOKEN_COST, DEFAULT_TOKENS.toInt()
+            cluster,
+            inferenceRequestObject.copy(maxTokens = maxCompletionTokens),
+            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            maxCompletionTokens
+        )
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(
+            cluster,
+            inferenceRequestObject,
+            (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            DEFAULT_TOKENS.toInt()
         )
     }
 

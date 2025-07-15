@@ -305,7 +305,8 @@ func TestProcessStartInference(t *testing.T) {
 			assert.Equal(t, tt.startMessage.InferenceId, inference.InferenceId)
 			assert.Equal(t, tt.startMessage.PromptHash, inference.PromptHash)
 			assert.Equal(t, tt.startMessage.PromptPayload, inference.PromptPayload)
-			assert.Equal(t, tt.startMessage.PromptTokenCount, inference.PromptTokenCount)
+			// PromptTokenCount is not set in ProcessStartInference anymore - only used for escrow calculation
+			// Real token count is set in ProcessFinishInference
 			assert.Equal(t, tt.startMessage.RequestedBy, inference.RequestedBy)
 			assert.Equal(t, tt.startMessage.Model, inference.Model)
 			assert.Equal(t, tt.blockContext.BlockHeight, inference.StartBlockHeight)

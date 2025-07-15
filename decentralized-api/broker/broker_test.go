@@ -142,8 +142,13 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	// so our set status timestamp comes after the initial registration timestamp
 	_ = <-nodeIsRegistered
 
-	queueMessage(t, broker, NewInferenceUpAllCommand())
-	queueMessage(t, broker, NewSetNodesActualStatusCommand(
+	inferenceUpCommand := NewInferenceUpAllCommand()
+	queueMessage(t, broker, inferenceUpCommand)
+
+	// Wait for InferenceUpAllCommand to complete
+	<-inferenceUpCommand.Response
+
+	setStatusCommand := NewSetNodesActualStatusCommand(
 		[]StatusUpdate{
 			{
 				NodeId:     node.Id,
@@ -152,7 +157,12 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 				Timestamp:  time.Now(),
 			},
 		},
-	))
+	)
+	queueMessage(t, broker, setStatusCommand)
+
+	<-setStatusCommand.Response
+
+	time.Sleep(10 * time.Millisecond)
 }
 
 func TestNodeRemoval(t *testing.T) {

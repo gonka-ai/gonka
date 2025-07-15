@@ -14,3 +14,9 @@ images:
 - name: tmkms
   newName: ghcr.io/product-science/tmkms-softsign-with-keygen
   newTag: 32165a2
+- name: proxy
+  newName: ghcr.io/product-science/proxy
+  newTag: 1.1.2
+- name: explorer
+  newName: ghcr.io/product-science/explorer
+  newTag: latest

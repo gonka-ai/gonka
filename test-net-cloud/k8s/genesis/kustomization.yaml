@@ -13,7 +13,7 @@ resources:
 - api-deployment.yaml
 - inference-deployment.yaml
 - inference-deployment-2.yaml
-- api-public-service.yaml
+- proxy-service.yaml
 - node-service.yaml
 
 components:
