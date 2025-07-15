@@ -122,6 +122,8 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
+	nodes = filterNodes(nodes)
+	logging.Info("ValidateReceivedBatches. Filtered nodes available for PoC validation.", types.PoC, "numNodes", len(nodes))
 
 	if len(nodes) == 0 {
 		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
@@ -157,4 +159,14 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 	}
 
 	logging.Info("ValidateReceivedBatches. Finished.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+}
+
+func filterNodes(nodes []broker.NodeResponse) []broker.NodeResponse {
+	filtered := make([]broker.NodeResponse, 0, len(nodes))
+	for _, node := range nodes {
+		if node.State.CurrentStatus == types.HardwareNodeStatus_POC && node.State.PocCurrentStatus == broker.PocStatusValidating {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered
 }
