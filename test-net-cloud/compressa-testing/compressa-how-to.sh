@@ -3,7 +3,7 @@
 #  https://testnet.productscience.ai/developer/quickstart/
 export ACCOUNT_NAME="test-account"
 # Url of the genesis k8s node API
-export NODE_URL="http://34.9.136.116:30000"
+export NODE_URL="http://34.9.136.116:30000/api"
 # export NODE_URL="http://34.9.136.116:30010"
 export GONKA_ENDPOINTS=$NODE_URL/v1
 # export INFERENCED_BINARY="kubectl -n genesis exec node-0 -- inferenced"
@@ -16,15 +16,15 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 
 # Create account, should return 200
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
-  --node-address $NODE_URL
+  --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka1zfy7wqq82gsmekrdfz56mw69du4m370ryqa5l0"
+export GONKA_ADDRESS="gonka13h5qk3wqd0quye9qes54ucv9es4jzt2q76hsrd"
 
 # View it
 "$INFERENCED_BINARY" keys list
 
 "$INFERENCED_BINARY" query bank balances "$GONKA_ADDRESS" \
-  --node tcp://34.9.136.116:30002
+  --node tcp://34.9.136.116:30000/chain-rpc/ # trailing slash in necesary for now
 
 # Export private key:
 GONKA_PRIVATE_KEY="$(echo y | "$INFERENCED_BINARY" keys export $ACCOUNT_NAME --unarmored-hex --unsafe)"
@@ -51,7 +51,7 @@ compressa-perf measure-from-yaml \
 compressa-perf measure-from-yaml \
   --private_key_hex "$GONKA_PRIVATE_KEY" \
   --account_address "$GONKA_ADDRESS" \
-  --node_url $NODE_URL \
+  --node_url $NODE_URL/api \
   config-2.yml \
   --model_name Qwen/Qwen2.5-1.5B-Instruct
 
