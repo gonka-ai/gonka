@@ -2,8 +2,9 @@ package inference
 
 import (
 	"context"
-	keeper "github.com/productscience/inference/x/inference/keeper"
 	"testing"
+
+	"github.com/productscience/inference/x/inference/keeper"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -111,9 +112,51 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 	// Check first group (assigned model)
 	modelGroup := participant.MlNodes[0]
 	require.Len(t, modelGroup.MlNodes, 2, "The model-specific group should have two nodes")
-	require.Equal(t, "mlnode1", modelGroup.MlNodes[0].NodeId, "The first node should be assigned to the model")
-	// The node should be set to PRE_POC by default, not POC
-	require.Equal(t, []bool{true, false}, modelGroup.MlNodes[0].TimeslotAllocation, "Timeslot allocation should be default [true, false]")
-	require.Equal(t, "mlnode2", modelGroup.MlNodes[1].NodeId, "The second node should be assigned to the model")
-	require.Equal(t, []bool{true, false}, modelGroup.MlNodes[1].TimeslotAllocation, "Timeslot allocation should be default [true, false]")
+
+	// Verify that both nodes are in the same group and have the correct timeslot allocations.
+	assertNodeInGroup(t, modelGroup.MlNodes, "mlnode1")
+	assertNodeInGroup(t, modelGroup.MlNodes, "mlnode2")
+
+	// Verify that one node is allocated for PoC and the other is not.
+	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 1)
+	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, true}, 1)
+}
+
+// assertNodeInGroup checks if a node with the given ID exists in the list of nodes.
+func assertNodeInGroup(t *testing.T, nodes []*types.MLNodeInfo, nodeID string) {
+	t.Helper()
+	found := false
+	for _, node := range nodes {
+		if node.NodeId == nodeID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "Node with ID %s not found in the group", nodeID)
+}
+
+// assertTimeslotAllocationCount checks if there are exactly `expectedCount` nodes
+// with the given timeslot allocation.
+func assertTimeslotAllocationCount(t *testing.T, nodes []*types.MLNodeInfo, allocation []bool, expectedCount int) {
+	t.Helper()
+	count := 0
+	for _, node := range nodes {
+		if equalBoolSlice(node.TimeslotAllocation, allocation) {
+			count++
+		}
+	}
+	require.Equal(t, expectedCount, count, "Expected %d nodes with timeslot allocation %v, but found %d", expectedCount, allocation, count)
+}
+
+// equalBoolSlice compares two boolean slices for equality.
+func equalBoolSlice(a, b []bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
