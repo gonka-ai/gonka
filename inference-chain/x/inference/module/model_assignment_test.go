@@ -106,18 +106,14 @@ func TestSetModelsForParticipants_OneModelTwoNodes_Bug(t *testing.T) {
 	require.Len(t, participant.Models, 1, "Should have one supported model")
 	require.Equal(t, modelID, participant.Models[0], "The supported model should be correct")
 
-	require.Len(t, participant.MlNodes, 2, "Should have two MLNode groups due to the bug (one for model, one for overflow)")
+	require.Len(t, participant.MlNodes, 1, "Should have one MLNode groups corresponding to the model: "+modelID)
 
 	// Check first group (assigned model)
 	modelGroup := participant.MlNodes[0]
-	require.Len(t, modelGroup.MlNodes, 1, "The model-specific group should have one node")
+	require.Len(t, modelGroup.MlNodes, 2, "The model-specific group should have two nodes")
 	require.Equal(t, "mlnode1", modelGroup.MlNodes[0].NodeId, "The first node should be assigned to the model")
 	// The node should be set to PRE_POC by default, not POC
 	require.Equal(t, []bool{true, false}, modelGroup.MlNodes[0].TimeslotAllocation, "Timeslot allocation should be default [true, false]")
-
-	// Check second group (overflow)
-	overflowGroup := participant.MlNodes[1]
-	require.Len(t, overflowGroup.MlNodes, 1, "The overflow group should have one node")
-	require.Equal(t, "mlnode2", overflowGroup.MlNodes[0].NodeId, "The second node should be in the overflow group")
-	require.Equal(t, []bool{true, false}, overflowGroup.MlNodes[0].TimeslotAllocation, "Timeslot allocation should be default [true, false]")
+	require.Equal(t, "mlnode2", modelGroup.MlNodes[1].NodeId, "The second node should be assigned to the model")
+	require.Equal(t, []bool{true, false}, modelGroup.MlNodes[1].TimeslotAllocation, "Timeslot allocation should be default [true, false]")
 }
