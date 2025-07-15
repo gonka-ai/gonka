@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
 - ../../join
-- api-public-service.yaml
+- proxy-service.yaml
 - node-service.yaml
 
 patches:
@@ -12,3 +12,4 @@ patches:
 - path: api-deployment-patch.yaml
 - path: inference-deployment-patch.yaml
 - path: config-patch.yaml
+- path: node-config-patch.yaml

@@ -9,7 +9,7 @@
 #    to check use: ip -4 addr show
 K3S_TOKEN=""
 CONTROL_PLANE_INTERNAL_IP="10.128.0.41"
-WORKER_INTERNAL_IP="10.128.0.42"
+WORKER_INTERNAL_IP="10.128.0.46"
 curl -sfL https://get.k3s.io | K3S_URL=https://$CONTROL_PLANE_INTERNAL_IP:6443 \
     K3S_TOKEN="$K3S_TOKEN" \
     INSTALL_K3S_EXEC="agent --flannel-iface=ens4 \

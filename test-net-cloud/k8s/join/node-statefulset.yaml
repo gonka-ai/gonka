@@ -33,6 +33,10 @@ spec:
           name: tendermint-rpc
         - containerPort: 26658
           name: tmkms
+        - containerPort: 1317
+          name: rest-api
+        - containerPort: 9090
+          name: tendermint-grpc
         envFrom:
         - configMapRef:
             name: config
@@ -61,6 +65,8 @@ spec:
           value: "26658"
         - name: TMKMS_PORT
           value: "26658"
+        - name: REST_API_ACTIVE
+          value: "true"  # Enable REST API server for explorer
         volumeMounts:
         - name: inference-data
           mountPath: /root/.inference # Shared data with API
