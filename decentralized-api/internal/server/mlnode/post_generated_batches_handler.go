@@ -17,21 +17,22 @@ func (s *Server) postGeneratedBatches(ctx echo.Context) error {
 	var body mlnodeclient.ProofBatch
 
 	if err := ctx.Bind(&body); err != nil {
-		logging.Error("Failed to decode request body of type ProofBatch", types.PoC, "error", err)
+		logging.Error("ProofBatch-callback. Failed to decode request body of type ProofBatch", types.PoC, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	logging.Info("ProofBatch received", types.PoC, "body", body)
+	logging.Debug("ProofBatch-callback. Received", types.PoC, "body", body)
 
 	var nodeId string
-	if body.NodeNum > 0 {
-		node, found := s.broker.GetNodeByNodeNum(body.NodeNum)
-		if found {
-			nodeId = node.Id
-		} else {
-			logging.Warn("Received PoC batch with unknown NodeNum", types.PoC, "node_num", body.NodeNum)
-			// NodeId will be an empty string
-		}
+	node, found := s.broker.GetNodeByNodeNum(body.NodeNum)
+	if found {
+		nodeId = node.Id
+		logging.Info("ProofBatch-callback. Found node by node num", types.PoC,
+			"nodeId", nodeId,
+			"nodeNum", body.NodeNum)
+	} else {
+		logging.Warn("ProofBatch-callback. Unknown NodeNum. Sending MsgSubmitPocBatch with empty nodeId",
+			types.PoC, "node_num", body.NodeNum)
 	}
 
 	msg := &inference.MsgSubmitPocBatch{
@@ -43,7 +44,7 @@ func (s *Server) postGeneratedBatches(ctx echo.Context) error {
 	}
 
 	if err := s.recorder.SubmitPocBatch(msg); err != nil {
-		logging.Error("Failed to submit MsgSubmitPocBatch", types.PoC, "error", err)
+		logging.Error("ProofBatch-callback. Failed to submit MsgSubmitPocBatch", types.PoC, "error", err)
 		return err
 	}
 
