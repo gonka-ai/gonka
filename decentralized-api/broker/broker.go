@@ -1083,7 +1083,7 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 // and populates the NodeState with the epoch-specific model and MLNode info.
 // It only performs the update if the epoch index or phase has changed.
 func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) error {
-	if epochState.LatestEpoch.EpochIndex == b.lastEpochIndex && epochState.CurrentPhase == b.lastEpochPhase {
+	if epochState.LatestEpoch.EpochIndex <= b.lastEpochIndex && epochState.CurrentPhase == b.lastEpochPhase {
 		return nil // No change, no need to update
 	}
 
