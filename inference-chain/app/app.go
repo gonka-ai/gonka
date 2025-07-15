@@ -32,6 +32,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	_ "github.com/cosmos/cosmos-sdk/x/auth" // import for side-effects
@@ -56,9 +57,9 @@ import (
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	_ "github.com/cosmos/cosmos-sdk/x/group" // import for side-effects
 	groupkeeper "github.com/cosmos/cosmos-sdk/x/group/keeper"
-	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
-	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/mint" // import for side-effects
 	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/params" // import for side-effects
 	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
@@ -68,6 +69,7 @@ import (
 	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/staking" // import for side-effects
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+
 	_ "github.com/cosmos/ibc-go/modules/capability" // import for side-effects
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
 	_ "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts" // import for side-effects
@@ -79,6 +81,9 @@ import (
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
+	inferencegenesis "github.com/productscience/inference/x/inference/module"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+
 	// this line is used by starport scaffolding # stargate/app/moduleImport
 
 	// WASM
@@ -387,6 +392,10 @@ func New(
 
 	if loadLatest {
 		ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
+		// Initialize denom metadata in the SDK's global registry
+		if err := app.initializeDenomMetadata(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize denom metadata: %w", err)
+		}
 
 		if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize pinned codes: %w", err)
@@ -507,4 +516,18 @@ func BlockedAddresses() map[string]bool {
 		}
 	}
 	return result
+}
+
+func (app *App) initializeDenomMetadata(ctx sdk.Context) error {
+	denomMetadata, found := app.BankKeeper.GetDenomMetaData(ctx, inferencetypes.BaseCoin)
+	if !found {
+		panic("BaseCoin denom not found")
+	}
+
+	if err := inferencegenesis.LoadMetadataToSdk(denomMetadata); err != nil {
+		return fmt.Errorf("failed to load denom metadata to SDK: %w", err)
+	}
+
+	ctx.Logger().Info("Successfully initialized denom metadata", "base", denomMetadata.Base, "units", len(denomMetadata.DenomUnits))
+	return nil
 }
