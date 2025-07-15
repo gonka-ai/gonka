@@ -16,8 +16,9 @@ const (
 )
 
 var ModelToPassValue = map[string]float64{
-	"Qwen/Qwen2.5-7B-Instruct": 0.85,
-	"Qwen/QwQ-32B":             0.85,
+	"Qwen/Qwen2.5-7B-Instruct":   0.85,
+	"Qwen/Qwen2.5-1.5B-Instruct": 0.85,
+	"Qwen/QwQ-32B":               0.85,
 }
 
 func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (*types.MsgValidationResponse, error) {
