@@ -142,6 +142,26 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	// so our set status timestamp comes after the initial registration timestamp
 	_ = <-nodeIsRegistered
 
+	mlNode := types.MLNodeInfo{
+		NodeId:             node.Id,
+		Throughput:         0,
+		PocWeight:          10,
+		TimeslotAllocation: []bool{true, false},
+	}
+
+	var modelId string
+	for m, _ := range node.Models {
+		modelId = m
+		break
+	}
+	if modelId == "" {
+		t.Fatalf("expected modelId, got empty string")
+	}
+	model := types.Model{
+		Id: modelId,
+	}
+	broker.UpdateNodeEpochData([]*types.MLNodeInfo{&mlNode}, modelId, model)
+
 	inferenceUpCommand := NewInferenceUpAllCommand()
 	queueMessage(t, broker, inferenceUpCommand)
 

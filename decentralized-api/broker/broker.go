@@ -1083,9 +1083,6 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 // and populates the NodeState with the epoch-specific model and MLNode info.
 // It only performs the update if the epoch index or phase has changed.
 func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if epochState.LatestEpoch.EpochIndex == b.lastEpochIndex && epochState.CurrentPhase == b.lastEpochPhase {
 		return nil // No change, no need to update
 	}
@@ -1111,11 +1108,7 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	parentEpochData := parentGroupResp.GetEpochGroupData()
 
-	// Clear existing epoch data for all nodes first
-	for _, node := range b.nodes {
-		node.State.EpochModels = make(map[string]types.Model)
-		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
-	}
+	b.ClearNodeEpochData()
 
 	// 2. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
@@ -1140,19 +1133,36 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 			// Check if the participant is the one this broker is managing
 			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
 				// 4. Iterate through the ML nodes for this participant in the epoch data
-				for _, mlNodeInfo := range weightInfo.MlNodes {
-					// 5. Find the corresponding local node and update its state
-					if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
-						node.State.EpochModels[modelId] = *subgroup.ModelSnapshot
-						node.State.EpochMLNodes[modelId] = *mlNodeInfo
-						logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
-					}
-				}
+				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
 			}
 		}
 	}
 
 	return nil
+}
+
+func (b *Broker) ClearNodeEpochData() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	logging.Info("Clearing node epoch data", types.Nodes)
+	for _, node := range b.nodes {
+		node.State.EpochModels = make(map[string]types.Model)
+		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)
+	}
+}
+
+func (b *Broker) UpdateNodeEpochData(mlNodes []*types.MLNodeInfo, modelId string, modelSnapshot types.Model) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, mlNodeInfo := range mlNodes {
+		if node, ok := b.nodes[mlNodeInfo.NodeId]; ok {
+			node.State.EpochModels[modelId] = modelSnapshot
+			node.State.EpochMLNodes[modelId] = *mlNodeInfo
+			logging.Info("Updated epoch data for node", types.Nodes, "node_id", node.Node.Id, "model_id", modelId)
+		}
+	}
 }
 
 // MergeModelArgs combines model arguments from the epoch snapshot with locally
