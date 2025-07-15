@@ -134,7 +134,11 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 
-	for i, batch := range batches.PocBatch {
+	attemptCounter := 0
+	successfulValidations := 0
+	failedValidations := 0
+
+	for _, batch := range batches.PocBatch {
 		joinedBatch := mlnodeclient.ProofBatch{
 			PublicKey:   batch.HexPubKey,
 			BlockHash:   blockHash,
@@ -145,22 +149,45 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
 			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
 		}
-		node := nodes[i%len(nodes)]
 
-		logging.Info("ValidateReceivedBatches. Sending joined batch for validation.", types.PoC,
-			"startOfValStageHeight", startOfValStageHeight,
-			"node.Id", node.Node.Id, "node.Host", node.Node.Host,
-			"batch.Participant", batch.Participant)
-		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
+		validationSucceeded := false
+		for attempt := range 5 {
+			node := nodes[attemptCounter%len(nodes)]
+			attemptCounter++
 
-		// FIXME: copying: doesn't look good for large PoCBatch structures?
-		nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
-		err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
-		if err != nil {
-			logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
-			continue
+			logging.Info("ValidateReceivedBatches. Sending joined batch for validation.", types.PoC,
+				"attempt", attempt,
+				"startOfValStageHeight", startOfValStageHeight,
+				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
+				"batch.Participant", batch.Participant)
+			logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
+
+			// FIXME: copying: doesn't look good for large PoCBatch structures?
+			nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
+			err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
+			if err != nil {
+				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
+				continue
+			}
+
+			validationSucceeded = true
+			break
+		}
+
+		if validationSucceeded {
+			successfulValidations++
+		} else {
+			failedValidations++
+			logging.Error("ValidateReceivedBatches. Failed to validate batch after all retry attempts", types.PoC,
+				"startOfValStageHeight", startOfValStageHeight,
+				"batch.Participant", batch.Participant,
+				"maxAttempts", 5)
 		}
 	}
 
-	logging.Info("ValidateReceivedBatches. Finished.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+	logging.Info("ValidateReceivedBatches. Finished.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"totalBatches", len(batches.PocBatch),
+		"successfulValidations", successfulValidations,
+		"failedValidations", failedValidations)
 }
