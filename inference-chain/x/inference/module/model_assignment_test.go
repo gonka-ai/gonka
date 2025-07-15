@@ -160,3 +160,67 @@ func equalBoolSlice(a, b []bool) bool {
 	}
 	return true
 }
+
+func TestSetModelsForParticipants_OneNodeOneModel(t *testing.T) {
+	// 1. Setup
+	ctx := context.Background()
+	participantAddress := "gonka1xmwh48ugfvd2ktmy0t90ueuzqxdk4g0anwe3v6"
+	modelID := "Qwen/Qwen2.5-7B-Instruct"
+
+	models := []types.Model{
+		{
+			ProposedBy: "genesis",
+			Id:         modelID,
+			VRam:       16,
+		},
+	}
+	// Mock Keeper setup
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: models,
+		hardwareNodes: map[string]*types.HardwareNodes{
+			participantAddress: {
+				Participant: participantAddress,
+				HardwareNodes: []*types.HardwareNode{
+					{LocalId: "mlnode1", Models: []string{modelID}},
+				},
+			},
+		},
+	}
+
+	// Model Assigner
+	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
+
+	// Participant data setup
+	participants := []*types.ActiveParticipant{
+		{
+			Index:  participantAddress,
+			Models: []string{modelID},
+			MlNodes: []*types.ModelMLNodes{
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "mlnode1", PocWeight: 29},
+					},
+				},
+			},
+		},
+	}
+
+	upcomingEpoch := types.Epoch{Index: 1}
+
+	// 2. Execute
+	modelAssigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
+
+	// 3. Assert
+	participant := participants[0]
+
+	require.Len(t, participant.Models, 1, "Should have one supported model")
+	require.Equal(t, modelID, participant.Models[0], "The supported model should be correct")
+
+	require.Len(t, participant.MlNodes, 1, "Should have one MLNode group corresponding to the model")
+
+	modelGroup := participant.MlNodes[0]
+	require.Len(t, modelGroup.MlNodes, 1, "The model-specific group should have one node")
+
+	assertNodeInGroup(t, modelGroup.MlNodes, "mlnode1")
+	assertTimeslotAllocationCount(t, modelGroup.MlNodes, []bool{true, false}, 1)
+}
