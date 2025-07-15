@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"sort"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -16,6 +17,17 @@ func (k Keeper) GetGovernanceModel(ctx context.Context, id string) (*types.Model
 
 func (k Keeper) GetGovernanceModels(ctx context.Context) ([]*types.Model, error) {
 	return GetAllValues(ctx, &k, types.KeyPrefix(types.ModelKeyPrefix), func() *types.Model { return &types.Model{} })
+}
+
+func (k Keeper) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
+	models, err := k.GetGovernanceModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(models, func(i, j int) bool {
+		return models[i].Id < models[j].Id
+	})
+	return models, nil
 }
 
 func (k Keeper) IsValidGovernanceModel(ctx context.Context, id string) bool {
