@@ -11,6 +11,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const (
+	POC_VALIDATE_BATCH_RETRIES     = 5
+	POC_VALIDATE_SAMPLES_PER_BATCH = 200
+)
+
 type NodePoCOrchestrator interface {
 	ValidateReceivedBatches(startOfValStageHeight int64)
 }
@@ -150,8 +155,10 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
 		}
 
+		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, POC_VALIDATE_SAMPLES_PER_BATCH)
+
 		validationSucceeded := false
-		for attempt := range 5 {
+		for attempt := range POC_VALIDATE_BATCH_RETRIES {
 			node := nodes[attemptCounter%len(nodes)]
 			attemptCounter++
 
@@ -160,11 +167,11 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 				"startOfValStageHeight", startOfValStageHeight,
 				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
 				"batch.Participant", batch.Participant)
-			logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
+			logging.Debug("ValidateReceivedBatches. Sending batch", types.PoC, "node", node.Node.Host, "batch", batchToValidate)
 
 			// FIXME: copying: doesn't look good for large PoCBatch structures?
 			nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
-			err = nodeClient.ValidateBatch(context.Background(), joinedBatch)
+			err = nodeClient.ValidateBatch(context.Background(), batchToValidate)
 			if err != nil {
 				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
 				continue
