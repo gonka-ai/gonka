@@ -16,7 +16,7 @@ images:
   newTag: 32165a2
 - name: proxy
   newName: ghcr.io/product-science/proxy
-  newTag: v1.1.2 # FIXME: remove v
+  newTag: 0.1.13
 - name: explorer
   newName: ghcr.io/product-science/explorer
   newTag: latest
