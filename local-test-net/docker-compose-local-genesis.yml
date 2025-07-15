@@ -54,6 +54,8 @@ services:
   mock-server:
     container_name: ${KEY_NAME}-mock-server
     image: inference-mock-server
+    volumes:
+      - ./prod-local/mock-server/${KEY_NAME}:/app/files
     build:
       context: ../testermint
       dockerfile: Dockerfile

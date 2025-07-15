@@ -214,6 +214,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster: LocalCluster,
         requestingNode: LocalInferencePair = cluster.genesis,
         requester: String? = cluster.genesis.node.getAddress(),
+        taAddress: String = requestingNode.node.getAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
@@ -295,25 +296,26 @@ class InferenceAccountingTests : TestermintTest() {
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
-            val inferences = getFailingInference(localCluster, consumer.pair, consumer.address)
-            val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-            val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-            logSection("Waiting for inference to expire")
-            genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
-            logSection("Verifying inference was expired and refunded")
-            val finishedInferences = inferences.map {
-                genesis.api.getInference(it.index)
+            genesis.markNeedsReboot() // Failed inferences mess with reputations!
+            var failure: Exception? = null
+            try {
+                val result = consumer.pair.makeInferenceRequest(
+                    inferenceRequest,
+                    consumer.address,
+                    taAddress = genesis.node.getAddress()
+                )
+            } catch(e: com.github.kittinunf.fuel.core.FuelError) {
+                failure = e
+                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
+                logSection("Waiting for inference to expire")
+                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                logSection("Verifying inference was expired and refunded")
+                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+                val changes = startBalance - balanceAfterSettle
+                assertThat(changes).isZero()
             }
-            val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            val expectedBalance = finishedInferences.sumOf {
-                if (it.status == InferenceStatus.EXPIRED.value) {
-                    0
-                } else {
-                    it.actualCost!!
-                }
-            }
-            val changes = startBalance - balanceAfterSettle
-            assertThat(changes).isEqualTo(expectedBalance)
+            assertThat(failure).isNotNull()
         }
     }
 }

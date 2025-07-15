@@ -39,11 +39,11 @@ COPY inference-chain/ /app/inference-chain
 WORKDIR /app/decentralized-api
 COPY decentralized-api/go.mod decentralized-api/go.sum ./
 
+COPY decentralized-api/. .
+
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
     CGO_ENABLED=1 CC=gcc \
     go mod download
-
-COPY decentralized-api/. .
 
 # ARG LDFLAGS
 RUN --mount=type=cache,id=go-build-cache3,target=/root/.cache/go-build \
