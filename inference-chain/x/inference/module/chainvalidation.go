@@ -425,18 +425,11 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		return nil
 	}
 
-	vals := wc.Validations[participantAddress]
+	vals := wc.getParticipantValidations(participantAddress)
 	if vals == nil || len(vals) == 0 {
 		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
 		return nil
 	}
-
-	validators := make([]string, len(vals))
-	for i, v := range vals {
-		validators[i] = v.ValidatorParticipantAddress
-	}
-	wc.Logger.LogInfo("Calculate: Found validations for participant", types.PoC,
-		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
 
 	nodeWeights, claimedWeight := calculateParticipantWeight(wc.OriginalBatches[participantAddress])
 	if claimedWeight < 1 {
@@ -485,6 +478,33 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 		MlNodes:      modelMLNodesArray, // Now using the double repeated structure
 	}
 	return activeParticipant
+}
+
+func (wc *WeightCalculator) getParticipantValidations(participantAddress string) []types.PoCValidation {
+	vals := wc.Validations[participantAddress]
+
+	validators := make([]string, len(vals))
+	for i, v := range vals {
+		validators[i] = v.ValidatorParticipantAddress
+	}
+	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
+		"participant", participantAddress, "len(vals)", len(vals), "validators", validators)
+
+	filteredVals := make([]types.PoCValidation, 0, len(vals))
+	for _, v := range vals {
+		if _, ok := wc.CurrentValidatorWeights[v.ValidatorParticipantAddress]; ok {
+			filteredVals = append(filteredVals, v)
+		}
+	}
+
+	filteredValidators := make([]string, len(filteredVals))
+	for i, v := range filteredVals {
+		filteredValidators[i] = v.ValidatorParticipantAddress
+	}
+	wc.Logger.LogInfo("Calculate: filtered validations to include only current validators", types.PoC,
+		"participant", participantAddress, "len(vals)", len(filteredVals), "validators", filteredValidators)
+
+	return filteredVals
 }
 
 func (wc *WeightCalculator) pocValidated(vals []types.PoCValidation, participantAddress string) bool {
