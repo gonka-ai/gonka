@@ -309,9 +309,11 @@ class InferenceAccountingTests : TestermintTest() {
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
+            Thread.sleep(5000)
             genesis.markNeedsReboot() // Failed inferences mess with reputations!
             var failure: Exception? = null
             try {
+                genesis.waitForNextInferenceWindow()
                 val result = consumer.pair.makeInferenceRequest(
                     inferenceRequest,
                     consumer.address,

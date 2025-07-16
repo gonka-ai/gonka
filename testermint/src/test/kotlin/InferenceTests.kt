@@ -194,6 +194,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `valid direct executor request`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
@@ -225,6 +226,7 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor validates dev signature`() {
+        genesis.waitForNextInferenceWindow()
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
