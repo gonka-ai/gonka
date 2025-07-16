@@ -17,7 +17,7 @@ const (
 
 	DefaultRTarget        = 1.3971164020989417
 	DefaultBatchSize      = 100
-	DefaultFraudThreshold = 0.045
+	DefaultFraudThreshold = 1e-7
 )
 
 type InitDto struct {
@@ -33,7 +33,12 @@ type InitDto struct {
 	URL            string  `json:"url"`
 }
 
-func BuildInitDto(blockHeight int64, pubKey string, totalNodes, nodeNum int64, blockHash, callbackUrl string) InitDto {
+func BuildInitDto(
+	blockHeight int64,
+	pubKey string,
+	totalNodes, nodeNum int64,
+	blockHash, callbackUrl string,
+) InitDto {
 	return InitDto{
 		BlockHeight:    blockHeight,
 		BlockHash:      blockHash,
