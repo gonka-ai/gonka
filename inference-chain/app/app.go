@@ -57,9 +57,9 @@ import (
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
-	_ "github.com/cosmos/cosmos-sdk/x/group" // import for side-effects
 	groupkeeper "github.com/cosmos/cosmos-sdk/x/group/keeper"
-	_ "github.com/cosmos/cosmos-sdk/x/mint" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/group/module" // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/mint"         // import for side-effects
 	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
 	_ "github.com/cosmos/cosmos-sdk/x/params" // import for side-effects
 	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
@@ -392,9 +392,11 @@ func New(
 
 	if loadLatest {
 		ctx := app.BaseApp.NewUncachedContext(true, types.Header{})
-		// Initialize denom metadata in the SDK's global registry
+		// Initialize denom metadata in the SDK's global registry on every startup
 		if err := app.initializeDenomMetadata(ctx); err != nil {
-			return nil, fmt.Errorf("failed to initialize denom metadata: %w", err)
+			ctx.Logger().Warn("Failed to register denom metadata", "error", err)
+		} else {
+			ctx.Logger().Info("Successfully registered denom metadata")
 		}
 
 		if err := app.WasmKeeper.InitializePinnedCodes(ctx); err != nil {
@@ -521,7 +523,16 @@ func BlockedAddresses() map[string]bool {
 func (app *App) initializeDenomMetadata(ctx sdk.Context) error {
 	denomMetadata, found := app.BankKeeper.GetDenomMetaData(ctx, inferencetypes.BaseCoin)
 	if !found {
-		panic("BaseCoin denom not found")
+		ctx.Logger().Info("BaseCoin denom metadata not found during app initialization, this may be normal during genesis")
+		return nil
+	}
+
+	for _, denomUnit := range denomMetadata.DenomUnits {
+		if _, isRegistered := sdk.GetDenomUnit(denomUnit.Denom); isRegistered {
+			ctx.Logger().Info("Denom metadata already registered, skipping duplicate registration",
+				"base", denomMetadata.Base, "registered_unit", denomUnit.Denom)
+			return nil
+		}
 	}
 
 	if err := inferencegenesis.LoadMetadataToSdk(denomMetadata); err != nil {
