@@ -348,6 +348,56 @@ func (k Keeper) GetAllUnbonding(ctx sdk.Context) []types.UnbondingCollateral {
 	return unbondingList
 }
 
+// SetJailed stores a participant's jailed status.
+// The presence of the key indicates the participant is jailed.
+func (k Keeper) SetJailed(ctx sdk.Context, participantAddress string) {
+	store := k.storeService.OpenKVStore(ctx)
+	// We store a simple value, like a single byte, as the presence of the key is what matters.
+	err := store.Set(types.GetJailedKey(participantAddress), []byte{1})
+	if err != nil {
+		panic(err)
+	}
+}
+
+// RemoveJailed removes a participant's jailed status.
+func (k Keeper) RemoveJailed(ctx sdk.Context, participantAddress string) {
+	store := k.storeService.OpenKVStore(ctx)
+	err := store.Delete(types.GetJailedKey(participantAddress))
+	if err != nil {
+		panic(err)
+	}
+}
+
+// IsJailed checks if a participant is currently marked as jailed.
+func (k Keeper) IsJailed(ctx sdk.Context, participantAddress string) bool {
+	store := k.storeService.OpenKVStore(ctx)
+	bz, err := store.Get(types.GetJailedKey(participantAddress))
+	if err != nil {
+		panic(err)
+	}
+	return bz != nil
+}
+
+// GetAllJailed returns all jailed participant addresses.
+func (k Keeper) GetAllJailed(ctx sdk.Context) []string {
+	store := k.storeService.OpenKVStore(ctx)
+	jailedList := []string{}
+
+	iterator, err := store.Iterator(types.JailedKey, nil)
+	if err != nil {
+		panic(err)
+	}
+	defer iterator.Close()
+
+	for ; iterator.Valid(); iterator.Next() {
+		// The key itself contains the address after the prefix.
+		address := string(iterator.Key()[len(types.JailedKey):])
+		jailedList = append(jailedList, address)
+	}
+
+	return jailedList
+}
+
 // Slash penalizes a participant by burning a fraction of their total collateral.
 // This includes both their active collateral and any collateral in the unbonding queue.
 // The slash is applied proportionally to all holdings.

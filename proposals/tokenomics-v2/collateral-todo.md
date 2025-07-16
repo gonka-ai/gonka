@@ -272,31 +272,45 @@ Each task includes:
 ### Section 3: Integration with `x/staking` via Hooks
 
 #### 3.1 Implement `StakingHooks` Interface
-- **Task**: [ ] Implement and register `StakingHooks`
+- **Task**: [x] Implement and register `StakingHooks`
 - **What**: Implement the `StakingHooks` interface in the `x/collateral` module. Register these hooks with the `staking` keeper so the module can react to validator state changes.
 - **Where**:
-  - A new file `inference-chain/x/collateral/hooks.go`
-  - `inference-chain/app/app.go` (for registration)
+  - A new file `inference-chain/x/collateral/module/hooks.go`
+  - `inference-chain/x/collateral/module/module.go` (for registration)
 - **Why**: This allows consensus-level penalties to be mirrored in the application-specific collateral system.
 - **Dependencies**: 1.6
+- **Result**:
+  - Created a new `hooks.go` file in `x/collateral/module` with the `StakingHooks` implementation.
+  - Updated `x/collateral/types/expected_keepers.go` to include the `SetHooks` method in the `StakingKeeper` interface.
+  - Registered the new hooks with the `stakingKeeper` in `x/collateral/module/module.go`.
 
 #### 3.2 Implement `BeforeValidatorSlashed` Hook
-- **Task**: [ ] Implement `BeforeValidatorSlashed` logic
+- **Task**: [x] Implement `BeforeValidatorSlashed` logic
 - **What**: When a validator is slashed at the consensus level, this hook should trigger a proportional slash of the corresponding participant's collateral in the `x/collateral` module.
 - **Where**: `inference-chain/x/collateral/hooks.go`
 - **Dependencies**: 3.1
+- **Result**:
+  - Implemented the `BeforeValidatorSlashed` hook.
+  - The logic now directly converts the validator's address (`ValAddress`) to its corresponding account address (`AccAddress`) and attempts to slash collateral. This simplifies the implementation by removing the dependency on the `x/inference` module for this hook.
 
 #### 3.3 Implement `AfterValidatorBeginUnbonding` Hook
-- **Task**: [ ] Implement `AfterValidatorBeginUnbonding` logic
+- **Task**: [x] Implement `AfterValidatorBeginUnbonding` logic
 - **What**: When a validator starts unbonding (e.g., is jailed), this hook should trigger a state change in the `x/collateral` module, potentially restricting the participant's collateral usage.
 - **Where**: `inference-chain/x/collateral/hooks.go`
 - **Dependencies**: 3.1
+- **Result**:
+  - Implemented the `AfterValidatorBeginUnbonding` hook to create a persistent record of a participant's jailed status.
+  - This is achieved by calling a new `k.SetJailed()` method in the collateral keeper, which stores the participant's address.
+  - This state can now be queried by other modules or functions in the future to restrict actions for jailed participants.
 
 #### 3.4 Implement `AfterValidatorBonded` Hook
-- **Task**: [ ] Implement `AfterValidatorBonded` logic
+- **Task**: [x] Implement `AfterValidatorBonded` logic
 - **What**: When a validator becomes bonded again, this hook should signal that the participant's collateral can be considered fully active again.
 - **Where**: `inference-chain/x/collateral/hooks.go`
 - **Dependencies**: 3.1
+- **Result**:
+  - Implemented the `AfterValidatorBonded` hook to remove a participant's jailed status from the persistent store.
+  - This is done by calling the new `k.RemoveJailed()` method, ensuring the on-chain state accurately reflects the validator's return to the active set.
 
 ### Section 4: Queries, Events, and CLI
 

@@ -28,6 +28,9 @@ var (
 	// UnbondingKey is the prefix for unbonding entries
 	// Format: unbonding/{completionEpoch}/{participantAddress}
 	UnbondingKey = []byte("unbonding/")
+
+	// JailedKey is the prefix for jailed participant entries
+	JailedKey = []byte("jailed/")
 )
 
 func KeyPrefix(p string) []byte {
@@ -52,6 +55,11 @@ func GetUnbondingEpochPrefix(completionEpoch uint64) []byte {
 	epochBz := make([]byte, 8)
 	binary.BigEndian.PutUint64(epochBz, completionEpoch)
 	return append(UnbondingKey, epochBz...)
+}
+
+// GetJailedKey creates a key for a specific participant's jailed status
+func GetJailedKey(participantAddress string) []byte {
+	return append(JailedKey, []byte(participantAddress)...)
 }
 
 // ParseUnbondingKey parses the completion epoch and participant address from an unbonding key

@@ -168,6 +168,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		}
 		k.SetEpochPerformanceSummary(ctx, epochPerformance)
 
+		// TODO: Check if it is better to move this function outside the settleAccounts function.
 		// Check for downtime and slash if necessary.
 		k.CheckAndSlashForDowntime(ctx, &participant, &epochPerformance)
 

@@ -16,6 +16,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 
 	// this line is used by starport scaffolding # 1
@@ -99,6 +100,7 @@ type AppModule struct {
 	accountKeeper    types.AccountKeeper
 	bankKeeper       types.BankKeeper
 	bankEscrowKeeper types.BankEscrowKeeper
+	stakingKeeper    types.StakingKeeper
 }
 
 func NewAppModule(
@@ -107,6 +109,7 @@ func NewAppModule(
 	accountKeeper types.AccountKeeper,
 	bankKeeper types.BankKeeper,
 	bankEscrowKeeper types.BankEscrowKeeper,
+	stakingKeeper types.StakingKeeper,
 ) AppModule {
 	return AppModule{
 		AppModuleBasic:   NewAppModuleBasic(cdc),
@@ -114,6 +117,7 @@ func NewAppModule(
 		accountKeeper:    accountKeeper,
 		bankKeeper:       bankKeeper,
 		bankEscrowKeeper: bankEscrowKeeper,
+		stakingKeeper:    stakingKeeper,
 	}
 }
 
@@ -194,6 +198,7 @@ type ModuleOutputs struct {
 
 	CollateralKeeper keeper.Keeper
 	Module           appmodule.AppModule
+	Hooks            stakingtypes.StakingHooksWrapper
 }
 
 func ProvideModule(in ModuleInputs) ModuleOutputs {
@@ -217,7 +222,12 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.AccountKeeper,
 		in.BankKeeper,
 		in.BankEscrowKeeper,
+		in.StakingKeeper,
 	)
 
-	return ModuleOutputs{CollateralKeeper: k, Module: m}
+	return ModuleOutputs{
+		CollateralKeeper: k,
+		Module:           m,
+		Hooks:            stakingtypes.StakingHooksWrapper{StakingHooks: NewStakingHooks(k)},
+	}
 }
