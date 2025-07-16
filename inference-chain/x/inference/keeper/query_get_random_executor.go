@@ -77,9 +77,10 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 
 	k.Logger().Info("GetRandomExecutor: createFilterFn: Determined current phase",
 		"model_id", modelId, "current_phase", string(currentPhase),
-		"epoch_index", effectiveEpoch.Index, "block_height", sdkCtx.BlockHeight())
+		"epoch_index", effectiveEpoch.Index, "latest_epoch_index", epochContext.EpochIndex,
+		"block_height", sdkCtx.BlockHeight(), "set_new_validators_block_height", epochContext.SetNewValidators())
 
-	if currentPhase == types.InferencePhase {
+	if currentPhase == types.InferencePhase && sdkCtx.BlockHeight() > epochContext.SetNewValidators() {
 		// Everyone is expected to be available during the inference phase
 		k.Logger().Info("GetRandomExecutor: createFilterFn: Using inference phase filter (all members available)",
 			"model_id", modelId)
