@@ -55,19 +55,19 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(members []*group.GroupMember) []*group.GroupMember, error) {
 	sdkCtx := sdk.UnwrapSDKContext(goCtx)
 
-	k.Logger().Info("createFilterFn: Starting filter creation",
+	k.Logger().Info("GetRandomExecutor: createFilterFn: Starting filter creation",
 		"model_id", modelId, "block_height", sdkCtx.BlockHeight())
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(goCtx)
 	if !found || effectiveEpoch == nil {
-		k.Logger().Error("createFilterFn: no effective epoch found",
+		k.Logger().Error("GetRandomExecutor: createFilterFn: no effective epoch found",
 			"model_id", modelId)
 		return nil, status.Error(codes.NotFound, "GetRandomExecutor: no effective epoch found")
 	}
 
 	epochParams := k.GetParams(goCtx)
 	if epochParams.EpochParams == nil {
-		k.Logger().Error("createFilterFn: epoch params are nil",
+		k.Logger().Error("GetRandomExecutor: createFilterFn: epoch params are nil",
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index)
 		return nil, status.Error(codes.NotFound, "GetRandomExecutor: epoch params are nill")
 	}
@@ -75,45 +75,45 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 	epochContext := types.NewEpochContextFromEffectiveEpoch(*effectiveEpoch, *epochParams.EpochParams, sdkCtx.BlockHeight())
 	currentPhase := epochContext.GetCurrentPhase(sdkCtx.BlockHeight())
 
-	k.Logger().Info("createFilterFn: Determined current phase",
+	k.Logger().Info("GetRandomExecutor: createFilterFn: Determined current phase",
 		"model_id", modelId, "current_phase", string(currentPhase),
 		"epoch_index", effectiveEpoch.Index, "block_height", sdkCtx.BlockHeight())
 
 	if currentPhase == types.InferencePhase {
 		// Everyone is expected to be available during the inference phase
-		k.Logger().Info("createFilterFn: Using inference phase filter (all members available)",
+		k.Logger().Info("GetRandomExecutor: createFilterFn: Using inference phase filter (all members available)",
 			"model_id", modelId)
 		return func(members []*group.GroupMember) []*group.GroupMember {
-			k.Logger().Debug("InferencePhase filter: returning all members",
+			k.Logger().Debug("GetRandomExecutor: InferencePhase filter: returning all members",
 				"model_id", modelId, "member_count", len(members))
 			return members
 		}, nil
 	} else {
-		k.Logger().Info("createFilterFn: Using PoC phase filter (checking POC_SLOT allocations)",
+		k.Logger().Info("GetRandomExecutor: createFilterFn: Using PoC phase filter (checking POC_SLOT allocations)",
 			"model_id", modelId, "current_phase", string(currentPhase))
 		return k.createIsAvailableDuringPoCFilterFn(goCtx, effectiveEpoch.Index, modelId)
 	}
 }
 
 func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId uint64, modelId string) (func(members []*group.GroupMember) []*group.GroupMember, error) {
-	k.Logger().Info("createIsAvailableDuringPoCFilterFn: Starting PoC availability filter creation",
+	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Starting PoC availability filter creation",
 		"epoch_id", epochId, "model_id", modelId)
 
 	activeParticipants, found := k.GetActiveParticipants(ctx, epochId)
 	if !found {
 		msg := fmt.Sprintf("GetRandomExecutor: createIsAvailableDuringPocFilterFn failed, can't find active participants. epochId = %d", epochId)
-		k.Logger().Error("createIsAvailableDuringPoCFilterFn: active participants not found",
+		k.Logger().Error("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: active participants not found",
 			"epoch_id", epochId, "model_id", modelId)
 		return nil, status.Error(codes.NotFound, msg)
 	}
 
 	if activeParticipants.Participants == nil {
-		k.Logger().Error("createIsAvailableDuringPoCFilterFn: participants list is nil",
+		k.Logger().Error("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: participants list is nil",
 			"epoch_id", epochId, "model_id", modelId)
 		return nil, status.Error(codes.Internal, "participants list is nil")
 	}
 
-	k.Logger().Info("createIsAvailableDuringPoCFilterFn: Found active participants",
+	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Found active participants",
 		"epoch_id", epochId, "model_id", modelId, "participant_count", len(activeParticipants.Participants))
 
 	isAvailableDuringPoc := make(map[string]bool)
@@ -125,12 +125,12 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 		totalParticipantsChecked++
 
 		if participant == nil {
-			k.Logger().Warn("createIsAvailableDuringPoCFilterFn: found nil participant",
+			k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: found nil participant",
 				"epoch_id", epochId, "model_id", modelId, "participant_index", totalParticipantsChecked-1)
 			continue
 		}
 
-		k.Logger().Debug("createIsAvailableDuringPoCFilterFn: Processing participant",
+		k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Processing participant",
 			"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 			"participant_models", participant.Models, "ml_nodes_arrays", len(participant.MlNodes))
 
@@ -144,20 +144,20 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 		}
 
 		if participantModelIndex == -1 {
-			k.Logger().Debug("createIsAvailableDuringPoCFilterFn: participant doesn't support model",
+			k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: participant doesn't support model",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 				"participant_models", participant.Models)
 			continue
 		}
 
 		participantsWithModel++
-		k.Logger().Debug("createIsAvailableDuringPoCFilterFn: participant supports model",
+		k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: participant supports model",
 			"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 			"model_index", participantModelIndex)
 
 		// Defensive programming: check bounds
 		if len(participant.MlNodes) <= participantModelIndex {
-			k.Logger().Warn("createIsAvailableDuringPoCFilterFn: model index out of bounds",
+			k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: model index out of bounds",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 				"model_index", participantModelIndex, "ml_nodes_length", len(participant.MlNodes))
 			continue
@@ -166,20 +166,20 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 		// Defensive programming: check for nil model MLNodes array
 		modelMLNodes := participant.MlNodes[participantModelIndex]
 		if modelMLNodes == nil {
-			k.Logger().Warn("createIsAvailableDuringPoCFilterFn: model MLNodes array is nil",
+			k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: model MLNodes array is nil",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 				"model_index", participantModelIndex)
 			continue
 		}
 
 		if modelMLNodes.MlNodes == nil {
-			k.Logger().Warn("createIsAvailableDuringPoCFilterFn: MlNodes slice is nil",
+			k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: MlNodes slice is nil",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 				"model_index", participantModelIndex)
 			continue
 		}
 
-		k.Logger().Debug("createIsAvailableDuringPoCFilterFn: Checking MLNodes for POC_SLOT availability",
+		k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Checking MLNodes for POC_SLOT availability",
 			"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 			"ml_nodes_count", len(modelMLNodes.MlNodes))
 
@@ -189,20 +189,20 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 			nodeCount++
 
 			if node == nil {
-				k.Logger().Warn("createIsAvailableDuringPoCFilterFn: found nil MLNode",
+				k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: found nil MLNode",
 					"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 					"node_index", nodeCount-1)
 				continue
 			}
 
-			k.Logger().Debug("createIsAvailableDuringPoCFilterFn: Checking node timeslot allocation",
+			k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Checking node timeslot allocation",
 				"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 				"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation,
 				"timeslot_length", len(node.TimeslotAllocation))
 
 			// Defensive programming: check timeslot allocation bounds and values
 			if len(node.TimeslotAllocation) <= 1 {
-				k.Logger().Warn("createIsAvailableDuringPoCFilterFn: invalid timeslot allocation length",
+				k.Logger().Warn("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: invalid timeslot allocation length",
 					"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 					"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation,
 					"expected_min_length", 2)
@@ -213,7 +213,7 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 			if node.TimeslotAllocation[1] {
 				availableNodeCount++
 				isAvailableDuringPoc[participant.Index] = true
-				k.Logger().Info("createIsAvailableDuringPoCFilterFn: Found node available during PoC",
+				k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Found node available during PoC",
 					"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 					"node_id", node.NodeId, "timeslot_allocation", node.TimeslotAllocation)
 				// Break after finding first available node for this participant
@@ -225,13 +225,13 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 			participantsWithAvailableNodes++
 		}
 
-		k.Logger().Debug("createIsAvailableDuringPoCFilterFn: Participant node analysis complete",
+		k.Logger().Debug("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Participant node analysis complete",
 			"epoch_id", epochId, "model_id", modelId, "participant_address", participant.Index,
 			"total_nodes", nodeCount, "available_nodes", availableNodeCount,
 			"participant_available", isAvailableDuringPoc[participant.Index])
 	}
 
-	k.Logger().Info("createIsAvailableDuringPoCFilterFn: Analysis complete",
+	k.Logger().Info("GetRandomExecutor: createIsAvailableDuringPoCFilterFn: Analysis complete",
 		"epoch_id", epochId, "model_id", modelId,
 		"total_participants_checked", totalParticipantsChecked,
 		"participants_with_model", participantsWithModel,
@@ -239,36 +239,36 @@ func (k Keeper) createIsAvailableDuringPoCFilterFn(ctx context.Context, epochId 
 		"available_participants", len(isAvailableDuringPoc))
 
 	return func(members []*group.GroupMember) []*group.GroupMember {
-		k.Logger().Debug("PoC filter function: Starting member filtering",
+		k.Logger().Debug("GetRandomExecutor: PoC filter function: Starting member filtering",
 			"epoch_id", epochId, "model_id", modelId, "input_member_count", len(members))
 
 		filtered := make([]*group.GroupMember, 0, len(members))
 		for _, member := range members {
 			if member == nil {
-				k.Logger().Warn("PoC filter function: found nil group member",
+				k.Logger().Warn("GetRandomExecutor: PoC filter function: found nil group member",
 					"epoch_id", epochId, "model_id", modelId)
 				continue
 			}
 
 			if member.Member == nil {
-				k.Logger().Warn("PoC filter function: group member has nil Member field",
+				k.Logger().Warn("GetRandomExecutor: PoC filter function: group member has nil Member field",
 					"epoch_id", epochId, "model_id", modelId)
 				continue
 			}
 
 			if isAvailable, exists := isAvailableDuringPoc[member.Member.Address]; exists && isAvailable {
 				filtered = append(filtered, member)
-				k.Logger().Debug("PoC filter function: included member",
+				k.Logger().Debug("GetRandomExecutor: PoC filter function: included member",
 					"epoch_id", epochId, "model_id", modelId,
 					"member_address", member.Member.Address)
 			} else {
-				k.Logger().Debug("PoC filter function: excluded member",
+				k.Logger().Debug("GetRandomExecutor: PoC filter function: excluded member",
 					"epoch_id", epochId, "model_id", modelId,
 					"member_address", member.Member.Address, "exists", exists, "available", isAvailable)
 			}
 		}
 
-		k.Logger().Info("PoC filter function: Filtering complete",
+		k.Logger().Info("GetRandomExecutor: PoC filter function: Filtering complete",
 			"epoch_id", epochId, "model_id", modelId,
 			"input_member_count", len(members), "filtered_member_count", len(filtered))
 
