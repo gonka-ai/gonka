@@ -114,7 +114,13 @@ func (k msgServer) Validation(goCtx context.Context, msg *types.MsgValidation) (
 	}
 	// Where will we get this number? How much does it vary by model?
 
+	// Store the original status to check for a state transition to INVALID.
+	originalStatus := executor.Status
 	executor.Status = calculateStatus(params.ValidationParams, executor)
+
+	// Check for a status transition and slash if necessary.
+	k.CheckAndSlashForInvalidStatus(goCtx, originalStatus, &executor)
+
 	k.SetParticipant(ctx, executor)
 
 	k.LogInfo("Saving inference", types.Validation, "inferenceId", inference.InferenceId, "status", inference.Status, "proposalDetails", inference.ProposalDetails)

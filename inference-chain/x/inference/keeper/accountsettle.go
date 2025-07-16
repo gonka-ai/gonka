@@ -155,18 +155,22 @@ func (k *Keeper) SettleAccounts(ctx context.Context, pocBlockHeight uint64) erro
 		participant.CurrentEpochStats.EarnedCoins = 0
 
 		k.LogInfo("Participant CoinBalance reset", types.Balances, "address", participant.Address)
-		k.SetEpochPerformanceSummary(ctx,
-			types.EpochPerformanceSummary{
-				EpochStartHeight:      pocBlockHeight,
-				ParticipantId:         participant.Address,
-				InferenceCount:        participant.CurrentEpochStats.InferenceCount,
-				MissedRequests:        participant.CurrentEpochStats.MissedRequests,
-				EarnedCoins:           amount.Settle.WorkCoins,
-				RewardedCoins:         amount.Settle.RewardCoins,
-				ValidatedInferences:   participant.CurrentEpochStats.ValidatedInferences,
-				InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
-				Claimed:               false,
-			})
+		epochPerformance := types.EpochPerformanceSummary{
+			EpochStartHeight:      pocBlockHeight,
+			ParticipantId:         participant.Address,
+			InferenceCount:        participant.CurrentEpochStats.InferenceCount,
+			MissedRequests:        participant.CurrentEpochStats.MissedRequests,
+			EarnedCoins:           amount.Settle.WorkCoins,
+			RewardedCoins:         amount.Settle.RewardCoins,
+			ValidatedInferences:   participant.CurrentEpochStats.ValidatedInferences,
+			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
+			Claimed:               false,
+		}
+		k.SetEpochPerformanceSummary(ctx, epochPerformance)
+
+		// Check for downtime and slash if necessary.
+		k.CheckAndSlashForDowntime(ctx, &participant, &epochPerformance)
+
 		participant.CurrentEpochStats = &types.CurrentEpochStats{}
 		k.SetParticipant(ctx, participant)
 		amount.Settle.PocStartHeight = pocBlockHeight

@@ -49,16 +49,16 @@ Each task includes:
 
 #### 1.2 Define Collateral Parameters
 - **Task**: [x] Define collateral parameters and genesis state
-- **What**: Add `BaseWeightRatio`, `CollateralPerWeightUnit`, and `UnbondingPeriodEpochs` to the module's parameters. Define the `GenesisState` to initialize them. Set defaults of `0.2` for `BaseWeightRatio` and `1` for `UnbondingPeriodEpochs`.
+- **What**: Add `UnbondingPeriodEpochs` to the module's parameters. Define the `GenesisState` to initialize it. Set the default to `1`.
 - **Where**:
   - `inference-chain/proto/inference/collateral/params.proto`
   - `inference-chain/proto/inference/collateral/genesis.proto`
-- **Why**: These parameters are crucial for the new weight calculation and need to be configurable via governance.
+- **Why**: This parameter is crucial for the withdrawal unbonding process.
 - **Result**: 
-  - Added three parameters to `params.proto` using string fields with `LegacyDec` for decimal values
-  - Implemented parameter validation in `types/params.go` with defaults: BaseWeightRatio=0.2, CollateralPerWeightUnit=1, UnbondingPeriodEpochs=1
-  - Genesis state already properly wired to use default parameters
-  - Successfully built the inference chain with the new parameters
+  - Added `UnbondingPeriodEpochs` parameter to `params.proto`.
+  - Implemented parameter validation in `types/params.go` with a default of 1.
+  - Genesis state already properly wired to use the default parameter.
+  - Successfully built the inference chain.
 
 #### 1.3 Implement Collateral Storage
 - **Task**: [x] Implement collateral storage
@@ -202,8 +202,10 @@ Each task includes:
 ### Section 2: Integration with `x/inference` Module
 
 #### 2.1 Define Slashing Parameters in `x/inference`
-- **Task**: [ ] Define slashing governance parameters
-- **What**: Add three new governance-votable parameters to the `x/inference` module's `params.proto`:
+- **Task**: [x] Define slashing and weight-related governance parameters
+- **What**: Add new governance-votable parameters to the `x/inference` module's `params.proto`:
+  - `base_weight_ratio`: The portion of potential weight granted unconditionally. Default `0.2`.
+  - `collateral_per_weight_unit`: The collateral required per unit of weight. Default `1`.
   - `slash_fraction_invalid`: Percentage of collateral to slash when a participant is marked `INVALID`. Default `0.20` (20%).
   - `slash_fraction_downtime`: Percentage of collateral to slash for downtime. Default `0.10` (10%).
   - `downtime_missed_percentage_threshold`: The missed request percentage that triggers a downtime slash. Default `0.05` (5%).
@@ -212,27 +214,60 @@ Each task includes:
   - `inference-chain/proto/inference/inference/params.proto`
   - `inference-chain/x/inference/types/params.go`
 - **Dependencies**: None
+- **Result**:
+  - Grouped the new parameters under a `CollateralParams` message in `params.proto` for better organization.
+  - Added `slash_fraction_invalid`, `slash_fraction_downtime`, and `downtime_missed_percentage_threshold` to the new message.
+  - Implemented default values and validation logic for the new parameters in `params.go`.
+  - Successfully built the project.
 
-#### 2.2 Update Weight Calculation
-- **Task**: [ ] Update `getWeight` function in `x/inference`
-- **What**: Modify the weight calculation logic. It should check the current epoch: if it is within the first 180 epochs, all weight is granted unconditionally. After epoch 180, it should use the hybrid model, querying the `x/collateral` module for a participant's *active* collateral.
-- **Where**: `inference-chain/x/inference/epochgroup/unit_of_compute_price.go` (and its callers)
-- **Why**: This is the core change to link collateral with network influence, including the initial grace period.
-- **Dependencies**: 1.3
+#### 2.1a Add Grace Period Parameter to `x/inference`
+- **Task**: [x] Add `GracePeriodEndEpoch` parameter
+- **What**: Add a new governance-votable parameter, `GracePeriodEndEpoch`, to the `CollateralParams` of `x/inference` module's `params.proto`. This parameter defines the epoch number at which the collateral requirement grace period ends. Set its default value to `180`.
+- **Where**:
+  - `inference-chain/proto/inference/inference/params.proto`
+  - `inference-chain/x/inference/types/params.go`
+- **Why**: To make the initial collateral-free period configurable via governance.
+- **Dependencies**: None
+
+#### 2.2 Implement Collateral-Based Weight Adjustment
+- **Task**: [x] Implement collateral-based weight adjustment
+- **What**: Create a new keeper function, `AdjustWeightsByCollateral`. This function will iterate through all active participants after their `PotentialWeight` has been calculated by `ComputeNewWeights`. It will adjust their weights based on the new collateral logic:
+  - If the current epoch is before or at `GracePeriodEndEpoch`, no adjustment is made.
+  - After the grace period, it queries the `x/collateral` module for active collateral. It calculates `BaseWeight` (e.g., 20% of `PotentialWeight`) and then activates additional weight based on the participant's collateral, up to the remaining `Collateral-Eligible Weight`.
+- **Where**: Create the new function in a new file, `inference-chain/x/inference/keeper/collateral_weight.go`. Call this function from `onSetNewValidatorsStage` in `inference-chain/x/inference/module/module.go` immediately after the call to `am.keeper.ComputeNewWeights`.
+- **Why**: This implements the core logic of Tokenomics V2, where network weight is backed by financial collateral after an initial grace period.
+- **Dependencies**: 1.3, 2.1a
+- **Result**:
+  - Refactored the architecture to move `BaseWeightRatio` and `CollateralPerWeightUnit` from the `x/collateral` module to `x/inference` for better cohesion.
+  - Created a new `AdjustWeightsByCollateral` function in `inference-chain/x/inference/keeper/collateral_weight.go` (renamed from `weight.go`).
+  - The function now correctly and efficiently adjusts the `Weight` of `ActiveParticipant` objects in-memory.
+  - Integrated the new function into the epoch lifecycle by calling it from `onSetNewValidatorsStage` in `module.go`.
+  - Ensured all logic sources parameters from the correct module and the project builds successfully.
 
 #### 2.3 Trigger Slashing When Participant is Marked `INVALID`
-- **Task**: [ ] Trigger slash when participant status becomes `INVALID`
+- **Task**: [x] Trigger slash when participant status becomes `INVALID`
 - **What**: Add logic to trigger a call to the `x/collateral` module's `Slash` function at the moment a participant's status changes to `INVALID`. The slash amount will be determined by the new `SlashFractionInvalid` governance parameter. This requires checking the participant's status before and after it is recalculated.
 - **Where**: This logic must be added in two places:
   1. `inference-chain/x/inference/keeper/msg_server_invalidate_inference.go`: Inside `InvalidateInference`, after `calculateStatus` is called.
   2. `inference-chain/x/inference/keeper/msg_server_validation.go`: Inside `Validation`, after `calculateStatus` is called.
 - **Dependencies**: 1.6, 2.1
+- **Result**:
+  - Added the `Slash` method to the `CollateralKeeper` interface in `x/inference/types/expected_keepers.go`.
+  - Implemented logic in `msg_server_invalidate_inference.go` to check for a status transition to `INVALID` and trigger a collateral slash using the `SlashFractionInvalid` parameter.
+  - Implemented the same slashing logic in `msg_server_validation.go` to ensure consistent punishment.
+  - Refactored the duplicated logic into a shared `CheckAndSlashForInvalidStatus` function in `inference-chain/x/inference/keeper/collateral.go`.
+  - Renamed `collateral_weight.go` to `collateral.go` to better reflect its purpose.
 
 #### 2.4 Trigger Slashing for Downtime at End of Epoch
-- **Task**: [ ] Add downtime slashing trigger to epoch settlement
-- **What**: Enhance the `x/inference` module by adding logic to the `onSetNewValidatorsStage` function. This logic will check each participant's performance for the completed epoch. If their missed request percentage exceeds the `DowntimeMissedPercentageThreshold` parameter, it should trigger a call to the `x/collateral` module's `Slash` function.
-- **Where**: The new logic should be placed inside the `onSetNewValidatorsStage` function in `inference-chain/x/inference/module/module.go`, right before the call to `am.keeper.SettleAccounts`.
+- **Task**: [x] Add downtime slashing trigger to epoch settlement
+- **What**: Enhance the `x/inference` module by adding logic to check each participant's performance for the completed epoch. If their missed request percentage exceeds the `DowntimeMissedPercentageThreshold` parameter, it should trigger a call to the `x/collateral` module's `Slash` function.
+- **Where**: The new logic has been placed inside the `SettleAccount` function in `inference-chain/x/inference/keeper/accountsettle.go`, which is a more efficient location than originally planned.
 - **Dependencies**: 1.6, 2.1
+- **Result**:
+  - Created a new `CheckAndSlashForDowntime` function in `inference-chain/x/inference/keeper/collateral.go`.
+  - This function calculates a participant's missed request percentage for the epoch and compares it to the `DowntimeMissedPercentageThreshold` parameter.
+  - If the threshold is exceeded, it slashes the participant's collateral using the `SlashFractionDowntime` parameter.
+  - The logic is called from `SettleAccount` in `accountsettle.go`, which ensures it runs exactly once per participant at the end of each epoch, right after their final performance stats are available.
 
 ### Section 3: Integration with `x/staking` via Hooks
 

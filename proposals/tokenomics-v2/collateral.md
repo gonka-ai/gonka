@@ -18,7 +18,7 @@ The core of this change is the modification of how a participant's weight is cal
 
 #### 2.1.1. Initial Grace Period
 
-To encourage early adoption and minimize barriers to entry, there will be an initial grace period of **180 epochs** during which no collateral is required. For the first 180 epochs, the `Base Weight Ratio` will be programmatically treated as `1.0` (100%), meaning all `Potential Weight` is granted unconditionally. After epoch 180, the system will switch to using the governance-defined `Base Weight Ratio`.
+To encourage early adoption and minimize barriers to entry, there will be an initial grace period during which no collateral is required. This grace period will be controlled by a new governance-votable parameter, `GracePeriodEndEpoch`, with a proposed default of `180`. For all epochs up to and including `GracePeriodEndEpoch`, the `Base Weight Ratio` will be programmatically treated as `1.0` (100%), meaning all `Potential Weight` is granted unconditionally. After this epoch, the system will switch to using the governance-defined `Base Weight Ratio`.
 
 #### 2.1.2. Standard Calculation Process
 
@@ -36,7 +36,7 @@ Here is the proposed calculation process, which becomes effective after the init
 
 5.  **Final Effective Weight**: The participant's final, effective weight used in governance and other network functions is the sum of their `Base Weight` and the `Activated Weight` backed by their collateral.
 
-This new calculation logic will be implemented in the `getWeight` function within the `x/inference` module (currently referenced in `inference-chain/x/inference/epochgroup/unit_of_compute_price.go`). To determine a participant's collateral, this function will query the new `x/collateral` module. The `Participant` data structure in the `x/inference` module will not be modified; instead, the `x/collateral` module will maintain its own state mapping participant addresses to their collateral amounts.
+This new weight adjustment logic will be implemented in a new function within the `x/inference` module's keeper. This function will be called during the epoch transition process, specifically in the `onSetNewValidatorsStage` function, immediately after the initial `Potential Weight` has been calculated. It will iterate through the active participants, query the `x/collateral` module for each participant's active collateral, and then adjust their final `Effective Weight` based on the formulas described above. The `Participant` data structure in the `x/inference` module will not be modified; instead, the `x/collateral` module will maintain its own state mapping participant addresses to their collateral amounts.
 
 ### 2.2. Managing Collateral
 
@@ -76,7 +76,9 @@ These messages will be defined in `inference-chain/proto/inference/collateral/tx
 
 Slashing will be initiated by the `x/inference` module, but executed by the `x/collateral` module. The `x/collateral` module will expose a `Slash` function that other modules can call. When a slash is triggered, the penalty will be applied **proportionally** to both the participant's active collateral and any funds they have in the unbonding queue.
 
-The `x/inference` module will introduce new governance parameters to control the severity of slashing:
+The `x/inference` module will introduce new governance parameters to control the severity of slashing and the collateral-to-weight ratio:
+*   `BaseWeightRatio`: The portion of a participant's `PotentialWeight` that is granted unconditionally, without collateral backing. Proposed default: `0.2` (20%).
+*   `CollateralPerWeightUnit`: The amount of collateral (in the native token) required to activate one unit of `Collateral-Eligible Weight`.
 *   `SlashFractionInvalid`: The percentage of a participant's total collateral to be slashed when they are marked as `INVALID`. Proposed default: `0.20` (20%).
 *   `SlashFractionDowntime`: The percentage of a participant's total collateral to be slashed for failing to meet participation requirements in an epoch. Proposed default: `0.10` (10%).
 *   `DowntimeMissedPercentageThreshold`: The epoch performance threshold that triggers a downtime slash. If a participant's missed request percentage for an epoch exceeds this value, their collateral will be slashed. Proposed default: `0.05` (5%).
@@ -148,7 +150,7 @@ To ensure transparency and facilitate interaction, the `x/collateral` module wil
 The module will expose gRPC and REST query endpoints to retrieve information about:
 *   A specific participant's active and unbonding collateral.
 *   All unbonding collateral for a given epoch.
-*   The current `x/collateral` module parameters (`BaseWeightRatio`, `CollateralPerWeightUnit`, etc.).
+*   The current `x/collateral` module parameters.
 
 ### 4.2. Events
 
@@ -171,6 +173,6 @@ The module will provide CLI commands for:
 Activating the collateral system requires a coordinated network upgrade. The upgrade process will be managed by the `x/upgrade` module and will perform two critical functions:
 
 1.  **Create New `x/collateral` Module Store**: The upgrade will be configured to add a new store to the blockchain's state for the `x/collateral` module. This is where all collateral balances and unbonding queues will be stored.
-2.  **Migrate `x/inference` Parameters**: The upgrade handler will execute a one-time migration of the `x/inference` module's parameters. It will read the existing parameters from the store, add the new `SlashFractionInvalid`, `SlashFractionDowntime`, and `DowntimeMissedPercentageThreshold` parameters with their defined default values, and save the updated parameter structure back to the store.
+2.  **Migrate `x/inference` Parameters**: The upgrade handler will execute a one-time migration of the `x/inference` module's parameters. It will read the existing parameters from the store, add the new `BaseWeightRatio`, `CollateralPerWeightUnit`, `SlashFractionInvalid`, `SlashFractionDowntime`, and `DowntimeMissedPercentageThreshold` parameters with their defined default values, and save the updated parameter structure back to the store.
 
 This ensures that upon upgrade, the new module is ready and all existing modules have the necessary parameters to support the collateral and slashing features. 

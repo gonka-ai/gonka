@@ -2,8 +2,20 @@ package types
 
 import (
 	"fmt"
+
+	"cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
+	"github.com/pkg/errors"
 	"github.com/shopspring/decimal"
+)
+
+var (
+	KeySlashFractionInvalid              = []byte("SlashFractionInvalid")
+	KeySlashFractionDowntime             = []byte("SlashFractionDowntime")
+	KeyDowntimeMissedPercentageThreshold = []byte("DowntimeMissedPercentageThreshold")
+	KeyGracePeriodEndEpoch               = []byte("GracePeriodEndEpoch")
+	KeyBaseWeightRatio                   = []byte("BaseWeightRatio")
+	KeyCollateralPerWeightUnit           = []byte("CollateralPerWeightUnit")
 )
 
 var _ paramtypes.ParamSet = (*Params)(nil)
@@ -40,40 +52,68 @@ func DefaultGenesisOnlyParams() GenesisOnlyParams {
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
 	return Params{
-		EpochParams: &EpochParams{
-			EpochLength:               40,
-			EpochMultiplier:           1,
-			EpochShift:                0,
-			DefaultUnitOfComputePrice: 100,
-			PocStageDuration:          10,
-			PocExchangeDuration:       2,
-			PocValidationDelay:        2,
-			PocValidationDuration:     6,
-		},
-		ValidationParams: &ValidationParams{
-			FalsePositiveRate:           DecimalFromFloat(0.05),
-			MinRampUpMeasurements:       10,
-			PassValue:                   DecimalFromFloat(0.99),
-			MinValidationAverage:        DecimalFromFloat(0.01),
-			MaxValidationAverage:        DecimalFromFloat(1.0),
-			ExpirationBlocks:            20,
-			EpochsToMax:                 30,
-			FullValidationTrafficCutoff: 10000,
-			MinValidationHalfway:        DecimalFromFloat(0.05),
-			MinValidationTrafficCutoff:  100,
-			MissPercentageCutoff:        DecimalFromFloat(0.01),
-			MissRequestsPenalty:         DecimalFromFloat(1.0),
-		},
-		PocParams: &PocParams{
-			DefaultDifficulty: 5,
-		},
-		TokenomicsParams: &TokenomicsParams{
-			SubsidyReductionInterval: DecimalFromFloat(0.05),
-			SubsidyReductionAmount:   DecimalFromFloat(0.20),
-			CurrentSubsidyPercentage: DecimalFromFloat(0.90),
-			TopRewardAllowedFailure:  DecimalFromFloat(0.10),
-			TopMinerPocQualification: 10,
-		},
+		EpochParams:      DefaultEpochParams(),
+		ValidationParams: DefaultValidationParams(),
+		PocParams:        DefaultPocParams(),
+		TokenomicsParams: DefaultTokenomicsParams(),
+		CollateralParams: DefaultCollateralParams(),
+	}
+}
+
+func DefaultEpochParams() *EpochParams {
+	return &EpochParams{
+		EpochLength:               40,
+		EpochMultiplier:           1,
+		EpochShift:                0,
+		DefaultUnitOfComputePrice: 100,
+		PocStageDuration:          10,
+		PocExchangeDuration:       2,
+		PocValidationDelay:        2,
+		PocValidationDuration:     6,
+	}
+}
+
+func DefaultValidationParams() *ValidationParams {
+	return &ValidationParams{
+		FalsePositiveRate:           DecimalFromFloat(0.05),
+		MinRampUpMeasurements:       10,
+		PassValue:                   DecimalFromFloat(0.99),
+		MinValidationAverage:        DecimalFromFloat(0.01),
+		MaxValidationAverage:        DecimalFromFloat(1.0),
+		ExpirationBlocks:            20,
+		EpochsToMax:                 30,
+		FullValidationTrafficCutoff: 10000,
+		MinValidationHalfway:        DecimalFromFloat(0.05),
+		MinValidationTrafficCutoff:  100,
+		MissPercentageCutoff:        DecimalFromFloat(0.01),
+		MissRequestsPenalty:         DecimalFromFloat(1.0),
+	}
+}
+
+func DefaultPocParams() *PocParams {
+	return &PocParams{
+		DefaultDifficulty: 5,
+	}
+}
+
+func DefaultTokenomicsParams() *TokenomicsParams {
+	return &TokenomicsParams{
+		SubsidyReductionInterval: DecimalFromFloat(0.05),
+		SubsidyReductionAmount:   DecimalFromFloat(0.20),
+		CurrentSubsidyPercentage: DecimalFromFloat(0.90),
+		TopRewardAllowedFailure:  DecimalFromFloat(0.10),
+		TopMinerPocQualification: 10,
+	}
+}
+
+func DefaultCollateralParams() *CollateralParams {
+	return &CollateralParams{
+		SlashFractionInvalid:              math.LegacyMustNewDecFromStr("0.20"),
+		SlashFractionDowntime:             math.LegacyMustNewDecFromStr("0.10"),
+		DowntimeMissedPercentageThreshold: math.LegacyMustNewDecFromStr("0.05"),
+		GracePeriodEndEpoch:               180,
+		BaseWeightRatio:                   math.LegacyNewDecWithPrec(2, 1), // 0.2 (20%)
+		CollateralPerWeightUnit:           math.LegacyNewDec(1),            // 1 token per weight unit
 	}
 }
 
@@ -81,60 +121,123 @@ func DefaultParams() Params {
 func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{}
 }
+
+// ParamSetPairs gets the params for the slashing section
+func (p *CollateralParams) ParamSetPairs() paramtypes.ParamSetPairs {
+	return paramtypes.ParamSetPairs{
+		paramtypes.NewParamSetPair(KeySlashFractionInvalid, &p.SlashFractionInvalid, validateSlashFraction),
+		paramtypes.NewParamSetPair(KeySlashFractionDowntime, &p.SlashFractionDowntime, validateSlashFraction),
+		paramtypes.NewParamSetPair(KeyDowntimeMissedPercentageThreshold, &p.DowntimeMissedPercentageThreshold, validatePercentage),
+		paramtypes.NewParamSetPair(KeyGracePeriodEndEpoch, &p.GracePeriodEndEpoch, validateEpoch),
+		paramtypes.NewParamSetPair(KeyBaseWeightRatio, &p.BaseWeightRatio, validateBaseWeightRatio),
+		paramtypes.NewParamSetPair(KeyCollateralPerWeightUnit, &p.CollateralPerWeightUnit, validateCollateralPerWeightUnit),
+	}
+}
+
 func validateEpochParams(i interface{}) error {
 	return nil
 }
 
 // Validate validates the set of params
 func (p Params) Validate() error {
-	if p.EpochParams == nil {
-		return fmt.Errorf("epoch params cannot be nil")
+	// TODO: Uncomment this when we have a way to validate the params
+	// if err := p.EpochParams.Validate(); err != nil {
+	// 	return err
+	// }
+	// if err := p.ValidationParams.Validate(); err != nil {
+	// 	return err
+	// }
+	// if err := p.PocParams.Validate(); err != nil {
+	// 	return err
+	// }
+	// if err := p.TokenomicsParams.Validate(); err != nil {
+	// 	return err
+	// }
+	if err := p.CollateralParams.Validate(); err != nil {
+		return err
 	}
-	if p.ValidationParams == nil {
-		return fmt.Errorf("validation params cannot be nil")
+	return nil
+}
+
+func (p *CollateralParams) Validate() error {
+	if err := validateSlashFraction(p.SlashFractionInvalid); err != nil {
+		return errors.Wrap(err, "invalid slash_fraction_invalid")
 	}
-	if p.PocParams == nil {
-		return fmt.Errorf("poc params cannot be nil")
+	if err := validateSlashFraction(p.SlashFractionDowntime); err != nil {
+		return errors.Wrap(err, "invalid slash_fraction_downtime")
 	}
-	if p.TokenomicsParams == nil {
-		return fmt.Errorf("tokenomics params cannot be nil")
+	if err := validatePercentage(p.DowntimeMissedPercentageThreshold); err != nil {
+		return errors.Wrap(err, "invalid downtime_missed_percentage_threshold")
+	}
+	if err := validateEpoch(p.GracePeriodEndEpoch); err != nil {
+		return errors.Wrap(err, "invalid grace_period_end_epoch")
+	}
+	if err := validateBaseWeightRatio(p.BaseWeightRatio); err != nil {
+		return errors.Wrap(err, "invalid base_weight_ratio")
+	}
+	if err := validateCollateralPerWeightUnit(p.CollateralPerWeightUnit); err != nil {
+		return errors.Wrap(err, "invalid collateral_per_weight_unit")
+	}
+	return nil
+}
+
+func validateSlashFraction(i interface{}) error {
+	v, ok := i.(math.LegacyDec)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v.IsNegative() || v.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("slash fraction must be between 0 and 1, but is %s", v.String())
+	}
+	return nil
+}
+
+func validateBaseWeightRatio(v interface{}) error {
+	baseWeightRatio, ok := v.(math.LegacyDec)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", v)
 	}
 
-	if p.ValidationParams.FalsePositiveRate == nil {
-		return fmt.Errorf("false positive rate cannot be nil")
-	}
-	if p.ValidationParams.PassValue == nil {
-		return fmt.Errorf("pass value cannot be nil")
-	}
-	if p.ValidationParams.MinValidationAverage == nil {
-		return fmt.Errorf("min validation average cannot be nil")
-	}
-	if p.ValidationParams.MaxValidationAverage == nil {
-		return fmt.Errorf("max validation average cannot be nil")
-	}
-	if p.ValidationParams.MinValidationHalfway == nil {
-		return fmt.Errorf("min validation halfway cannot be nil")
-	}
-	if p.ValidationParams.MissPercentageCutoff == nil {
-		return fmt.Errorf("miss percentage cutoff cannot be nil")
-	}
-	if p.ValidationParams.MissRequestsPenalty == nil {
-		return fmt.Errorf("miss requests penalty cannot be nil")
+	if baseWeightRatio.IsNegative() {
+		return fmt.Errorf("base weight ratio cannot be negative: %s", baseWeightRatio)
 	}
 
-	if p.TokenomicsParams.SubsidyReductionInterval == nil {
-		return fmt.Errorf("subsidy reduction interval cannot be nil")
-	}
-	if p.TokenomicsParams.SubsidyReductionAmount == nil {
-		return fmt.Errorf("subsidy reduction amount cannot be nil")
-	}
-	if p.TokenomicsParams.CurrentSubsidyPercentage == nil {
-		return fmt.Errorf("current subsidy percentage cannot be nil")
-	}
-	if p.TokenomicsParams.TopRewardAllowedFailure == nil {
-		return fmt.Errorf("top reward allowed failure cannot be nil")
+	if baseWeightRatio.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("base weight ratio cannot be greater than 1: %s", baseWeightRatio)
 	}
 
+	return nil
+}
+
+func validateCollateralPerWeightUnit(v interface{}) error {
+	collateralPerWeightUnit, ok := v.(math.LegacyDec)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", v)
+	}
+
+	if collateralPerWeightUnit.IsNegative() {
+		return fmt.Errorf("collateral per weight unit cannot be negative: %s", collateralPerWeightUnit)
+	}
+
+	return nil
+}
+
+func validatePercentage(i interface{}) error {
+	v, ok := i.(math.LegacyDec)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v.IsNegative() || v.GT(math.LegacyOneDec()) {
+		return fmt.Errorf("percentage must be between 0 and 1, but is %s", v.String())
+	}
+	return nil
+}
+
+func validateEpoch(i interface{}) error {
+	_, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
 	return nil
 }
 

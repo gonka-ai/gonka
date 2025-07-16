@@ -312,6 +312,13 @@ func (am AppModule) onSetNewValidatorsStage(ctx context.Context, blockHeight int
 		return
 	}
 
+	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
+	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
+		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
+		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
+		// which means participants will proceed with their unadjusted PotentialWeight.
+	}
+
 	am.setModelsForParticipants(ctx, activeParticipants)
 
 	err = am.RegisterTopMiners(ctx, activeParticipants, blockTime)

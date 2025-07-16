@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,7 +37,13 @@ func (k msgServer) InvalidateInference(goCtx context.Context, msg *types.MsgInva
 	if err != nil {
 		return nil, err
 	}
+
+	// Store the original status to check for a state transition to INVALID.
+	originalStatus := executor.Status
 	executor.Status = calculateStatus(k.Keeper.GetParams(goCtx).ValidationParams, executor)
+
+	// Check for a status transition and slash if necessary.
+	k.CheckAndSlashForInvalidStatus(goCtx, originalStatus, &executor)
 
 	k.SetInference(ctx, inference)
 	k.SetParticipant(ctx, executor)
