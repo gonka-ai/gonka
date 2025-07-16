@@ -31,6 +31,7 @@ type NodePoCOrchestratorImpl struct {
 type OrchestratorChainBridge interface {
 	PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error)
 	GetBlockHash(height int64) (string, error)
+	GetPocParams() (*types.PocParams, error)
 }
 
 type OrchestratorChainBridgeImpl struct {
@@ -45,6 +46,16 @@ func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int
 		return nil, err
 	}
 	return response, nil
+}
+
+func (b *OrchestratorChainBridgeImpl) GetPocParams() (*types.PocParams, error) {
+	response, err := b.cosmosClient.NewInferenceQueryClient().Params(*b.cosmosClient.GetContext(), &types.QueryParamsRequest{})
+	if err != nil {
+		logging.Error("Failed to query params", types.PoC, "error", err)
+		return nil, err
+	}
+	pocParams := response.Params.PocParams
+	return pocParams, nil
 }
 
 func (b *OrchestratorChainBridgeImpl) GetBlockHash(height int64) (string, error) {
@@ -139,8 +150,16 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 
-	// params := o.phaseTracker.GetParams()
-	// samplesPerBatch := params.PocParams.ValidationSampleSize
+	pocParams, err := o.chainBridge.GetPocParams()
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get chain parameters", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	samplesPerBatch := int64(pocParams.ValidationSampleSize)
+	if pocParams.ValidationSampleSize == 0 {
+		logging.Info("Defaulting to 200 samples per batch", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		samplesPerBatch = POC_VALIDATE_SAMPLES_PER_BATCH
+	}
 
 	attemptCounter := 0
 	successfulValidations := 0
@@ -158,15 +177,16 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
 		}
 
-		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, POC_VALIDATE_SAMPLES_PER_BATCH)
+		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, samplesPerBatch)
 
 		validationSucceeded := false
 		for attempt := range POC_VALIDATE_BATCH_RETRIES {
 			node := nodes[attemptCounter%len(nodes)]
 			attemptCounter++
 
-			logging.Info("ValidateReceivedBatches. Sending joined batch for validation.", types.PoC,
+			logging.Info("ValidateReceivedBatches. Sending sampled batch for validation.", types.PoC,
 				"attempt", attempt,
+				"length", len(batchToValidate.Nonces),
 				"startOfValStageHeight", startOfValStageHeight,
 				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
 				"batch.Participant", batch.Participant)

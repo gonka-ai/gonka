@@ -10,7 +10,6 @@ type EpochContext struct {
 	EpochIndex          uint64
 	PocStartBlockHeight int64
 	EpochParams         EpochParams
-	PocParams           PocParams
 }
 
 func NewEpochContext(epoch Epoch, params EpochParams) EpochContext {
