@@ -152,7 +152,7 @@ func (ms msgServer) validateSeedSignature(ctx sdk.Context, msg *types.MsgClaimRe
 	}
 	acc := ms.AccountKeeper.GetAccount(ctx, addr)
 	if acc == nil {
-		ms.LogError("Account not found for signature", types.Claims, "address", msg.Creator)
+		ms.LogError("account not found for signature", types.Claims, "address", msg.Creator)
 		return types.ErrParticipantNotFound
 	}
 	pubKey := acc.GetPubKey()

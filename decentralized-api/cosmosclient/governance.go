@@ -28,13 +28,7 @@ func SubmitProposal(cosmosClient CosmosMessageClient, msg sdk.Msg, proposalData 
 	if err != nil {
 		return err
 	}
-
-	_, err = cosmosClient.SendTransaction(proposalMsg)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return cosmosClient.SendTransaction(proposalMsg)
 }
 
 func GetProposalMsgSigner() string {

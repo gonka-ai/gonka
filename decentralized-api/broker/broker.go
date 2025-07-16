@@ -409,7 +409,7 @@ func (b *Broker) syncNodes() {
 	req := &types.QueryHardwareNodesRequest{
 		Participant: b.client.GetAddress(),
 	}
-	resp, err := queryClient.HardwareNodes(*b.client.GetContext(), req)
+	resp, err := queryClient.HardwareNodes(b.client.GetContext(), req)
 	if err != nil {
 		logging.Error("[sync nodes]. Error getting nodes", types.Nodes, "error", err)
 		return
@@ -430,7 +430,7 @@ func (b *Broker) syncNodes() {
 		logging.Info("[sync nodes] No diff to submit", types.Nodes)
 	} else {
 		logging.Info("[sync nodes] Submitting diff", types.Nodes)
-		if _, err = b.client.SendTransaction(&diff); err != nil {
+		if err = b.client.SendTransaction(&diff); err != nil {
 			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
 		}
 	}

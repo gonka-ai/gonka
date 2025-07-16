@@ -65,7 +65,7 @@ func (s *Server) getParticipantsByEpoch(c echo.Context) error {
 
 func (s *Server) getParticipants(epochOrNil *uint64) (*ActiveParticipantWithProof, error) {
 	queryClient := s.recorder.NewInferenceQueryClient()
-	currEpoch, err := queryClient.GetCurrentEpoch(*s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
+	currEpoch, err := queryClient.GetCurrentEpoch(s.recorder.GetContext(), &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		logging.Error("Failed to get current epoch", types.Participants, "error", err)
 		return nil, err

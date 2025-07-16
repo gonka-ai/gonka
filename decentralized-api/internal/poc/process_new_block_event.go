@@ -18,7 +18,7 @@ func ProcessNewBlockEvent(nodePoCOrchestrator *NodePoCOrchestrator, event *chain
 		return
 	}
 
-	params, err := transactionRecorder.NewInferenceQueryClient().Params(transactionRecorder.Context, &types.QueryParamsRequest{})
+	params, err := transactionRecorder.NewInferenceQueryClient().Params(transactionRecorder.GetContext(), &types.QueryParamsRequest{})
 	if err == nil {
 		nodePoCOrchestrator.SetParams(&params.Params)
 	}

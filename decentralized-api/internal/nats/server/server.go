@@ -1,14 +1,18 @@
-package nats_server
+package server
 
 import (
 	"decentralized-api/apiconfig"
-	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	natssrv "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/pkg/errors"
 	types2 "github.com/productscience/inference/x/inference/types"
 	"time"
+)
+
+const (
+	TxsToSendStream    = "txs_to_send"
+	TxsToObserveStream = "txs_to_observe"
 )
 
 type NatsServer interface {
@@ -64,7 +68,7 @@ func (s *server) Start() error {
 		}
 	}
 
-	return s.createJetStreamTopics([]string{cosmosclient.TxsToObserveTopic, cosmosclient.TxsToSendTopic})
+	return s.createJetStreamTopics([]string{TxsToSendStream, TxsToObserveStream})
 }
 
 func (s *server) createJetStreamTopics(topicNames []string) error {

@@ -33,7 +33,7 @@ func (k Keeper) PocBatchesForStage(goCtx context.Context, req *types.QueryPocBat
 
 		acc := k.AccountKeeper.GetAccount(ctx, addr)
 		if acc == nil {
-			k.LogError("PocBatchesForStage. Account not found", types.PoC, "address", participantIndex)
+			k.LogError("PocBatchesForStage. account not found", types.PoC, "address", participantIndex)
 			continue
 		}
 

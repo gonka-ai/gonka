@@ -6,7 +6,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener"
-	"decentralized-api/internal/nats_server"
+	"decentralized-api/internal/nats/server"
 	"decentralized-api/internal/poc"
 	adminserver "decentralized-api/internal/server/admin"
 	mlserver "decentralized-api/internal/server/mlnode"
@@ -59,7 +59,7 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
-	natssrv := nats_server.NewServer(config.GetNatsConfig())
+	natssrv := server.NewServer(config.GetNatsConfig())
 	if err := natssrv.Start(); err != nil {
 		panic(err)
 	}
@@ -92,7 +92,7 @@ func main() {
 		return
 	}
 
-	pubKey, err := recorder.Account.Record.GetPubKey()
+	pubKey, err := recorder.GetAccount().Record.GetPubKey()
 	if err != nil {
 		logging.Error("Failed to get public key", types.EventProcessing, "error", err)
 		return
@@ -100,8 +100,8 @@ func main() {
 	pubKeyString := utils.PubKeyToHexString(pubKey)
 
 	logging.Debug("Initializing PoC orchestrator",
-		types.PoC, "name", recorder.Account.Name,
-		"address", recorder.Address,
+		types.PoC, "name", recorder.GetAccount().Name,
+		"address", recorder.GetAddress(),
 		"pubkey", pubKeyString)
 
 	nodePocOrchestrator := poc.NewNodePoCOrchestrator(
