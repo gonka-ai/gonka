@@ -56,6 +56,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			var err error
 			lineToProxy, err = responseProcessor.ProcessStreamedResponse(line)
 			if err != nil {
+				logging.Error("Failed to process streamed response line", types.Inferences, "error", err, "line", line)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

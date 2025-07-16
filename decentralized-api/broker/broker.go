@@ -463,19 +463,23 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version 
 	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
+	logging.Info("nodeAvailable. Node is in INFERENCE state", types.Nodes, "nodeId", node.Node.Id)
 
 	if node.State.ReconcileInfo != nil {
 		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
 	}
+	logging.Info("nodeAvailable. Node is not being reconciled, ReconcileInfo == nil", types.Nodes, "nodeId", node.Node.Id)
 
 	if node.State.LockCount >= node.Node.MaxConcurrent {
 		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
 	}
+	logging.Info("nodeAvailable. Node is not locked too many times", types.Nodes, "nodeId", node.Node.Id, "lockCount", node.State.LockCount, "maxConcurrent", node.Node.MaxConcurrent)
 
 	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
 		return false, fmt.Sprintf("Node is administratively disabled: currentEpoch=%v, currentPhase=%s, adminState = %v", currentEpoch, currentPhase, node.State.AdminState)
 	}
+	logging.Info("nodeAvailable. Node is not administratively enabled", types.Nodes, "nodeId", node.Node.Id, "adminState", node.State.AdminState)
 
 	if version != "" && node.Node.Version != version {
 		return false, fmt.Sprintf("Node version mismatch: expected %s, got %s", version, node.Node.Version)
