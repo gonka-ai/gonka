@@ -139,6 +139,9 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 		return
 	}
 
+	// params := o.phaseTracker.GetParams()
+	// samplesPerBatch := params.PocParams.ValidationSampleSize
+
 	attemptCounter := 0
 	successfulValidations := 0
 	failedValidations := 0

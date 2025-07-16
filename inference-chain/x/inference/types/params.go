@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/shopspring/decimal"
 )
@@ -65,7 +66,8 @@ func DefaultParams() Params {
 			MissRequestsPenalty:         DecimalFromFloat(1.0),
 		},
 		PocParams: &PocParams{
-			DefaultDifficulty: 5,
+			DefaultDifficulty:    5,
+			ValidationSampleSize: 200,
 		},
 		TokenomicsParams: &TokenomicsParams{
 			SubsidyReductionInterval: DecimalFromFloat(0.05),
