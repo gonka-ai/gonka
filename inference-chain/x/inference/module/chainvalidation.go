@@ -426,7 +426,7 @@ func (wc *WeightCalculator) validatedParticipant(participantAddress string) *typ
 	}
 
 	vals := wc.getParticipantValidations(participantAddress)
-	if vals == nil || len(vals) == 0 {
+	if len(vals) == 0 {
 		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", participantAddress)
 		return nil
 	}
