@@ -211,7 +211,7 @@ func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight 
 			logging.Error("ValidateReceivedBatches. Failed to validate batch after all retry attempts", types.PoC,
 				"startOfValStageHeight", startOfValStageHeight,
 				"batch.Participant", batch.Participant,
-				"maxAttempts", 5)
+				"maxAttempts", POC_VALIDATE_BATCH_RETRIES)
 		}
 	}
 
