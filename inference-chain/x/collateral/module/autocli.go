@@ -17,6 +17,28 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "params",
 					Short:     "Shows the parameters of the module",
 				},
+				{
+					RpcMethod:      "Collateral",
+					Use:            "show-collateral [participant]",
+					Short:          "Shows a collateral",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod: "CollateralAll",
+					Use:       "list-collateral",
+					Short:     "List all collateral",
+				},
+				{
+					RpcMethod:      "UnbondingCollateral",
+					Use:            "show-unbonding-collateral [participant]",
+					Short:          "Shows a unbondingCollateral",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod: "UnbondingCollateralAll",
+					Use:       "list-unbonding-collateral",
+					Short:     "List all unbondingCollateral",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -27,6 +49,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{
 					RpcMethod: "UpdateParams",
 					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod:      "DepositCollateral",
+					Use:            "deposit-collateral [amount]",
+					Short:          "Send a deposit-collateral tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}},
+				},
+				{
+					RpcMethod:      "WithdrawCollateral",
+					Use:            "withdraw-collateral [amount]",
+					Short:          "Send a withdraw-collateral tx",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

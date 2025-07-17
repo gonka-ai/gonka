@@ -8,7 +8,9 @@ import (
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/productscience/inference/x/collateral/types"
@@ -70,8 +72,11 @@ func (k Keeper) Logger() log.Logger {
 // SetCollateral stores a participant's collateral amount
 func (k Keeper) SetCollateral(ctx sdk.Context, participantAddress string, amount sdk.Coin) {
 	store := k.storeService.OpenKVStore(ctx)
-	bz := k.cdc.MustMarshal(&amount)
-	err := store.Set(types.GetCollateralKey(participantAddress), bz)
+	bz, err := k.cdc.Marshal(&amount)
+	if err != nil {
+		panic(err)
+	}
+	err = store.Set(types.GetCollateralKey(participantAddress), bz)
 	if err != nil {
 		panic(err)
 	}
@@ -89,7 +94,10 @@ func (k Keeper) GetCollateral(ctx sdk.Context, participantAddress string) (sdk.C
 	}
 
 	var amount sdk.Coin
-	k.cdc.MustUnmarshal(bz, &amount)
+	err = k.cdc.Unmarshal(bz, &amount)
+	if err != nil {
+		panic(err)
+	}
 	return amount, true
 }
 
@@ -104,23 +112,24 @@ func (k Keeper) RemoveCollateral(ctx sdk.Context, participantAddress string) {
 
 // GetAllCollateral returns all collateral entries
 func (k Keeper) GetAllCollateral(ctx sdk.Context) map[string]sdk.Coin {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	collateralStore := prefix.NewStore(storeAdapter, types.CollateralKey)
 	collateralMap := make(map[string]sdk.Coin)
 
-	iterator, err := store.Iterator(types.CollateralKey, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := collateralStore.Iterator(nil, nil)
+
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
 		// Extract participant address from the key
-		key := iterator.Key()
-		participantAddr := string(key[len(types.CollateralKey):])
+		participantAddr := string(iterator.Key())
 
 		// Unmarshal the collateral amount
 		var amount sdk.Coin
-		k.cdc.MustUnmarshal(iterator.Value(), &amount)
+		err := k.cdc.Unmarshal(iterator.Value(), &amount)
+		if err != nil {
+			panic(err)
+		}
 
 		collateralMap[participantAddr] = amount
 	}
@@ -177,13 +186,10 @@ func (k Keeper) RemoveUnbondingCollateral(ctx sdk.Context, participantAddress st
 // RemoveUnbondingByEpoch removes all unbonding entries for a specific epoch
 // This is useful for batch processing at the end of an epoch
 func (k Keeper) RemoveUnbondingByEpoch(ctx sdk.Context, completionEpoch uint64) {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	unbondingStore := prefix.NewStore(storeAdapter, types.GetUnbondingEpochPrefix(completionEpoch))
 
-	prefix := types.GetUnbondingEpochPrefix(completionEpoch)
-	iterator, err := store.Iterator(prefix, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := unbondingStore.Iterator(nil, nil)
 	defer iterator.Close()
 
 	// Collect keys to delete (can't delete while iterating)
@@ -194,23 +200,17 @@ func (k Keeper) RemoveUnbondingByEpoch(ctx sdk.Context, completionEpoch uint64) 
 
 	// Delete all collected keys
 	for _, key := range keysToDelete {
-		err := store.Delete(key)
-		if err != nil {
-			panic(err)
-		}
+		unbondingStore.Delete(key)
 	}
 }
 
 // GetUnbondingByEpoch returns all unbonding entries for a specific epoch
 func (k Keeper) GetUnbondingByEpoch(ctx sdk.Context, completionEpoch uint64) []types.UnbondingCollateral {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	unbondingStore := prefix.NewStore(storeAdapter, types.GetUnbondingEpochPrefix(completionEpoch))
 	unbondingList := []types.UnbondingCollateral{}
 
-	prefix := types.GetUnbondingEpochPrefix(completionEpoch)
-	iterator, err := store.Iterator(prefix, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := unbondingStore.Iterator(nil, nil)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -224,14 +224,12 @@ func (k Keeper) GetUnbondingByEpoch(ctx sdk.Context, completionEpoch uint64) []t
 
 // GetUnbondingByParticipant returns all unbonding entries for a specific participant
 func (k Keeper) GetUnbondingByParticipant(ctx sdk.Context, participantAddress string) []types.UnbondingCollateral {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	unbondingStore := prefix.NewStore(storeAdapter, types.UnbondingKey)
 	unbondingList := []types.UnbondingCollateral{}
 
 	// We need to iterate through all unbonding entries and filter by participant
-	iterator, err := store.Iterator(types.UnbondingKey, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := unbondingStore.Iterator(nil, nil)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -330,13 +328,11 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) {
 
 // GetAllUnbonding returns all unbonding entries (for genesis export)
 func (k Keeper) GetAllUnbonding(ctx sdk.Context) []types.UnbondingCollateral {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	unbondingStore := prefix.NewStore(storeAdapter, types.UnbondingKey)
 	unbondingList := []types.UnbondingCollateral{}
 
-	iterator, err := store.Iterator(types.UnbondingKey, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := unbondingStore.Iterator(nil, nil)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -380,18 +376,16 @@ func (k Keeper) IsJailed(ctx sdk.Context, participantAddress string) bool {
 
 // GetAllJailed returns all jailed participant addresses.
 func (k Keeper) GetAllJailed(ctx sdk.Context) []string {
-	store := k.storeService.OpenKVStore(ctx)
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	jailedStore := prefix.NewStore(storeAdapter, types.JailedKey)
 	jailedList := []string{}
 
-	iterator, err := store.Iterator(types.JailedKey, nil)
-	if err != nil {
-		panic(err)
-	}
+	iterator := jailedStore.Iterator(nil, nil)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
 		// The key itself contains the address after the prefix.
-		address := string(iterator.Key()[len(types.JailedKey):])
+		address := string(iterator.Key())
 		jailedList = append(jailedList, address)
 	}
 

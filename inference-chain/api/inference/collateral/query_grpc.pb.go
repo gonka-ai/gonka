@@ -19,7 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName = "/inference.collateral.Query/Params"
+	Query_Params_FullMethodName                 = "/inference.collateral.Query/Params"
+	Query_Collateral_FullMethodName             = "/inference.collateral.Query/Collateral"
+	Query_AllCollateral_FullMethodName          = "/inference.collateral.Query/AllCollateral"
+	Query_UnbondingCollateral_FullMethodName    = "/inference.collateral.Query/UnbondingCollateral"
+	Query_AllUnbondingCollateral_FullMethodName = "/inference.collateral.Query/AllUnbondingCollateral"
 )
 
 // QueryClient is the client API for Query service.
@@ -28,6 +32,14 @@ const (
 type QueryClient interface {
 	// Parameters queries the parameters of the module.
 	Params(ctx context.Context, in *QueryParamsRequest, opts ...grpc.CallOption) (*QueryParamsResponse, error)
+	// Queries a specific participant's active collateral.
+	Collateral(ctx context.Context, in *QueryCollateralRequest, opts ...grpc.CallOption) (*QueryCollateralResponse, error)
+	// Queries all active collateral.
+	AllCollateral(ctx context.Context, in *QueryAllCollateralRequest, opts ...grpc.CallOption) (*QueryAllCollateralResponse, error)
+	// Queries a specific participant's unbonding collateral.
+	UnbondingCollateral(ctx context.Context, in *QueryUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryUnbondingCollateralResponse, error)
+	// Queries all unbonding collateral.
+	AllUnbondingCollateral(ctx context.Context, in *QueryAllUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralResponse, error)
 }
 
 type queryClient struct {
@@ -47,12 +59,56 @@ func (c *queryClient) Params(ctx context.Context, in *QueryParamsRequest, opts .
 	return out, nil
 }
 
+func (c *queryClient) Collateral(ctx context.Context, in *QueryCollateralRequest, opts ...grpc.CallOption) (*QueryCollateralResponse, error) {
+	out := new(QueryCollateralResponse)
+	err := c.cc.Invoke(ctx, Query_Collateral_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) AllCollateral(ctx context.Context, in *QueryAllCollateralRequest, opts ...grpc.CallOption) (*QueryAllCollateralResponse, error) {
+	out := new(QueryAllCollateralResponse)
+	err := c.cc.Invoke(ctx, Query_AllCollateral_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) UnbondingCollateral(ctx context.Context, in *QueryUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryUnbondingCollateralResponse, error) {
+	out := new(QueryUnbondingCollateralResponse)
+	err := c.cc.Invoke(ctx, Query_UnbondingCollateral_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) AllUnbondingCollateral(ctx context.Context, in *QueryAllUnbondingCollateralRequest, opts ...grpc.CallOption) (*QueryAllUnbondingCollateralResponse, error) {
+	out := new(QueryAllUnbondingCollateralResponse)
+	err := c.cc.Invoke(ctx, Query_AllUnbondingCollateral_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
 type QueryServer interface {
 	// Parameters queries the parameters of the module.
 	Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error)
+	// Queries a specific participant's active collateral.
+	Collateral(context.Context, *QueryCollateralRequest) (*QueryCollateralResponse, error)
+	// Queries all active collateral.
+	AllCollateral(context.Context, *QueryAllCollateralRequest) (*QueryAllCollateralResponse, error)
+	// Queries a specific participant's unbonding collateral.
+	UnbondingCollateral(context.Context, *QueryUnbondingCollateralRequest) (*QueryUnbondingCollateralResponse, error)
+	// Queries all unbonding collateral.
+	AllUnbondingCollateral(context.Context, *QueryAllUnbondingCollateralRequest) (*QueryAllUnbondingCollateralResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -62,6 +118,18 @@ type UnimplementedQueryServer struct {
 
 func (UnimplementedQueryServer) Params(context.Context, *QueryParamsRequest) (*QueryParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Params not implemented")
+}
+func (UnimplementedQueryServer) Collateral(context.Context, *QueryCollateralRequest) (*QueryCollateralResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Collateral not implemented")
+}
+func (UnimplementedQueryServer) AllCollateral(context.Context, *QueryAllCollateralRequest) (*QueryAllCollateralResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllCollateral not implemented")
+}
+func (UnimplementedQueryServer) UnbondingCollateral(context.Context, *QueryUnbondingCollateralRequest) (*QueryUnbondingCollateralResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UnbondingCollateral not implemented")
+}
+func (UnimplementedQueryServer) AllUnbondingCollateral(context.Context, *QueryAllUnbondingCollateralRequest) (*QueryAllUnbondingCollateralResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AllUnbondingCollateral not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -94,6 +162,78 @@ func _Query_Params_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_Collateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryCollateralRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).Collateral(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_Collateral_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).Collateral(ctx, req.(*QueryCollateralRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_AllCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllCollateralRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).AllCollateral(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_AllCollateral_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).AllCollateral(ctx, req.(*QueryAllCollateralRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_UnbondingCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryUnbondingCollateralRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).UnbondingCollateral(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_UnbondingCollateral_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).UnbondingCollateral(ctx, req.(*QueryUnbondingCollateralRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_AllUnbondingCollateral_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAllUnbondingCollateralRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).AllUnbondingCollateral(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_AllUnbondingCollateral_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).AllUnbondingCollateral(ctx, req.(*QueryAllUnbondingCollateralRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -104,6 +244,22 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Params",
 			Handler:    _Query_Params_Handler,
+		},
+		{
+			MethodName: "Collateral",
+			Handler:    _Query_Collateral_Handler,
+		},
+		{
+			MethodName: "AllCollateral",
+			Handler:    _Query_AllCollateral_Handler,
+		},
+		{
+			MethodName: "UnbondingCollateral",
+			Handler:    _Query_UnbondingCollateral_Handler,
+		},
+		{
+			MethodName: "AllUnbondingCollateral",
+			Handler:    _Query_AllUnbondingCollateral_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

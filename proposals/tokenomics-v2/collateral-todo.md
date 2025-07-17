@@ -199,6 +199,15 @@ Each task includes:
   - It emits a `slash_collateral` event with the participant, total slashed amount, and the slash fraction.
   - Successfully built the project.
 
+### Section 1a: Post-Implementation Refactoring and Verification
+- **Task**: [x] - Finished Refactor all keeper iterators and run full test suite.
+- **What**: A bug was discovered where `ExportGenesis` was exporting incorrect data because a store iterator was not correctly bounded. All iterators in the `x/collateral` keeper were refactored to use the safer `prefix.NewStore` pattern.
+- **Where**: `inference-chain/x/collateral/keeper/keeper.go`
+- **Why**: This fixes the critical genesis export bug, prevents similar bugs in other iteration functions, and aligns the module with best practices used in `x/inference`.
+- **Result**:
+    - All keeper functions using iterators were updated (`GetAllCollateral`, `GetAllUnbonding`, `GetAllJailed`, etc.).
+    - All tests for `x/collateral`, `x/inference`, `make node-test`, and `make api-test` were executed and passed, confirming the refactoring did not introduce regressions.
+
 ### Section 2: Integration with `x/inference` Module
 
 #### 2.1 Define Slashing Parameters in `x/inference`
@@ -315,26 +324,32 @@ Each task includes:
 ### Section 4: Queries, Events, and CLI
 
 #### 4.1 Implement Query Endpoints
-- **Task**: [ ] Implement Query Endpoints
+- **Task**: [x] - Finished Implement Query Endpoints
 - **What**: Implement gRPC and REST query endpoints for fetching participant collateral (active and unbonding) and module parameters.
 - **Where**:
   - `inference-chain/proto/inference/collateral/query.proto`
   - `inference-chain/x/collateral/keeper/query_server.go`
 - **Dependencies**: 1.3, 1.5.1
+- **Result**:
+  - Defined query services and messages in `query.proto` for parameters, single participant collateral, all collateral, and unbonding queues.
+  - Implemented the corresponding logic in `query_server.go`.
+  - Correctly generated the Go protobuf code to eliminate compilation errors.
 
 #### 4.2 Implement Event Emitting
-- **Task**: [ ] Add event emitting to key functions
+- **Task**: [x] - Finished Add event emitting to key functions
 - **What**: Emit strongly-typed events for deposits, withdrawals, and slashing to facilitate off-chain tracking.
 - **Where**:
   - `inference-chain/x/collateral/keeper/msg_server_*.go`
   - `inference-chain/x/collateral/keeper/keeper.go` (in the `Slash` function)
 - **Dependencies**: 1.4, 1.5.2, 1.6
+- **Result**: All required events (`DepositCollateral`, `WithdrawCollateral`, `SlashCollateral`, `ProcessWithdrawal`) were already implemented in previous tasks (1.4, 1.5.2, 1.5.3, and 1.6). This task was a verification step and is now complete.
 
 #### 4.3 Implement CLI Commands
-- **Task**: [ ] Implement CLI commands
+- **Task**: [x] - Finished
 - **What**: Create CLI commands for all new messages and queries to allow for easy interaction and testing.
 - **Where**: `inference-chain/x/collateral/client/cli/`
 - **Dependencies**: 4.1
+- **Result**: Added CLI commands for all new queries (`Collateral`, `CollateralAll`, `UnbondingCollateral`, `UnbondingCollateralAll`) and messages (`DepositCollateral`, `WithdrawCollateral`) to `inference-chain/x/collateral/module/autocli.go`. The project builds successfully with these changes.
 
 ### Section 5: Testing and Integration
 
