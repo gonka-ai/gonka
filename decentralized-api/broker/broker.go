@@ -460,6 +460,11 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 type NodeNotAvailableReason = string
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+		return false, fmt.Sprintf("Node is not intended for INFERENCE at the moment: %s", node.State.IntendedStatus)
+	}
+	logging.Info("nodeAvailable. Node is intended for INFERENCE", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus)
+
 	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
