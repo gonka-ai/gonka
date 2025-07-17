@@ -2,6 +2,7 @@ import com.productscience.GENESIS_KEY_NAME
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -18,7 +19,10 @@ class SchedulingTests : TestermintTest() {
                 GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
             )
         )
-        val (cluster, genesis) = initCluster(config = config, reboot = true)
-        logSection("Scheduling a basic task")
+        val (_, genesis) = initCluster(config = config, reboot = true)
+
+        genesis.api.getNodes().let { nodes ->
+            assertThat(nodes).hasSize(2)
+        }
     }
 }

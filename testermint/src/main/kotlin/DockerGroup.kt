@@ -16,6 +16,7 @@ import kotlin.contracts.contract
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
+import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
 const val LOCAL_TEST_NET_DIR = "local-test-net"
@@ -69,7 +70,11 @@ data class DockerGroup(
             composeArgs.addAll(listOf("-f", file))
         }
         config.additionalDockerFilesByKeyName[keyName]?.forEach { file ->
-            composeArgs.addAll(listOf("-f", file))
+            val path = "$LOCAL_TEST_NET_DIR/$file"
+            if (!Path.of(workingDirectory, path).exists()) {
+                error("Provided additional docker file that doesn't exist: $path")
+            }
+            composeArgs.addAll(listOf("-f", path))
         }
         composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
         val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
