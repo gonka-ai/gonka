@@ -89,11 +89,16 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 
 	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
 		"currentEpochGroupId", currentEpochGroup.GroupData.EpochGroupId,
-		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight)
+		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
+		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
 		participantAddress := validationWeight.MemberAddress
+
+		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing participant", types.PoC,
+			"participantAddress", participantAddress,
+			"len(MlNodes)", len(validationWeight.MlNodes))
 
 		// Check if any MLNode has POC_SLOT = true (index 1 in TimeslotAllocation)
 		var inferenceMLNodes []*types.MLNodeInfo
@@ -114,6 +119,10 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 					"preservedWeight", mlNode.PocWeight)
 			}
 		}
+
+		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing participant", types.PoC,
+			"participantAddress", participantAddress,
+			"len(inferenceMLNodes)", len(inferenceMLNodes))
 
 		// If we found inference-serving MLNodes for this participant, create ActiveParticipant
 		if len(inferenceMLNodes) > 0 {
