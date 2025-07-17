@@ -18,7 +18,7 @@ curl "$NODE_URL/v1/epochs/current/participants" | jq
 "$INFERENCED_BINARY" create-client $ACCOUNT_NAME \
   --node-address "$NODE_URL"
 
-export GONKA_ADDRESS="gonka1ymw034f45d8f32ze2frtevhmh0ujyad8uhff4q"
+export GONKA_ADDRESS="gonka1edrlxw2v26650gqsqnp8e5h6yac8u366a4hdnx"
 
 # View it
 "$INFERENCED_BINARY" keys list
@@ -65,4 +65,6 @@ kubectl -n genesis exec node-0 -- inferenced query inference params --output jso
 kubectl -n genesis exec node-0 -- inferenced query bank balances gonka1mfyq5pe9z7eqtcx3mtysrh0g5a07969zxm6pfl --output json
 
 # Tunnel to admin API, might be useful to check node status
-kubectl port-forward -n genesis svc/api-private 9200:9200
+kubectl port-forward -n genesis svc/api 9200:9200
+
+kubectl port-forward -n join-k8s-worker-2 svc/api 9200:9200
