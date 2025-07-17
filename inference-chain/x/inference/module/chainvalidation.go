@@ -176,6 +176,9 @@ func (am AppModule) GetPreservedNodesByParticipant(ctx context.Context, epochId 
 	result := make(map[string][]*types.MLNodeInfo)
 
 	for _, p := range participants.Participants {
+		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation. GetPreservedNodesByParticipant: Processing participant", types.PoC,
+			"participantAddress", p.Index, "len(p.MlNodes)", len(p.MlNodes))
+
 		nodes := make([]*types.MLNodeInfo, 0)
 		for _, nodeArray := range p.MlNodes {
 			for _, mlNode := range nodeArray.MlNodes {
