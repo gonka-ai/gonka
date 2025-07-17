@@ -203,7 +203,9 @@ fun createDockerGroup(
     useSnapshots: Boolean
 ): DockerGroup {
     val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
-    val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_mock-server_$keyName.json"
+    val nodeConfigFile = config.nodeConfigFileByKeyName[keyName]
+        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock-server_$keyName.json" }
+        .let { file: String -> "${LOCAL_TEST_NET_DIR}/$file" }
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
