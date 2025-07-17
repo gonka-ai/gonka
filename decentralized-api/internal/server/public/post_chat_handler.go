@@ -138,7 +138,9 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 	defer resp.Body.Close()
 
-	logging.Info("Proxying response from executor", types.Inferences, "inferenceId", inferenceUUID)
+	logging.Info("Proxying response from executor", types.Inferences,
+		"inferenceId", inferenceUUID,
+		"executor", executor.Address)
 	proxyResponse(resp, ctx.Response().Writer, false, nil)
 	return nil
 }

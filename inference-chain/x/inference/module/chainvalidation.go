@@ -192,11 +192,11 @@ func (am AppModule) GetPreservedNodesByParticipant(ctx context.Context, epochId 
 		}
 		if len(nodes) > 0 {
 			result[p.Index] = nodes
-			am.LogInfo("GetPreservedNodesByParticipant: Found preserved MLNodes for participant", types.PoC,
+			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Found preserved MLNodes for participant", types.PoC,
 				"participantAddress", p.Index,
 				"numMLNodes", len(nodes))
 		} else {
-			am.LogInfo("GetPreservedNodesByParticipant: No preserved MLNodes for participant", types.PoC,
+			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: No preserved MLNodes for participant", types.PoC,
 				"participantAddress", p.Index)
 		}
 	}
