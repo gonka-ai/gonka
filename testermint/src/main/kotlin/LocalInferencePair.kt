@@ -532,7 +532,8 @@ data class ApplicationConfig(
     val genesisName: String = "genesis",
     val genesisSpec: Spec<AppState>? = null,
     // execName accommodates upgraded chains.
-    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName"
+    val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
+    val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

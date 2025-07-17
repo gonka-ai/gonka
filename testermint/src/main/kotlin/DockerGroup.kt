@@ -67,6 +67,9 @@ data class DockerGroup(
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
         }
+        config.additionalDockerFilesByKeyName[keyName]?.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
         composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
         val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
         val process = dockerProcess.start()
