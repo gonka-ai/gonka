@@ -99,7 +99,7 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochId-1)
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochId)
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
