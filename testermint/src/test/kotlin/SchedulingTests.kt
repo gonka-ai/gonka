@@ -1,3 +1,4 @@
+import com.productscience.GENESIS_KEY_NAME
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
@@ -11,7 +12,10 @@ class SchedulingTests : TestermintTest() {
     fun basicSchedulingTest() {
         val config = inferenceConfig.copy(
             additionalDockerFilesByKeyName= mapOf(
-                "genesis" to listOf("docker-compose-local-mock-node-2.yml")
+                GENESIS_KEY_NAME to listOf("docker-compose-local-mock-node-2.yml")
+            ),
+            nodeConfigFileByKeyName = mapOf(
+                GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
             )
         )
         val (cluster, genesis) = initCluster(config = config, reboot = true)

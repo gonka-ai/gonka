@@ -17,6 +17,7 @@ import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 
+const val GENESIS_KEY_NAME = "genesis"
 const val LOCAL_TEST_NET_DIR = "local-test-net"
 val BASE_COMPOSE_FILES = listOf(
     "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
@@ -196,7 +197,7 @@ fun createDockerGroup(
     config: ApplicationConfig,
     useSnapshots: Boolean
 ): DockerGroup {
-    val keyName = if (iteration == 0) "genesis" else "join$joinIter"
+    val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
     val nodeConfigFile = "${LOCAL_TEST_NET_DIR}/node_payload_mock-server_$keyName.json"
     val repoRoot = getRepoRoot()
 
