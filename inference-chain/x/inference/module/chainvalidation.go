@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -86,11 +87,18 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Unable to get current epoch group", types.PoC, "error", err.Error())
 		return preservedParticipants
 	}
+	if currentEpochGroup.GroupData.EpochId != upcomingEpoch.Index-1 {
+		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Current epoch group does not match upcoming epoch", types.PoC,
+			"currentEpochGroup.EpochId", currentEpochGroup.GroupData.EpochId,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+	}
 
 	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing current epoch group (about to end)", types.PoC,
 		"currentEpochGroupId", currentEpochGroup.GroupData.EpochGroupId,
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
+
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochId-1)
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
 	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
@@ -100,24 +108,11 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 			"participantAddress", participantAddress,
 			"len(MlNodes)", len(validationWeight.MlNodes))
 
-		// Check if any MLNode has POC_SLOT = true (index 1 in TimeslotAllocation)
-		var inferenceMLNodes []*types.MLNodeInfo
-		for _, mlNode := range validationWeight.MlNodes {
-			if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
-				// Copy the MLNode info with preserved weight
-				preservedMLNode := &types.MLNodeInfo{
-					NodeId:             mlNode.NodeId,
-					Throughput:         mlNode.Throughput,
-					PocWeight:          mlNode.PocWeight,    // Preserve the weight from current epoch
-					TimeslotAllocation: []bool{true, false}, // Reset to default for new epoch
-				}
-				inferenceMLNodes = append(inferenceMLNodes, preservedMLNode)
-
-				am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Found inference-serving MLNode", types.PoC,
-					"participantAddress", participantAddress,
-					"nodeId", mlNode.NodeId,
-					"preservedWeight", mlNode.PocWeight)
-			}
+		inferenceMLNodes, ok := preservedNodesByParticipant[participantAddress]
+		if !ok || len(inferenceMLNodes) == 0 {
+			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: No preserved MLNodes for participant", types.PoC,
+				"participantAddress", participantAddress)
+			continue
 		}
 
 		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Processing participant", types.PoC,
@@ -125,51 +120,87 @@ func (am AppModule) GetPreviousEpochMLNodesWithInferenceAllocation(ctx context.C
 			"len(inferenceMLNodes)", len(inferenceMLNodes))
 
 		// If we found inference-serving MLNodes for this participant, create ActiveParticipant
-		if len(inferenceMLNodes) > 0 {
-			// Get participant details
-			participant, found := am.keeper.GetParticipant(ctx, participantAddress)
-			if !found {
-				am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Participant not found", types.PoC,
-					"participantAddress", participantAddress)
-				continue
-			}
-
-			// Calculate total weight from preserved MLNodes
-			totalWeight := int64(0)
-			for _, mlNode := range inferenceMLNodes {
-				totalWeight += mlNode.PocWeight
-			}
-
-			// Create the double repeated structure with all MLNodes in the first array (index 0)
-			firstMLNodeArray := &types.ModelMLNodes{
-				MlNodes: inferenceMLNodes,
-			}
-			modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
-
-			// Create ActiveParticipant with preserved weights
-			activeParticipant := &types.ActiveParticipant{
-				Index:        participant.Address,
-				ValidatorKey: participant.ValidatorKey,
-				Weight:       totalWeight,
-				InferenceUrl: participant.InferenceUrl,
-				Seed:         nil,               // Will be set later if available
-				Models:       make([]string, 0), // Will be populated by setModelsForParticipants
-				MlNodes:      modelMLNodesArray,
-			}
-
-			preservedParticipants[participantAddress] = activeParticipant
-
-			am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
-				"participantAddress", participantAddress,
-				"totalWeight", totalWeight,
-				"numMLNodes", len(inferenceMLNodes))
+		// Get participant details
+		participant, found := am.keeper.GetParticipant(ctx, participantAddress)
+		if !found {
+			am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Participant not found", types.PoC,
+				"participantAddress", participantAddress)
+			continue
 		}
+
+		// Calculate total weight from preserved MLNodes
+		totalWeight := int64(0)
+		for _, mlNode := range inferenceMLNodes {
+			totalWeight += mlNode.PocWeight
+		}
+
+		// Create the double repeated structure with all MLNodes in the first array (index 0)
+		firstMLNodeArray := &types.ModelMLNodes{
+			MlNodes: inferenceMLNodes,
+		}
+		modelMLNodesArray := []*types.ModelMLNodes{firstMLNodeArray}
+
+		// Create ActiveParticipant with preserved weights
+		activeParticipant := &types.ActiveParticipant{
+			Index:        participant.Address,
+			ValidatorKey: participant.ValidatorKey,
+			Weight:       totalWeight,
+			InferenceUrl: participant.InferenceUrl,
+			Seed:         nil,               // Will be set later if available
+			Models:       make([]string, 0), // Will be populated by setModelsForParticipants
+			MlNodes:      modelMLNodesArray,
+		}
+
+		preservedParticipants[participantAddress] = activeParticipant
+
+		am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Created preserved participant", types.PoC,
+			"participantAddress", participantAddress,
+			"totalWeight", totalWeight,
+			"numMLNodes", len(inferenceMLNodes))
 	}
 
 	am.LogInfo("GetPreviousEpochMLNodesWithInferenceAllocation: Summary", types.PoC,
 		"totalPreservedParticipants", len(preservedParticipants))
 
 	return preservedParticipants
+}
+
+func (am AppModule) GetPreservedNodesByParticipant(ctx context.Context, epochId uint64) (map[string][]*types.MLNodeInfo, error) {
+	participants, found := am.keeper.GetActiveParticipants(ctx, epochId)
+	if !found {
+		am.LogError("GetPreviousEpochMLNodesWithInferenceAllocation: Active participants not found", types.PoC, "epochId", epochId)
+		return nil, errors.New("GetPreviousEpochMLNodesWithInferenceAllocation: active participant not found. epochId: " + strconv.FormatUint(epochId, 10))
+	}
+
+	result := make(map[string][]*types.MLNodeInfo)
+
+	for _, p := range participants.Participants {
+		nodes := make([]*types.MLNodeInfo, 0)
+		for _, nodeArray := range p.MlNodes {
+			for _, mlNode := range nodeArray.MlNodes {
+				if len(mlNode.TimeslotAllocation) > 1 && mlNode.TimeslotAllocation[1] { // POC_SLOT = true
+					preservedMLNode := &types.MLNodeInfo{
+						NodeId:             mlNode.NodeId,
+						Throughput:         mlNode.Throughput,
+						PocWeight:          mlNode.PocWeight,    // Preserve the weight from current epoch
+						TimeslotAllocation: []bool{true, false}, // Reset to default for new epoch
+					}
+					nodes = append(nodes, preservedMLNode)
+				}
+			}
+		}
+		if len(nodes) > 0 {
+			result[p.Index] = nodes
+			am.LogInfo("GetPreservedNodesByParticipant: Found preserved MLNodes for participant", types.PoC,
+				"participantAddress", p.Index,
+				"numMLNodes", len(nodes))
+		} else {
+			am.LogInfo("GetPreservedNodesByParticipant: No preserved MLNodes for participant", types.PoC,
+				"participantAddress", p.Index)
+		}
+	}
+
+	return result, nil
 }
 
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
