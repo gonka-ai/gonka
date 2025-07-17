@@ -18,8 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"decentralized-api/internal/timing"
-
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -304,8 +302,6 @@ func (b *Broker) processCommands() {
 }
 
 func (b *Broker) executeCommand(command Command) {
-	defer timing.TimeOperation("broker_execute_command")()
-
 	logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
 	switch command := command.(type) {
 	case LockAvailableNode:
@@ -391,8 +387,6 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 }
 
 func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
-	defer timing.TimeOperation("broker_node_selection")()
-
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState.IsNilOrNotSynced() {
 		logging.Error("getLeastBusyNode. Cannot get least busy node, epoch state is empty", types.Nodes)
