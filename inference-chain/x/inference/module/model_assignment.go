@@ -245,19 +245,40 @@ func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeI
 	newMLNodes = append(newMLNodes, originalMLNodes[:legacyIndex]...)
 	newMLNodes = append(newMLNodes, originalMLNodes[legacyIndex+1:]...)
 
+	hardwareNodesIds := make(map[string]bool)
+	for _, hwNode := range hardwareNodes.HardwareNodes {
+		hardwareNodesIds[hwNode.LocalId] = true
+	}
+	var numPreservedNodes int64
+	for _, preservedNode := range preservedNodes {
+		if _, ok := hardwareNodesIds[preservedNode.NodeId]; ok {
+			numPreservedNodes++
+		}
+	}
+
 	// Calculate weight per hardware node
 	totalLegacyWeight := legacyMLNode.PocWeight
 	numHardwareNodes := int64(len(hardwareNodes.HardwareNodes))
-	weightPerNode := totalLegacyWeight / numHardwareNodes
-	remainderWeight := totalLegacyWeight % numHardwareNodes
-	ma.LogInfo("Calculated weight distribution", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "calculate_distribution", "total_legacy_weight", totalLegacyWeight, "num_hardware_nodes", numHardwareNodes, "weight_per_node", weightPerNode, "remainder_weight", remainderWeight)
+	numNodesToDistributeWeight := numHardwareNodes - numPreservedNodes
+	weightPerNode := totalLegacyWeight / numNodesToDistributeWeight
+	remainderWeight := totalLegacyWeight % numNodesToDistributeWeight
+	ma.LogInfo("Calculated weight distribution", types.PoC,
+		"flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "calculate_distribution",
+		"total_legacy_weight", totalLegacyWeight,
+		"num_hardware_nodes", numHardwareNodes,
+		"numPreservedNodes", numPreservedNodes,
+		"numNodesToDistributeWeight", numNodesToDistributeWeight,
+		"weight_per_node", weightPerNode,
+		"remainder_weight", remainderWeight)
 
+	var remainderCounter = int64(0)
 	// Distribute weight among hardware nodes
 	// Give weightPerNode to each, then distribute remainder by giving +1 to first nodes until remainder is over
-	for i, hwNode := range hardwareNodes.HardwareNodes {
+	for _, hwNode := range hardwareNodes.HardwareNodes {
+		preservedNode, _ := preservedNodes[hwNode.LocalId]
 		nodeId := hwNode.LocalId
 		distributedWeight := weightPerNode
-		if int64(i) < remainderWeight {
+		if remainderCounter < remainderWeight {
 			distributedWeight++ // Give +1 to first remainderWeight nodes
 		}
 
@@ -271,7 +292,17 @@ func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeI
 		for _, existingMLNode := range newMLNodes {
 			if existingMLNode.NodeId == nodeId {
 				// Add distributed weight to existing MLNode
-				existingMLNode.PocWeight += distributedWeight
+				if preservedNode == nil {
+					if remainderCounter < remainderWeight {
+						distributedWeight++
+						remainderCounter++
+					}
+					existingMLNode.PocWeight += distributedWeight
+				} else {
+					// If preserved node, just set the weight without adding
+					existingMLNode.PocWeight = preservedNode.PocWeight
+				}
+
 				found = true
 				ma.LogInfo("Added weight to existing ML node", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "add_to_existing_node", "node_id", existingMLNode.NodeId, "added_weight", distributedWeight, "new_total_weight", existingMLNode.PocWeight)
 				break
@@ -280,13 +311,25 @@ func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeI
 
 		// If no existing MLNode found, create new one
 		if !found {
-			newMLNode := &types.MLNodeInfo{
-				NodeId:     nodeId,
-				PocWeight:  distributedWeight,
-				Throughput: 0, // Will be populated later if needed
+			var newMLNode *types.MLNodeInfo
+			if preservedNode != nil {
+				newMLNode = preservedNode
+				newMLNode.TimeslotAllocation = []bool{true, false} // Ensure preserved nodes are set to PRE_POC_SLOT=true, POC_SLOT=false
+				ma.LogInfo("Created new ML node from PRESERVED hardware node", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "create_new_ml_node", "node_id", newMLNode.NodeId, "weight", newMLNode.PocWeight)
+			} else {
+				if remainderCounter < remainderWeight {
+					distributedWeight++
+					remainderCounter++
+				}
+				newMLNode = &types.MLNodeInfo{
+					NodeId:     nodeId,
+					PocWeight:  distributedWeight,
+					Throughput: 0, // Will be populated later if needed
+				}
+				ma.LogInfo("Created new ML node for hardware node", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "create_new_ml_node", "node_id", newMLNode.NodeId, "weight", newMLNode.PocWeight)
 			}
+
 			newMLNodes = append(newMLNodes, newMLNode)
-			ma.LogInfo("Created new ML node for hardware node", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "create_new_ml_node", "node_id", newMLNode.NodeId, "weight", newMLNode.PocWeight)
 		}
 	}
 
