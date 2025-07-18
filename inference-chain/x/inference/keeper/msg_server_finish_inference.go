@@ -14,9 +14,28 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
-	_, found := k.GetParticipant(ctx, msg.ExecutedBy)
+	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
 	if !found {
+		k.LogError("FinishInference: executor not found", types.Inferences, "executed_by", msg.ExecutedBy)
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
+	}
+
+	requestor, found := k.GetParticipant(ctx, msg.RequestedBy)
+	if !found {
+		k.LogError("FinishInference: requestor not found", types.Inferences, "requested_by", msg.RequestedBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy)
+	}
+
+	transferAgent, found := k.GetParticipant(ctx, msg.TransferredBy)
+	if !found {
+		k.LogError("FinishInference: transfer agent not found", types.Inferences, "transferred_by", msg.TransferredBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy)
+	}
+
+	err := k.verifyFinishKeys(goCtx, msg, &transferAgent, &requestor, &executor)
+	if err != nil {
+		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
+		return nil, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error())
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
@@ -40,6 +59,38 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	}
 
 	return &types.MsgFinishInferenceResponse{}, nil
+}
+
+func (k msgServer) verifyFinishKeys(ctx context.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
+	components := getFinishSignatureComponents(msg)
+
+	// Create SignatureData with the necessary participants and signatures
+	sigData := calculations.SignatureData{
+		DevSignature:      msg.InferenceId,
+		TransferSignature: msg.TransferSignature,
+		ExecutorSignature: msg.ExecutorSignature,
+		Dev:               requestor,
+		TransferAgent:     transferAgent,
+		Executor:          executor,
+	}
+
+	// Use the generic VerifyKeys function
+	err := calculations.VerifyKeys(ctx, components, sigData, k)
+	if err != nil {
+		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
+		return err
+	}
+
+	return nil
+}
+
+func getFinishSignatureComponents(msg *types.MsgFinishInference) calculations.SignatureComponents {
+	return calculations.SignatureComponents{
+		Payload:         msg.OriginalPrompt,
+		Timestamp:       msg.RequestTimestamp,
+		TransferAddress: msg.TransferredBy,
+		ExecutorAddress: msg.ExecutedBy,
+	}
 }
 
 func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *types.Inference) error {

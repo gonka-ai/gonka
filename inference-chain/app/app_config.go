@@ -149,6 +149,7 @@ var (
 	preBlockers = []string{
 		upgradetypes.ModuleName,
 		// this line is used by starport scaffolding # stargate/app/preBlockers
+		authtypes.ModuleName,
 	}
 
 	// module account permissions

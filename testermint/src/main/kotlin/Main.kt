@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.github.kittinunf.fuel.core.FuelError
+import com.google.gson.FieldNamingPolicy
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.*
@@ -377,6 +378,7 @@ val cosmosJson: Gson = GsonBuilder()
     .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
     .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+    .registerMessages("com.productscience.data", FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .create()
 
 val openAiJson: Gson = GsonBuilder()
@@ -388,23 +390,26 @@ val openAiJson: Gson = GsonBuilder()
 val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data")
 
 fun createGsonWithTxMessageSerializers(packageName: String): Gson {
-    val gsonBuilder = GsonBuilder()
+    return GsonBuilder()
         .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
         .registerTypeAdapter(Instant::class.java, InstantDeserializer())
         .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+        .registerMessages(packageName, FieldNamingPolicy.IDENTITY)
+        .create()
+}
 
+private fun GsonBuilder.registerMessages(packageName: String, fieldNamingPolicy: FieldNamingPolicy): GsonBuilder {
     // Scan the package to get all `TxMessage` implementations
     val reflections = Reflections(packageName)
-    val txMessageSubtypes = reflections.getSubTypesOf(GovernanceMessage::class.java)
+    val txMessageSubtypes = reflections.getSubTypesOf(TxMessage::class.java)
 
     // Register `MessageSerializer` for each implementation of `TxMessage`
     txMessageSubtypes.forEach { subclass ->
         if (!subclass.isInterface) { // Ignore interfaces and abstract classes
-            gsonBuilder.registerTypeAdapter(subclass, MessageSerializer())
+            registerTypeAdapter(subclass, MessageSerializer(fieldNamingPolicy))
         }
     }
-
-    return gsonBuilder.create()
+    return this
 }
 
 val inferenceConfig = ApplicationConfig(

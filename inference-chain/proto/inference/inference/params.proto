@@ -66,6 +66,8 @@ message ValidationParams {
   int64  min_validation_traffic_cutoff = 10;
   Decimal miss_percentage_cutoff = 11;
   Decimal miss_requests_penalty = 12;
+  int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
+  int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
 }
 
 message PocParams {

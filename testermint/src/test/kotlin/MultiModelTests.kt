@@ -81,6 +81,7 @@ class MultiModelTests : TestermintTest() {
         logSection("Setting up second model")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
+        genesis.waitForNextInferenceWindow()
         logSection("making inferences")
         val join1Balance = cluster.joinPairs[0].node.getSelfBalance("nicoin")
         val join2Balance = cluster.joinPairs[1].node.getSelfBalance("nicoin")

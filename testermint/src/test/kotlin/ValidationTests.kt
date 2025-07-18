@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
+import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -124,7 +125,10 @@ fun runParallelInferences(
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
             try {
-                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson())
+                System.nanoTime()
+                // This works, because the Instant.now() resolution gives us 3 zeros at the end, so we know these will be unique
+                val timestamp = Instant.now().toEpochNanos() + i
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
             } catch (e: Exception) {
                 Logger.error("Error making inference request: ${e.message}")
                 null

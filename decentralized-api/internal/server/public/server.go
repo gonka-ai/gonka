@@ -29,6 +29,10 @@ func NewServer(
 	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
+
+	// Set the package-level configManagerRef
+	configManagerRef = configManager
+
 	s := &Server{
 		e:                e,
 		nodeBroker:       nodeBroker,

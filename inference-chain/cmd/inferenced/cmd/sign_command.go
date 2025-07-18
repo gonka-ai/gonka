@@ -9,6 +9,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/spf13/cobra"
 	"io"
 	"net/http"
@@ -17,10 +18,12 @@ import (
 )
 
 const (
-	AccountAddress = "account-address"
-	File           = "file"
-	Signature      = "signature"
-	NodeAddress    = "node-address"
+	AccountAddress  = "account-address"
+	File            = "file"
+	Signature       = "signature"
+	NodeAddress     = "node-address"
+	Timestamp       = "timestamp"
+	EndpointAccount = "endpoint-account" // Optional, used for specifying the account that will receive the request
 )
 
 func SignatureCommands() *cobra.Command {
@@ -49,12 +52,14 @@ func GetPayloadVerifyCommand() *cobra.Command {
 	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
 	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
 	cmd.Flags().String(Signature, "", "Signature to verify")
+	cmd.Flags().Int64(Timestamp, 0, "Timestamp for the request (optional)")
+	cmd.Flags().String(EndpointAccount, "", "Address of the account that will receive the request (optional)")
 	flags.AddKeyringFlags(cmd.PersistentFlags())
 	return cmd
 }
 
 func verifyPayload(cmd *cobra.Command, args []string) error {
-	bytes, err := getInputBytes(cmd, args)
+	components, err := getSignatureComponents(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -73,10 +78,6 @@ func verifyPayload(cmd *cobra.Command, args []string) error {
 
 	cmd.Printf("Address: %s\n", address)
 
-	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
-	if err != nil {
-		return err
-	}
 	key, err := context.Keyring.KeyByAddress(address)
 	if err != nil {
 		return err
@@ -85,10 +86,13 @@ func verifyPayload(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if pubKey.VerifySignature(bytes, signatureBytes) {
-		cmd.Printf("Signature verified\n")
+
+	pubKeyStr := base64.StdEncoding.EncodeToString(pubKey.Bytes())
+	err = calculations.ValidateSignature(components, calculations.Developer, pubKeyStr, signature)
+	if err != nil {
+		cmd.Printf("Signature not verified: %s\n", err)
 	} else {
-		cmd.Printf("Signature not verified\n")
+		cmd.Printf("Signature verified\n")
 	}
 	return nil
 }
@@ -103,13 +107,15 @@ func GetPayloadSignCommand() *cobra.Command {
 	}
 	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
 	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
+	cmd.Flags().Int64(Timestamp, 0, "Timestamp for the request (optional)")
+	cmd.Flags().String(EndpointAccount, "", "Address of the account that will receive the request (optional)")
 	flags.AddKeyringFlags(cmd.PersistentFlags())
 
 	return cmd
 }
 
 func signPayload(cmd *cobra.Command, args []string) (err error) {
-	bytes, err := getInputBytes(cmd, args)
+	components, err := getSignatureComponents(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -125,21 +131,17 @@ func signPayload(cmd *cobra.Command, args []string) (err error) {
 
 	cmd.Printf("Address: %s\n", addr)
 
-	signatureString, err := getSignature(bytes, addr, context)
+	signer := &AccountSigner{
+		Addr:    addr,
+		Context: context,
+	}
+	signatureString, err := calculations.Sign(signer, components, calculations.Developer)
 	if err != nil {
 		return err
 	}
 
 	cmd.Printf("Signature: %s\n", signatureString)
 	return nil
-}
-
-func getSignature(inputBytes []byte, addr sdk.AccAddress, context client.Context) (string, error) {
-	outputBytes, _, err := context.Keyring.SignByAddress(addr, inputBytes, signing.SignMode_SIGN_MODE_DIRECT)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(outputBytes), nil
 }
 
 func getAddress(cmd *cobra.Command, context client.Context) (sdk.AccAddress, error) {
@@ -165,23 +167,57 @@ func getAddress(cmd *cobra.Command, context client.Context) (sdk.AccAddress, err
 	return nil, errors.New("no local address found")
 }
 
-func getInputBytes(cmd *cobra.Command, args []string) ([]byte, error) {
+func getInputString(cmd *cobra.Command, args []string) (string, error) {
 	filename, err := cmd.Flags().GetString(File)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	switch filename {
 	case "":
 		if len(args) == 0 {
-			return nil, errors.New("no text provided")
+			return "", errors.New("no text provided")
 		}
-		return []byte(args[0]), nil
+		return args[0], nil
 	case "-":
-		return io.ReadAll(os.Stdin)
+		stdioBytes, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(stdioBytes), nil
 	default:
-		return os.ReadFile(filename)
+		fileBytes, err := os.ReadFile(filename)
+		if err != nil {
+			return "", err
+		}
+		return string(fileBytes), nil
 	}
+}
+
+func getSignatureComponents(cmd *cobra.Command, args []string) (calculations.SignatureComponents, error) {
+	payload, err := getInputString(cmd, args)
+	if err != nil {
+		return calculations.SignatureComponents{}, err
+	}
+
+	// Get timestamp from flag
+	timestamp, err := cmd.Flags().GetInt64(Timestamp)
+	if err != nil {
+		return calculations.SignatureComponents{}, err
+	}
+
+	// Get endpoint account from flag
+	endpointAccount, err := cmd.Flags().GetString(EndpointAccount)
+	if err != nil {
+		return calculations.SignatureComponents{}, err
+	}
+
+	return calculations.SignatureComponents{
+		Payload:         payload,
+		Timestamp:       timestamp,
+		TransferAddress: endpointAccount,
+		ExecutorAddress: "", // This is not set from CLI flags
+	}, nil
 }
 
 func PostSignedRequest() *cobra.Command {
@@ -195,6 +231,8 @@ func PostSignedRequest() *cobra.Command {
 	cmd.Flags().String(AccountAddress, "", "Address of the account that will sign the transaction")
 	cmd.Flags().String(NodeAddress, "", "Address of the node to send the request to. Example: http://<ip>:<port>")
 	cmd.Flags().String(File, "", "File containing the payload to sign instead of text")
+	cmd.Flags().Int64(Timestamp, 0, "Timestamp for the request (optional)")
+	cmd.Flags().String(EndpointAccount, "", "Address of the account that will receive the request (optional)")
 	return cmd
 }
 
@@ -204,7 +242,7 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	inputBytes, err := getInputBytes(cmd, args)
+	components, err := getSignatureComponents(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -217,13 +255,18 @@ func postSignedRequest(cmd *cobra.Command, args []string) error {
 
 	cmd.Printf("Address: %s\n", addr)
 
-	signatureString, err := getSignature(inputBytes, addr, context)
+	signer := &AccountSigner{
+		Addr:    addr,
+		Context: context,
+	}
+	signatureString, err := calculations.Sign(signer, components, calculations.Developer)
 	if err != nil {
 		return err
 	}
 
 	cmd.Printf("Signature: %s\n", signatureString)
-	return sendSignedRequest(cmd, nodeAddress, inputBytes, signatureString, addr)
+	// Use the payload from components for the request
+	return sendSignedRequest(cmd, nodeAddress, []byte(components.Payload), signatureString, addr)
 }
 
 func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []byte, signature string, requesterAddress sdk.AccAddress) error {
@@ -272,4 +315,17 @@ func sendSignedRequest(cmd *cobra.Command, nodeAddress string, payloadBytes []by
 		cmd.Println(string(bodyBytes))
 	}
 	return nil
+}
+
+type AccountSigner struct {
+	Addr    sdk.AccAddress
+	Context client.Context
+}
+
+func (s *AccountSigner) SignBytes(data []byte) (string, error) {
+	outputBytes, _, err := s.Context.Keyring.SignByAddress(s.Addr, data, signing.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(outputBytes), nil
 }
