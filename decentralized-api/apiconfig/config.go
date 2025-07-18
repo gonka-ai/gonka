@@ -13,6 +13,7 @@ type Config struct {
 	KeyConfig          KeyConfig             `koanf:"key_config"`
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 
 type NodeVersionStack struct {
@@ -133,4 +134,9 @@ type ModelConfig struct {
 type Hardware struct {
 	Type  string `koanf:"type" json:"type"`
 	Count uint32 `koanf:"count" json:"count"`
+}
+
+type ValidationParamsCache struct {
+	TimestampExpiration int64 `koanf:"timestamp_expiration"`
+	TimestampAdvance    int64 `koanf:"timestamp_advance"`
 }

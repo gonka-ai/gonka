@@ -3061,6 +3061,8 @@ var (
 	fd_ValidationParams_min_validation_traffic_cutoff  protoreflect.FieldDescriptor
 	fd_ValidationParams_miss_percentage_cutoff         protoreflect.FieldDescriptor
 	fd_ValidationParams_miss_requests_penalty          protoreflect.FieldDescriptor
+	fd_ValidationParams_timestamp_expiration           protoreflect.FieldDescriptor
+	fd_ValidationParams_timestamp_advance              protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -3078,6 +3080,8 @@ func init() {
 	fd_ValidationParams_min_validation_traffic_cutoff = md_ValidationParams.Fields().ByName("min_validation_traffic_cutoff")
 	fd_ValidationParams_miss_percentage_cutoff = md_ValidationParams.Fields().ByName("miss_percentage_cutoff")
 	fd_ValidationParams_miss_requests_penalty = md_ValidationParams.Fields().ByName("miss_requests_penalty")
+	fd_ValidationParams_timestamp_expiration = md_ValidationParams.Fields().ByName("timestamp_expiration")
+	fd_ValidationParams_timestamp_advance = md_ValidationParams.Fields().ByName("timestamp_advance")
 }
 
 var _ protoreflect.Message = (*fastReflection_ValidationParams)(nil)
@@ -3217,6 +3221,18 @@ func (x *fastReflection_ValidationParams) Range(f func(protoreflect.FieldDescrip
 			return
 		}
 	}
+	if x.TimestampExpiration != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TimestampExpiration)
+		if !f(fd_ValidationParams_timestamp_expiration, value) {
+			return
+		}
+	}
+	if x.TimestampAdvance != int64(0) {
+		value := protoreflect.ValueOfInt64(x.TimestampAdvance)
+		if !f(fd_ValidationParams_timestamp_advance, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -3256,6 +3272,10 @@ func (x *fastReflection_ValidationParams) Has(fd protoreflect.FieldDescriptor) b
 		return x.MissPercentageCutoff != nil
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		return x.MissRequestsPenalty != nil
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		return x.TimestampExpiration != int64(0)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		return x.TimestampAdvance != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3296,6 +3316,10 @@ func (x *fastReflection_ValidationParams) Clear(fd protoreflect.FieldDescriptor)
 		x.MissPercentageCutoff = nil
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		x.MissRequestsPenalty = nil
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		x.TimestampExpiration = int64(0)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		x.TimestampAdvance = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3348,6 +3372,12 @@ func (x *fastReflection_ValidationParams) Get(descriptor protoreflect.FieldDescr
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		value := x.MissRequestsPenalty
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		value := x.TimestampExpiration
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.ValidationParams.timestamp_advance":
+		value := x.TimestampAdvance
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3392,6 +3422,10 @@ func (x *fastReflection_ValidationParams) Set(fd protoreflect.FieldDescriptor, v
 		x.MissPercentageCutoff = value.Message().Interface().(*Decimal)
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		x.MissRequestsPenalty = value.Message().Interface().(*Decimal)
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		x.TimestampExpiration = value.Int()
+	case "inference.inference.ValidationParams.timestamp_advance":
+		x.TimestampAdvance = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3457,6 +3491,10 @@ func (x *fastReflection_ValidationParams) Mutable(fd protoreflect.FieldDescripto
 		panic(fmt.Errorf("field full_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
 	case "inference.inference.ValidationParams.min_validation_traffic_cutoff":
 		panic(fmt.Errorf("field min_validation_traffic_cutoff of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		panic(fmt.Errorf("field timestamp_expiration of message inference.inference.ValidationParams is not mutable"))
+	case "inference.inference.ValidationParams.timestamp_advance":
+		panic(fmt.Errorf("field timestamp_advance of message inference.inference.ValidationParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3501,6 +3539,10 @@ func (x *fastReflection_ValidationParams) NewField(fd protoreflect.FieldDescript
 	case "inference.inference.ValidationParams.miss_requests_penalty":
 		m := new(Decimal)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ValidationParams.timestamp_expiration":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.ValidationParams.timestamp_advance":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ValidationParams"))
@@ -3613,6 +3655,12 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 			l = options.Size(x.MissRequestsPenalty)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.TimestampExpiration != 0 {
+			n += 1 + runtime.Sov(uint64(x.TimestampExpiration))
+		}
+		if x.TimestampAdvance != 0 {
+			n += 1 + runtime.Sov(uint64(x.TimestampAdvance))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -3641,6 +3689,16 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.TimestampAdvance != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TimestampAdvance))
+			i--
+			dAtA[i] = 0x70
+		}
+		if x.TimestampExpiration != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.TimestampExpiration))
+			i--
+			dAtA[i] = 0x68
 		}
 		if x.MissRequestsPenalty != nil {
 			encoded, err := options.Marshal(x.MissRequestsPenalty)
@@ -4161,6 +4219,44 @@ func (x *fastReflection_ValidationParams) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 13:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TimestampExpiration", wireType)
+				}
+				x.TimestampExpiration = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TimestampExpiration |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 14:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TimestampAdvance", wireType)
+				}
+				x.TimestampAdvance = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.TimestampAdvance |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -5415,6 +5511,8 @@ type ValidationParams struct {
 	MinValidationTrafficCutoff  int64    `protobuf:"varint,10,opt,name=min_validation_traffic_cutoff,json=minValidationTrafficCutoff,proto3" json:"min_validation_traffic_cutoff,omitempty"`
 	MissPercentageCutoff        *Decimal `protobuf:"bytes,11,opt,name=miss_percentage_cutoff,json=missPercentageCutoff,proto3" json:"miss_percentage_cutoff,omitempty"`
 	MissRequestsPenalty         *Decimal `protobuf:"bytes,12,opt,name=miss_requests_penalty,json=missRequestsPenalty,proto3" json:"miss_requests_penalty,omitempty"`
+	TimestampExpiration         int64    `protobuf:"varint,13,opt,name=timestamp_expiration,json=timestampExpiration,proto3" json:"timestamp_expiration,omitempty"` // Max time in seconds until timestamps are "too old"
+	TimestampAdvance            int64    `protobuf:"varint,14,opt,name=timestamp_advance,json=timestampAdvance,proto3" json:"timestamp_advance,omitempty"`          // Max time in seconds until timestamps are "in the future"
 }
 
 func (x *ValidationParams) Reset() {
@@ -5519,6 +5617,20 @@ func (x *ValidationParams) GetMissRequestsPenalty() *Decimal {
 		return x.MissRequestsPenalty
 	}
 	return nil
+}
+
+func (x *ValidationParams) GetTimestampExpiration() int64 {
+	if x != nil {
+		return x.TimestampExpiration
+	}
+	return 0
+}
+
+func (x *ValidationParams) GetTimestampAdvance() int64 {
+	if x != nil {
+		return x.TimestampAdvance
+	}
+	return 0
 }
 
 type PocParams struct {
@@ -5718,7 +5830,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x17, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
 	0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x08, 0x20, 0x01, 0x28, 0x03, 0x52, 0x15,
 	0x70, 0x6f, 0x63, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44, 0x75, 0x72,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xd7, 0x06, 0x0a, 0x10,
+	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xb7, 0x07, 0x0a, 0x10,
 	0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
 	0x12, 0x4c, 0x0a, 0x13, 0x66, 0x61, 0x6c, 0x73, 0x65, 0x5f, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x69,
 	0x76, 0x65, 0x5f, 0x72, 0x61, 0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
@@ -5771,7 +5883,13 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x13, 0x6d, 0x69, 0x73, 0x73,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x50, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x3a,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x50, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x12,
+	0x31, 0x0a, 0x14, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x5f, 0x65, 0x78, 0x70,
+	0x69, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x74,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x45, 0x78, 0x70, 0x69, 0x72, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x12, 0x2b, 0x0a, 0x11, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x5f,
+	0x61, 0x64, 0x76, 0x61, 0x6e, 0x63, 0x65, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x74,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x41, 0x64, 0x76, 0x61, 0x6e, 0x63, 0x65, 0x3a,
 	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x40, 0x0a, 0x09, 0x50, 0x6f, 0x63, 0x50, 0x61, 0x72, 0x61,
 	0x6d, 0x73, 0x12, 0x2d, 0x0a, 0x12, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x64, 0x69,
 	0x66, 0x66, 0x69, 0x63, 0x75, 0x6c, 0x74, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x05, 0x52, 0x11,
