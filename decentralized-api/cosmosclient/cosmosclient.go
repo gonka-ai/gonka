@@ -108,6 +108,14 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, nodeCon
 		return nil, err
 	}
 
+	if err := mn.SendTxs(); err != nil {
+		return nil, err
+	}
+
+	if err := mn.ObserveTxs(); err != nil {
+		return nil, err
+	}
+
 	return &InferenceCosmosClient{
 		ctx:     ctx,
 		address: addr,

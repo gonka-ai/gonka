@@ -6,6 +6,8 @@ import (
 	"decentralized-api/internal/nats/server"
 	"encoding/json"
 	"fmt"
+	"github.com/cometbft/cometbft/libs/bytes"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/google/uuid"
@@ -16,6 +18,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
 )
 
 /*
@@ -47,7 +50,7 @@ func setUpNats(t *testing.T) *nats.Conn {
 	return conn
 }
 
-/*func TestTxManager_Success(t *testing.T) {
+func TestTxManager_Success(t *testing.T) {
 	const (
 		network = "cosmos"
 
@@ -145,7 +148,6 @@ func setUpNats(t *testing.T) *nats.Conn {
 	time.Sleep(15 * time.Second)
 	// assert.NoError(t, mn.ObserveTxs())
 }
-*/
 
 func TestPack_Unpack_Msg(t *testing.T) {
 	const (
