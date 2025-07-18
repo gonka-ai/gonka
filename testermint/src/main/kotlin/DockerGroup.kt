@@ -53,7 +53,17 @@ data class DockerGroup(
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
 ) {
-    val composeFiles = if (isGenesis) GENESIS_COMPOSE_FILES else NODE_COMPOSE_FILES
+    val composeFiles = when (isGenesis) {
+        true -> GENESIS_COMPOSE_FILES
+        false -> NODE_COMPOSE_FILES
+    }.let { baseFiles: List<String> ->
+        val additionalFiles = config.additionalDockerFilesByKeyName[keyName] ?: emptyList()
+        baseFiles + additionalFiles.map { "$LOCAL_TEST_NET_DIR/$it" }
+    }.onEach { file: String ->
+        if (!Path.of(workingDirectory, file).exists()) {
+            error("A docker file doesn't exist: $file")
+        }
+    }
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
         val envMap = this.getCommonEnvMap(useSnapshots)
@@ -68,13 +78,6 @@ data class DockerGroup(
         val composeArgs = mutableListOf("compose", "-p", keyName)
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
-        }
-        config.additionalDockerFilesByKeyName[keyName]?.forEach { file ->
-            val path = "$LOCAL_TEST_NET_DIR/$file"
-            if (!Path.of(workingDirectory, path).exists()) {
-                error("Provided additional docker file that doesn't exist: $path")
-            }
-            composeArgs.addAll(listOf("-f", path))
         }
         composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
         val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
