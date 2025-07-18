@@ -21,20 +21,20 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 func (c RegisterNode) Execute(b *Broker) {
 	govModels, err := b.chainBridge.GetGovernanceModels()
 	if err != nil {
-		logging.Error("Failed to get governance models", types.Nodes, "error", err)
+		logging.Error("RegisterNode. Failed to get governance models", types.Nodes, "error", err)
 		c.Response <- nil
 		return
 	}
 
 	modelMap := make(map[string]struct{})
 	for _, model := range govModels.Model {
-		logging.Info("Governance model", types.Nodes, "model_id", model.Id)
+		logging.Info("RegisterNode. Governance model", types.Nodes, "model_id", model.Id)
 		modelMap[model.Id] = struct{}{}
 	}
 
 	for modelId := range c.Node.Models {
 		if _, ok := modelMap[modelId]; !ok {
-			logging.Error("Model is not a valid governance model", types.Nodes, "model_id", modelId)
+			logging.Error("RegisterNode. Model is not a valid governance model", types.Nodes, "model_id", modelId)
 			c.Response <- nil
 			return
 		}
@@ -103,7 +103,7 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
-	logging.Info("Registered node", types.Nodes, "node", c.Node)
+	logging.Info("RegisterNode. Registered node", types.Nodes, "node", c.Node)
 	c.Response <- &c.Node
 }
 
