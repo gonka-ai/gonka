@@ -77,6 +77,7 @@ func NewTxManager(
 		client:           client,
 		address:          address,
 		account:          account,
+		highestSequence:  -1,
 		accountRetriever: accountRetriever,
 		mtx:              &sync.Mutex{},
 		blockTimeout:     blockTimeout,
@@ -161,9 +162,6 @@ func (m *manager) SendTxs() error {
 		}
 
 		if !tx.Sent {
-			/*			m.mtx.Lock()
-						defer m.mtx.Unlock()*/
-
 			logging.Debug("Start Broadcast", types.Messages, "id", tx.TxInfo.Id)
 			txHash, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
@@ -171,21 +169,6 @@ func (m *manager) SendTxs() error {
 				return
 			}
 
-			/*			resp, err := m.client.Context().BroadcastTxSync(txBytes)
-						if err != nil {
-							logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", tx.TxInfo.Id, "err", err)
-							msg.NakWithDelay(defaultNackDelay)
-							return
-						}
-
-						// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
-						if resp.Code > 0 {
-							logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", tx.TxInfo.Id, "err", NewTransactionErrorFromResponse(resp))
-							msg.NakWithDelay(defaultNackDelay)
-							return
-						}
-
-						m.highestSequence++*/
 			tx.TxInfo.TimeOutHeight = blockTimeout
 			tx.TxInfo.TxHash = txHash
 			tx.Sent = true
@@ -308,27 +291,10 @@ func (m *manager) resendAllTxs() error {
 
 func (m *manager) SendTransactionBlocking(msg proto.Message) (*ctypes.ResultTx, error) {
 	id := uuid.New().String()
-	// m.mtx.Lock()
 	txHash, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
-		//m.mtx.Unlock()
 		return nil, err
 	}
-
-	/*	response, err := m.client.Context().BroadcastTxSync(signedTx)
-		if err != nil {
-			m.mtx.Unlock()
-			logging.Error("SendTransactionBlocking: Failed to Broadcast tx", types.Messages, "id", id, "response", response)
-			return nil, err
-		}
-
-		if response.Code != 0 {
-			m.mtx.Unlock()
-			logging.Error("SendTransactionBlocking: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "response", response)
-			return nil, NewTransactionErrorFromResponse(response)
-		}*/
-
-	// m.highestSequence++
 
 	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", txHash)
 	result, err := m.WaitForResponse(txHash)
@@ -457,7 +423,8 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, er
 
 	// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
 	if resp.Code > 0 {
-		logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "err", NewTransactionErrorFromResponse(resp))
+		err = NewTransactionErrorFromResponse(resp)
+		logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "err", err)
 		return "", 0, err
 	}
 
