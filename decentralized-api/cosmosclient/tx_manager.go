@@ -50,7 +50,7 @@ type manager struct {
 	accountRetriever client.AccountRetriever
 	address          string
 	highestSequence  int64
-	mtx              sync.Mutex
+	mtx              *sync.Mutex
 	blockTimeout     uint64
 	nc               *nats.Conn
 	js               nats.JetStreamContext
@@ -75,10 +75,10 @@ func NewTxManager(
 	return &manager{
 		ctx:              ctx,
 		client:           client,
-		highestSequence:  -1,
 		address:          address,
 		account:          account,
 		accountRetriever: accountRetriever,
+		mtx:              &sync.Mutex{},
 		blockTimeout:     blockTimeout,
 		nc:               nc,
 		js:               js,
@@ -161,33 +161,33 @@ func (m *manager) SendTxs() error {
 		}
 
 		if !tx.Sent {
-			m.mtx.Lock()
-			defer m.mtx.Unlock()
+			/*			m.mtx.Lock()
+						defer m.mtx.Unlock()*/
 
 			logging.Debug("Start Broadcast", types.Messages, "id", tx.TxInfo.Id)
-			txBytes, blockTimeout, err := m.buildAndSignTx(tx.TxInfo.Id, rawTx)
+			txHash, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
 				msg.NakWithDelay(defaultNackDelay)
 				return
 			}
 
-			resp, err := m.client.Context().BroadcastTxSync(txBytes)
-			if err != nil {
-				logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", tx.TxInfo.Id, "err", err)
-				msg.NakWithDelay(defaultNackDelay)
-				return
-			}
+			/*			resp, err := m.client.Context().BroadcastTxSync(txBytes)
+						if err != nil {
+							logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", tx.TxInfo.Id, "err", err)
+							msg.NakWithDelay(defaultNackDelay)
+							return
+						}
 
-			// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
-			if resp.Code > 0 {
-				logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", tx.TxInfo.Id, "err", NewTransactionErrorFromResponse(resp))
-				msg.NakWithDelay(defaultNackDelay)
-				return
-			}
+						// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
+						if resp.Code > 0 {
+							logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", tx.TxInfo.Id, "err", NewTransactionErrorFromResponse(resp))
+							msg.NakWithDelay(defaultNackDelay)
+							return
+						}
 
-			m.highestSequence++
+						m.highestSequence++*/
 			tx.TxInfo.TimeOutHeight = blockTimeout
-			tx.TxInfo.TxHash = resp.TxHash
+			tx.TxInfo.TxHash = txHash
 			tx.Sent = true
 		}
 
@@ -308,31 +308,30 @@ func (m *manager) resendAllTxs() error {
 
 func (m *manager) SendTransactionBlocking(msg proto.Message) (*ctypes.ResultTx, error) {
 	id := uuid.New().String()
-	m.mtx.Lock()
-	signedTx, _, err := m.buildAndSignTx(id, msg)
+	// m.mtx.Lock()
+	txHash, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
-		m.mtx.Unlock()
+		//m.mtx.Unlock()
 		return nil, err
 	}
 
-	response, err := m.client.Context().BroadcastTxSync(signedTx)
-	if err != nil {
-		m.mtx.Unlock()
-		logging.Error("SendTransactionBlocking: Failed to Broadcast tx", types.Messages, "id", id, "response", response)
-		return nil, err
-	}
+	/*	response, err := m.client.Context().BroadcastTxSync(signedTx)
+		if err != nil {
+			m.mtx.Unlock()
+			logging.Error("SendTransactionBlocking: Failed to Broadcast tx", types.Messages, "id", id, "response", response)
+			return nil, err
+		}
 
-	if response.Code != 0 {
-		m.mtx.Unlock()
-		logging.Error("SendTransactionBlocking: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "response", response)
-		return nil, NewTransactionErrorFromResponse(response)
-	}
+		if response.Code != 0 {
+			m.mtx.Unlock()
+			logging.Error("SendTransactionBlocking: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "response", response)
+			return nil, NewTransactionErrorFromResponse(response)
+		}*/
 
-	m.highestSequence++
-	m.mtx.Unlock()
+	// m.highestSequence++
 
-	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", response.TxHash)
-	result, err := m.WaitForResponse(response.TxHash)
+	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", txHash)
+	result, err := m.WaitForResponse(txHash)
 	if err != nil {
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
 		return nil, err
@@ -383,18 +382,23 @@ func ParseMsgResponse(data []byte, msgIndex int, dstMsg proto.Message) error {
 	return nil
 }
 
-func (m *manager) buildAndSignTx(id string, rawTx sdk.Msg) ([]byte, uint64, error) {
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, error) {
+	m.mtx.Lock()
+	m.mtx.Unlock()
+
 	address, err := m.account.Record.GetAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return "", 0, err
 	}
 
 	accountNumber, sequence, err := m.accountRetriever.GetAccountNumberSequence(m.client.Context(), address)
 	if err != nil {
 		logging.Error("Failed to get account number and sequence", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return "", 0, err
 	}
+
+	logging.Debug("Got account number and sequence", types.Messages, "tx_id", id, "blockchain_sequence", sequence, "highest_sequence", m.highestSequence)
 
 	if int64(sequence) <= m.highestSequence {
 		logging.Info("Factory sequence is lower or equal than highest sequence", types.Messages, "sequence", sequence, "highestSequence", m.highestSequence)
@@ -404,7 +408,7 @@ func (m *manager) buildAndSignTx(id string, rawTx sdk.Msg) ([]byte, uint64, erro
 	currentHeight, err := m.client.LatestBlockHeight(m.ctx)
 	if err != nil {
 		logging.Error("Failed to latest block", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return "", 0, err
 	}
 
 	timeout := uint64(currentHeight) + m.blockTimeout
@@ -427,7 +431,7 @@ func (m *manager) buildAndSignTx(id string, rawTx sdk.Msg) ([]byte, uint64, erro
 
 	unsignedTx, err := factory.BuildUnsignedTx(rawTx)
 	if err != nil {
-		return nil, 0, err
+		return "", 0, err
 	}
 
 	unsignedTx.SetGasLimit(1000000000)
@@ -436,16 +440,29 @@ func (m *manager) buildAndSignTx(id string, rawTx sdk.Msg) ([]byte, uint64, erro
 	err = txclient.Sign(m.ctx, factory, m.account.Name, unsignedTx, false)
 	if err != nil {
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return "", 0, err
 	}
 
 	txBytes, err := m.client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
 		logging.Error("Failed to encode transaction", types.Messages, "tx_id", id, "error", err)
-		return nil, 0, err
+		return "", 0, err
 	}
 
-	return txBytes, unsignedTx.GetTx().GetTimeoutHeight(), nil
+	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	if err != nil {
+		logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", id, "err", err)
+		return "", 0, err
+	}
+
+	// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
+	if resp.Code > 0 {
+		logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "err", NewTransactionErrorFromResponse(resp))
+		return "", 0, err
+	}
+
+	m.highestSequence++
+	return resp.TxHash, unsignedTx.GetTx().GetTimeoutHeight(), nil
 }
 
 func (m *manager) setUpSequenceFromBlockchain() error {
