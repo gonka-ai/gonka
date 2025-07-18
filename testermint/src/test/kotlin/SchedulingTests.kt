@@ -1,3 +1,4 @@
+import com.productscience.EpochStage
 import com.productscience.GENESIS_KEY_NAME
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -24,5 +25,25 @@ class SchedulingTests : TestermintTest() {
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
         }
+
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+
+        // TODO: assert weight == 20
+        val nodeId = genesis.api.getNodes().let { nodes ->
+            assertThat(nodes).hasSize(2)
+            "x" // TODO: find the node with poc slot allocated
+        }
+
+        genesis.waitForStage(EpochStage.START_OF_POC)
+
+        // TODO: assert weight == 20
+        // TODO: check that the node is in Inference state
+        genesis.api.getNodes().let { nodes ->
+            assertThat(nodes).hasSize(2)
+        }
+
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        // TODO: assert weight of participant is still == 20
+
     }
 }
