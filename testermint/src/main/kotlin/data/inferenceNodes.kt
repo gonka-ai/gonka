@@ -29,14 +29,14 @@ data class NodeState(
     val lockCount: Int,
     val failureReason: String,
     val statusTimestamp: String,
-    val adminState: AdminState,
+    val adminState: AdminState? = null,
     val epochModels: Map<String, EpochModel>?,
-    val epochMlNodes: Map<String, EpochMlNode>?
+    val epochMlNodes: Map<String, EpochMlNode>?,
 )
 
 data class AdminState(
     val enabled: Boolean,
-    val epoch: ULong
+    val epoch: Long
 )
 
 data class ModelConfig(
