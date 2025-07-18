@@ -22,7 +22,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient"
@@ -30,10 +29,11 @@ import (
 )
 
 type InferenceCosmosClient struct {
-	Client  *cosmosclient.Client
-	Account *cosmosaccount.Account
-	Address string
-	Context context.Context
+	Client    *cosmosclient.Client
+	Account   *cosmosaccount.Account
+	Address   string
+	Context   context.Context
+	TxFactory *tx.Factory
 }
 
 func NewInferenceCosmosClientWithRetry(ctx context.Context, addressPrefix string, maxRetries int, delay time.Duration, config *apiconfig.ConfigManager) (*InferenceCosmosClient, error) {
@@ -279,9 +279,7 @@ func (icc *InferenceCosmosClient) BridgeExchange(transaction *types.MsgBridgeExc
 	return err
 }
 
-var sendTransactionMutex sync.Mutex = sync.Mutex{}
 var accountRetriever = authtypes.AccountRetriever{}
-var highestSequence int64 = -1
 
 func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
 	factory, err := c.getFactory()
@@ -296,17 +294,22 @@ func (c *InferenceCosmosClient) BroadcastMessage(ctx context.Context, msg sdk.Ms
 	if err != nil {
 		return nil, err
 	}
-	response, err := c.Client.Context().BroadcastTxSync(txBytes)
-	if err == nil && response.Code == 0 {
-		highestSequence = int64(factory.Sequence())
-	}
-	return response, err
+	return c.Client.Context().BroadcastTxSync(txBytes)
+}
+
+// TODO: This is likely not as guaranteed to be unique as we want. Will fix
+func getTimestamp() time.Time {
+	// Use the current time in seconds since epoch
+	return time.Now().Add(time.Second * 60) // Adding 60 seconds to ensure the transaction is valid for a while
 }
 
 func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx client.TxBuilder, factory *tx.Factory) ([]byte, error) {
 	// Gas is not charged, but without a high gas limit the transactions fail
 	unsignedTx.SetGasLimit(1000000000)
 	unsignedTx.SetFeeAmount(sdk.Coins{})
+	timestamp := getTimestamp()
+	unsignedTx.SetUnordered(true)
+	unsignedTx.SetTimeoutTimestamp(timestamp)
 	name := c.Account.Name
 	logging.Debug("Signing transaction", types.Messages, "name", name)
 	err := tx.Sign(ctx, *factory, name, unsignedTx, false)
@@ -323,32 +326,29 @@ func (c *InferenceCosmosClient) getSignedBytes(ctx context.Context, unsignedTx c
 }
 
 func (c *InferenceCosmosClient) getFactory() (*tx.Factory, error) {
+	// Now that we don't need the sequence, we only need to create the factory if it doesn't exist
+	if c.TxFactory != nil {
+		return c.TxFactory, nil
+	}
 	address, err := c.Account.Record.GetAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "error", err)
 		return nil, err
 	}
-	accountNumber, sequence, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
+	accountNumber, _, err := accountRetriever.GetAccountNumberSequence(c.Client.Context(), address)
 	if err != nil {
 		logging.Error("Failed to get account number and sequence", types.Messages, "error", err)
 		return nil, err
 	}
-	if int64(sequence) <= highestSequence {
-		logging.Info("Sequence is lower than highest sequence", types.Messages, "sequence", sequence, "highestSequence", highestSequence)
-		sequence = uint64(highestSequence + 1)
-	}
-	logging.Debug("Transaction sequence", types.Messages, "sequence", sequence, "accountNumber", accountNumber)
 	factory := c.Client.TxFactory.
-		WithSequence(sequence).
-		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0)
+		WithAccountNumber(accountNumber).WithGasAdjustment(10).WithFees("").WithGasPrices("").WithGas(0).WithUnordered(true)
+	c.TxFactory = &factory
 	return &factory, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransaction(msg sdk.Msg) (*sdk.TxResponse, error) {
 	// create a guid
 	id := uuid.New().String()
-	sendTransactionMutex.Lock()
-	defer sendTransactionMutex.Unlock()
 
 	logging.Debug("Start Broadcast", types.Messages, "id", id)
 	response, err := icc.BroadcastMessage(icc.Context, msg)
