@@ -22,33 +22,54 @@ class SchedulingTests : TestermintTest() {
         )
         val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodesToDefaultNode = false)
 
-        genesis.api.getNodes().let { nodes ->
-            assertThat(nodes).hasSize(2)
-        }
-
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-
         // TODO: assert weight == 20
-        val nodeId = genesis.api.getNodes().let { nodes ->
+
+        val allocatedNode = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
-/*            nodes.firstOrNull { node ->
-            }*/
-            "x" // TODO: find the node with poc slot allocated
+            nodes.firstNotNullOf { node ->
+                val isAllocatedForInference = node.state.epochMlNodes
+                    ?.firstNotNullOf { (_, x) -> x.timeslotAllocation.getOrNull(1) == true  }
+                    ?: false
+                node.takeIf { isAllocatedForInference }
+            }
         }
+
+        assertThat(allocatedNode).isNotNull
 
         genesis.waitForStage(EpochStage.START_OF_POC)
 
-        // TODO: assert weight == 20
-        // TODO: check that the node is in Inference state
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+            nodes.forEach { node ->
+                if (node.node.id == allocatedNode.node.id) {
+                    assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
+                    assertThat(node.state.intendedStatus).isEqualTo("INFERENCE")
+                } else {
+                    assertThat(node.state.currentStatus).isEqualTo("POC")
+                    assertThat(node.state.intendedStatus).isEqualTo("POC")
+                }
+            }
         }
 
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        // TODO: assert weight of participant is still == 20
 
-        genesis.api.getNodes().let { nodes ->
+        // TODO: assert weight == 20
+        val allocatedNode2 = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+
+            nodes.forEach { node ->
+                assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
+                assertThat(node.state.intendedStatus).isEqualTo("INFERENCE")
+            }
+
+            nodes.firstNotNullOf { node ->
+                val isAllocatedForInference = node.state.epochMlNodes
+                    ?.firstNotNullOf { (_, x) -> x.timeslotAllocation.getOrNull(1) == true  }
+                    ?: false
+                node.takeIf { isAllocatedForInference }
+            }
         }
+
+        assertThat(allocatedNode2).isNotNull
     }
 }
