@@ -26,6 +26,14 @@ class SchedulingTests : TestermintTest() {
 
         val allocatedNode = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+            nodes.forEach { node ->
+                node.state.epochMlNodes?.forEach { (key, value) ->
+                    assertThat(value.pocWeight).isEqualTo(10)
+                    assertThat(value.timeslotAllocation).hasSize(2)
+                    assertThat(value.timeslotAllocation[0]).isTrue
+                    assertThat(value.timeslotAllocation[1]).isTrue
+                }
+            }
             nodes.firstNotNullOf { node ->
                 val isAllocatedForInference = node.state.epochMlNodes
                     ?.firstNotNullOf { (_, x) -> x.timeslotAllocation.getOrNull(1) == true  }
@@ -40,6 +48,14 @@ class SchedulingTests : TestermintTest() {
 
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+            nodes.forEach { node ->
+                node.state.epochMlNodes?.forEach { (key, value) ->
+                    assertThat(value.pocWeight).isEqualTo(10)
+                    assertThat(value.timeslotAllocation).hasSize(2)
+                    assertThat(value.timeslotAllocation[0]).isTrue
+                    assertThat(value.timeslotAllocation[1]).isTrue
+                }
+            }
             nodes.forEach { node ->
                 if (node.node.id == allocatedNode.node.id) {
                     assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
@@ -56,6 +72,15 @@ class SchedulingTests : TestermintTest() {
         // TODO: assert weight == 20
         val allocatedNode2 = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+
+            nodes.forEach { node ->
+                node.state.epochMlNodes?.forEach { (key, value) ->
+                    assertThat(value.pocWeight).isEqualTo(10)
+                    assertThat(value.timeslotAllocation).hasSize(2)
+                    assertThat(value.timeslotAllocation[0]).isTrue
+                    assertThat(value.timeslotAllocation[1]).isTrue
+                }
+            }
 
             nodes.forEach { node ->
                 assertThat(node.state.currentStatus).isEqualTo("INFERENCE")
