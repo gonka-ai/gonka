@@ -127,6 +127,7 @@ jobs:
           - LargePayloadPocTest
           - UpgradeTests
           - KubernetesTests
+          - SchedulingTests
 
     steps:
       - name: Checkout code
