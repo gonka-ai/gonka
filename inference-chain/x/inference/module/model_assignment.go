@@ -26,6 +26,7 @@ func NewModelAssigner(keeper KeeperForModelAssigner, logger types.InferenceLogge
 type KeeperForModelAssigner interface {
 	GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error)
 	GetHardwareNodes(ctx context.Context, participantId string) (*types.HardwareNodes, bool)
+	GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool)
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
@@ -43,6 +44,7 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 	}
 	ma.LogInfo("Retrieved governance models", types.EpochGroup, "flow_context", flowContext, "step", "get_governance_models", "num_models", len(governanceModels))
 
+	preservedNodes := ma.getPreservedNodes(ctx, upcomingEpoch.Index)
 	for _, p := range participants {
 		ma.LogInfo("Processing participant", types.EpochGroup, "flow_context", flowContext, "step", "participant_loop_start", "participant_index", p.Index)
 		hardwareNodes, found := ma.keeper.GetHardwareNodes(ctx, p.Index)
@@ -62,7 +64,7 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		ma.LogInfo("Original ML nodes before legacy weight distribution", types.EpochGroup, "flow_context", flowContext, "step", "pre_legacy_distribution", "participant_index", p.Index, "ml_nodes", originalMLNodes)
 
 		// Handle legacy PoC weight distribution for batches without NodeId
-		originalMLNodes = ma.distributeLegacyWeight(originalMLNodes, hardwareNodes)
+		originalMLNodes = ma.distributeLegacyWeight(originalMLNodes, hardwareNodes, preservedNodes[p.Index])
 		ma.LogInfo("ML nodes after legacy weight distribution", types.EpochGroup, "flow_context", flowContext, "step", "post_legacy_distribution", "participant_index", p.Index, "ml_nodes", originalMLNodes)
 
 		// Set PRE_POC_SLOT to true and POC_SLOT to false for all MLNodes (default to mining PoC)
@@ -209,7 +211,7 @@ func (ma *ModelAssigner) apply50PercentWeightAllocation(upcomingEpoch types.Epoc
 
 // distributeLegacyWeight handles legacy PoC batches by distributing weight from
 // MLNodes with empty NodeId among actual hardware nodes
-func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeInfo, hardwareNodes *types.HardwareNodes) []*types.MLNodeInfo {
+func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeInfo, hardwareNodes *types.HardwareNodes, preservedNodes map[string]*types.MLNodeInfo) []*types.MLNodeInfo {
 	const flowContext = "model_assignment"
 	const subFlowContext = "distribute_legacy_weight"
 	ma.LogInfo("Starting legacy weight distribution", types.PoC, "flow_context", flowContext, "sub_flow_context", subFlowContext, "step", "start")
@@ -295,6 +297,45 @@ func (ma *ModelAssigner) distributeLegacyWeight(originalMLNodes []*types.MLNodeI
 		"final_ml_nodes", newMLNodes)
 
 	return newMLNodes
+}
+
+func (ma *ModelAssigner) getPreservedNodes(ctx context.Context, upcomingEpoch uint64) map[string]map[string]*types.MLNodeInfo {
+	if upcomingEpoch == 1 {
+		ma.LogInfo("ModelAssigner.getPreservedNodes: No preserved nodes for epoch 0", types.EpochGroup, "upcoming_epoch", upcomingEpoch)
+		return nil
+	}
+
+	activeParticipants, found := ma.keeper.GetActiveParticipants(ctx, upcomingEpoch-1)
+	if !found {
+		ma.LogError("ModelAssigner.getPreservedNodes: No active participants found for previous epoch", types.EpochGroup, "upcoming_epoch", upcomingEpoch)
+		return nil
+	}
+
+	result := make(map[string]map[string]*types.MLNodeInfo)
+	for _, p := range activeParticipants.Participants {
+		preservedNodes := make(map[string]*types.MLNodeInfo)
+		for _, nodeArray := range p.MlNodes {
+			for _, n := range nodeArray.MlNodes {
+				if len(n.TimeslotAllocation) > 1 && n.TimeslotAllocation[1] {
+					preservedNodes[n.NodeId] = n
+				}
+			}
+		}
+
+		if len(preservedNodes) > 0 {
+			ma.LogInfo("ModelAssigner.getPreservedNodes. Found preserved nodes for participant", types.EpochGroup,
+				"participant_address", p.Index,
+				"upcoming_epoch", upcomingEpoch,
+				"len(preservedNodes)", len(preservedNodes))
+			result[p.Index] = preservedNodes
+		}
+	}
+
+	ma.LogInfo("ModelAssigner.getPreservedNodes: Completed collecting preserved nodes", types.EpochGroup,
+		"upcoming_epoch", upcomingEpoch,
+		"number_of_participants_with_preserved_nodes", len(result))
+
+	return result
 }
 
 // Helper function to create a map of modelId to supported models
