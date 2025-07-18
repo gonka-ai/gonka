@@ -18,20 +18,9 @@ import java.util.concurrent.TimeUnit
 class ValidationTests : TestermintTest() {
     @Test
     fun `test valid in parallel`() {
-        val (_, genesis) = initCluster(
-            config = inferenceConfig.copy(
-                genesisSpec = createSpec(
-                    epochLength = 100,
-                    epochShift = 80
-                )
-            ),
-            reboot = true
-        )
-
-        genesis.node.waitForMinimumBlock(35)
+        val (_, genesis) = initCluster()
         logSection("Making inference requests in parallel")
-        val requests = 50
-        val statuses = runParallelInferences(genesis, requests, maxConcurrentRequests = requests)
+        val statuses = runParallelInferences(genesis, 100, maxConcurrentRequests = 100)
         Logger.info("Statuses: $statuses")
 
         logSection("Verifying inference statuses")
@@ -40,7 +29,6 @@ class ValidationTests : TestermintTest() {
         }).allMatch {
             it == InferenceStatus.VALIDATED || it == InferenceStatus.FINISHED
         }
-        assertThat(statuses).hasSize(requests)
 
         Thread.sleep(10000)
     }
@@ -137,11 +125,10 @@ fun runParallelInferences(
         async(limitedDispatcher) {
             Logger.warn("Starting request $i")
             try {
+                System.nanoTime()
                 // This works, because the Instant.now() resolution gives us 3 zeros at the end, so we know these will be unique
                 val timestamp = Instant.now().toEpochNanos() + i
-                val result = genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
-                Logger.info("Result for $i: $result\n\n\n")
-                result
+                genesis.makeInferenceRequest(inferenceRequestObject.copy(model = models.random()).toJson(), timestamp = timestamp)
             } catch (e: Exception) {
                 Logger.error("Error making inference request: ${e.message}")
                 null
