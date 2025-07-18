@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"decentralized-api/apiconfig"
@@ -23,6 +24,7 @@ import (
 // Minimal interface for query operations needed by the dispatcher
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
+	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -59,6 +61,7 @@ type OnNewBlockDispatcher struct {
 	getStatusFunc        StatusFunc
 	setHeightFunc        SetHeightFunc
 	randomSeedManager    poc.RandomSeedManager
+	configManager        *apiconfig.ConfigManager
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -93,6 +96,7 @@ func NewOnNewBlockDispatcher(
 	setHeightFunc SetHeightFunc,
 	randomSeedManager poc.RandomSeedManager,
 	reconciliationConfig MlNodeReconciliationConfig,
+	configManager *apiconfig.ConfigManager,
 ) *OnNewBlockDispatcher {
 	return &OnNewBlockDispatcher{
 		nodeBroker:           nodeBroker,
@@ -103,6 +107,7 @@ func NewOnNewBlockDispatcher(
 		getStatusFunc:        getStatusFunc,
 		setHeightFunc:        setHeightFunc,
 		randomSeedManager:    randomSeedManager,
+		configManager:        configManager,
 	}
 }
 
@@ -137,6 +142,7 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		setHeightFunc,
 		randomSeedManager,
 		reconciliationConfig,
+		configManager,
 	)
 }
 
@@ -152,6 +158,27 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Error("Failed to query network info, skipping block processing", types.Stages,
 			"error", err, "height", blockInfo.Height)
 		return err // Skip processing this block
+	}
+
+	// Fetch validation parameters - skip in tests
+	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
+		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
+		if err != nil {
+			logging.Error("Failed to get params", types.Validation, "error", err)
+		} else {
+			// Update validation parameters in config
+			validationParams := apiconfig.ValidationParamsCache{
+				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
+				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
+			}
+			logging.Debug("Updating validation parameters", types.Validation,
+				"timestampExpiration", validationParams.TimestampExpiration,
+				"timestampAdvance", validationParams.TimestampAdvance)
+			err = d.configManager.SetValidationParams(validationParams)
+			if err != nil {
+				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+			}
+		}
 	}
 
 	// Let's check in prod how often this happens

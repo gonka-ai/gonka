@@ -12,8 +12,9 @@ import (
 func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 
 	// Test adding new hardware nodes
 	newNode1 := &types.HardwareNode{
@@ -112,8 +113,9 @@ func TestMsgServer_SubmitHardwareDiff(t *testing.T) {
 func TestMsgServer_SubmitHardwareDiff_NoExistingNodes(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 
 	// Test adding new hardware nodes when no existing nodes
 	newNode := &types.HardwareNode{
@@ -149,8 +151,9 @@ func TestMsgServer_SubmitHardwareDiff_NoExistingNodes(t *testing.T) {
 func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 
+	mockCreator := NewMockAccount(testutil.Creator)
 	// Create a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 
 	// Add a hardware node
 	newNode := &types.HardwareNode{

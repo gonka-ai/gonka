@@ -3,8 +3,12 @@ package com.productscience.data
 import java.math.BigInteger
 import java.time.Instant
 
-interface GovernanceMessage {
+interface TxMessage {
     val type: String
+}
+
+interface GovernanceMessage : TxMessage {
+    override val type: String
     fun withAuthority(authority: String): GovernanceMessage
 }
 
@@ -91,4 +95,13 @@ data class ProposalVotes(
     val pagination: ProposalVotePagination
 )
 
+data class Transaction(
+    val body: TransactionBody,
+)
+
+data class TransactionBody(
+    val messages: List<TxMessage>,
+    val memo: String,
+    val timeoutHeight: Long,
+)
 

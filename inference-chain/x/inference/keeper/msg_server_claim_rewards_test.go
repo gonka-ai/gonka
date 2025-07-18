@@ -17,12 +17,9 @@ import (
 func TestMsgServer_ClaimRewards(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
+	mockAccount := NewMockAccount(testutil.Creator)
 	// Setup a participant
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-
-	// Generate a private key and get its public key
-	privKey := secp256k1.GenPrivKey()
-	pubKey := privKey.PubKey()
+	MustAddParticipant(t, ms, ctx, *mockAccount)
 
 	// Create a seed value and its binary representation
 	seed := uint64(1)
@@ -30,7 +27,7 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	binary.BigEndian.PutUint64(seedBytes, seed)
 
 	// Sign the seed with the private key
-	signature, err := privKey.Sign(seedBytes)
+	signature, err := mockAccount.key.Sign(seedBytes)
 	require.NoError(t, err)
 	signatureHex := hex.EncodeToString(signature)
 
@@ -76,9 +73,6 @@ func TestMsgServer_ClaimRewards(t *testing.T) {
 	// Setup account with public key for signature verification
 	addr, err := sdk.AccAddressFromBech32(testutil.Creator)
 	require.NoError(t, err)
-
-	// Create a mock account with the public key
-	mockAccount := authtypes.NewBaseAccount(addr, pubKey, 0, 0)
 
 	// Mock the account keeper to return our mock account
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addr).Return(mockAccount)
@@ -202,10 +196,13 @@ func TestMsgServer_ClaimRewards_ValidationLogic(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
+	mockCreator := NewMockAccount(testutil.Creator)
+	mockExecutor1 := NewMockAccount("executor1")
+	mockExecutor2 := NewMockAccount("executor2")
 	// Setup participants
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-	MustAddParticipant(t, ms, ctx, "executor1")
-	MustAddParticipant(t, ms, ctx, "executor2")
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	MustAddParticipant(t, ms, ctx, *mockExecutor1)
+	MustAddParticipant(t, ms, ctx, *mockExecutor2)
 
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()
@@ -375,10 +372,13 @@ func TestMsgServer_ClaimRewards_PartialValidation(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
+	mockCreator := NewMockAccount(testutil.Creator)
+	mockExecutor1 := NewMockAccount("executor1")
+	mockExecutor2 := NewMockAccount("executor2")
 	// Setup participants
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
-	MustAddParticipant(t, ms, ctx, "executor1")
-	MustAddParticipant(t, ms, ctx, "executor2")
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	MustAddParticipant(t, ms, ctx, *mockExecutor1)
+	MustAddParticipant(t, ms, ctx, *mockExecutor2)
 
 	// Generate a private key and get its public key
 	privKey := secp256k1.GenPrivKey()

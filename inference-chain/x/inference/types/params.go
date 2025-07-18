@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/shopspring/decimal"
 )
@@ -63,6 +64,8 @@ func DefaultParams() Params {
 			MinValidationTrafficCutoff:  100,
 			MissPercentageCutoff:        DecimalFromFloat(0.01),
 			MissRequestsPenalty:         DecimalFromFloat(1.0),
+			TimestampExpiration:         60,
+			TimestampAdvance:            30,
 		},
 		PocParams: &PocParams{
 			DefaultDifficulty: 5,
@@ -120,6 +123,14 @@ func (p Params) Validate() error {
 	}
 	if p.ValidationParams.MissRequestsPenalty == nil {
 		return fmt.Errorf("miss requests penalty cannot be nil")
+	}
+
+	// Validate timestamp parameters
+	if p.ValidationParams.TimestampExpiration <= 0 {
+		return fmt.Errorf("timestamp expiration must be positive")
+	}
+	if p.ValidationParams.TimestampAdvance <= 0 {
+		return fmt.Errorf("timestamp advance must be positive")
 	}
 
 	if p.TokenomicsParams.SubsidyReductionInterval == nil {

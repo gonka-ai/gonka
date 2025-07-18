@@ -602,6 +602,11 @@ var (
 	fd_Inference_node_version                 protoreflect.FieldDescriptor
 	fd_Inference_epoch_id                     protoreflect.FieldDescriptor
 	fd_Inference_epoch_poc_start_block_height protoreflect.FieldDescriptor
+	fd_Inference_transferred_by               protoreflect.FieldDescriptor
+	fd_Inference_request_timestamp            protoreflect.FieldDescriptor
+	fd_Inference_transfer_signature           protoreflect.FieldDescriptor
+	fd_Inference_execution_signature          protoreflect.FieldDescriptor
+	fd_Inference_original_prompt              protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -633,6 +638,11 @@ func init() {
 	fd_Inference_node_version = md_Inference.Fields().ByName("node_version")
 	fd_Inference_epoch_id = md_Inference.Fields().ByName("epoch_id")
 	fd_Inference_epoch_poc_start_block_height = md_Inference.Fields().ByName("epoch_poc_start_block_height")
+	fd_Inference_transferred_by = md_Inference.Fields().ByName("transferred_by")
+	fd_Inference_request_timestamp = md_Inference.Fields().ByName("request_timestamp")
+	fd_Inference_transfer_signature = md_Inference.Fields().ByName("transfer_signature")
+	fd_Inference_execution_signature = md_Inference.Fields().ByName("execution_signature")
+	fd_Inference_original_prompt = md_Inference.Fields().ByName("original_prompt")
 }
 
 var _ protoreflect.Message = (*fastReflection_Inference)(nil)
@@ -856,6 +866,36 @@ func (x *fastReflection_Inference) Range(f func(protoreflect.FieldDescriptor, pr
 			return
 		}
 	}
+	if x.TransferredBy != "" {
+		value := protoreflect.ValueOfString(x.TransferredBy)
+		if !f(fd_Inference_transferred_by, value) {
+			return
+		}
+	}
+	if x.RequestTimestamp != int64(0) {
+		value := protoreflect.ValueOfInt64(x.RequestTimestamp)
+		if !f(fd_Inference_request_timestamp, value) {
+			return
+		}
+	}
+	if x.TransferSignature != "" {
+		value := protoreflect.ValueOfString(x.TransferSignature)
+		if !f(fd_Inference_transfer_signature, value) {
+			return
+		}
+	}
+	if x.ExecutionSignature != "" {
+		value := protoreflect.ValueOfString(x.ExecutionSignature)
+		if !f(fd_Inference_execution_signature, value) {
+			return
+		}
+	}
+	if x.OriginalPrompt != "" {
+		value := protoreflect.ValueOfString(x.OriginalPrompt)
+		if !f(fd_Inference_original_prompt, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -923,6 +963,16 @@ func (x *fastReflection_Inference) Has(fd protoreflect.FieldDescriptor) bool {
 		return x.EpochId != uint64(0)
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		return x.EpochPocStartBlockHeight != uint64(0)
+	case "inference.inference.Inference.transferred_by":
+		return x.TransferredBy != ""
+	case "inference.inference.Inference.request_timestamp":
+		return x.RequestTimestamp != int64(0)
+	case "inference.inference.Inference.transfer_signature":
+		return x.TransferSignature != ""
+	case "inference.inference.Inference.execution_signature":
+		return x.ExecutionSignature != ""
+	case "inference.inference.Inference.original_prompt":
+		return x.OriginalPrompt != ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -991,6 +1041,16 @@ func (x *fastReflection_Inference) Clear(fd protoreflect.FieldDescriptor) {
 		x.EpochId = uint64(0)
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		x.EpochPocStartBlockHeight = uint64(0)
+	case "inference.inference.Inference.transferred_by":
+		x.TransferredBy = ""
+	case "inference.inference.Inference.request_timestamp":
+		x.RequestTimestamp = int64(0)
+	case "inference.inference.Inference.transfer_signature":
+		x.TransferSignature = ""
+	case "inference.inference.Inference.execution_signature":
+		x.ExecutionSignature = ""
+	case "inference.inference.Inference.original_prompt":
+		x.OriginalPrompt = ""
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1088,6 +1148,21 @@ func (x *fastReflection_Inference) Get(descriptor protoreflect.FieldDescriptor) 
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		value := x.EpochPocStartBlockHeight
 		return protoreflect.ValueOfUint64(value)
+	case "inference.inference.Inference.transferred_by":
+		value := x.TransferredBy
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Inference.request_timestamp":
+		value := x.RequestTimestamp
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.Inference.transfer_signature":
+		value := x.TransferSignature
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Inference.execution_signature":
+		value := x.ExecutionSignature
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.Inference.original_prompt":
+		value := x.OriginalPrompt
+		return protoreflect.ValueOfString(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1162,6 +1237,16 @@ func (x *fastReflection_Inference) Set(fd protoreflect.FieldDescriptor, value pr
 		x.EpochId = value.Uint()
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		x.EpochPocStartBlockHeight = value.Uint()
+	case "inference.inference.Inference.transferred_by":
+		x.TransferredBy = value.Interface().(string)
+	case "inference.inference.Inference.request_timestamp":
+		x.RequestTimestamp = value.Int()
+	case "inference.inference.Inference.transfer_signature":
+		x.TransferSignature = value.Interface().(string)
+	case "inference.inference.Inference.execution_signature":
+		x.ExecutionSignature = value.Interface().(string)
+	case "inference.inference.Inference.original_prompt":
+		x.OriginalPrompt = value.Interface().(string)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1241,6 +1326,16 @@ func (x *fastReflection_Inference) Mutable(fd protoreflect.FieldDescriptor) prot
 		panic(fmt.Errorf("field epoch_id of message inference.inference.Inference is not mutable"))
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		panic(fmt.Errorf("field epoch_poc_start_block_height of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.transferred_by":
+		panic(fmt.Errorf("field transferred_by of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.request_timestamp":
+		panic(fmt.Errorf("field request_timestamp of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.transfer_signature":
+		panic(fmt.Errorf("field transfer_signature of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.execution_signature":
+		panic(fmt.Errorf("field execution_signature of message inference.inference.Inference is not mutable"))
+	case "inference.inference.Inference.original_prompt":
+		panic(fmt.Errorf("field original_prompt of message inference.inference.Inference is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1308,6 +1403,16 @@ func (x *fastReflection_Inference) NewField(fd protoreflect.FieldDescriptor) pro
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.Inference.epoch_poc_start_block_height":
 		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.inference.Inference.transferred_by":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Inference.request_timestamp":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.Inference.transfer_signature":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Inference.execution_signature":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.Inference.original_prompt":
+		return protoreflect.ValueOfString("")
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.Inference"))
@@ -1470,6 +1575,25 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.EpochPocStartBlockHeight != 0 {
 			n += 2 + runtime.Sov(uint64(x.EpochPocStartBlockHeight))
 		}
+		l = len(x.TransferredBy)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
+		if x.RequestTimestamp != 0 {
+			n += 2 + runtime.Sov(uint64(x.RequestTimestamp))
+		}
+		l = len(x.TransferSignature)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.ExecutionSignature)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
+		l = len(x.OriginalPrompt)
+		if l > 0 {
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1498,6 +1622,49 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.OriginalPrompt) > 0 {
+			i -= len(x.OriginalPrompt)
+			copy(dAtA[i:], x.OriginalPrompt)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.OriginalPrompt)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xfa
+		}
+		if len(x.ExecutionSignature) > 0 {
+			i -= len(x.ExecutionSignature)
+			copy(dAtA[i:], x.ExecutionSignature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ExecutionSignature)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xf2
+		}
+		if len(x.TransferSignature) > 0 {
+			i -= len(x.TransferSignature)
+			copy(dAtA[i:], x.TransferSignature)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.TransferSignature)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xea
+		}
+		if x.RequestTimestamp != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.RequestTimestamp))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xe0
+		}
+		if len(x.TransferredBy) > 0 {
+			i -= len(x.TransferredBy)
+			copy(dAtA[i:], x.TransferredBy)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.TransferredBy)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xda
 		}
 		if x.EpochPocStartBlockHeight != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EpochPocStartBlockHeight))
@@ -2402,6 +2569,153 @@ func (x *fastReflection_Inference) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
+			case 27:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TransferredBy", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.TransferredBy = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 28:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RequestTimestamp", wireType)
+				}
+				x.RequestTimestamp = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.RequestTimestamp |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 29:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field TransferSignature", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.TransferSignature = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 30:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExecutionSignature", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.ExecutionSignature = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 31:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field OriginalPrompt", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.OriginalPrompt = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2590,6 +2904,11 @@ type Inference struct {
 	NodeVersion              string           `protobuf:"bytes,24,opt,name=node_version,json=nodeVersion,proto3" json:"node_version,omitempty"`
 	EpochId                  uint64           `protobuf:"varint,25,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
 	EpochPocStartBlockHeight uint64           `protobuf:"varint,26,opt,name=epoch_poc_start_block_height,json=epochPocStartBlockHeight,proto3" json:"epoch_poc_start_block_height,omitempty"`
+	TransferredBy            string           `protobuf:"bytes,27,opt,name=transferred_by,json=transferredBy,proto3" json:"transferred_by,omitempty"`
+	RequestTimestamp         int64            `protobuf:"varint,28,opt,name=request_timestamp,json=requestTimestamp,proto3" json:"request_timestamp,omitempty"`
+	TransferSignature        string           `protobuf:"bytes,29,opt,name=transfer_signature,json=transferSignature,proto3" json:"transfer_signature,omitempty"`
+	ExecutionSignature       string           `protobuf:"bytes,30,opt,name=execution_signature,json=executionSignature,proto3" json:"execution_signature,omitempty"`
+	OriginalPrompt           string           `protobuf:"bytes,31,opt,name=original_prompt,json=originalPrompt,proto3" json:"original_prompt,omitempty"`
 }
 
 func (x *Inference) Reset() {
@@ -2794,6 +3113,41 @@ func (x *Inference) GetEpochPocStartBlockHeight() uint64 {
 	return 0
 }
 
+func (x *Inference) GetTransferredBy() string {
+	if x != nil {
+		return x.TransferredBy
+	}
+	return ""
+}
+
+func (x *Inference) GetRequestTimestamp() int64 {
+	if x != nil {
+		return x.RequestTimestamp
+	}
+	return 0
+}
+
+func (x *Inference) GetTransferSignature() string {
+	if x != nil {
+		return x.TransferSignature
+	}
+	return ""
+}
+
+func (x *Inference) GetExecutionSignature() string {
+	if x != nil {
+		return x.ExecutionSignature
+	}
+	return ""
+}
+
+func (x *Inference) GetOriginalPrompt() string {
+	if x != nil {
+		return x.OriginalPrompt
+	}
+	return ""
+}
+
 var File_inference_inference_inference_proto protoreflect.FileDescriptor
 
 var file_inference_inference_inference_proto_rawDesc = []byte{
@@ -2810,7 +3164,7 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x12, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x50, 0x6f, 0x6c, 0x69, 0x63,
 	0x79, 0x49, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x5f, 0x61, 0x64,
 	0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x70, 0x6f, 0x6c,
-	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xb2, 0x08, 0x0a, 0x09, 0x49,
+	0x69, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0x8f, 0x0a, 0x0a, 0x09, 0x49,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21,
 	0x0a, 0x0c, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02,
@@ -2877,26 +3231,40 @@ var file_inference_inference_inference_proto_rawDesc = []byte{
 	0x3e, 0x0a, 0x1c, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61,
 	0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
 	0x1a, 0x20, 0x01, 0x28, 0x04, 0x52, 0x18, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x50, 0x6f, 0x63, 0x53,
-	0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x2a,
-	0x65, 0x0a, 0x0f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74,
-	0x75, 0x73, 0x12, 0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12,
-	0x0c, 0x0a, 0x08, 0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a,
-	0x09, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b,
-	0x49, 0x4e, 0x56, 0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a,
-	0x06, 0x56, 0x4f, 0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x12, 0x0b, 0x0a, 0x07, 0x45, 0x58, 0x50,
-	0x49, 0x52, 0x45, 0x44, 0x10, 0x05, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x42, 0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f,
-	0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e,
-	0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58,
-	0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02,
-	0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12,
+	0x25, 0x0a, 0x0e, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x72, 0x65, 0x64, 0x5f, 0x62,
+	0x79, 0x18, 0x1b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65,
+	0x72, 0x72, 0x65, 0x64, 0x42, 0x79, 0x12, 0x2b, 0x0a, 0x11, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x1c, 0x20, 0x01, 0x28,
+	0x03, 0x52, 0x10, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74,
+	0x61, 0x6d, 0x70, 0x12, 0x2d, 0x0a, 0x12, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x5f,
+	0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x1d, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x11, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75,
+	0x72, 0x65, 0x12, 0x2f, 0x0a, 0x13, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
+	0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x1e, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x12, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74,
+	0x75, 0x72, 0x65, 0x12, 0x27, 0x0a, 0x0f, 0x6f, 0x72, 0x69, 0x67, 0x69, 0x6e, 0x61, 0x6c, 0x5f,
+	0x70, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x18, 0x1f, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x6f, 0x72,
+	0x69, 0x67, 0x69, 0x6e, 0x61, 0x6c, 0x50, 0x72, 0x6f, 0x6d, 0x70, 0x74, 0x2a, 0x65, 0x0a, 0x0f,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12,
+	0x0b, 0x0a, 0x07, 0x53, 0x54, 0x41, 0x52, 0x54, 0x45, 0x44, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08,
+	0x46, 0x49, 0x4e, 0x49, 0x53, 0x48, 0x45, 0x44, 0x10, 0x01, 0x12, 0x0d, 0x0a, 0x09, 0x56, 0x41,
+	0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x02, 0x12, 0x0f, 0x0a, 0x0b, 0x49, 0x4e, 0x56,
+	0x41, 0x4c, 0x49, 0x44, 0x41, 0x54, 0x45, 0x44, 0x10, 0x03, 0x12, 0x0a, 0x0a, 0x06, 0x56, 0x4f,
+	0x54, 0x49, 0x4e, 0x47, 0x10, 0x04, 0x12, 0x0b, 0x0a, 0x07, 0x45, 0x58, 0x50, 0x49, 0x52, 0x45,
+	0x44, 0x10, 0x05, 0x42, 0xbc, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
+	0x0e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (

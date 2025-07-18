@@ -201,7 +201,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address)
+            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
             assertThat(result).isNotNull
             var inference: InferencePayload? = null
             var tries = 0
@@ -227,13 +227,14 @@ class InferenceAccountingTests : TestermintTest() {
         cluster: LocalCluster,
         requestingNode: LocalInferencePair = cluster.genesis,
         requester: String? = cluster.genesis.node.getAddress(),
+        taAddress: String = requestingNode.node.getAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester)
+                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getAddress())
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
@@ -308,25 +309,28 @@ class InferenceAccountingTests : TestermintTest() {
             localCluster.joinPairs.forEach {
                 it.mock?.setInferenceResponse("This is invalid json!!!")
             }
-            val inferences = getFailingInference(localCluster, consumer.pair, consumer.address)
-            val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-            val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-            logSection("Waiting for inference to expire")
-            genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
-            logSection("Verifying inference was expired and refunded")
-            val finishedInferences = inferences.map {
-                genesis.api.getInference(it.index)
+            Thread.sleep(5000)
+            genesis.markNeedsReboot() // Failed inferences mess with reputations!
+            var failure: Exception? = null
+            try {
+                genesis.waitForNextInferenceWindow()
+                val result = consumer.pair.makeInferenceRequest(
+                    inferenceRequest,
+                    consumer.address,
+                    taAddress = genesis.node.getAddress()
+                )
+            } catch(e: com.github.kittinunf.fuel.core.FuelError) {
+                failure = e
+                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
+                logSection("Waiting for inference to expire")
+                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                logSection("Verifying inference was expired and refunded")
+                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+                val changes = startBalance - balanceAfterSettle
+                assertThat(changes).isZero()
             }
-            val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            val expectedBalance = finishedInferences.sumOf {
-                if (it.status == InferenceStatus.EXPIRED.value) {
-                    0
-                } else {
-                    it.actualCost!!
-                }
-            }
-            val changes = startBalance - balanceAfterSettle
-            assertThat(changes).isEqualTo(expectedBalance)
+            assertThat(failure).isNotNull()
         }
     }
 }
