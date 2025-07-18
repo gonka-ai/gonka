@@ -103,7 +103,7 @@ func (c RegisterNode) Execute(b *Broker) {
 		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
 	}()
 
-	logging.Debug("Registered node", types.Nodes, "node", c.Node)
+	logging.Info("Registered node", types.Nodes, "node", c.Node)
 	c.Response <- &c.Node
 }
 

@@ -18,9 +18,9 @@ class SchedulingTests : TestermintTest() {
             ),
             nodeConfigFileByKeyName = mapOf(
                 GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
-            )
+            ),
         )
-        val (_, genesis) = initCluster(config = config, reboot = true)
+        val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodesToDefaultNode = false)
 
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
@@ -31,6 +31,8 @@ class SchedulingTests : TestermintTest() {
         // TODO: assert weight == 20
         val nodeId = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
+/*            nodes.firstOrNull { node ->
+            }*/
             "x" // TODO: find the node with poc slot allocated
         }
 
@@ -45,5 +47,8 @@ class SchedulingTests : TestermintTest() {
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         // TODO: assert weight of participant is still == 20
 
+        genesis.api.getNodes().let { nodes ->
+            assertThat(nodes).hasSize(2)
+        }
     }
 }

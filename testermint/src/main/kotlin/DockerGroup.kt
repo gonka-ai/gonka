@@ -287,6 +287,7 @@ fun initCluster(
     joinCount: Int = 2,
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
+    resetMlNodesToDefaultNode: Boolean = true,
 ): Pair<LocalCluster, LocalInferencePair> {
     logSection("Cluster Discovery")
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
@@ -294,7 +295,7 @@ fun initCluster(
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs)
+        initialize(cluster.allPairs, resetMlNodesToDefaultNode = resetMlNodesToDefaultNode)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {

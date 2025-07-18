@@ -157,7 +157,7 @@ fun attachDockerLogs(
 data class LocalInferencePair(
     val node: ApplicationCLI,
     val api: ApplicationAPI,
-    val mock: IInferenceMock?,
+    val mock: IInferenceMock?, // FIXME: technically it's a list
     val name: String,
     override val config: ApplicationConfig,
     var mostRecentParams: InferenceParams? = null,

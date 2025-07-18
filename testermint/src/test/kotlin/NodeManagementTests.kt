@@ -1,9 +1,6 @@
 import com.productscience.data.InferenceNode
 import com.productscience.data.ModelConfig
-import com.productscience.getLocalInferencePairs
-import com.productscience.inferenceConfig
 import com.productscience.initCluster
-import com.productscience.initialize
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
