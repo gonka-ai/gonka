@@ -165,8 +165,9 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `old timestamp`() {
+        val params = genesis.getParams()
         genesis.waitForNextInferenceWindow()
-        val timestamp = Instant.now().minusSeconds(20).toEpochNanos()
+        val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
 
@@ -268,7 +269,8 @@ class InferenceTests : TestermintTest() {
 
     @Test
     fun `executor rejects old timestamp`() {
-        val timestamp = Instant.now().minusSeconds(20).toEpochNanos()
+        val params = genesis.getParams()
+        val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
         val genesisAddress = genesis.node.getAddress()
         val signature = genesis.node.signPayload(inferenceRequest + timestamp.toString() + genesisAddress, null)
         val taSignature =

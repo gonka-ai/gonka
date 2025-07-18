@@ -3,6 +3,7 @@ package public
 import (
 	"bytes"
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/completionapi"
 	"decentralized-api/logging"
@@ -51,6 +52,9 @@ var (
 
 	// Mutex for thread safety
 	authKeysMutex sync.RWMutex
+
+	// Reference to the config manager for accessing validation parameters
+	configManagerRef *apiconfig.ConfigManager
 )
 
 // checkAndRecordAuthKey checks if an AuthKey has been used before and records it if not
@@ -92,10 +96,36 @@ func checkAndRecordAuthKey(authKey string, currentBlockHeight int64, context Aut
 	return false // Key wasn't used before
 }
 
-// cleanupExpiredAuthKeys removes auth keys from block heights older than 4 blocks ago
+// cleanupExpiredAuthKeys removes auth keys from block heights based on timestamp_expiration parameter
 func cleanupExpiredAuthKeys(currentBlockHeight int64) {
-	// Keep AuthKeys from the last 4 blocks (including current)
-	expirationHeight := currentBlockHeight - 4
+	// Default expiration is 4 blocks if configManager is not set
+	expirationBlocks := int64(4)
+
+	// If configManager is available, use twice the timestamp_expiration value
+	if configManagerRef != nil {
+		validationParams := configManagerRef.GetValidationParams()
+		timestampExpiration := validationParams.TimestampExpiration
+
+		// Use default value if parameter is not set
+		if timestampExpiration == 0 {
+			timestampExpiration = 10 // Default 10 seconds
+		}
+
+		// Use twice the timestamp_expiration value (converted to blocks)
+		// Assuming average block time of 5 seconds
+		expirationBlocks = (timestampExpiration * 2) / 5
+
+		// Ensure we keep at least 4 blocks for safety
+		if expirationBlocks < 4 {
+			expirationBlocks = 4
+		}
+
+		logging.Debug("Auth key expiration", types.Inferences,
+			"timestampExpiration", timestampExpiration,
+			"expirationBlocks", expirationBlocks)
+	}
+
+	expirationHeight := currentBlockHeight - expirationBlocks
 
 	for height := oldestBlockHeight; height < expirationHeight; height++ {
 		keys, exists := authKeysByBlock[height]
@@ -166,7 +196,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) e
 	}
 
 	status, err := s.recorder.GetCosmosClient().Status(context.Background())
-	if err := validateRequest(request, status); err != nil {
+	if err != nil {
+		logging.Error("Failed to get status", types.Inferences, "error", err)
+		return err
+	}
+
+	if err := validateRequest(request, status, s.configManager); err != nil {
 		return err
 	}
 
@@ -244,16 +279,34 @@ func (s *Server) getPromptTokenEstimation(text string, model string) (int, error
 	return len(text), nil
 }
 
-func validateRequest(request *ChatRequest, status *coretypes.ResultStatus) error {
+func validateRequest(request *ChatRequest, status *coretypes.ResultStatus, configManager *apiconfig.ConfigManager) error {
 	lastHeightTime := status.SyncInfo.LatestBlockTime.UnixNano()
 	currentBlockHeight := status.SyncInfo.LatestBlockHeight
 
-	requestOffset := time.Duration(lastHeightTime - request.Timestamp)
-	logging.Info("Request offset", types.Inferences, "offset", requestOffset.String(), "lastHeightTime", lastHeightTime, "requestTimestamp", request.Timestamp)
-	if requestOffset > 10*time.Second {
+	// Get validation parameters from config
+	validationParams := configManager.GetValidationParams()
+	timestampExpirationNs := validationParams.TimestampExpiration * int64(time.Second)
+	timestampAdvanceNs := validationParams.TimestampAdvance * int64(time.Second)
+
+	// Use default values if parameters are not set
+	if timestampExpirationNs == 0 {
+		timestampExpirationNs = 10 * int64(time.Second)
+	}
+	if timestampAdvanceNs == 0 {
+		timestampAdvanceNs = 10 * int64(time.Second)
+	}
+
+	requestOffset := lastHeightTime - request.Timestamp
+	logging.Info("Request offset", types.Inferences,
+		"offset", time.Duration(requestOffset).String(),
+		"lastHeightTime", lastHeightTime,
+		"requestTimestamp", request.Timestamp)
+
+	if requestOffset > timestampExpirationNs {
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
 	}
-	if requestOffset < -10*time.Second {
+
+	if requestOffset < -timestampAdvanceNs {
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
 	}
 
@@ -440,14 +493,36 @@ func (s *Server) validateTimestampNonce(err error, request *ChatRequest) error {
 	currentBlockHeight := status.SyncInfo.LatestBlockHeight
 	lastHeightTime := status.SyncInfo.LatestBlockTime.UnixNano()
 
-	requestOffset := time.Duration(lastHeightTime - request.Timestamp)
-	logging.Info("Request offset for executor", types.Inferences, "offset", requestOffset.String(), "lastHeightTime", lastHeightTime, "requestTimestamp", request.Timestamp)
-	if requestOffset > 10*time.Second {
-		logging.Warn("Request timestamp is too old", types.Inferences, "inferenceId", request.InferenceId, "offset", requestOffset.String())
+	// Get validation parameters from config
+	validationParams := s.configManager.GetValidationParams()
+	timestampExpirationNs := validationParams.TimestampExpiration * int64(time.Second)
+	timestampAdvanceNs := validationParams.TimestampAdvance * int64(time.Second)
+
+	// Use default values if parameters are not set
+	if timestampExpirationNs == 0 {
+		timestampExpirationNs = 10 * int64(time.Second)
+	}
+	if timestampAdvanceNs == 0 {
+		timestampAdvanceNs = 10 * int64(time.Second)
+	}
+
+	requestOffset := lastHeightTime - request.Timestamp
+	logging.Info("Request offset for executor", types.Inferences,
+		"offset", time.Duration(requestOffset).String(),
+		"lastHeightTime", lastHeightTime,
+		"requestTimestamp", request.Timestamp)
+
+	if requestOffset > timestampExpirationNs {
+		logging.Warn("Request timestamp is too old", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String())
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is too old")
 	}
-	if requestOffset < -10*time.Second {
-		logging.Warn("Request timestamp is in the future", types.Inferences, "inferenceId", request.InferenceId, "offset", requestOffset.String())
+
+	if requestOffset < -timestampAdvanceNs {
+		logging.Warn("Request timestamp is in the future", types.Inferences,
+			"inferenceId", request.InferenceId,
+			"offset", time.Duration(requestOffset).String())
 		return echo.NewHTTPError(http.StatusBadRequest, "Request timestamp is in the future")
 	}
 

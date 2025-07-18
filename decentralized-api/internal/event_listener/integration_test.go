@@ -126,6 +126,14 @@ func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochIn
 	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
 }
 
+func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
+}
+
 // Test setup helpers
 
 type IntegrationTestSetup struct {
@@ -194,6 +202,19 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		LatestEpoch: types.Epoch{},
 	}, nil)
 
+	// Setup mock for Params method
+	validationParams := &types.ValidationParams{
+		TimestampExpiration: 10,
+		TimestampAdvance:    10,
+	}
+	mockQueryClient.On("Params", mock.MatchedBy(func(ctx context.Context) bool {
+		return true // Match any context
+	}), mock.AnythingOfType("*types.QueryParamsRequest")).Return(&types.QueryParamsResponse{
+		Params: types.Params{
+			ValidationParams: validationParams,
+		},
+	}, nil)
+
 	// Setup mock expectations for RandomSeedManager
 	mockSeedManager.On("GenerateSeed", mock.AnythingOfType("int64")).Return()
 	mockSeedManager.On("ChangeCurrentSeed").Return()
@@ -206,6 +227,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		finalReconciliationConfig = *reconcilialtionConfig
 	}
 	// Create dispatcher with mocked dependencies
+	mockConfigManager := &apiconfig.ConfigManager{}
 	dispatcher := NewOnNewBlockDispatcher(
 		nodeBroker,
 		pocOrchestrator,
@@ -215,6 +237,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockSetHeightFunc,
 		mockSeedManager,
 		finalReconciliationConfig,
+		mockConfigManager,
 	)
 
 	return &IntegrationTestSetup{

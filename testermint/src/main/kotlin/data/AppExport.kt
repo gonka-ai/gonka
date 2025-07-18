@@ -119,6 +119,8 @@ data class ValidationParams(
     val minValidationTrafficCutoff: Long,
     val missPercentageCutoff: Decimal,
     val missRequestsPenalty: Decimal,
+    val timestampExpiration: Long,
+    val timestampAdvance: Long,
 )
 
 data class PocParams(
