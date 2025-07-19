@@ -292,16 +292,18 @@ fun makeInterruptedStreamingInferenceRequest(
     return inference ?: InferencePayload.empty()
 }
 
-fun initialize(pairs: List<LocalInferencePair>, resetMlNodesToDefaultNode: Boolean = true): LocalInferencePair {
+fun initialize(pairs: List<LocalInferencePair>, resetMlNodesTo: Boolean = true): LocalInferencePair {
     pairs.forEach {
         it.waitForFirstBlock()
-        val nodes = it.config.nodesByKeyName[it.name] ?: listOf(
-            validNode.copy(
-                host = "${it.name.trim('/')}-mock-server",
-            ).withMockServerPorts()
-        )
-        it.api.setNodesTo(nodes)
         it.waitForFirstValidators()
+        if (resetMlNodesTo) {
+            val nodes = listOf(
+                validNode.copy(
+                    host = "${it.name.trim('/')}-mock-server",
+                ).withMockServerPorts()
+            )
+            it.api.setNodesTo(nodes)
+        }
 
         it.mock?.setInferenceResponse(defaultInferenceResponseObject, streamDelay = Duration.ofMillis(200))
         it.getParams()

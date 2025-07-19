@@ -206,7 +206,9 @@ fun createDockerGroup(
     useSnapshots: Boolean
 ): DockerGroup {
     val keyName = if (iteration == 0) GENESIS_KEY_NAME else "join$joinIter"
-    val nodeConfigFile = "$LOCAL_TEST_NET_DIR/node_payload_mock-server_$keyName.json"
+    val nodeConfigFile = config.nodeConfigFileByKeyName[keyName]
+        .let { fileOrNull: String? -> fileOrNull ?: "node_payload_mock-server_$keyName.json" }
+        .let { file: String -> "$LOCAL_TEST_NET_DIR/$file" }
     val repoRoot = getRepoRoot()
 
     val nodeFile = Path.of(repoRoot, nodeConfigFile)
@@ -288,7 +290,7 @@ fun initCluster(
     joinCount: Int = 2,
     config: ApplicationConfig = inferenceConfig,
     reboot: Boolean = false,
-    resetMlNodesToDefaultNode: Boolean = true,
+    resetMlNodes: Boolean = true,
 ): Pair<LocalCluster, LocalInferencePair> {
     logSection("Cluster Discovery")
     val rebootFlagOn = Files.deleteIfExists(Path.of("reboot.txt"))
@@ -296,7 +298,7 @@ fun initCluster(
     Thread.sleep(50000)
     try {
         logSection("Found cluster, initializing")
-        initialize(cluster.allPairs, resetMlNodesToDefaultNode = resetMlNodesToDefaultNode)
+        initialize(cluster.allPairs, resetMlNodesTo = resetMlNodes)
     } catch (e: Exception) {
         Logger.error(e, "Failed to initialize cluster")
         if (reboot) {

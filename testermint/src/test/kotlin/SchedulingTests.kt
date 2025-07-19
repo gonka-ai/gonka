@@ -4,7 +4,6 @@ import com.productscience.GENESIS_KEY_NAME
 import com.productscience.data.Pubkey2
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
-import com.productscience.logSection
 import com.productscience.validNode
 import com.productscience.withMockServerPorts
 import org.assertj.core.api.Assertions.assertThat
@@ -20,14 +19,11 @@ class SchedulingTests : TestermintTest() {
             additionalDockerFilesByKeyName= mapOf(
                 GENESIS_KEY_NAME to listOf("docker-compose-local-mock-node-2.yml")
             ),
-            nodesByKeyName = mapOf(
-                GENESIS_KEY_NAME to listOf(
-                    validNode.copy(id = "mock-1", host = "genesis-mock-server").withMockServerPorts(),
-                    validNode.copy(id = "mock-2", host = "genesis-mock-server-2").withMockServerPorts(),
-                )
+            nodeConfigFileByKeyName = mapOf(
+                GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
             ),
         )
-        val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodesToDefaultNode = false)
+        val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodes = false)
         val genesisParticipantKey = genesis.node.getValidatorInfo()
 
         checkParticipantWeights(genesis.node, genesisParticipantKey)

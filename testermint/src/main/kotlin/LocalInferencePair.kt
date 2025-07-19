@@ -535,7 +535,7 @@ data class ApplicationConfig(
     // execName accommodates upgraded chains.
     val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
     val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
-    val nodesByKeyName: Map<String, List<InferenceNode>> = emptyMap(),
+    val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
