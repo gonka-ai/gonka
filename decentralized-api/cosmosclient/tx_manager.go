@@ -145,20 +145,6 @@ func (m *manager) putOnRetry(
 	return err
 }
 
-func (m *manager) PutTxToSend(rawTx sdk.Msg) error {
-	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
-	if err != nil {
-		return err
-	}
-
-	b, err := json.Marshal(&txToSend{TxInfo: txInfo{Id: uuid.New().String(), RawTx: bz}})
-	if err != nil {
-		return err
-	}
-	_, err = m.js.Publish(server.TxsToSendStream, b)
-	return err
-}
-
 func (m *manager) SignBytes(seed []byte) ([]byte, error) {
 	name := m.account.Name
 	// Kind of guessing here, not sure if this is the right way to sign bytes, will need to test
@@ -210,7 +196,7 @@ func (m *manager) SendTxs() error {
 		}
 
 		if !tx.Sent {
-			logging.Debug("Start Broadcast", types.Messages, "id", tx.TxInfo.Id)
+			logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id)
 			resp, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
 				msg.NakWithDelay(defaultNackDelay)
@@ -221,6 +207,8 @@ func (m *manager) SendTxs() error {
 			tx.TxInfo.TxHash = resp.TxHash
 			tx.Sent = true
 		}
+
+		logging.Debug("tx broadcasted, put to observe", types.Messages, "id", tx.TxInfo.Id, "tx_hash", tx.TxInfo.TxHash, "block_timeout", tx.TxInfo.TimeOutHeight)
 
 		if err := m.putTxToObserve(tx.TxInfo.Id, rawTx, tx.TxInfo.TxHash, tx.TxInfo.TimeOutHeight); err != nil {
 			logging.Error("error pushing to observe queue", types.Messages, "id", tx.TxInfo.Id, "err", err)
@@ -264,13 +252,14 @@ func (m *manager) ObserveTxs() error {
 
 					logging.Debug("Pause sending txs", types.Messages, "id", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight)
 
-					if err := m.resendAllTxs(); err != nil {
+					if err := m.resendAllTxs(tx.TimeOutHeight); err != nil {
 						logging.Error("Failed to resend transactions batch", types.Messages, "err", err)
 					}
 
 					if err := m.setUpSequenceFromBlockchain(); err != nil {
 						logging.Error("Failed to setup new sequence", types.Messages, "error", err)
 					}
+
 					m.resumeSendTxs()
 					logging.Debug("Resume sending txs", types.Messages, "txHash", tx.TxHash, "tx_timeout_block", tx.TimeOutHeight)
 				}
@@ -298,7 +287,7 @@ func (m *manager) resumeSendTxs() {
 	m.paused = false
 }
 
-func (m *manager) resendAllTxs() error {
+func (m *manager) resendAllTxs(blockTimeout uint64) error {
 	sub, err := m.js.PullSubscribe(server.TxsToObserveStream, txObserverConsumer, nats.Bind(server.TxsToSendStream, txObserverConsumer))
 	if err != nil {
 		return err
@@ -327,9 +316,17 @@ func (m *manager) resendAllTxs() error {
 				continue
 			}
 
-			if err := m.PutTxToSend(rawTx); err != nil {
-				msg.NakWithDelay(defaultNackDelay)
-				continue
+			if tx.TimeOutHeight > blockTimeout {
+				// tx was sent after failed tx, resend them all
+				if err := m.putOnRetry(tx.Id, "", 0, rawTx, false); err != nil {
+					msg.NakWithDelay(defaultNackDelay)
+					continue
+				}
+			} else {
+				if err := m.putOnRetry(tx.Id, tx.TxHash, tx.TimeOutHeight, rawTx, true); err != nil {
+					msg.NakWithDelay(defaultNackDelay)
+					continue
+				}
 			}
 			msg.Ack()
 		}
@@ -354,7 +351,10 @@ func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultT
 }
 
 func (m *manager) WaitForResponse(txHash string) (*ctypes.ResultTx, error) {
-	transactionAppliedResult, err := m.client.WaitForTx(m.ctx, txHash)
+	ctx, cancel := context.WithTimeout(m.ctx, time.Second*15)
+	defer cancel()
+
+	transactionAppliedResult, err := m.client.WaitForTx(ctx, txHash)
 	if err != nil {
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err, "result", transactionAppliedResult)
 		return nil, err
