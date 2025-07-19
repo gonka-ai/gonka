@@ -73,6 +73,7 @@ message ValidationParams {
 message PocParams {
   option (gogoproto.equal) = true;
   int32 default_difficulty = 1;
+  int32 validation_sample_size = 2;
 }
 
 message Decimal {
