@@ -14,6 +14,7 @@ import com.productscience.data.EpochPhase
 import com.productscience.data.EpochResponse
 import com.productscience.data.GovernanceMessage
 import com.productscience.data.GovernanceProposal
+import com.productscience.data.InferenceNode
 import com.productscience.data.InferenceParams
 import com.productscience.data.InferenceParticipant
 import com.productscience.data.OpenAIResponse
@@ -534,8 +535,7 @@ data class ApplicationConfig(
     // execName accommodates upgraded chains.
     val execName: String = "$stateDirName/cosmovisor/current/bin/$appName",
     val additionalDockerFilesByKeyName: Map<String, List<String>> = emptyMap(),
-    // Just a file name/path, relative to LOCAL_TEST_NET_DIR
-    val nodeConfigFileByKeyName: Map<String, String> = emptyMap(),
+    val nodesByKeyName: Map<String, List<InferenceNode>> = emptyMap(),
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")

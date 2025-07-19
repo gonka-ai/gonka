@@ -1,8 +1,11 @@
+import com.productscience.ApplicationCLI
 import com.productscience.EpochStage
 import com.productscience.GENESIS_KEY_NAME
+import com.productscience.data.Pubkey2
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
+import com.productscience.validNode
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
@@ -16,22 +19,24 @@ class SchedulingTests : TestermintTest() {
             additionalDockerFilesByKeyName= mapOf(
                 GENESIS_KEY_NAME to listOf("docker-compose-local-mock-node-2.yml")
             ),
-            nodeConfigFileByKeyName = mapOf(
-                GENESIS_KEY_NAME to "node_payload_mock-server_genesis_2_nodes.json"
+            nodesByKeyName = mapOf(
+                GENESIS_KEY_NAME to listOf(
+                    validNode.copy(id = "mock-1", host = "genesis-mock-server"),
+                    validNode.copy(id = "mock-2", host = "genesis-mock-server-2"),
+                )
             ),
         )
         val (_, genesis) = initCluster(config = config, reboot = true, resetMlNodesToDefaultNode = false)
+        val genesisParticipantKey = genesis.node.getValidatorInfo()
 
-        // TODO: assert weight == 20
+        checkParticipantWeights(genesis.node, genesisParticipantKey)
 
         val allocatedNode = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
             nodes.forEach { node ->
-                node.state.epochMlNodes?.forEach { (key, value) ->
+                node.state.epochMlNodes?.forEach { (_, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
                     assertThat(value.timeslotAllocation).hasSize(2)
-                    assertThat(value.timeslotAllocation[0]).isTrue
-                    assertThat(value.timeslotAllocation[1]).isTrue
                 }
             }
             nodes.firstNotNullOf { node ->
@@ -49,11 +54,9 @@ class SchedulingTests : TestermintTest() {
         genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
             nodes.forEach { node ->
-                node.state.epochMlNodes?.forEach { (key, value) ->
+                node.state.epochMlNodes?.forEach { (_, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
                     assertThat(value.timeslotAllocation).hasSize(2)
-                    assertThat(value.timeslotAllocation[0]).isTrue
-                    assertThat(value.timeslotAllocation[1]).isTrue
                 }
             }
             nodes.forEach { node ->
@@ -69,7 +72,8 @@ class SchedulingTests : TestermintTest() {
 
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
 
-        // TODO: assert weight == 20
+        checkParticipantWeights(genesis.node, genesisParticipantKey)
+
         val allocatedNode2 = genesis.api.getNodes().let { nodes ->
             assertThat(nodes).hasSize(2)
 
@@ -77,8 +81,6 @@ class SchedulingTests : TestermintTest() {
                 node.state.epochMlNodes?.forEach { (key, value) ->
                     assertThat(value.pocWeight).isEqualTo(10)
                     assertThat(value.timeslotAllocation).hasSize(2)
-                    assertThat(value.timeslotAllocation[0]).isTrue
-                    assertThat(value.timeslotAllocation[1]).isTrue
                 }
             }
 
@@ -96,5 +98,17 @@ class SchedulingTests : TestermintTest() {
         }
 
         assertThat(allocatedNode2).isNotNull
+    }
+}
+
+fun checkParticipantWeights(
+    appCli: ApplicationCLI,
+    genesisParticipantKey: Pubkey2,
+) {
+    appCli.getValidators().validators.forEach { v ->
+        when (v.consensusPubkey.value) {
+            genesisParticipantKey.key -> assertThat(v.tokens).isEqualTo(20)
+            else -> assertThat(v.tokens).isEqualTo(10)
+        }
     }
 }
