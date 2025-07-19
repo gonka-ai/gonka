@@ -61,7 +61,7 @@ func (s *Server) SetStoreRecord(ctx context.Context, req *inference.SetStoreReco
 	}
 	response := inference.MsgSubmitTrainingKvRecordResponse{}
 
-	err := s.cosmosClient.SendTransactionBlocking(msg, &response)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(msg, &response)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -121,7 +121,7 @@ func (s *Server) JoinTraining(ctx context.Context, req *inference.JoinTrainingRe
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingResponse{}
-	err := s.cosmosClient.SendTransactionBlocking(&msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -136,7 +136,7 @@ func (s *Server) GetJoinTrainingStatus(ctx context.Context, req *inference.JoinT
 		Req:     req,
 	}
 	resp := inference.MsgJoinTrainingStatusResponse{}
-	err := s.cosmosClient.SendTransactionBlocking(&msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -156,7 +156,7 @@ func (s *Server) SendHeartbeat(ctx context.Context, req *inference.HeartbeatRequ
 		Req:     req,
 	}
 	resp := inference.MsgTrainingHeartbeatResponse{}
-	err := s.cosmosClient.SendTransactionBlocking(&msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err
@@ -197,7 +197,7 @@ func (s *Server) SetBarrier(ctx context.Context, req *inference.SetBarrierReques
 		Req:     req,
 	}
 	resp := inference.MsgSetBarrierResponse{}
-	err := s.cosmosClient.SendTransactionBlocking(&msg, &resp)
+	err := s.cosmosClient.SendTransactionSyncNoRetry(&msg, &resp)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Training, "error", err)
 		return nil, err

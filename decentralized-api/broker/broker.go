@@ -430,7 +430,7 @@ func (b *Broker) syncNodes() {
 		logging.Info("[sync nodes] No diff to submit", types.Nodes)
 	} else {
 		logging.Info("[sync nodes] Submitting diff", types.Nodes)
-		if err = b.client.SendTransaction(&diff); err != nil {
+		if _, err = b.client.SendTransactionAsyncNoRetry(&diff); err != nil {
 			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
 		}
 	}

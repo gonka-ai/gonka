@@ -37,10 +37,11 @@ func (s *Server) sendTransaction(ctx echo.Context) error {
 
 	logging.Info("Unpacked message", types.Messages, "Message", msg)
 
-	err = s.recorder.SendTransaction(msg.(sdk.Msg))
+	txResp, err := s.recorder.SendTransactionAsyncNoRetry(msg.(sdk.Msg))
 	if err != nil {
 		return err
 	}
 
-	return ctx.NoContent(http.StatusOK)
+	logging.Info("TxResp", types.Messages, "txResp", *txResp)
+	return ctx.JSON(http.StatusOK, txResp)
 }

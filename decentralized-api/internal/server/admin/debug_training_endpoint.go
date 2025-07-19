@@ -35,7 +35,7 @@ func (s *Server) postDummyTrainingTask(ctx echo.Context) error {
 		},
 	}
 	dst := &inference.MsgCreateDummyTrainingTaskResponse{}
-	err := s.recorder.SendTransactionBlocking(msg, dst)
+	err := s.recorder.SendTransactionSyncNoRetry(msg, dst)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err)
 	}

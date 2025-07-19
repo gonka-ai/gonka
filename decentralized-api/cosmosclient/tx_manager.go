@@ -37,10 +37,9 @@ const (
 type TxManager interface {
 	GetClientContext() client.Context
 	SignBytes(seed []byte) ([]byte, error)
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (string, error)
-	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (string, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
-	PutTxToSend(rawTx sdk.Msg) error
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTxs() error
 	ObserveTxs() error
@@ -100,27 +99,21 @@ type txInfo struct {
 	TimeOutHeight uint64
 }
 
-func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (string, error) {
+func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
-	txHash, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
+	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
 	if broadcastErr != nil {
 		err := m.putOnRetry(id, "", 0, rawTx, false)
-		if err != nil {
-			return "", err
-		}
+		return nil, err
 	}
-
-	err := m.putOnRetry(id, txHash, timeout, rawTx, true)
-	if err != nil {
-		return txHash, err
-	}
-	return txHash, nil
+	err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, true)
+	return resp, err
 }
 
-func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (string, error) {
+func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
-	txHash, _, broadcastErr := m.broadcastMessage(id, rawTx)
-	return txHash, broadcastErr
+	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
+	return resp, broadcastErr
 }
 
 func (m *manager) putOnRetry(
@@ -218,14 +211,14 @@ func (m *manager) SendTxs() error {
 
 		if !tx.Sent {
 			logging.Debug("Start Broadcast", types.Messages, "id", tx.TxInfo.Id)
-			txHash, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
+			resp, blockTimeout, err := m.broadcastMessage(tx.TxInfo.Id, rawTx)
 			if err != nil {
 				msg.NakWithDelay(defaultNackDelay)
 				return
 			}
 
 			tx.TxInfo.TimeOutHeight = blockTimeout
-			tx.TxInfo.TxHash = txHash
+			tx.TxInfo.TxHash = resp.TxHash
 			tx.Sent = true
 		}
 
@@ -346,13 +339,13 @@ func (m *manager) resendAllTxs() error {
 
 func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
 	id := uuid.New().String()
-	txHash, _, err := m.broadcastMessage(id, msg)
+	resp, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
 		return nil, err
 	}
 
-	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", txHash)
-	result, err := m.WaitForResponse(txHash)
+	logging.Debug("Transaction broadcast successful (or pending if async)", types.Messages, "id", id, "txHash", resp.TxHash)
+	result, err := m.WaitForResponse(resp.TxHash)
 	if err != nil {
 		logging.Error("Failed to wait for transaction", types.Messages, "error", err)
 		return nil, err
@@ -403,20 +396,20 @@ func ParseMsgResponse(data []byte, msgIndex int, dstMsg proto.Message) error {
 	return nil
 }
 
-func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, error) {
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, uint64, error) {
 	m.mtx.Lock()
-	m.mtx.Unlock()
+	defer m.mtx.Unlock()
 
 	address, err := m.account.Record.GetAddress()
 	if err != nil {
 		logging.Error("Failed to get account address", types.Messages, "tx_id", id, "error", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	accountNumber, sequence, err := m.accountRetriever.GetAccountNumberSequence(m.client.Context(), address)
 	if err != nil {
 		logging.Error("Failed to get account number and sequence", types.Messages, "tx_id", id, "error", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	logging.Debug("Got account number and sequence", types.Messages, "tx_id", id, "blockchain_sequence", sequence, "highest_sequence", m.highestSequence)
@@ -429,12 +422,12 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, er
 	currentHeight, err := m.client.LatestBlockHeight(m.ctx)
 	if err != nil {
 		logging.Error("Failed to latest block", types.Messages, "tx_id", id, "error", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	timeout := uint64(currentHeight) + m.blockTimeout
 	logging.Info(
-		"Build tx params", types.Messages,
+		"d tx params", types.Messages,
 		"tx_id", id,
 		"sequence", sequence,
 		"account_name", m.account.Name,
@@ -452,7 +445,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, er
 
 	unsignedTx, err := factory.BuildUnsignedTx(rawTx)
 	if err != nil {
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	unsignedTx.SetGasLimit(1000000000)
@@ -461,30 +454,29 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, er
 	err = txclient.Sign(m.ctx, factory, m.account.Name, unsignedTx, false)
 	if err != nil {
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	txBytes, err := m.client.Context().TxConfig.TxEncoder()(unsignedTx.GetTx())
 	if err != nil {
 		logging.Error("Failed to encode transaction", types.Messages, "tx_id", id, "error", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	resp, err := m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		logging.Error("SendTxs: Failed to  Broadcast, try later", types.Messages, "id", id, "err", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
-	// TODO if error is with sequence, stop sending txs and resend txs, which already were sent
 	if resp.Code > 0 {
 		err = NewTransactionErrorFromResponse(resp)
 		logging.Error("SendTxs: Transaction failed during CheckTx or DeliverTx (sync/block mode)", types.Messages, "id", id, "err", err)
-		return "", 0, err
+		return nil, 0, err
 	}
 
 	m.highestSequence = int64(factory.Sequence())
-	return resp.TxHash, unsignedTx.GetTx().GetTimeoutHeight(), nil
+	return resp, unsignedTx.GetTx().GetTimeoutHeight(), nil
 }
 
 func (m *manager) setUpSequenceFromBlockchain() error {
@@ -497,9 +489,10 @@ func (m *manager) setUpSequenceFromBlockchain() error {
 		return err
 	}
 
+	logging.Debug("setUpSequenceFromBlockchain: setup sequence", types.Messages, "sequence", sequence, "highestSequence", m.highestSequence)
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
-	if m.highestSequence > int64(sequence) {
+	if m.highestSequence != int64(sequence) {
 		m.highestSequence = int64(sequence)
 	}
 	return nil
