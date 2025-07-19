@@ -37,8 +37,10 @@ const (
 type TxManager interface {
 	GetClientContext() client.Context
 	SignBytes(seed []byte) ([]byte, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg) (string, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (string, error)
+	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
 	PutTxToSend(rawTx sdk.Msg) error
-	SendTransactionBlocking(msg proto.Message) (*ctypes.ResultTx, error)
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTxs() error
 	ObserveTxs() error
@@ -98,6 +100,58 @@ type txInfo struct {
 	TimeOutHeight uint64
 }
 
+func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg) (string, error) {
+	id := uuid.New().String()
+	txHash, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
+	if broadcastErr != nil {
+		err := m.putOnRetry(id, "", 0, rawTx, false)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	err := m.putOnRetry(id, txHash, timeout, rawTx, true)
+	if err != nil {
+		return txHash, err
+	}
+	return txHash, nil
+}
+
+func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (string, error) {
+	id := uuid.New().String()
+	txHash, _, broadcastErr := m.broadcastMessage(id, rawTx)
+	return txHash, broadcastErr
+}
+
+func (m *manager) putOnRetry(
+	id,
+	txHash string,
+	timeoutBlock uint64,
+	rawTx sdk.Msg,
+	sent bool) error {
+	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
+	if err != nil {
+		return err
+	}
+
+	if id == "" {
+		id = uuid.New().String()
+	}
+
+	b, err := json.Marshal(&txToSend{
+		TxInfo: txInfo{
+			Id:            id,
+			RawTx:         bz,
+			TxHash:        txHash,
+			TimeOutHeight: timeoutBlock,
+		}, Sent: sent})
+	if err != nil {
+		return err
+	}
+	_, err = m.js.Publish(server.TxsToSendStream, b)
+	return err
+}
+
 func (m *manager) PutTxToSend(rawTx sdk.Msg) error {
 	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
 	if err != nil {
@@ -122,13 +176,14 @@ func (m *manager) SignBytes(seed []byte) ([]byte, error) {
 	return bytes, nil
 }
 
-func (m *manager) putTxToObserve(rawTx sdk.Msg, txHash string, timeOutHeight uint64) error {
+func (m *manager) putTxToObserve(id string, rawTx sdk.Msg, txHash string, timeOutHeight uint64) error {
 	bz, err := m.client.Context().Codec.MarshalInterfaceJSON(rawTx)
 	if err != nil {
 		return err
 	}
 
 	b, err := json.Marshal(&txInfo{
+		Id:            id,
 		RawTx:         bz,
 		TxHash:        txHash,
 		TimeOutHeight: timeOutHeight,
@@ -174,7 +229,7 @@ func (m *manager) SendTxs() error {
 			tx.Sent = true
 		}
 
-		if err := m.putTxToObserve(rawTx, tx.TxInfo.TxHash, tx.TxInfo.TimeOutHeight); err != nil {
+		if err := m.putTxToObserve(tx.TxInfo.Id, rawTx, tx.TxInfo.TxHash, tx.TxInfo.TimeOutHeight); err != nil {
 			logging.Error("error pushing to observe queue", types.Messages, "id", tx.TxInfo.Id, "err", err)
 			msg.NakWithDelay(defaultNackDelay)
 		} else {
@@ -289,7 +344,7 @@ func (m *manager) resendAllTxs() error {
 	return nil
 }
 
-func (m *manager) SendTransactionBlocking(msg proto.Message) (*ctypes.ResultTx, error) {
+func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
 	id := uuid.New().String()
 	txHash, _, err := m.broadcastMessage(id, msg)
 	if err != nil {
@@ -428,7 +483,7 @@ func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (string, uint64, er
 		return "", 0, err
 	}
 
-	m.highestSequence++
+	m.highestSequence = int64(factory.Sequence())
 	return resp.TxHash, unsignedTx.GetTx().GetTimeoutHeight(), nil
 }
 

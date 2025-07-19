@@ -144,7 +144,7 @@ type CosmosMessageClient interface {
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	SendTransaction(msg sdk.Msg) error
-	SendTransactionBlocking(transaction proto.Message, dstMsg proto.Message) error
+	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
 	GetContext() context.Context
 	GetAddress() string
 	GetAccount() *cosmosaccount.Account
@@ -226,7 +226,7 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 	transaction.Creator = icc.address
 	msg := &inference.MsgCreateTrainingTaskResponse{}
 
-	if err := icc.SendTransactionBlocking(transaction, msg); err != nil {
+	if err := icc.SendTransactionSyncNoRetry(transaction, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -235,7 +235,7 @@ func (icc *InferenceCosmosClient) CreateTrainingTask(transaction *inference.MsgC
 func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *inference.MsgClaimTrainingTaskForAssignment) (*inference.MsgClaimTrainingTaskForAssignmentResponse, error) {
 	transaction.Creator = icc.address
 	msg := &inference.MsgClaimTrainingTaskForAssignmentResponse{}
-	if err := icc.SendTransactionBlocking(transaction, msg); err != nil {
+	if err := icc.SendTransactionSyncNoRetry(transaction, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -243,7 +243,7 @@ func (icc *InferenceCosmosClient) ClaimTrainingTaskForAssignment(transaction *in
 
 func (icc *InferenceCosmosClient) AssignTrainingTask(transaction *inference.MsgAssignTrainingTask) (*inference.MsgAssignTrainingTaskResponse, error) {
 	transaction.Creator = icc.address
-	result, err := icc.manager.SendTransactionBlocking(transaction)
+	result, err := icc.manager.SendTransactionSyncNoRetry(transaction)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
 		return nil, err
@@ -347,8 +347,8 @@ func WaitForResponse[T proto.Message](ctx context.Context, client *cosmosclient.
 }
 */
 
-func (icc *InferenceCosmosClient) SendTransactionBlocking(transaction proto.Message, dstMsg proto.Message) error {
-	result, err := icc.manager.SendTransactionBlocking(transaction)
+func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {
+	result, err := icc.manager.SendTransactionSyncNoRetry(transaction)
 	if err != nil {
 		logging.Error("Failed to send transaction", types.Messages, "error", err, "result", result)
 		return err
