@@ -49,6 +49,8 @@ func ProcessStartInference(
 			startMessage.RequestedBy,
 			"model",
 			startMessage.Model,
+			"assignedTo",
+			startMessage.AssignedTo,
 		)
 		currentInference = &types.Inference{
 			Index:       startMessage.InferenceId,
@@ -57,8 +59,12 @@ func ProcessStartInference(
 		}
 	}
 	// Works if FinishInference came before
+	currentInference.RequestTimestamp = startMessage.RequestTimestamp
+	currentInference.TransferredBy = startMessage.Creator
+	currentInference.TransferSignature = startMessage.TransferSignature
 	currentInference.PromptHash = startMessage.PromptHash
 	currentInference.PromptPayload = startMessage.PromptPayload
+	currentInference.OriginalPrompt = startMessage.OriginalPrompt
 	if currentInference.PromptTokenCount == 0 {
 		currentInference.PromptTokenCount = startMessage.PromptTokenCount
 	}
@@ -71,6 +77,9 @@ func ProcessStartInference(
 	currentInference.NodeVersion = startMessage.NodeVersion
 
 	if currentInference.EscrowAmount == 0 {
+		if startMessage.PromptTokenCount == 0 {
+			logger.LogWarn("PromptTokens is 0 when StartInference is called!", types.Inferences, "inferenceId", startMessage.InferenceId)
+		}
 		escrowAmount := CalculateEscrow(currentInference, startMessage.PromptTokenCount)
 		// We are NOT setting inference.EscrowAmount here, because it will be set later after
 		// escrow is SUCCESSFULLY put in escrow.
@@ -123,11 +132,24 @@ func ProcessFinishInference(
 	if finishMessage.PromptTokenCount != 0 {
 		currentInference.PromptTokenCount = finishMessage.PromptTokenCount
 	}
+	// TODO: What if there are discrepancies between existing values and the ones in finishMessage?
+	currentInference.RequestTimestamp = finishMessage.RequestTimestamp
+	currentInference.TransferredBy = finishMessage.TransferredBy
+	currentInference.TransferSignature = finishMessage.TransferSignature
+	currentInference.ExecutionSignature = finishMessage.ExecutorSignature
+	currentInference.OriginalPrompt = finishMessage.OriginalPrompt
+
 	currentInference.CompletionTokenCount = finishMessage.CompletionTokenCount
 	currentInference.ExecutedBy = finishMessage.ExecutedBy
 	currentInference.EndBlockHeight = blockContext.BlockHeight
 	currentInference.EndBlockTimestamp = blockContext.BlockTimestamp
 
+	if currentInference.PromptTokenCount == 0 {
+		logger.LogWarn("PromptTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	}
+	if currentInference.CompletionTokenCount == 0 {
+		logger.LogWarn("CompletionTokens is 0 when FinishInference is called!", types.Inferences, "inferenceId", currentInference.InferenceId)
+	}
 	currentInference.ActualCost = CalculateCost(currentInference)
 	if startProcessed(currentInference) {
 		escrowAmount := currentInference.EscrowAmount

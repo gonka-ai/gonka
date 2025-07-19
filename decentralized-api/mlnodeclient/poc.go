@@ -1,16 +1,23 @@
 package mlnodeclient
 
 import (
+	"context"
+	"crypto/sha256"
 	"decentralized-api/utils"
+	"encoding/binary"
+	"fmt"
+	"math/rand"
 	"net/url"
 )
 
 const (
-	InitGeneratePath = "/api/v1/pow/init/generate"
+	InitGeneratePath  = "/api/v1/pow/init/generate"
+	InitValidatePath  = "/api/v1/pow/init/validate"
+	ValidateBatchPath = "/api/v1/pow/validate"
 
 	DefaultRTarget        = 1.3971164020989417
 	DefaultBatchSize      = 100
-	DefaultFraudThreshold = 0.01
+	DefaultFraudThreshold = 1e-7
 )
 
 type InitDto struct {
@@ -26,7 +33,12 @@ type InitDto struct {
 	URL            string  `json:"url"`
 }
 
-func BuildInitDto(blockHeight int64, pubKey string, totalNodes, nodeNum int64, blockHash, callbackUrl string) InitDto {
+func BuildInitDto(
+	blockHeight int64,
+	pubKey string,
+	totalNodes, nodeNum int64,
+	blockHash, callbackUrl string,
+) InitDto {
 	return InitDto{
 		BlockHeight:    blockHeight,
 		BlockHash:      blockHash,
@@ -97,13 +109,123 @@ var TestNetParams = Params{
 	SeqLen:           128,
 }
 
-func (api *Client) InitGenerate(dto InitDto) error {
+type ProofBatch struct {
+	PublicKey   string    `json:"public_key"`
+	BlockHash   string    `json:"block_hash"`
+	BlockHeight int64     `json:"block_height"`
+	Nonces      []int64   `json:"nonces"`
+	Dist        []float64 `json:"dist"`
+}
+
+type ValidatedBatch struct {
+	ProofBatch // Inherits from ProofBatch
+
+	// New fields
+	ReceivedDist      []float64 `json:"received_dist"`
+	RTarget           float64   `json:"r_target"`
+	FraudThreshold    float64   `json:"fraud_threshold"`
+	NInvalid          int64     `json:"n_invalid"`
+	ProbabilityHonest float64   `json:"probability_honest"`
+	FraudDetected     bool      `json:"fraud_detected"`
+}
+
+// This sample doesn't have to be cryptographically secure as it's only used for sampling nonces to validate.
+// If it can't be reproduced on another machine, it's also not causing any harm as it's not validated on-chain.
+func (pb ProofBatch) SampleNoncesToValidate(
+	validatorPublicKey string,
+	nNonces int64,
+) ProofBatch {
+	totalNonces := int64(len(pb.Nonces))
+	if nNonces >= totalNonces {
+		return pb
+	}
+
+	nonceIndexes := deterministicSampleIndices(
+		validatorPublicKey,
+		pb.BlockHash,
+		pb.BlockHeight,
+		nNonces,
+		totalNonces,
+	)
+
+	sampledNonces := make([]int64, nNonces)
+	sampledDist := make([]float64, nNonces)
+
+	for i, idx := range nonceIndexes {
+		sampledNonces[i] = pb.Nonces[idx]
+		sampledDist[i] = pb.Dist[idx]
+	}
+
+	return ProofBatch{
+		PublicKey:   pb.PublicKey,
+		BlockHash:   pb.BlockHash,
+		BlockHeight: pb.BlockHeight,
+		Nonces:      sampledNonces,
+		Dist:        sampledDist,
+	}
+}
+
+func deterministicSampleIndices(
+	validatorPublicKey string,
+	blockHash string,
+	blockHeight int64,
+	nSamples int64,
+	totalItems int64,
+) []int {
+	if nSamples >= totalItems {
+		indices := make([]int, totalItems)
+		for i := int64(0); i < totalItems; i++ {
+			indices[i] = int(i)
+		}
+		return indices
+	}
+
+	seedInput := fmt.Sprintf("%s:%s:%d", validatorPublicKey, blockHash, blockHeight)
+	hash := sha256.Sum256([]byte(seedInput))
+	seed := int64(binary.BigEndian.Uint64(hash[:8]))
+
+	source := rand.NewSource(seed)
+	rng := rand.New(source)
+	indices := rng.Perm(int(totalItems))[:nSamples]
+
+	return indices
+}
+
+func (api *Client) InitGenerate(context context.Context, dto InitDto) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, InitGeneratePath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(&api.client, requestUrl, dto)
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *Client) InitValidate(context context.Context, dto InitDto) error {
+	requestUrl, err := url.JoinPath(api.pocUrl, InitValidatePath)
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, dto)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *Client) ValidateBatch(context context.Context, batch ProofBatch) error {
+	requestUrl, err := url.JoinPath(api.pocUrl, ValidateBatchPath)
+	if err != nil {
+		return err
+	}
+
+	_, err = utils.SendPostJsonRequest(context, &api.client, requestUrl, batch)
 	if err != nil {
 		return err
 	}

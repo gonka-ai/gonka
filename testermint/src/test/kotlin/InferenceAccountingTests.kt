@@ -17,6 +17,9 @@ import com.productscience.inferenceRequest
 import com.productscience.inferenceRequestObject
 import com.productscience.initCluster
 import com.productscience.logSection
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.Tag
@@ -39,13 +42,26 @@ class InferenceAccountingTests : TestermintTest() {
     fun `test with maximum tokens`() {
         val (cluster, genesis) = initCluster()
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(cluster, inferenceRequestObject.copy(maxCompletionTokens = 100), 119L * DEFAULT_TOKEN_COST, 100)
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        verifyEscrow(cluster, inferenceRequestObject.copy(maxTokens = 100), 119L * DEFAULT_TOKEN_COST, 100)
+        val maxCompletionTokens = 100
+        verifyEscrow(
+            cluster,
+            inferenceRequestObject.copy(maxCompletionTokens = maxCompletionTokens),
+            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            maxCompletionTokens
+        )
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         verifyEscrow(
-            cluster, inferenceRequestObject,
-            (DEFAULT_TOKENS + 19) * DEFAULT_TOKEN_COST, DEFAULT_TOKENS.toInt()
+            cluster,
+            inferenceRequestObject.copy(maxTokens = maxCompletionTokens),
+            (maxCompletionTokens + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            maxCompletionTokens
+        )
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
+        verifyEscrow(
+            cluster,
+            inferenceRequestObject,
+            (DEFAULT_TOKENS + inferenceRequestObject.textLength()) * DEFAULT_TOKEN_COST,
+            DEFAULT_TOKENS.toInt()
         )
     }
 
@@ -61,9 +77,19 @@ class InferenceAccountingTests : TestermintTest() {
             it.mock?.setInferenceResponse(defaultInferenceResponseObject, Duration.ofSeconds(10))
         }
         val seed = Random.nextInt()
-        genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
-        val lastRequest =
-            cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+
+        CoroutineScope(Dispatchers.Default).launch {
+            genesis.makeInferenceRequest(inference.copy(seed = seed).toJson())
+        }
+
+        var lastRequest: InferenceRequestPayload? = null
+        var attempts = 0
+        while (lastRequest == null && attempts < 5) {
+            Thread.sleep(Duration.ofSeconds(1))
+            attempts++
+            lastRequest = cluster.allPairs.firstNotNullOfOrNull { it.mock?.getLastInferenceRequest()?.takeIf { it.seed == seed } }
+        }
+
         assertThat(lastRequest).isNotNull
         assertThat(lastRequest?.maxTokens).withFailMessage { "Max tokens was not set" }.isNotNull()
         assertThat(lastRequest?.maxTokens).isEqualTo(expectedMaxTokens)
@@ -175,7 +201,7 @@ class InferenceAccountingTests : TestermintTest() {
         cluster.withConsumer("consumer1") { consumer ->
             val balanceAtStart = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
             logSection("Making inference with consumer account")
-            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address)
+            val result = consumer.pair.makeInferenceRequest(inferenceRequest, consumer.address, taAddress = genesis.node.getAddress())
             assertThat(result).isNotNull
             var inference: InferencePayload? = null
             var tries = 0
@@ -199,16 +225,16 @@ class InferenceAccountingTests : TestermintTest() {
 
     private fun getFailingInference(
         cluster: LocalCluster,
-        failingAddress: String,
         requestingNode: LocalInferencePair = cluster.genesis,
         requester: String? = cluster.genesis.node.getAddress(),
+        taAddress: String = requestingNode.node.getAddress(),
     ): List<InferencePayload> {
         var failed = false
         val results: MutableList<InferencePayload> = mutableListOf()
         while (!failed) {
             val currentBlock = cluster.genesis.getCurrentBlockHeight()
             try {
-                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester)
+                val response = requestingNode.makeInferenceRequest(inferenceRequest, requester, taAddress = requestingNode.node.getAddress())
                 cluster.genesis.node.waitForNextBlock()
                 results.add(cluster.genesis.api.getInference(response.id))
             } catch (e: Exception) {
@@ -220,7 +246,7 @@ class InferenceAccountingTests : TestermintTest() {
                     val inferences = cluster.genesis.node.getInferences()
                     foundInference =
                         inferences.inference
-                            .firstOrNull { it.assignedTo == failingAddress && it.startBlockHeight >= currentBlock }
+                            .firstOrNull { it.startBlockHeight >= currentBlock }
                     if (tries++ > 5) {
                         error("Could not find inference after block $currentBlock")
                     }
@@ -236,7 +262,7 @@ class InferenceAccountingTests : TestermintTest() {
     fun `verify failed inference is refunded`() {
         val (localCluster, genesis) = initCluster()
         logSection("Waiting to clear claims")
-        genesis.waitForStage(EpochStage.END_OF_POC)
+        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         logSection("Making inference that will fail")
         val balanceAtStart = genesis.node.getSelfBalance()
         val timeoutsAtStart = genesis.node.getInferenceTimeouts()
@@ -280,27 +306,31 @@ class InferenceAccountingTests : TestermintTest() {
         localCluster.withConsumer("consumer1") { consumer ->
             logSection("Making inference that will fail")
             val startBalance = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            localCluster.joinPairs.first().mock?.setInferenceResponse("This is invalid json!!!")
-            val failingAddress = localCluster.joinPairs.first().node.getAddress()
-            val inferences = getFailingInference(localCluster, failingAddress, consumer.pair, consumer.address)
-            val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
-            val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
-            logSection("Waiting for inference to expire")
-            genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
-            logSection("Verifying inference was expired and refunded")
-            val finishedInferences = inferences.map {
-                genesis.api.getInference(it.index)
+            localCluster.joinPairs.forEach {
+                it.mock?.setInferenceResponse("This is invalid json!!!")
             }
-            val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
-            val expectedBalance = finishedInferences.sumOf {
-                if (it.status == InferenceStatus.EXPIRED.value) {
-                    0
-                } else {
-                    it.actualCost!!
-                }
+            Thread.sleep(5000)
+            genesis.markNeedsReboot() // Failed inferences mess with reputations!
+            var failure: Exception? = null
+            try {
+                genesis.waitForNextInferenceWindow()
+                val result = consumer.pair.makeInferenceRequest(
+                    inferenceRequest,
+                    consumer.address,
+                    taAddress = genesis.node.getAddress()
+                )
+            } catch(e: com.github.kittinunf.fuel.core.FuelError) {
+                failure = e
+                val expirationBlocks = genesis.node.getInferenceParams().params.validationParams.expirationBlocks + 1
+                val expirationBlock = genesis.getCurrentBlockHeight() + expirationBlocks
+                logSection("Waiting for inference to expire")
+                genesis.node.waitForMinimumBlock(expirationBlock, "inferenceExpiration")
+                logSection("Verifying inference was expired and refunded")
+                val balanceAfterSettle = genesis.node.getBalance(consumer.address, "nicoin").balance.amount
+                val changes = startBalance - balanceAfterSettle
+                assertThat(changes).isZero()
             }
-            val changes = startBalance - balanceAfterSettle
-            assertThat(changes).isEqualTo(expectedBalance)
+            assertThat(failure).isNotNull()
         }
     }
 }
@@ -317,7 +347,7 @@ fun verifySettledInferences(
     // More than just debugging, this forces the evaluation of the sequence
     val allInferences = inferences.toList()
     highestFunded.waitForStage(EpochStage.START_OF_POC)
-    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS)
+    highestFunded.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
 
     logSection("Verifying balance changes")
     val afterSettleParticipants = highestFunded.api.getParticipants()

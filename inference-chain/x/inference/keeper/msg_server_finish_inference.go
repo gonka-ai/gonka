@@ -14,9 +14,28 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 
 	k.LogInfo("FinishInference", types.Inferences, "inference_id", msg.InferenceId, "executed_by", msg.ExecutedBy, "created_by", msg.Creator)
 
-	_, found := k.GetParticipant(ctx, msg.ExecutedBy)
+	executor, found := k.GetParticipant(ctx, msg.ExecutedBy)
 	if !found {
+		k.LogError("FinishInference: executor not found", types.Inferences, "executed_by", msg.ExecutedBy)
 		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.ExecutedBy)
+	}
+
+	requestor, found := k.GetParticipant(ctx, msg.RequestedBy)
+	if !found {
+		k.LogError("FinishInference: requestor not found", types.Inferences, "requested_by", msg.RequestedBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.RequestedBy)
+	}
+
+	transferAgent, found := k.GetParticipant(ctx, msg.TransferredBy)
+	if !found {
+		k.LogError("FinishInference: transfer agent not found", types.Inferences, "transferred_by", msg.TransferredBy)
+		return nil, sdkerrors.Wrap(types.ErrParticipantNotFound, msg.TransferredBy)
+	}
+
+	err := k.verifyFinishKeys(goCtx, msg, &transferAgent, &requestor, &executor)
+	if err != nil {
+		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
+		return nil, sdkerrors.Wrap(types.ErrInvalidSignature, err.Error())
 	}
 
 	existingInference, found := k.GetInference(ctx, msg.InferenceId)
@@ -32,7 +51,6 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 		return nil, err
 	}
 	k.SetInference(ctx, *finalInference)
-
 	if existingInference.IsCompleted() {
 		err := k.handleInferenceCompleted(ctx, &existingInference)
 		if err != nil {
@@ -43,6 +61,38 @@ func (k msgServer) FinishInference(goCtx context.Context, msg *types.MsgFinishIn
 	return &types.MsgFinishInferenceResponse{}, nil
 }
 
+func (k msgServer) verifyFinishKeys(ctx context.Context, msg *types.MsgFinishInference, transferAgent *types.Participant, requestor *types.Participant, executor *types.Participant) error {
+	components := getFinishSignatureComponents(msg)
+
+	// Create SignatureData with the necessary participants and signatures
+	sigData := calculations.SignatureData{
+		DevSignature:      msg.InferenceId,
+		TransferSignature: msg.TransferSignature,
+		ExecutorSignature: msg.ExecutorSignature,
+		Dev:               requestor,
+		TransferAgent:     transferAgent,
+		Executor:          executor,
+	}
+
+	// Use the generic VerifyKeys function
+	err := calculations.VerifyKeys(ctx, components, sigData, k)
+	if err != nil {
+		k.LogError("FinishInference: verifyKeys failed", types.Inferences, "error", err)
+		return err
+	}
+
+	return nil
+}
+
+func getFinishSignatureComponents(msg *types.MsgFinishInference) calculations.SignatureComponents {
+	return calculations.SignatureComponents{
+		Payload:         msg.OriginalPrompt,
+		Timestamp:       msg.RequestTimestamp,
+		TransferAddress: msg.TransferredBy,
+		ExecutorAddress: msg.ExecutedBy,
+	}
+}
+
 func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *types.Inference) error {
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
@@ -50,13 +100,19 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 			sdk.NewAttribute("inference_id", existingInference.InferenceId),
 		),
 	)
-	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	if !found {
+		k.LogError("Effective Epoch Index not found", types.EpochGroup)
+		return types.ErrEffectiveEpochNotFound.Wrapf("handleInferenceCompleted: Effective Epoch Index not found")
+	}
+	currentEpochGroup, err := k.GetEpochGroupForEpoch(ctx, *effectiveEpoch)
 	if err != nil {
-		k.LogError("Unable to get current Epoch Group", types.EpochGroup, err)
+		k.LogError("Unable to get current Epoch Group", types.EpochGroup, "err", err)
 		return err
 	}
 
-	existingInference.EpochGroupId = currentEpochGroup.GroupData.PocStartBlockHeight
+	existingInference.EpochPocStartBlockHeight = uint64(effectiveEpoch.PocStartBlockHeight)
+	existingInference.EpochId = effectiveEpoch.Index
 	currentEpochGroup.GroupData.NumberOfRequests++
 
 	executorPower := uint64(0)
@@ -68,7 +124,8 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 			break
 		}
 	}
-	modelEpochGroup, err := k.GetEpochGroup(ctx, currentEpochGroup.GroupData.PocStartBlockHeight, existingInference.Model)
+
+	modelEpochGroup, err := currentEpochGroup.GetSubGroup(ctx, existingInference.Model)
 	if err != nil {
 		k.LogError("Unable to get model Epoch Group", types.EpochGroup, err)
 		return err
@@ -80,13 +137,17 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		ExecutorReputation: executorReputation,
 		TrafficBasis:       uint64(math.Max(currentEpochGroup.GroupData.NumberOfRequests, currentEpochGroup.GroupData.PreviousEpochRequests)),
 		ExecutorPower:      executorPower,
-		EpochId:            currentEpochGroup.GroupData.EpochGroupId,
-		Model:              existingInference.Model,
-		TotalPower:         uint64(modelEpochGroup.GroupData.TotalWeight),
+		// Can be deleted in next upgrade
+		EpochId:      currentEpochGroup.GroupData.EpochGroupId,
+		EpochGroupId: currentEpochGroup.GroupData.EpochGroupId,
+		Model:        existingInference.Model,
+		TotalPower:   uint64(modelEpochGroup.GroupData.TotalWeight),
 	}
 	if inferenceDetails.TotalPower == inferenceDetails.ExecutorPower {
 		k.LogWarn("Executor Power equals Total Power", types.Validation,
 			"model", existingInference.Model,
+			"epoch_id", currentEpochGroup.GroupData.EpochGroupId,
+			"epoch_start_block_height", currentEpochGroup.GroupData.PocStartBlockHeight,
 			"group_id", modelEpochGroup.GroupData.EpochGroupId,
 			"inference_id", existingInference.InferenceId,
 			"executor_id", inferenceDetails.ExecutorId,
@@ -97,7 +158,7 @@ func (k msgServer) handleInferenceCompleted(ctx sdk.Context, existingInference *
 		"Adding Inference Validation Details",
 		types.Validation,
 		"inference_id", inferenceDetails.InferenceId,
-		"epoch_id", inferenceDetails.EpochId,
+		"epoch_group_id", inferenceDetails.EpochGroupId,
 		"executor_id", inferenceDetails.ExecutorId,
 		"executor_power", inferenceDetails.ExecutorPower,
 		"executor_reputation", inferenceDetails.ExecutorReputation,

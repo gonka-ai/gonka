@@ -109,6 +109,18 @@ func (cm *ConfigManager) GetCurrentNodeVersion() string {
 	return cm.currentConfig.CurrentNodeVersion
 }
 
+func (cm *ConfigManager) SetValidationParams(params ValidationParamsCache) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.currentConfig.ValidationParams = params
+	logging.Info("Setting validation params", types.Config, "params", params)
+	return writeConfig(cm.currentConfig, cm.WriterProvider.GetWriter())
+}
+
+func (cm *ConfigManager) GetValidationParams() ValidationParamsCache {
+	return cm.currentConfig.ValidationParams
+}
+
 func (cm *ConfigManager) AddNodeVersion(height int64, version string) error {
 	if !cm.currentConfig.NodeVersions.Insert(height, version) {
 		return nil

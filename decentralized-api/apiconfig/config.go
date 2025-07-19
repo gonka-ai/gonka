@@ -14,6 +14,7 @@ type Config struct {
 	NodeVersions       NodeVersionStack      `koanf:"node_versions"`
 	Nats               NatsServerConfig      `koanf:"nats"`
 	CurrentNodeVersion string                `koanf:"current_node_version"`
+	ValidationParams   ValidationParamsCache `koanf:"validation_params"`
 }
 
 type NatsServerConfig struct {
@@ -141,4 +142,9 @@ type ModelConfig struct {
 type Hardware struct {
 	Type  string `koanf:"type" json:"type"`
 	Count uint32 `koanf:"count" json:"count"`
+}
+
+type ValidationParamsCache struct {
+	TimestampExpiration int64 `koanf:"timestamp_expiration"`
+	TimestampAdvance    int64 `koanf:"timestamp_advance"`
 }

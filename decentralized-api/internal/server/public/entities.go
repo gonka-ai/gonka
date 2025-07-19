@@ -8,14 +8,16 @@ import (
 )
 
 type ChatRequest struct {
-	Body             []byte
-	Request          *http.Request
-	OpenAiRequest    OpenAiRequest
-	AuthKey          string // signature signing inference request
-	PubKey           string // pubkey of participant, who signed inference request
-	Seed             string
-	InferenceId      string
-	RequesterAddress string // address of participant, who signed inference request
+	Body              []byte
+	Request           *http.Request
+	OpenAiRequest     OpenAiRequest
+	AuthKey           string // signature signing inference request
+	Seed              string
+	InferenceId       string
+	RequesterAddress  string // address of participant, who signed inference request
+	TransferAddress   string
+	Timestamp         int64  // timestamp of the request
+	TransferSignature string // signature of the transfer address
 }
 
 type OpenAiRequest struct {
@@ -35,17 +37,6 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-type InferenceTransaction struct {
-	PromptHash           string `json:"promptHash"`
-	PromptPayload        string `json:"promptPayload"`
-	ResponseHash         string `json:"responseHash"`
-	ResponsePayload      string `json:"responsePayload"`
-	PromptTokenCount     uint64 `json:"promptTokenCount"`
-	CompletionTokenCount uint64 `json:"completionTokenCount"`
-	Model                string `json:"model"`
-	Id                   string `json:"id"`
-}
-
 type ModelsResponse struct {
 	Models []types.Model `json:"models"`
 }
@@ -54,7 +45,7 @@ type ActiveParticipantWithProof struct {
 	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
 	Addresses               []string                 `json:"addresses"`
 	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
-	ProofOps                cryptotypes.ProofOps     `json:"proof_ops"`
+	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
 	Validators              []*comettypes.Validator  `json:"validators"`
 	Block                   []*comettypes.Block      `json:"block"`
 	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
@@ -115,14 +106,6 @@ type VerifyBlockRequest struct {
 type Validator struct {
 	PubKey      string `json:"pub_key"`
 	VotingPower int64  `json:"voting_power"`
-}
-
-type SubmitUnfundedNewParticipantDto struct {
-	Address      string `json:"address"`
-	Url          string `json:"url"`
-	ValidatorKey string `json:"validator_key"`
-	PubKey       string `json:"pub_key"`
-	WorkerKey    string `json:"worker_key"`
 }
 
 type UnitOfComputePriceProposalDto struct {

@@ -1,0 +1,67 @@
+services:
+  chain-node:
+    container_name: ${KEY_NAME}-node
+    command: [ "sh", "./init-docker.sh" ]
+    image: ghcr.io/product-science/inferenced
+    volumes:
+      - ./prod-local/${KEY_NAME}:/root/.inference
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - REST_API_ACTIVE=${REST_API_ACTIVE:-false}
+      - SNAPSHOT_INTERVAL=100
+      - SNAPSHOT_KEEP_RECENT=5
+      - DEBUG=false
+    ports:
+      - "${RPC_PORT:-26657}:26657"  # RPC
+      - "${P2P_PORT:-26656}:26656"  # P2P
+    networks:
+      - chain-public
+
+  api:
+    container_name: ${KEY_NAME}-api
+    image: ghcr.io/product-science/api
+    volumes:
+      - ./prod-local/${KEY_NAME}:/root/.inference
+      - ./${NODE_CONFIG}:/root/node_config.json
+    ports:
+      - "${PUBLIC_SERVER_PORT}:9000"
+      - "${ML_SERVER_PORT}:9100"
+      - "${ADMIN_SERVER_PORT}:9200"
+      - "${ML_GRPC_SERVER_PORT}:9300"
+      - "4222:4222"
+    environment:
+      - KEY_NAME=${KEY_NAME}
+      - NODE_HOST=${KEY_NAME}-node
+      - DAPI_API__POC_CALLBACK_URL=${POC_CALLBACK_URL}
+      - DAPI_API__PUBLIC_URL=${PUBLIC_URL}
+      - DAPI_API__PUBLIC_SERVER_PORT=9000
+      - DAPI_API__ML_SERVER_PORT=9100
+      - DAPI_API__ADMIN_SERVER_PORT=9200
+      - DAPI_API__ML_GRPC_SERVER_PORT=9300
+      - DAPI_API__TEST_MODE=true
+      - NODE_CONFIG_PATH=/root/node_config.json
+      - DAPI_NATS__HOST=0.0.0.0
+      - DAPI_NATS__PORT=4222
+      - DAPI_NATS__STORAGE_DIR=/root/nats
+      - DEBUG=true
+    networks:
+      - chain-public
+
+  mock-server:
+    container_name: ${KEY_NAME}-mock-server
+    image: inference-mock-server
+    volumes:
+      - ./prod-local/mock-server/${KEY_NAME}:/app/files
+    build:
+      context: ../testermint
+      dockerfile: Dockerfile
+    environment:
+      - KEY_NAME=${KEY_NAME}
+    ports:
+      - "${WIREMOCK_PORT}:8080"
+    networks:
+      - chain-public
+
+networks:
+  chain-public:
+    name: chain-public

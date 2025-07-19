@@ -3,338 +3,63 @@ package poc
 import (
 	"context"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
-	"decentralized-api/utils"
-	"fmt"
-	"net/http"
-	"net/url"
-	"sync"
-	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
-	StopAllPath       = "/api/v1/stop"
-	InitValidatePath  = "/api/v1/pow/init/validate"
-	ValidateBatchPath = "/api/v1/pow/validate"
-	PoCStopPath       = "/api/v1/pow/stop"
-	InferenceUpPath   = "/api/v1/inference/up"
-	InferenceDownPath = "/api/v1/inference/down"
-	PoCBatchesPath    = "/v1/poc-batches"
+	POC_VALIDATE_BATCH_RETRIES     = 5
+	POC_VALIDATE_SAMPLES_PER_BATCH = 200
 )
 
-type NodePoCOrchestrator struct {
+type NodePoCOrchestrator interface {
+	ValidateReceivedBatches(startOfValStageHeight int64)
+}
+
+type NodePoCOrchestratorImpl struct {
 	pubKey       string
-	HTTPClient   *http.Client
 	nodeBroker   *broker.Broker
 	callbackUrl  string
+	chainBridge  OrchestratorChainBridge
+	phaseTracker *chainphase.ChainPhaseTracker
+}
+
+type OrchestratorChainBridge interface {
+	PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error)
+	GetBlockHash(height int64) (string, error)
+	GetPocParams() (*types.PocParams, error)
+}
+
+type OrchestratorChainBridgeImpl struct {
+	cosmosClient cosmos_client.CosmosMessageClient
 	chainNodeUrl string
-	cosmosClient *cosmos_client.InferenceCosmosClient
-	noOp         bool
-	parameters   *types.Params
-	sync         sync.Mutex
 }
 
-func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient *cosmos_client.InferenceCosmosClient, parameters *types.Params) *NodePoCOrchestrator {
-	return &NodePoCOrchestrator{
-		pubKey: pubKey,
-		HTTPClient: &http.Client{
-			Timeout: 180 * time.Second,
-		},
-		nodeBroker:   nodeBroker,
-		callbackUrl:  callbackUrl,
-		chainNodeUrl: chainNodeUrl,
-		cosmosClient: cosmosClient,
-		parameters:   parameters,
-	}
-}
-
-func (o *NodePoCOrchestrator) GetParams() *types.Params {
-	o.sync.Lock()
-	defer o.sync.Unlock()
-	return o.parameters
-}
-
-func (o *NodePoCOrchestrator) SetParams(params *types.Params) {
-	o.sync.Lock()
-	defer o.sync.Unlock()
-	o.parameters = params
-}
-
-func (o *NodePoCOrchestrator) getPocBatchesCallbackUrl() string {
-	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
-}
-
-func (o *NodePoCOrchestrator) getPocValidateCallbackUrl() string {
-	// For now the URl is the same, the node inference server appends "/validated" to the URL
-	//  or "/generated" (in case of init-generate)
-	return fmt.Sprintf("%s"+PoCBatchesPath, o.callbackUrl)
-}
-
-var DefaultParams = Params{
-	Dim:              512,
-	NLayers:          64,
-	NHeads:           128,
-	NKVHeads:         128,
-	VocabSize:        8192,
-	FFNDimMultiplier: 16.0,
-	MultipleOf:       1024,
-	NormEps:          1e-05,
-	RopeTheta:        500000.0,
-	UseScaledRope:    true,
-	SeqLen:           4,
-}
-
-var DevTestParams = Params{
-	Dim:              512,
-	NLayers:          16,
-	NHeads:           16,
-	NKVHeads:         16,
-	VocabSize:        8192,
-	FFNDimMultiplier: 1.3,
-	MultipleOf:       1024,
-	NormEps:          1e-05,
-	RopeTheta:        500000.0,
-	UseScaledRope:    true,
-	SeqLen:           4,
-}
-
-var TestNetParams = Params{
-	Dim:              2048,
-	NLayers:          16,
-	NHeads:           16,
-	NKVHeads:         16,
-	VocabSize:        8192,
-	FFNDimMultiplier: 1.3,
-	MultipleOf:       1024,
-	NormEps:          1e-5,
-	RopeTheta:        500000.0,
-	UseScaledRope:    true,
-	SeqLen:           16,
-}
-
-func (o *NodePoCOrchestrator) StartPoC(blockHeight int64, blockHash string) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.Start. NoOp is set. Skipping start.", types.PoC)
-		return
-	}
-
-	o.nodeBroker.SetChainState(broker.ChainStatePOC)
-
-	command := broker.StartPocCommand{
-		BlockHeight: blockHeight,
-		BlockHash:   blockHash,
-		PubKey:      o.pubKey,
-		CallbackUrl: o.getPocBatchesCallbackUrl(),
-		Response:    make(chan bool, 2),
-	}
-	err := o.nodeBroker.QueueMessage(command)
+func (b *OrchestratorChainBridgeImpl) PoCBatchesForStage(startPoCBlockHeight int64) (*types.QueryPocBatchesForStageResponse, error) {
+	response, err := b.cosmosClient.NewInferenceQueryClient().PocBatchesForStage(*b.cosmosClient.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: startPoCBlockHeight})
 	if err != nil {
-		logging.Error("Failed to send start PoC command", types.PoC, "error", err)
-		return
-	}
-
-	success := <-command.Response
-	logging.Info("NodePoCOrchestrator.Start. Start PoC command response", types.PoC, "success", success)
-}
-
-func (o *NodePoCOrchestrator) StopPoC() {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.Stop. NoOp is set. Skipping stop.", types.PoC)
-		return
-	}
-
-	o.nodeBroker.SetChainState(broker.ChainStateWork)
-
-	command := broker.NewInferenceUpAllCommand()
-	err := o.nodeBroker.QueueMessage(command)
-	if err != nil {
-		logging.Error("Failed to send inference up command", types.PoC, "error", err)
-		return
-	}
-
-	success := <-command.Response
-	logging.Info("NodePoCOrchestrator.Stop. Inference up command response", types.PoC, "success", success)
-}
-
-func (o *NodePoCOrchestrator) sendStopRequest(node *broker.Node) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), PoCStopPath)
-	if err != nil {
+		logging.Error("Failed to query PoC batches for stage", types.PoC, "error", err)
 		return nil, err
 	}
-
-	logging.Info("Sending stop request to node", types.PoC, "stopUrl", stopUrl)
-
-	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
+	return response, nil
 }
 
-func (o *NodePoCOrchestrator) sendStopAllRequest(node *broker.Node) (*http.Response, error) {
-	stopUrl, err := url.JoinPath(node.PoCUrl(), StopAllPath)
+func (b *OrchestratorChainBridgeImpl) GetPocParams() (*types.PocParams, error) {
+	response, err := b.cosmosClient.NewInferenceQueryClient().Params(*b.cosmosClient.GetContext(), &types.QueryParamsRequest{})
 	if err != nil {
+		logging.Error("Failed to query params", types.PoC, "error", err)
 		return nil, err
 	}
-
-	logging.Info("Sending stop all request to node", types.Nodes, stopUrl)
-	return utils.SendPostJsonRequest(o.HTTPClient, stopUrl, nil)
+	pocParams := response.Params.PocParams
+	return pocParams, nil
 }
 
-// TODO choose model, instead of pick any model
-func (o *NodePoCOrchestrator) sendInferenceUpRequest(node *broker.Node) (*http.Response, error) {
-	inferenceUpUrl, err := url.JoinPath(node.PoCUrl(), InferenceUpPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var anyModel string
-	var anyModelArgs []string
-
-	for model, args := range node.Models {
-		anyModel = model
-		anyModelArgs = args.Args
-		break
-	}
-
-	inferenceUpDto := InferenceUpDto{
-		Model: anyModel,
-		Dtype: "float16",
-		Args:  anyModelArgs,
-	}
-
-	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", inferenceUpDto)
-
-	return utils.SendPostJsonRequest(o.HTTPClient, inferenceUpUrl, inferenceUpDto)
-}
-
-func (o *NodePoCOrchestrator) sendInferenceDownRequest(node *broker.Node) (*http.Response, error) {
-	inferenceDownUrl, err := url.JoinPath(node.PoCUrl(), InferenceDownPath)
-	if err != nil {
-		return nil, err
-	}
-
-	logging.Info("Sending inference/down request to node", types.Nodes, inferenceDownUrl)
-	return utils.SendPostJsonRequest(o.HTTPClient, inferenceDownUrl, nil)
-}
-
-func (o *NodePoCOrchestrator) sendInitValidateRequest(node *broker.Node, totalNodes, blockHeight int64, blockHash string) (*http.Response, error) {
-	initDto := mlnodeclient.BuildInitDto(blockHeight, o.pubKey, totalNodes, int64(node.NodeNum), blockHash, o.getPocValidateCallbackUrl())
-	initUrl, err := url.JoinPath(node.PoCUrl(), InitValidatePath)
-	if err != nil {
-		return nil, err
-	}
-
-	return utils.SendPostJsonRequest(o.HTTPClient, initUrl, initDto)
-}
-
-func (o *NodePoCOrchestrator) MoveToValidationStage(encOfPoCBlockHeight int64) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.MoveToValidationStage. NoOp is set. Skipping move to validation stage.", types.PoC)
-		return
-	}
-
-	o.nodeBroker.SetChainState(broker.ChainStateValidation)
-
-	epochParams := o.GetParams().EpochParams
-
-	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromEndOfPocStage(encOfPoCBlockHeight)
-	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
-	if err != nil {
-		logging.Error("MoveToValidationStage. Failed to get block hash", types.PoC, "error", err)
-		return
-	}
-
-	logging.Info("Moving to PoC Validation Stage", types.PoC, "startOfPoCBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
-
-	logging.Info("Starting PoC Validation on nodes", types.PoC)
-	nodes, err := o.nodeBroker.GetNodes()
-	if err != nil {
-		logging.Error("Failed to get nodes", types.PoC, "error", err)
-		return
-	}
-
-	totalNodes := int64(len(nodes))
-	for _, n := range nodes {
-		_, err := o.sendInitValidateRequest(n.Node, totalNodes, startOfPoCBlockHeight, blockHash)
-		if err != nil {
-			logging.Error("Failed to send init-generate request to node", types.PoC, "node", n.Node.Host, "error", err)
-			continue
-		}
-		// TODO: analyze response somehow?
-	}
-}
-
-func (o *NodePoCOrchestrator) ValidateReceivedBatches(startOfValStageHeight int64) {
-	if o.noOp {
-		logging.Info("NodePoCOrchestrator.ValidateReceivedBatches. NoOp is set. Skipping validation.", types.PoC)
-		return
-	}
-
-	epochParams := o.GetParams().EpochParams
-	startOfPoCBlockHeight := epochParams.GetStartBlockHeightFromStartOfPocValidationStage(startOfValStageHeight)
-	blockHash, err := o.getBlockHash(startOfPoCBlockHeight)
-	if err != nil {
-		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "error", err)
-		return
-	}
-
-	// 1. GET ALL SUBMITTED BATCHES!
-	// batches, err := o.cosmosClient.GetPoCBatchesByStage(startOfPoCBlockHeight)
-	// FIXME: might be too long of a transaction, paging might be needed
-	queryClient := o.cosmosClient.NewInferenceQueryClient()
-	batches, err := queryClient.PocBatchesForStage(o.cosmosClient.GetContext(), &types.QueryPocBatchesForStageRequest{BlockHeight: startOfPoCBlockHeight})
-	if err != nil {
-		logging.Error("Failed to get PoC batches", types.PoC, "error", err)
-		return
-	}
-
-	nodes, err := o.nodeBroker.GetNodes()
-	if err != nil {
-		logging.Error("Failed to get nodes", types.PoC, "error", err)
-		return
-	}
-
-	if len(nodes) == 0 {
-		logging.Error("No nodes available to validate PoC batches", types.PoC)
-		return
-	}
-
-	for i, batch := range batches.PocBatch {
-		joinedBatch := ProofBatch{
-			PublicKey:   batch.HexPubKey,
-			BlockHash:   blockHash,
-			BlockHeight: startOfPoCBlockHeight,
-		}
-
-		for _, b := range batch.PocBatch {
-			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
-			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
-		}
-		node := nodes[i%len(nodes)]
-
-		logging.Debug("ValidateReceivedBatches. pubKey", types.PoC, "pubKey", batch.HexPubKey)
-		logging.Debug("ValidateReceivedBatches. sending batch", types.PoC, "node", node.Node.Host, "batch", joinedBatch)
-		_, err := o.sendValidateBatchRequest(node.Node, joinedBatch)
-		if err != nil {
-			logging.Error("Failed to send validate batch request to node", types.PoC, "node", node.Node.Host, "error", err)
-			continue
-		}
-	}
-}
-
-// FIXME: copying ;( doesn't look good for large PoCBatch structures
-func (o *NodePoCOrchestrator) sendValidateBatchRequest(node *broker.Node, batch ProofBatch) (*http.Response, error) {
-	validateBatchUrl, err := url.JoinPath(node.PoCUrl(), ValidateBatchPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return utils.SendPostJsonRequest(o.HTTPClient, validateBatchUrl, batch)
-}
-
-func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
-	client, err := cosmos_client.NewRpcClient(o.chainNodeUrl)
+func (b *OrchestratorChainBridgeImpl) GetBlockHash(height int64) (string, error) {
+	client, err := cosmos_client.NewRpcClient(b.chainNodeUrl)
 	if err != nil {
 		return "", err
 	}
@@ -345,4 +70,154 @@ func (o *NodePoCOrchestrator) getBlockHash(height int64) (string, error) {
 	}
 
 	return block.Block.Hash().String(), err
+}
+
+func NewNodePoCOrchestratorForCosmosChain(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainNodeUrl string, cosmosClient cosmos_client.CosmosMessageClient, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
+	return &NodePoCOrchestratorImpl{
+		pubKey:      pubKey,
+		nodeBroker:  nodeBroker,
+		callbackUrl: callbackUrl,
+		chainBridge: &OrchestratorChainBridgeImpl{
+			cosmosClient: cosmosClient,
+			chainNodeUrl: chainNodeUrl,
+		},
+		phaseTracker: phaseTracker,
+	}
+}
+
+func NewNodePoCOrchestrator(pubKey string, nodeBroker *broker.Broker, callbackUrl string, chainBridge OrchestratorChainBridge, phaseTracker *chainphase.ChainPhaseTracker) NodePoCOrchestrator {
+	return &NodePoCOrchestratorImpl{
+		pubKey:       pubKey,
+		nodeBroker:   nodeBroker,
+		callbackUrl:  callbackUrl,
+		chainBridge:  chainBridge,
+		phaseTracker: phaseTracker,
+	}
+}
+
+func (o *NodePoCOrchestratorImpl) ValidateReceivedBatches(startOfValStageHeight int64) {
+	logging.Info("ValidateReceivedBatches. Starting.", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+	epochState := o.phaseTracker.GetCurrentEpochState()
+	if epochState == nil {
+		logging.Error("ValidateReceivedBatches. Current epoch state is nil", types.PoC,
+			"startOfValStageHeight", startOfValStageHeight)
+		return
+	}
+
+	startOfPoCBlockHeight := epochState.LatestEpoch.PocStartBlockHeight
+	// TODO: maybe check if startOfPoCBlockHeight is consistent with current block height or smth?
+	logging.Info("ValidateReceivedBatches. Current epoch state.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"epochState.CurrentBlock.Height", epochState.CurrentBlock.Height,
+		"epochState.CurrentPhase", epochState.CurrentPhase,
+		"epochState.LatestEpoch.PocStartBlockHeight", epochState.LatestEpoch.PocStartBlockHeight,
+		"epochState.LatestEpoch.EpochIndex", epochState.LatestEpoch.EpochIndex)
+
+	blockHash, err := o.chainBridge.GetBlockHash(startOfPoCBlockHeight)
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get block hash", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	logging.Info("ValidateReceivedBatches. Got start of PoC block hash.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight, "pocStartBlockHeight", startOfPoCBlockHeight, "blockHash", blockHash)
+
+	// 1. GET ALL SUBMITTED BATCHES!
+	// batches, err := o.cosmosClient.GetPoCBatchesByStage(startOfPoCBlockHeight)
+	// FIXME: might be too long of a transaction, paging might be needed
+	batches, err := o.chainBridge.PoCBatchesForStage(startOfPoCBlockHeight)
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	participants := make([]string, len(batches.PocBatch))
+	for i, batch := range batches.PocBatch {
+		participants[i] = batch.Participant
+	}
+	logging.Info("ValidateReceivedBatches. Got PoC batches.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"numParticipants", len(batches.PocBatch),
+		"participants", participants)
+
+	nodes, err := o.nodeBroker.GetNodes()
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get nodes", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	logging.Info("ValidateReceivedBatches. Got nodes.", types.PoC, "startOfValStageHeight", startOfValStageHeight, "numNodes", len(nodes))
+
+	if len(nodes) == 0 {
+		logging.Error("ValidateReceivedBatches. No nodes available to validate PoC batches", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		return
+	}
+
+	pocParams, err := o.chainBridge.GetPocParams()
+	if err != nil {
+		logging.Error("ValidateReceivedBatches. Failed to get chain parameters", types.PoC, "startOfValStageHeight", startOfValStageHeight, "error", err)
+		return
+	}
+	samplesPerBatch := int64(pocParams.ValidationSampleSize)
+	if pocParams.ValidationSampleSize == 0 {
+		logging.Info("Defaulting to 200 samples per batch", types.PoC, "startOfValStageHeight", startOfValStageHeight)
+		samplesPerBatch = POC_VALIDATE_SAMPLES_PER_BATCH
+	}
+
+	attemptCounter := 0
+	successfulValidations := 0
+	failedValidations := 0
+
+	for _, batch := range batches.PocBatch {
+		joinedBatch := mlnodeclient.ProofBatch{
+			PublicKey:   batch.HexPubKey,
+			BlockHash:   blockHash,
+			BlockHeight: startOfPoCBlockHeight,
+		}
+
+		for _, b := range batch.PocBatch {
+			joinedBatch.Dist = append(joinedBatch.Dist, b.Dist...)
+			joinedBatch.Nonces = append(joinedBatch.Nonces, b.Nonces...)
+		}
+
+		batchToValidate := joinedBatch.SampleNoncesToValidate(o.pubKey, samplesPerBatch)
+
+		validationSucceeded := false
+		for attempt := range POC_VALIDATE_BATCH_RETRIES {
+			node := nodes[attemptCounter%len(nodes)]
+			attemptCounter++
+
+			logging.Info("ValidateReceivedBatches. Sending sampled batch for validation.", types.PoC,
+				"attempt", attempt,
+				"length", len(batchToValidate.Nonces),
+				"startOfValStageHeight", startOfValStageHeight,
+				"node.Id", node.Node.Id, "node.Host", node.Node.Host,
+				"batch.Participant", batch.Participant)
+			logging.Debug("ValidateReceivedBatches. Sending batch", types.PoC, "node", node.Node.Host, "batch", batchToValidate)
+
+			// FIXME: copying: doesn't look good for large PoCBatch structures?
+			nodeClient := o.nodeBroker.NewNodeClient(&node.Node)
+			err = nodeClient.ValidateBatch(context.Background(), batchToValidate)
+			if err != nil {
+				logging.Error("ValidateReceivedBatches. Failed to send validate batch request to node", types.PoC, "startOfValStageHeight", startOfValStageHeight, "node", node.Node.Host, "error", err)
+				continue
+			}
+
+			validationSucceeded = true
+			break
+		}
+
+		if validationSucceeded {
+			successfulValidations++
+		} else {
+			failedValidations++
+			logging.Error("ValidateReceivedBatches. Failed to validate batch after all retry attempts", types.PoC,
+				"startOfValStageHeight", startOfValStageHeight,
+				"batch.Participant", batch.Participant,
+				"maxAttempts", POC_VALIDATE_BATCH_RETRIES)
+		}
+	}
+
+	logging.Info("ValidateReceivedBatches. Finished.", types.PoC,
+		"startOfValStageHeight", startOfValStageHeight,
+		"totalBatches", len(batches.PocBatch),
+		"successfulValidations", successfulValidations,
+		"failedValidations", failedValidations)
 }

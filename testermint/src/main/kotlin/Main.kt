@@ -1,6 +1,7 @@
 package com.productscience
 
 import com.github.kittinunf.fuel.core.FuelError
+import com.google.gson.FieldNamingPolicy
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.productscience.data.*
@@ -80,7 +81,7 @@ fun getInterruptedStreamingInferenceResult(
         .copy(model = modelName ?: baseObject.model)
     val payload = inferenceObject.toJson()
 
-    val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead)
+    val inference = makeInterruptedStreamingInferenceRequest(highestFunded, payload, maxLinesToRead, checkFinished = true)
     val afterInference = highestFunded.api.getParticipants().also { Logger.info("After inference: $it") }
     return createInferenceResult(inference, afterInference, beforeInferenceParticipants)
 }
@@ -222,10 +223,11 @@ private fun makeStreamingInferenceRequest(highestFunded: LocalInferencePair, pay
  * @return The inference payload
  */
 fun makeInterruptedStreamingInferenceRequest(
-    highestFunded: LocalInferencePair, 
+    highestFunded: LocalInferencePair,
     payload: String,
     maxLinesToRead: Int = 1,
-    check: Boolean = true,
+    checkStarted: Boolean = true,
+    checkFinished: Boolean = false,
 ): InferencePayload {
     highestFunded.waitForFirstValidators()
 
@@ -268,7 +270,7 @@ fun makeInterruptedStreamingInferenceRequest(
 
     logSection("Waiting for stream to complete")
     Thread.sleep(10000)
-    if (!check) {
+    if (!checkStarted && !checkFinished) {
         return InferencePayload.empty()
     }
     check(inferenceId != null) { "Failed to get inference ID from stream before interruption" }
@@ -281,7 +283,11 @@ fun makeInterruptedStreamingInferenceRequest(
         } catch (_: FuelError) {
             InferencePayload.empty()
         }
-    }.take(5).firstOrNull { it != null }
+    }
+        .take(5)
+        .firstOrNull {
+            it.inferenceId.isNotEmpty() && (!checkFinished || it.checkComplete())
+        }
 
     // Note: We don't check if the inference is complete, as it may not be due to interruption
     return inference ?: InferencePayload.empty()
@@ -372,6 +378,7 @@ val cosmosJson: Gson = GsonBuilder()
     .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
     .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
     .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+    .registerMessages("com.productscience.data", FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
     .create()
 
 val openAiJson: Gson = GsonBuilder()
@@ -383,23 +390,26 @@ val openAiJson: Gson = GsonBuilder()
 val gsonCamelCase = createGsonWithTxMessageSerializers("com.productscience.data")
 
 fun createGsonWithTxMessageSerializers(packageName: String): Gson {
-    val gsonBuilder = GsonBuilder()
+    return GsonBuilder()
         .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.IDENTITY)
         .registerTypeAdapter(Instant::class.java, InstantDeserializer())
         .registerTypeAdapter(Duration::class.java, DurationDeserializer())
+        .registerMessages(packageName, FieldNamingPolicy.IDENTITY)
+        .create()
+}
 
+private fun GsonBuilder.registerMessages(packageName: String, fieldNamingPolicy: FieldNamingPolicy): GsonBuilder {
     // Scan the package to get all `TxMessage` implementations
     val reflections = Reflections(packageName)
-    val txMessageSubtypes = reflections.getSubTypesOf(GovernanceMessage::class.java)
+    val txMessageSubtypes = reflections.getSubTypesOf(TxMessage::class.java)
 
     // Register `MessageSerializer` for each implementation of `TxMessage`
     txMessageSubtypes.forEach { subclass ->
         if (!subclass.isInterface) { // Ignore interfaces and abstract classes
-            gsonBuilder.registerTypeAdapter(subclass, MessageSerializer())
+            registerTypeAdapter(subclass, MessageSerializer(fieldNamingPolicy))
         }
     }
-
-    return gsonBuilder.create()
+    return this
 }
 
 val inferenceConfig = ApplicationConfig(
@@ -415,7 +425,7 @@ val inferenceConfig = ApplicationConfig(
     genesisSpec = createSpec()
 )
 
-fun createSpec(epochLength: Long = 10L, epochShift: Int = 0): Spec<AppState> = spec {
+fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = spec {
     this[AppState::gov] = spec<GovState> {
         this[GovState::params] = spec<GovParams> {
             this[GovParams::votingPeriod] = Duration.ofSeconds(30)
@@ -464,9 +474,15 @@ data class InferenceRequestPayload(
     val stream: Boolean = false
 ) {
     fun toJson() = cosmosJson.toJson(this)
+
+    fun textLength(): Int {
+        var promptText = ""
+        for (message in messages) {
+            promptText += message.content + "\n"
+        }
+        return promptText.length
+    }
 }
-// Hardcoded for now
-const val inferenceRequestPromptTokens = 19
 val inferenceRequestObject = InferenceRequestPayload(
     model = "unsloth/llama-3-8b-Instruct",
     temperature = 0.8,

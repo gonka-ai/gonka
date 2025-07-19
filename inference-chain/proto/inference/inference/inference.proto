@@ -39,9 +39,16 @@ message Inference {
   int64 actual_cost = 18;
   int64 escrow_amount = 19;
   ProposalDetails proposal_details = 20;
-  uint64 epoch_group_id = 21;
+  uint64 epoch_group_id = 21; // DEPRECATED: now use epoch_poc_start_block_height. Renaming
   string assigned_to = 22;
   repeated string validated_by = 23;
   string node_version = 24;
+  uint64 epoch_id = 25;
+  uint64 epoch_poc_start_block_height = 26;
+  string transferred_by = 27;
+  int64 request_timestamp = 28;
+  string transfer_signature = 29;
+  string execution_signature = 30;
+  string original_prompt = 31;
 }
 

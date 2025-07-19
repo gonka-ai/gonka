@@ -18,8 +18,12 @@ import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 
 const val LOCAL_TEST_NET_DIR = "local-test-net"
-const val GENESIS_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local-genesis.yml"
-const val NODE_COMPOSE_FILE = "${LOCAL_TEST_NET_DIR}/docker-compose-local.yml"
+val BASE_COMPOSE_FILES = listOf(
+    "${LOCAL_TEST_NET_DIR}/docker-compose-base.yml",
+    "${LOCAL_TEST_NET_DIR}/docker-compose.proxy.yml"
+)
+val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml"
+val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-compose.join.yml"
 
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
@@ -37,6 +41,9 @@ data class DockerGroup(
     val nodeConfigFile: String,
     val isGenesis: Boolean = false,
     val mockExternalPort: Int,
+    val proxyPort: Int,
+    val rpcPort: Int,
+    val p2pPort: Int,
     val workingDirectory: String,
     val genesisGroup: GenesisUrls? = null,
     val genesisOverridesFile: String,
@@ -45,7 +52,7 @@ data class DockerGroup(
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
 ) {
-    val composeFile = if (isGenesis) GENESIS_COMPOSE_FILE else NODE_COMPOSE_FILE
+    val composeFiles = if (isGenesis) GENESIS_COMPOSE_FILES else NODE_COMPOSE_FILES
 
     fun dockerProcess(vararg args: String): ProcessBuilder {
         val envMap = this.getCommonEnvMap(useSnapshots)
@@ -57,17 +64,12 @@ data class DockerGroup(
     fun init() {
         tearDownExisting()
         setupFiles()
-        val dockerProcess = dockerProcess(
-            "compose",
-            "-p",
-            keyName,
-            "-f",
-            composeFile,
-            "--project-directory",
-            workingDirectory,
-            "up",
-            "-d"
-        )
+        val composeArgs = mutableListOf("compose", "-p", keyName)
+        composeFiles.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "up", "-d"))
+        val dockerProcess = dockerProcess(*composeArgs.toTypedArray())
         val process = dockerProcess.start()
         process.inputStream.bufferedReader().lines().forEach { Logger.info(it, "") }
         process.errorStream.bufferedReader().lines().forEach { Logger.info(it, "") }
@@ -78,7 +80,12 @@ data class DockerGroup(
 
     fun tearDownExisting() {
         Logger.info("Tearing down existing docker group with keyName={}", keyName)
-        dockerProcess("compose", "-p", keyName, "--project-directory", workingDirectory, "down").start().waitFor()
+        val composeArgs = mutableListOf("compose", "-p", keyName)
+        composeFiles.forEach { file ->
+            composeArgs.addAll(listOf("-f", file))
+        }
+        composeArgs.addAll(listOf("--project-directory", workingDirectory, "down"))
+        dockerProcess(*composeArgs.toTypedArray()).start().waitFor()
     }
 
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
@@ -104,6 +111,9 @@ data class DockerGroup(
             put("POC_CALLBACK_URL", pocCallbackUrl)
             put("IS_GENESIS", isGenesis.toString().lowercase())
             put("WIREMOCK_PORT", mockExternalPort.toString())
+            put("PROXY_PORT", proxyPort.toString())
+            put("RPC_PORT", rpcPort.toString())
+            put("P2P_PORT", p2pPort.toString())
             put("GENESIS_OVERRIDES_FILE", genesisOverridesFile)
             put("SYNC_WITH_SNAPSHOTS", useSnapshots.toString().lowercase())
             put("SNAPSHOT_INTERVAL", "100")
@@ -220,6 +230,9 @@ fun createDockerGroup(
         nodeConfigFile = nodeConfigFile,
         isGenesis = iteration == 0,
         mockExternalPort = 8090 + iteration,
+        proxyPort = 8000 + iteration,
+        rpcPort = 26657 + iteration,
+        p2pPort = 26656 + iteration,
         workingDirectory = repoRoot,
         genesisOverridesFile = "inference-chain/test_genesis_overrides.json",
         genesisGroup = genesisUrls,
@@ -255,7 +268,8 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         Logger.info("Initializing cluster with {} nodes", allGroups.size)
         allGroups.forEach { it.tearDownExisting() }
         genesisGroup.init()
-        Thread.sleep(Duration.ofSeconds(20L))
+        // TODO: can we wait here by querying the genesis API?
+        Thread.sleep(Duration.ofSeconds(30L))
         joinGroups.forEach { it.init() }
         return allGroups
     } finally {

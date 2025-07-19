@@ -19,7 +19,7 @@ func createNInference(keeper keeper.Keeper, ctx context.Context, n int) []types.
 	items := make([]types.Inference, n)
 	for i := range items {
 		items[i].Index = strconv.Itoa(i)
-
+		items[i].InferenceId = strconv.Itoa(i)
 		keeper.SetInference(ctx, items[i])
 	}
 	return items

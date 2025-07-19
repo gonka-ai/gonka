@@ -57,6 +57,7 @@ class MultiModelTests : TestermintTest() {
     @Tag("unstable")
     fun `invalidate invalid multi model response`() {
         val (cluster, genesis) = initCluster(3)
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         var tries = 5
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
         logSection("Setting up invalid inference")
@@ -78,8 +79,9 @@ class MultiModelTests : TestermintTest() {
     fun `multi model inferences get validated and claimed`() {
         val (cluster, genesis) = initCluster(3)
         logSection("Setting up second model")
-        genesis.waitForStage(EpochStage.END_OF_POC)
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
+        genesis.waitForNextInferenceWindow()
         logSection("making inferences")
         val join1Balance = cluster.joinPairs[0].node.getSelfBalance("nicoin")
         val join2Balance = cluster.joinPairs[1].node.getSelfBalance("nicoin")
@@ -88,7 +90,7 @@ class MultiModelTests : TestermintTest() {
         runParallelInferences(genesis, 30, models = models)
         logSection("Verifying some rewards given")
         // We don't need to calculate exact amounts, just that the rewards goes through (claim isn't rejected)
-        genesis.waitForStage(EpochStage.START_OF_POC)
+        // genesis.waitForStage(EpochStage.START_OF_POC) // TODO: Can be deleted if works
         genesis.waitForStage(EpochStage.CLAIM_REWARDS)
         // There is 99.95% chance each pair gets at least one inference (with 30 inferences)
         // If this fails, look to see if the node that doesn't increase it's balance ever got an inference

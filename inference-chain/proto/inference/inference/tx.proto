@@ -78,6 +78,9 @@ message MsgStartInference {
   string node_version   = 9;
   uint64 max_tokens     = 10;
   uint64 prompt_token_count = 11;
+  int64  request_timestamp = 12;
+  string transfer_signature = 14;
+  string original_prompt = 15;
 }
 
 message MsgStartInferenceResponse {
@@ -93,6 +96,12 @@ message MsgFinishInference {
   uint64 prompt_token_count     = 5;
   uint64 completion_token_count = 6;
   string executed_by            = 7;
+  string transferred_by         = 8;
+  int64  request_timestamp      = 9;
+  string transfer_signature     = 10;
+  string executor_signature     = 11;
+  string requested_by           = 12;
+  string original_prompt         = 13;
 }
 
 message MsgFinishInferenceResponse {
@@ -338,7 +347,7 @@ message MsgBridgeExchange {
   string blockNumber            = 7;  // block number where the transaction occurred
   string receiptIndex           = 8;  // index of the transaction receipt in the block
   string receiptsRoot           = 9;  // merkle root of receipts trie for transaction verification
-  
+
 }
 
 message MsgBridgeExchangeResponse {

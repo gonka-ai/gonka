@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
+	keeper2 "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -15,45 +16,54 @@ import (
 const INFERENCE_ID = "inferenceId"
 
 func TestMsgServer_Validation(t *testing.T) {
-	k, ms, ctx := setupMsgServer(t)
-	createParticipants(t, ms, ctx)
-	createCompletedInference(t, ms, ctx)
-	_, err := ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	expected, err := inferenceHelper.StartInference("promptPayload", "Qwen/QwQ-32B", 10020220, keeper.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId: expected.InferenceId,
 		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
 	require.NoError(t, err)
-	inference, found := k.GetInference(ctx, INFERENCE_ID)
+	inference, found := k.GetInference(ctx, expected.InferenceId)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VALIDATED, inference.Status)
 }
 
 func createParticipants(t *testing.T, ms types.MsgServer, ctx context.Context) {
-	MustAddParticipant(t, ms, ctx, testutil.Requester)
-	MustAddParticipant(t, ms, ctx, testutil.Executor)
-	MustAddParticipant(t, ms, ctx, testutil.Validator)
-	MustAddParticipant(t, ms, ctx, testutil.Creator)
+	mockRequester := NewMockAccount(testutil.Requester)
+	mockExecutor := NewMockAccount(testutil.Executor)
+	mockValidator := NewMockAccount(testutil.Validator)
+	mockCreator := NewMockAccount(testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockRequester)
+	MustAddParticipant(t, ms, ctx, *mockExecutor)
+	MustAddParticipant(t, ms, ctx, *mockValidator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
 }
 
 func TestMsgServer_Validation_Invalidate(t *testing.T) {
-	k, ms, ctx, mocks := setupKeeperWithMocks(t)
-	mocks.BankKeeper.ExpectAny(ctx)
-	createParticipants(t, ms, ctx)
-	createCompletedInference(t, ms, ctx)
+	inferenceHelper, k, ctx := NewMockInferenceHelper(t)
+	expected, err := inferenceHelper.StartInference("promptPayload", "Qwen/QwQ-32B", 10020220, keeper.DefaultMaxTokens)
+	require.NoError(t, err)
+	_, err = inferenceHelper.FinishInference()
+	require.NoError(t, err)
+	mocks := inferenceHelper.Mocks
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 1,
 	}, nil)
 	mocks.GroupKeeper.EXPECT().SubmitProposal(ctx, gomock.Any()).Return(&group.MsgSubmitProposalResponse{
 		ProposalId: 2,
 	}, nil)
-	_, err := ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
+	ms := inferenceHelper.MessageServer
+	_, err = ms.Validation(ctx, &types.MsgValidation{
+		InferenceId: expected.InferenceId,
 		Creator:     testutil.Validator,
 		Value:       0.80,
 	})
 	require.NoError(t, err)
-	inference, found := k.GetInference(ctx, INFERENCE_ID)
+	inference, found := k.GetInference(ctx, expected.InferenceId)
 	log.Print(inference)
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
@@ -61,24 +71,24 @@ func TestMsgServer_Validation_Invalidate(t *testing.T) {
 		ProposalId: 1,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_YES,
-		Metadata:   "Invalidate inference " + INFERENCE_ID,
+		Metadata:   "Invalidate inference " + expected.InferenceId,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
 	mocks.GroupKeeper.EXPECT().Vote(ctx, gomock.Eq(&group.MsgVote{
 		ProposalId: 2,
 		Voter:      testutil.Requester,
 		Option:     group.VOTE_OPTION_NO,
-		Metadata:   "Revalidate inference " + INFERENCE_ID,
+		Metadata:   "Revalidate inference " + expected.InferenceId,
 		Exec:       group.Exec_EXEC_TRY,
 	}))
 
 	_, err = ms.Validation(ctx, &types.MsgValidation{
-		InferenceId:  INFERENCE_ID,
+		InferenceId:  expected.InferenceId,
 		Creator:      testutil.Requester,
 		Value:        0.80,
 		Revalidation: true,
 	})
-	inference, found = k.GetInference(ctx, INFERENCE_ID)
+	inference, found = k.GetInference(ctx, expected.InferenceId)
 
 	require.True(t, found)
 	require.Equal(t, types.InferenceStatus_VOTING, inference.Status)
@@ -96,19 +106,12 @@ func TestMsgServer_NoInference(t *testing.T) {
 }
 
 func TestMsgServer_NotFinished(t *testing.T) {
-	_, ms, ctx := setupMsgServer(t)
-	createParticipants(t, ms, ctx)
-	_, err := ms.StartInference(ctx, &types.MsgStartInference{
-		InferenceId:   INFERENCE_ID,
-		PromptHash:    "promptHash",
-		PromptPayload: "promptPayload",
-		RequestedBy:   testutil.Requester,
-		Creator:       testutil.Creator,
-		Model:         "model1",
-	})
+	inferenceHelper, _, ctx := NewMockInferenceHelper(t)
+	requestTimestamp := int64(10020220)
+	expected, err := inferenceHelper.StartInference("promptPayload", "model1", requestTimestamp, keeper.DefaultMaxTokens)
 	require.NoError(t, err)
-	_, err = ms.Validation(ctx, &types.MsgValidation{
-		InferenceId: INFERENCE_ID,
+	_, err = inferenceHelper.MessageServer.Validation(ctx, &types.MsgValidation{
+		InferenceId: expected.InferenceId,
 		Creator:     testutil.Validator,
 		Value:       0.9999,
 	})
@@ -117,7 +120,8 @@ func TestMsgServer_NotFinished(t *testing.T) {
 
 func TestMsgServer_InvalidExecutor(t *testing.T) {
 	_, ms, ctx := setupMsgServer(t)
-	MustAddParticipant(t, ms, ctx, testutil.Validator)
+	mockValidator := NewMockAccount(testutil.Validator)
+	MustAddParticipant(t, ms, ctx, *mockValidator)
 	_, err := ms.Validation(ctx, &types.MsgValidation{
 		InferenceId: INFERENCE_ID,
 		Creator:     testutil.Executor,
@@ -137,7 +141,7 @@ func TestMsgServer_ValidatorCannotBeExecutor(t *testing.T) {
 	require.Error(t, err)
 }
 
-func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Context) {
+func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Context, mocks *keeper2.InferenceMocks) {
 	_, err := ms.StartInference(ctx, &types.MsgStartInference{
 		InferenceId:   "inferenceId",
 		PromptHash:    "promptHash",
@@ -147,6 +151,7 @@ func createCompletedInference(t *testing.T, ms types.MsgServer, ctx context.Cont
 		Model:         "Qwen/QwQ-32B",
 	})
 	require.NoError(t, err)
+	mocks.ExpectAnyCreateGroupWithPolicyCall()
 	_, err = ms.FinishInference(ctx, &types.MsgFinishInference{
 		InferenceId:          "inferenceId",
 		ResponseHash:         "responseHash",

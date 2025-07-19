@@ -14,12 +14,17 @@ data class StakeValidator(
     val consensusPubkey: ConsensusPubkey,
     val status: Int,
     val tokens: Long,
-    val delegatorShares: BigInteger,
+    val delegatorShares: Double,
     val description: ValidatorDescription,
     val unbondingTime: Instant,
     val commission: Commission,
     val minSelfDelegation: String
 )
+
+enum class StakeValidatorStatus(val value: Int) {
+    UNBONDING(2),
+    BONDED(3),
+}
 
 data class ConsensusPubkey(
     val type: String,
@@ -37,9 +42,9 @@ data class Commission(
 )
 
 data class CommissionRates(
-    val rate: Long,
-    val maxRate: Long,
-    val maxChangeRate: Long
+    val rate: Double,
+    val maxRate: Double,
+    val maxChangeRate: Double
 )
 
 data class CometValidatorsResponse(

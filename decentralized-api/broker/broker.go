@@ -1,15 +1,20 @@
 package broker
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,12 +30,78 @@ TRAINING = 3;
 }
 */
 
+// BrokerChainBridge defines the interface for the broker to interact with the blockchain.
+// This abstraction allows for easier testing and isolates the broker from the specifics
+// of the cosmos client implementation.
+type BrokerChainBridge interface {
+	GetHardwareNodes() (*types.QueryHardwareNodesResponse, error)
+	SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error
+	GetBlockHash(height int64) (string, error)
+}
+
+type BrokerChainBridgeImpl struct {
+	client       cosmosclient.CosmosMessageClient
+	chainNodeUrl string
+}
+
+func NewBrokerChainBridgeImpl(client cosmosclient.CosmosMessageClient, chainNodeUrl string) BrokerChainBridge {
+	return &BrokerChainBridgeImpl{client: client, chainNodeUrl: chainNodeUrl}
+}
+
+func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	req := &types.QueryHardwareNodesRequest{
+		Participant: b.client.GetAddress(),
+	}
+	return queryClient.HardwareNodes(*b.client.GetContext(), req)
+}
+
+func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
+	_, err := b.client.SendTransaction(diff)
+	return err
+}
+
+func (b *BrokerChainBridgeImpl) GetBlockHash(height int64) (string, error) {
+	client, err := cosmosclient.NewRpcClient(b.chainNodeUrl)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := client.Block(context.Background(), &height)
+	if err != nil {
+		return "", err
+	}
+
+	return block.Block.Hash().String(), err
+}
+
 type Broker struct {
-	commands       chan Command
-	nodes          map[string]*NodeWithState
-	curMaxNodesNum atomic.Uint64
-	client         cosmosclient.CosmosMessageClient
-	chainState     ChainState
+	highPriorityCommands chan Command
+	lowPriorityCommands  chan Command
+	nodes                map[string]*NodeWithState
+	mu                   sync.RWMutex
+	curMaxNodesNum       atomic.Uint64
+	chainBridge          BrokerChainBridge
+	nodeWorkGroup        *NodeWorkGroup
+	phaseTracker         *chainphase.ChainPhaseTracker
+	participantInfo      participant.CurrenParticipantInfo
+	callbackUrl          string
+	mlNodeClientFactory  mlnodeclient.ClientFactory
+	reconcileTrigger     chan struct{}
+}
+
+const (
+	PoCBatchesPath = "/v1/poc-batches"
+)
+
+func GetPocBatchesCallbackUrl(callbackUrl string) string {
+	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
+}
+
+func GetPocValidateCallbackUrl(callbackUrl string) string {
+	// For now the URl is the same, the node inference server appends "/validated" to the URL
+	//  or "/generated" (in case of init-generate)
+	return fmt.Sprintf("%s"+PoCBatchesPath, callbackUrl)
 }
 
 type ModelArgs struct {
@@ -64,37 +135,68 @@ type NodeWithState struct {
 	State NodeState
 }
 
-type NodeState struct {
-	LockCount       int                      `json:"lock_count"`
-	Operational     bool                     `json:"operational"`
-	FailureReason   string                   `json:"failure_reason"`
-	TrainingTaskId  uint64                   `json:"training_task_id"`
-	Status          types.HardwareNodeStatus `json:"status"`
-	StatusTimestamp time.Time                `json:"status_timestamp"`
-	IntendedStatus  types.HardwareNodeStatus `json:"intended_status,omitempty"`
-	LastStateChange time.Time                `json:"last_state_change"`
+// AdminState tracks administrative enable/disable status
+type AdminState struct {
+	Enabled bool   `json:"enabled"`
+	Epoch   uint64 `json:"epoch"`
 }
 
-type ChainState int
+type NodeState struct {
+	IntendedStatus     types.HardwareNodeStatus `json:"intended_status"`
+	CurrentStatus      types.HardwareNodeStatus `json:"current_status"`
+	ReconcileInfo      *ReconcileInfo           `json:"reconcile_info,omitempty"`
+	cancelInFlightTask func()
 
-const (
-	ChainStateUnknown    ChainState = 0
-	ChainStatePOC        ChainState = 1
-	ChainStateValidation ChainState = 2
-	ChainStateWork       ChainState = 3
-)
+	PocIntendedStatus PocStatus `json:"poc_intended_status"`
+	PocCurrentStatus  PocStatus `json:"poc_current_status"`
 
-func (b *Broker) SetChainState(state ChainState) {
-	b.chainState = state
+	TrainingTask *TrainingTaskPayload `json:"training_task,omitempty"`
+
+	LockCount       int        `json:"lock_count"`
+	FailureReason   string     `json:"failure_reason"`
+	StatusTimestamp time.Time  `json:"status_timestamp"`
+	AdminState      AdminState `json:"admin_state"`
+}
+
+func (s NodeState) MarshalJSON() ([]byte, error) {
+	type Alias NodeState
+	return json.Marshal(&struct {
+		IntendedStatus string `json:"intended_status"`
+		CurrentStatus  string `json:"current_status"`
+		Alias
+	}{
+		IntendedStatus: s.IntendedStatus.String(),
+		CurrentStatus:  s.CurrentStatus.String(),
+		Alias:          (Alias)(s),
+	})
+}
+
+type TrainingTaskPayload struct {
+	Id             uint64         `json:"id"`
+	MasterNodeAddr string         `json:"master_node_addr"`
+	NodeRanks      map[string]int `json:"node_ranks"`
+	WorldSize      int            `json:"world_size"`
+}
+
+type ReconcileInfo struct {
+	Status         types.HardwareNodeStatus `json:"status"`
+	PocStatus      PocStatus                `json:"poc_status"`
+	TrainingTaskId uint64                   `json:"training_task_id"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
-	s.Status = status
+	s.CurrentStatus = status
 	s.StatusTimestamp = time
 }
 
+func (s *NodeState) UpdateStatusWithPocStatusNow(status types.HardwareNodeStatus, pocStatus PocStatus) {
+	s.CurrentStatus = status
+	s.PocCurrentStatus = pocStatus
+	s.StatusTimestamp = time.Now()
+}
+
 func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
-	s.Status = status
+	s.CurrentStatus = status
 	s.StatusTimestamp = time.Now()
 }
 
@@ -104,42 +206,72 @@ func (s *NodeState) Failure(reason string) {
 }
 
 func (s *NodeState) IsOperational() bool {
-	return s.Status != types.HardwareNodeStatus_FAILED
+	return s.CurrentStatus != types.HardwareNodeStatus_FAILED
+}
+
+// ShouldBeOperational checks if node should be operational based on admin state and current epoch
+func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.EpochPhase) bool {
+	return ShouldBeOperational(s.AdminState, latestEpoch, currentPhase)
+}
+
+func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
+	if adminState.Enabled {
+		if latestEpoch > adminState.Epoch {
+			return true
+		} else { // latestEpoch == adminState.Epoch
+			return currentPhase == types.InferencePhase
+		}
+	} else {
+		return adminState.Epoch >= latestEpoch
+	}
 }
 
 type NodeResponse struct {
-	Node  *Node      `json:"node"`
-	State *NodeState `json:"state"`
+	Node  Node      `json:"node"`
+	State NodeState `json:"state"`
 }
 
-func NewBroker(client cosmosclient.CosmosMessageClient) *Broker {
+func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhaseTracker, participantInfo participant.CurrenParticipantInfo, callbackUrl string, clientFactory mlnodeclient.ClientFactory) *Broker {
 	broker := &Broker{
-		commands:   make(chan Command, 100),
-		nodes:      make(map[string]*NodeWithState),
-		client:     client,
-		chainState: ChainStateUnknown,
+		highPriorityCommands: make(chan Command, 100),
+		lowPriorityCommands:  make(chan Command, 10000),
+		nodes:                make(map[string]*NodeWithState),
+		chainBridge:          chainBridge,
+		phaseTracker:         phaseTracker,
+		participantInfo:      participantInfo,
+		callbackUrl:          callbackUrl,
+		mlNodeClientFactory:  clientFactory,
+		reconcileTrigger:     make(chan struct{}, 1),
 	}
+
+	// Initialize NodeWorkGroup
+	broker.nodeWorkGroup = NewNodeWorkGroup()
 
 	go broker.processCommands()
 	go nodeSyncWorker(broker)
+	// Reconciliation is now triggered by OnNewBlockDispatcher
+	// go nodeReconciliationWorker(broker)
 	go nodeStatusQueryWorker(broker)
-	go nodeReconciliationWorker(broker)
+	go broker.reconcilerLoop()
 	return broker
 }
 
-func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) {
+func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan *apiconfig.InferenceNodeConfig {
 	if node == nil {
-		return
+		return nil
 	}
 
+	responseChan := make(chan *apiconfig.InferenceNodeConfig, 2)
 	err := b.QueueMessage(RegisterNode{
 		Node:     *node,
-		Response: make(chan *apiconfig.InferenceNodeConfig, 2),
+		Response: responseChan,
 	})
 	if err != nil {
 		logging.Error("Failed to load node to broker", types.Nodes, "error", err)
 		panic(err)
 	}
+
+	return responseChan
 }
 
 func nodeSyncWorker(broker *Broker) {
@@ -154,51 +286,54 @@ func nodeSyncWorker(broker *Broker) {
 }
 
 func (b *Broker) processCommands() {
-	if b.chainState == ChainStateUnknown {
-		b.SetChainState(ChainStateWork)
-	}
-	for command := range b.commands {
-		logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
-		switch command := command.(type) {
-		case LockAvailableNode:
-			b.lockAvailableNode(command)
-		case ReleaseNode:
-			b.releaseNode(command)
-		case RegisterNode:
-			b.registerNode(command)
-		case RemoveNode:
-			b.removeNode(command)
-		case GetNodesCommand:
-			b.getNodes(command)
-		case SyncNodesCommand:
-			b.syncNodes()
-		case LockNodesForTrainingCommand:
-			b.lockNodesForTraining(command)
-		case StartTrainingCommand:
-			command.Execute(b)
-		case ReconcileNodesCommand:
-			if b.chainState != ChainStateWork {
-				logging.Info("Skipping reconcile nodes command", types.Nodes, "chain_state", b.chainState)
-				continue
-			}
-			b.reconcileNodes(command)
-		case SetNodesActualStatusCommand:
-			b.setNodesActualStatus(command)
-		case InferenceUpAllCommand:
-			if b.chainState != ChainStateWork {
-				logging.Info("Skipping inference up all command", types.Nodes, "chain_state", b.chainState)
-				continue
-			}
-			b.inferenceUpAll(command)
-		case StartPocCommand:
-			if b.chainState != ChainStatePOC {
-				logging.Info("Skipping start poc command", types.Nodes, "chain_state", b.chainState)
-				continue
-			}
-			command.Execute(b)
+	for {
+		select {
+		case command := <-b.highPriorityCommands:
+			b.executeCommand(command)
 		default:
-			logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
+			select {
+			case command := <-b.highPriorityCommands:
+				b.executeCommand(command)
+			case command := <-b.lowPriorityCommands:
+				b.executeCommand(command)
+			}
 		}
+	}
+}
+
+func (b *Broker) executeCommand(command Command) {
+	logging.Debug("Processing command", types.Nodes, "type", reflect.TypeOf(command).String())
+	switch command := command.(type) {
+	case LockAvailableNode:
+		b.lockAvailableNode(command)
+	case ReleaseNode:
+		b.releaseNode(command)
+	case RegisterNode:
+		command.Execute(b)
+	case RemoveNode:
+		command.Execute(b)
+	case GetNodesCommand:
+		command.Execute(b)
+	case SyncNodesCommand:
+		b.syncNodes()
+	case LockNodesForTrainingCommand:
+		b.lockNodesForTraining(command)
+	case StartTrainingCommand:
+		command.Execute(b)
+	case SetNodesActualStatusCommand:
+		command.Execute(b)
+	case SetNodeAdminStateCommand:
+		command.Execute(b)
+	case InferenceUpAllCommand:
+		command.Execute(b)
+	case StartPocCommand:
+		command.Execute(b)
+	case InitValidateCommand:
+		command.Execute(b)
+	case UpdateNodeResultCommand:
+		command.Execute(b)
+	default:
+		logging.Error("Unregistered command type", types.Nodes, "type", reflect.TypeOf(command).String())
 	}
 }
 
@@ -213,83 +348,22 @@ func (b *Broker) QueueMessage(command Command) error {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
 	}
-	b.commands <- command
+
+	switch command.(type) {
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, StartTrainingCommand, LockNodesForTrainingCommand, SyncNodesCommand:
+		b.highPriorityCommands <- command
+	default:
+		b.lowPriorityCommands <- command
+	}
 	return nil
 }
 
-func (b *Broker) getNodes(command GetNodesCommand) {
-	var nodeResponses []NodeResponse
-	for _, node := range b.nodes {
-		nodeResponses = append(nodeResponses, NodeResponse{
-			Node:  &node.Node,
-			State: &node.State,
-		})
-	}
-	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
-	command.Response <- nodeResponses
-}
-
-func (b *Broker) registerNode(command RegisterNode) {
-	b.curMaxNodesNum.Add(1)
-	curNum := b.curMaxNodesNum.Load()
-
-	models := make(map[string]ModelArgs)
-	for model, config := range command.Node.Models {
-		models[model] = ModelArgs{Args: config.Args}
-	}
-
-	node := Node{
-		Host:             command.Node.Host,
-		InferenceSegment: command.Node.InferenceSegment,
-		InferencePort:    command.Node.InferencePort,
-		PoCSegment:       command.Node.PoCSegment,
-		PoCPort:          command.Node.PoCPort,
-		Models:           models,
-		Id:               command.Node.Id,
-		MaxConcurrent:    command.Node.MaxConcurrent,
-		NodeNum:          curNum,
-		Hardware:         command.Node.Hardware,
-		Version:          command.Node.Version,
-	}
-
-	b.nodes[command.Node.Id] = &NodeWithState{
-		Node: node,
-		State: NodeState{
-			LockCount:       0,
-			FailureReason:   "",
-			Status:          types.HardwareNodeStatus_UNKNOWN,
-			StatusTimestamp: time.Now(),
-			IntendedStatus:  types.HardwareNodeStatus_UNKNOWN,
-		},
-	}
-	logging.Debug("Registered node", types.Nodes, "node", command.Node)
-	command.Response <- &command.Node
-}
-
-func newNodeClient(node *Node) *mlnodeclient.Client {
-	return mlnodeclient.NewNodeClient(node.PoCUrl(), node.InferenceUrl())
-}
-
-func (b *Broker) removeNode(command RemoveNode) {
-	if _, ok := b.nodes[command.NodeId]; !ok {
-		command.Response <- false
-		return
-	}
-	delete(b.nodes, command.NodeId)
-	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)
-	command.Response <- true
+func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
+	return b.mlNodeClientFactory.CreateClient(node.PoCUrl(), node.InferenceUrl())
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
-	var leastBusyNode *NodeWithState = nil
-
-	for _, node := range b.nodes {
-		if nodeAvailable(node, command.Model, command.Version) {
-			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
-				leastBusyNode = node
-			}
-		}
-	}
+	leastBusyNode := b.getLeastBusyNode(command)
 
 	if leastBusyNode != nil {
 		leastBusyNode.State.LockCount++
@@ -312,40 +386,87 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	}
 }
 
-func nodeAvailable(node *NodeWithState, neededModel string, version string) bool {
-	available := node.State.IsOperational() && node.State.LockCount < node.Node.MaxConcurrent
-	if !available {
-		return false
+func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
+	epochState := b.phaseTracker.GetCurrentEpochState()
+	if epochState.IsNilOrNotSynced() {
+		logging.Error("getLeastBusyNode. Cannot get least busy node, epoch state is empty", types.Nodes)
+		return nil
 	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var leastBusyNode *NodeWithState = nil
+	for _, node := range b.nodes {
+		// TODO: log some kind of a reason as to why the node is not available
+		if available, reason := b.nodeAvailable(node, command.Model, command.Version, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
+			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
+				leastBusyNode = node
+			}
+		} else {
+			logging.Info("Node not available", types.Nodes, "node_id", node.Node.Id, "reason", reason)
+		}
+	}
+
+	return leastBusyNode
+}
+
+type NodeNotAvailableReason = string
+
+func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, version string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
+		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
+	}
+
+	if node.State.ReconcileInfo != nil {
+		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
+	}
+
+	if node.State.LockCount >= node.Node.MaxConcurrent {
+		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
+	}
+
+	// Check admin state using provided epoch and phase
+	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {
+		return false, fmt.Sprintf("Node is administratively disabled: currentEpoch=%v, currentPhase=%s, adminState = %v", currentEpoch, currentPhase, node.State.AdminState)
+	}
+
 	if version != "" && node.Node.Version != version {
-		return false
+		return false, fmt.Sprintf("Node version mismatch: expected %s, got %s", version, node.Node.Version)
 	}
 
 	_, found := node.Node.Models[neededModel]
 	if !found {
 		logging.Info("Node does not have neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
+		return false, fmt.Sprintf("Node does not have model %s", neededModel)
 	} else {
 		logging.Info("Node has neededModel", types.Nodes, "node_id", node.Node.Id, "neededModel", neededModel)
+		return true, ""
 	}
-	return found
 }
 
 func (b *Broker) releaseNode(command ReleaseNode) {
-	if node, ok := b.nodes[command.NodeId]; !ok {
+	b.mu.RLock()
+	node, ok := b.nodes[command.NodeId]
+	b.mu.RUnlock()
+
+	if !ok {
 		command.Response <- false
 		return
 	} else {
 		node.State.LockCount--
 		if !command.Outcome.IsSuccess() {
 			logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
-			node.State.Failure("Inference failed")
+			// FIXME: need a write lock here?
+			//  not sure if we should update the state, we have health checks for that
+			// node.State.Failure("Inference failed")
 		}
 	}
 	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
 	command.Response <- true
 }
 
-var ErrNoNodesAvailable = errors.New("no nodes available")
+var ErrNoNodesAvailable = errors.New("no nodes available for inference")
 
 func LockNode[T any](
 	b *Broker,
@@ -354,6 +475,7 @@ func LockNode[T any](
 	action func(node *Node) (T, error),
 ) (T, error) {
 	var zero T
+
 	nodeChan := make(chan *Node, 2)
 	err := b.QueueMessage(LockAvailableNode{
 		Model:                model,
@@ -386,15 +508,14 @@ func LockNode[T any](
 	return action(node)
 }
 
-func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
-	response := make(chan []NodeResponse, 2)
-	err := nodeBroker.QueueMessage(GetNodesCommand{
-		Response: response,
-	})
+// FIXME: Should return a copy! To avoid modifying state outside of the broker
+func (b *Broker) GetNodes() ([]NodeResponse, error) {
+	command := NewGetNodesCommand()
+	err := b.QueueMessage(command)
 	if err != nil {
 		return nil, err
 	}
-	nodes := <-response
+	nodes := <-command.Response
 
 	if nodes == nil {
 		return nil, errors.New("Error getting nodes")
@@ -404,25 +525,28 @@ func (nodeBroker *Broker) GetNodes() ([]NodeResponse, error) {
 }
 
 func (b *Broker) syncNodes() {
-	queryClient := b.client.NewInferenceQueryClient()
-
-	req := &types.QueryHardwareNodesRequest{
-		Participant: b.client.GetAddress(),
-	}
-	resp, err := queryClient.HardwareNodes(b.client.GetContext(), req)
+	resp, err := b.chainBridge.GetHardwareNodes()
 	if err != nil {
 		logging.Error("[sync nodes]. Error getting nodes", types.Nodes, "error", err)
 		return
 	}
 	logging.Info("[sync nodes] Fetched chain nodes", types.Nodes, "size", len(resp.Nodes.HardwareNodes))
-	logging.Info("[sync nodes] Local nodes", types.Nodes, "size", len(b.nodes))
 
 	chainNodesMap := make(map[string]*types.HardwareNode)
 	for _, node := range resp.Nodes.HardwareNodes {
 		chainNodesMap[node.LocalId] = node
 	}
 
-	diff := b.calculateNodesDiff(chainNodesMap)
+	b.mu.RLock()
+	nodesCopy := make(map[string]*NodeWithState, len(b.nodes))
+	for id, node := range b.nodes {
+		nodesCopy[id] = node
+	}
+	b.mu.RUnlock()
+
+	logging.Info("[sync nodes] Local nodes", types.Nodes, "size", len(nodesCopy))
+
+	diff := b.calculateNodesDiff(chainNodesMap, nodesCopy)
 
 	logging.Info("[sync nodes] Hardware diff computed", types.Nodes, "diff", diff)
 
@@ -430,17 +554,17 @@ func (b *Broker) syncNodes() {
 		logging.Info("[sync nodes] No diff to submit", types.Nodes)
 	} else {
 		logging.Info("[sync nodes] Submitting diff", types.Nodes)
-		if _, err = b.client.SendTransactionAsyncNoRetry(&diff); err != nil {
+		if err = b.chainBridge.SubmitHardwareDiff(&diff); err != nil {
 			logging.Error("[sync nodes] Error submitting diff", types.Nodes, "error", err)
 		}
 	}
 }
 
-func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode) types.MsgSubmitHardwareDiff {
+func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode, localNodes map[string]*NodeWithState) types.MsgSubmitHardwareDiff {
 	var diff types.MsgSubmitHardwareDiff
-	diff.Creator = b.client.GetAddress()
+	diff.Creator = b.participantInfo.GetAddress()
 
-	for id, localNode := range b.nodes {
+	for id, localNode := range localNodes {
 		localHWNode := convertInferenceNodeToHardwareNode(localNode)
 
 		chainNode, exists := chainNodesMap[id]
@@ -452,7 +576,7 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 	}
 
 	for id, chainNode := range chainNodesMap {
-		if _, exists := b.nodes[id]; !exists {
+		if _, exists := localNodes[id]; !exists {
 			diff.Removed = append(diff.Removed, chainNode)
 		}
 	}
@@ -460,7 +584,9 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 }
 
 func (b *Broker) lockNodesForTraining(command LockNodesForTrainingCommand) {
-	// PRTODO: implement
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// TODO: implement
 	command.Response <- true
 }
 
@@ -475,19 +601,19 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState) *types.HardwareNode {
 		})
 	}
 
-	modelsNames := make([]string, 0)
+	modelNames := make([]string, 0)
 	for model := range node.Models {
-		modelsNames = append(modelsNames, model)
+		modelNames = append(modelNames, model)
 	}
 
 	// sort models names to make sure they will be in same order every time
-	sort.Strings(modelsNames)
+	sort.Strings(modelNames)
 
 	return &types.HardwareNode{
 		LocalId:  node.Id,
-		Status:   in.State.Status,
+		Status:   in.State.CurrentStatus,
 		Hardware: hardware,
-		Models:   modelsNames,
+		Models:   modelNames,
 		Host:     node.Host,
 		Port:     strconv.Itoa(node.PoCPort),
 	}
@@ -558,113 +684,239 @@ func hardwareEquals(a *types.HardwareNode, b *types.HardwareNode) bool {
 	return true
 }
 
-func nodeReconciliationWorker(broker *Broker) {
-	ticker := time.NewTicker(2 * time.Minute) // Reconcile every 2 minutes
+type pocParams struct {
+	startPoCBlockHeight int64
+	startPoCBlockHash   string
+}
+
+const reconciliationInterval = 30 * time.Second
+
+func (b *Broker) TriggerReconciliation() {
+	select {
+	case b.reconcileTrigger <- struct{}{}:
+	default:
+	}
+}
+
+func (b *Broker) reconcilerLoop() {
+	ticker := time.NewTicker(reconciliationInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		logging.Debug("Starting node state reconciliation", types.Nodes)
-		response := make(chan bool, 1)
-		err := broker.QueueMessage(ReconcileNodesCommand{
-			Response: response,
-		})
+	for {
+		select {
+		case <-b.reconcileTrigger:
+			b.reconcileIfSynced("Reconciliation triggered manually")
+		case <-ticker.C:
+			b.reconcileIfSynced("Reconciliation triggered by timer")
+		}
+	}
+}
 
-		if err != nil {
-			logging.Error("Failed to queue reconciliation command", types.Nodes, "error", err)
+func (b *Broker) reconcileIfSynced(triggerMsg string) {
+	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
+	if epochPhaseInfo.IsNilOrNotSynced() {
+		logging.Warn("Reconciliation triggered while epoch phase info is not synced. Skipping", types.Nodes)
+		return
+	}
+
+	logging.Info(triggerMsg, types.Nodes, "blockHeight", epochPhaseInfo.CurrentBlock.Height)
+	b.reconcile(*epochPhaseInfo)
+}
+
+func (b *Broker) reconcile(epochState chainphase.EpochState) {
+	blockHeight := epochState.CurrentBlock.Height
+
+	// Phase 1: Cancel outdated tasks
+	nodesToCancel := make(map[string]func())
+	b.mu.RLock()
+	for id, node := range b.nodes {
+		if node.State.ReconcileInfo != nil &&
+			(node.State.ReconcileInfo.Status != node.State.IntendedStatus ||
+				node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
+			if node.State.cancelInFlightTask != nil {
+				nodesToCancel[id] = node.State.cancelInFlightTask
+			}
+		}
+	}
+	b.mu.RUnlock()
+
+	for id, cancel := range nodesToCancel {
+		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id, "blockHeight", blockHeight)
+		cancel()
+		b.mu.Lock()
+		if node, ok := b.nodes[id]; ok {
+			node.State.ReconcileInfo = nil
+			node.State.cancelInFlightTask = nil
+		}
+		b.mu.Unlock()
+	}
+
+	nodesToDispatch := make(map[string]*NodeWithState)
+	b.mu.RLock()
+	for id, node := range b.nodes {
+		isStable := node.State.ReconcileInfo == nil
+		if !isStable {
 			continue
 		}
 
-		// We don't need to wait for the response here
-	}
-}
-
-func (b *Broker) reconcileNodes(command ReconcileNodesCommand) {
-	for nodeId, node := range b.nodes {
-		// TODO: maybe also skip if status is unknown or smth?
-
-		if node.State.Status == node.State.IntendedStatus {
-			continue // Node is already in the intended state
+		// Condition: The primary or PoC intended state does not match the current state.
+		if node.State.IntendedStatus != node.State.CurrentStatus || node.State.PocIntendedStatus != node.State.PocCurrentStatus {
+			nodeCopy := *node
+			nodesToDispatch[id] = &nodeCopy
 		}
+	}
+	b.mu.RUnlock()
 
-		logging.Info("Node state mismatch detected", types.Nodes,
-			"node_id", nodeId,
-			"current_state", node.State.Status.String(),
-			"intended_state", node.State.IntendedStatus.String())
+	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochState, nodesToDispatch, blockHeight)
 
-		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
-			logging.Info("Reconciliation for non-INFERENCE states not yet implemented",
-				types.Nodes, "node_id", nodeId)
+	for id, node := range nodesToDispatch {
+		// Re-check conditions under write lock to prevent races
+		b.mu.Lock()
+		currentNode, ok := b.nodes[id]
+		if !ok ||
+			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && (currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus)) ||
+			currentNode.State.ReconcileInfo != nil {
+			b.mu.Unlock()
 			continue
 		}
 
-		if node.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
-			(node.State.Status == types.HardwareNodeStatus_UNKNOWN ||
-				node.State.Status == types.HardwareNodeStatus_STOPPED ||
-				node.State.Status == types.HardwareNodeStatus_FAILED) {
-			b.restoreNodeToInferenceState(node)
+		ctx, cancel := context.WithCancel(context.Background())
+		intendedStatusCopy := currentNode.State.IntendedStatus
+		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
+		currentNode.State.ReconcileInfo = &ReconcileInfo{
+			Status:    intendedStatusCopy,
+			PocStatus: pocIntendedStatusCopy,
 		}
-	}
+		currentNode.State.cancelInFlightTask = cancel
 
-	command.Response <- true
-}
+		worker, exists := b.nodeWorkGroup.GetWorker(id)
+		b.mu.Unlock()
 
-func (b *Broker) restoreNodeToInferenceState(node *NodeWithState) {
-	client := newNodeClient(&node.Node)
-
-	nodeId := node.Node.Id
-
-	logging.Info("Attempting to repair node to INFERENCE state", types.Nodes, "node_id", nodeId)
-	status, err := b.queryNodeStatus(node.Node, node.State)
-	if err != nil {
-		logging.Error("Failed to query node status", types.Nodes, "node_id", nodeId, "error", err)
-		return
-	}
-
-	if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
-		logging.Info("Node is already in INFERENCE state", types.Nodes, "node_id", nodeId)
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-		return
-	}
-
-	err = client.Stop()
-	if err != nil {
-		logging.Error("Failed to stop node during reconciliation", types.Nodes,
-			"node_id", nodeId, "error", err)
-		return
-	} else {
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-	}
-
-	err = inferenceUp(&node.Node, client)
-	if err != nil {
-		logging.Error("Failed to bring up inference during reconciliation", types.Nodes, "noeId", nodeId, "error", err)
-		return
-	} else {
-		logging.Info("Successfully repaired node to INFERENCE state", types.Nodes, "nodeId", nodeId)
-		node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-	}
-}
-
-func (b *Broker) setNodesActualStatus(command SetNodesActualStatusCommand) {
-	for _, update := range command.StatusUpdates {
-		nodeId := update.NodeId
-		node, exists := b.nodes[nodeId]
 		if !exists {
-			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
+			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id, "blockHeight", blockHeight)
+			cancel() // Cancel context if worker doesn't exist
+			b.mu.Lock()
+			if nodeToClean, ok := b.nodes[id]; ok {
+				nodeToClean.State.ReconcileInfo = nil
+				nodeToClean.State.cancelInFlightTask = nil
+			}
+			b.mu.Unlock()
 			continue
 		}
 
-		if node.State.StatusTimestamp.After(update.Timestamp) {
-			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
-			continue
+		// Create and dispatch the command
+		cmd := b.getCommandForState(&node.State, currentPoCParams, pocParamsErr, len(nodesToDispatch))
+		if cmd != nil {
+			logging.Info("Dispatching reconciliation command", types.Nodes,
+				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
+			if !worker.Submit(ctx, cmd) {
+				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
+				cancel()
+				b.mu.Lock()
+				if nodeToClean, ok := b.nodes[id]; ok {
+					nodeToClean.State.ReconcileInfo = nil
+					nodeToClean.State.cancelInFlightTask = nil
+				}
+				b.mu.Unlock()
+			}
+		} else {
+			logging.Info("No valid command for reconciliation, cleaning up", types.Nodes, "node_id", id)
+			cancel()
+			b.mu.Lock()
+			if nodeToClean, ok := b.nodes[id]; ok {
+				nodeToClean.State.ReconcileInfo = nil
+				nodeToClean.State.cancelInFlightTask = nil
+			}
+			b.mu.Unlock()
 		}
+	}
+}
 
-		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
-		logging.Info("Set actual status for node", types.Nodes,
-			"node_id", nodeId, "status", update.NewStatus.String())
+func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDispatch map[string]*NodeWithState, blockHeight int64) (*pocParams, error) {
+	needsPocParams := false
+	for _, node := range nodesToDispatch {
+		if node.State.IntendedStatus == types.HardwareNodeStatus_POC {
+			if node.State.PocIntendedStatus == PocStatusGenerating || node.State.PocIntendedStatus == PocStatusValidating {
+				needsPocParams = true
+			}
+		}
 	}
 
-	command.Response <- true
+	if needsPocParams {
+		currentPoCParams, pocParamsErr := b.queryCurrentPoCParams(int64(epochState.LatestEpoch.PocStartBlockHeight))
+		if pocParamsErr != nil {
+			logging.Error("Failed to query PoC Generation parameters, skipping PoC reconciliation", types.Nodes, "error", pocParamsErr, "blockHeight", blockHeight)
+		}
+		return currentPoCParams, pocParamsErr
+	} else {
+		return nil, nil
+	}
+}
+
+func (b *Broker) getCommandForState(nodeState *NodeState, pocGenParams *pocParams, pocGenErr error, totalNodes int) NodeWorkerCommand {
+	switch nodeState.IntendedStatus {
+	case types.HardwareNodeStatus_INFERENCE:
+		return InferenceUpNodeCommand{}
+	case types.HardwareNodeStatus_POC:
+		switch nodeState.PocIntendedStatus {
+		case PocStatusGenerating:
+			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
+				return StartPoCNodeCommand{
+					BlockHeight: pocGenParams.startPoCBlockHeight,
+					BlockHash:   pocGenParams.startPoCBlockHash,
+					PubKey:      b.participantInfo.GetPubKey(),
+					CallbackUrl: GetPocBatchesCallbackUrl(b.callbackUrl),
+					TotalNodes:  totalNodes,
+				}
+			}
+			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
+			return nil
+		case PocStatusValidating:
+			if pocGenParams != nil && pocGenParams.startPoCBlockHeight > 0 {
+				return InitValidateNodeCommand{
+					BlockHeight: pocGenParams.startPoCBlockHeight,
+					BlockHash:   pocGenParams.startPoCBlockHash,
+					PubKey:      b.participantInfo.GetPubKey(),
+					CallbackUrl: GetPocValidateCallbackUrl(b.callbackUrl),
+					TotalNodes:  totalNodes,
+				}
+			}
+			logging.Error("Cannot create InitValidateNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
+			return nil
+		default:
+			return nil // No action for other phases if status is POC
+		}
+	case types.HardwareNodeStatus_STOPPED:
+		return StopNodeCommand{}
+	case types.Training:
+		if nodeState.TrainingTask == nil {
+			logging.Error("Training task ID is nil, cannot create StartTrainingCommand", types.Nodes)
+			return nil
+		}
+		return StartTrainingNodeCommand{
+			TaskId:         nodeState.TrainingTask.Id,
+			Participant:    b.participantInfo.GetAddress(),
+			MasterNodeAddr: nodeState.TrainingTask.MasterNodeAddr,
+			NodeRanks:      nodeState.TrainingTask.NodeRanks,
+			WorldSize:      nodeState.TrainingTask.WorldSize,
+		}
+	default:
+		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
+			"intended_state", nodeState.IntendedStatus.String())
+		return nil
+	}
+}
+
+func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, error) {
+	hash, err := b.chainBridge.GetBlockHash(epochPoCStartHeight)
+	if err != nil {
+		logging.Error("Failed to query PoC start block hash", types.Nodes, "height", epochPoCStartHeight, "error", err)
+		return nil, err
+	}
+	return &pocParams{
+		startPoCBlockHeight: epochPoCStartHeight,
+		startPoCBlockHash:   hash,
+	}, nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
@@ -681,7 +933,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 		statusUpdates := make([]StatusUpdate, 0)
 
 		for _, nodeResp := range nodes {
-			queryStatusResult, err := broker.queryNodeStatus(*nodeResp.Node, *nodeResp.State)
+			queryStatusResult, err := broker.queryNodeStatus(nodeResp.Node, nodeResp.State)
 			timestamp := time.Now()
 			if err != nil {
 				logging.Error("nodeStatusQueryWorker. Failed to queue status query command", types.Nodes,
@@ -704,10 +956,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 		}
 
-		err = broker.QueueMessage(SetNodesActualStatusCommand{
-			StatusUpdates: statusUpdates,
-			Response:      make(chan bool, 2),
-		})
+		err = broker.QueueMessage(NewSetNodesActualStatusCommand(statusUpdates))
 		if err != nil {
 			logging.Error("nodeStatusQueryWorker. Failed to queue status update command", types.Nodes, "error", err)
 			continue
@@ -722,9 +971,9 @@ type statusQueryResult struct {
 
 // Pass by value, because this is supposed to be a readonly function
 func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult, error) {
-	client := newNodeClient(&node)
+	client := b.NewNodeClient(&node)
 
-	status, err := client.NodeState()
+	status, err := client.NodeState(context.Background())
 
 	nodeId := node.Id
 	if err != nil {
@@ -733,17 +982,22 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		return nil, err
 	}
 
-	prevStatus := state.Status
+	prevStatus := state.CurrentStatus
 	currentStatus := toStatus(*status)
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
 
 	if currentStatus == types.HardwareNodeStatus_INFERENCE {
-		ok, err := client.InferenceHealth()
+		ok, err := client.InferenceHealth(context.Background())
 		if !ok || err != nil {
 			currentStatus = types.HardwareNodeStatus_FAILED
 			logging.Info("queryNodeStatus. Node inference health check failed", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String(), "err", err)
 		}
 	}
+
+	// TODO: probably should also check PoC sub status here
+	//  but before implementing it, need to check we treat them correctly during reconciliation
+	//  for example I think we expect IDLE instead of STOPPED for PoC nodes
+	//  which is actually wrong
 
 	return &statusQueryResult{
 		PrevStatus:    prevStatus,
@@ -764,69 +1018,4 @@ func toStatus(response mlnodeclient.StateResponse) types.HardwareNodeStatus {
 	default:
 		return types.HardwareNodeStatus_UNKNOWN
 	}
-}
-
-func (b *Broker) inferenceUpAll(command InferenceUpAllCommand) {
-	for _, node := range b.nodes {
-		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-
-		client := newNodeClient(&node.Node)
-
-		status, err := b.queryNodeStatus(node.Node, node.State)
-		if err != nil {
-			logging.Error("Failed to query node status", types.Nodes, "node_id", node.Node.Id, "error", err)
-			continue
-		}
-
-		if status.CurrentStatus == types.HardwareNodeStatus_INFERENCE {
-			health, err := client.InferenceHealth()
-			if err != nil {
-				logging.Error("Failed to check inference health", types.Nodes, "node_id", node.Node.Id, "error", err)
-				continue
-			}
-
-			if health {
-				logging.Info("Node is already in INFERENCE state and healthy", types.Nodes, "node_id", node.Node.Id)
-				node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-				continue
-			}
-		}
-
-		err = client.Stop()
-		if err != nil {
-			logging.Error("Failed to stop node for inference up", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-			continue
-		} else {
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_STOPPED)
-		}
-
-		err = inferenceUp(&node.Node, client)
-		if err != nil {
-			logging.Error("Failed to bring up inference", types.Nodes,
-				"node_id", node.Node.Id, "error", err)
-		} else {
-			node.State.UpdateStatusNow(types.HardwareNodeStatus_INFERENCE)
-		}
-	}
-
-	command.Response <- true
-}
-
-func inferenceUp(node *Node, nodeClient *mlnodeclient.Client) error {
-	if len(node.Models) == 0 {
-		logging.Error("No models found for node, can't inference up", types.Nodes,
-			"node_id", node.Id, "error")
-		return errors.New("no models found for node, can't inference up")
-	}
-
-	model := ""
-	var modelArgs []string
-	for modelName, args := range node.Models {
-		model = modelName
-		modelArgs = args.Args
-		break
-	}
-
-	return nodeClient.InferenceUp(model, modelArgs)
 }

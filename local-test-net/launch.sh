@@ -7,7 +7,7 @@ export ML_SERVER_PORT=9001
 export ADMIN_SERVER_PORT=9002
 export ML_GRPC_SERVER_PORT=9003
 export KEY_NAME=genesis
-export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 rm -r "prod-local" || true
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
@@ -20,9 +20,17 @@ sed "s/{{KEY_NAME}}/$KEY_NAME/g" ../testermint/src/main/resources/alternative-ma
 if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
   cp -r ../public-html/* "./prod-local/wiremock/$KEY_NAME/__files/"
 fi
+export WIREMOCK_PORT_2=8089
+mkdir -p "./prod-local/wiremock-2/$KEY_NAME/mappings/"
+mkdir -p "./prod-local/wiremock-2/$KEY_NAME/__files/"
+cp ../testermint/src/main/resources/mappings/*.json "./prod-local/wiremock-2/$KEY_NAME/mappings/"
+cp ../testermint/src/main/resources/alternative-mappings/generate_poc.json "./prod-local/wiremock-2/$KEY_NAME/mappings/generate_poc.json"
+if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
+  cp -r ../public-html/* "./prod-local/wiremock-2/$KEY_NAME/__files/"
+fi
 
 echo "Starting genesis node"
-docker compose -p genesis -f docker-compose-local-genesis.yml up --build -d
+docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml up -d
 sleep 40
 
 # seed node parameters for both joining nodes
@@ -33,7 +41,7 @@ export IS_GENESIS=false
 
 # join node 'join1'
 export KEY_NAME=join1
-export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_IP="join1-api"
 export PUBLIC_SERVER_PORT=9010
 export ML_SERVER_PORT=9011
@@ -45,11 +53,11 @@ export RPC_PORT=8101
 export P2P_PORT=8201
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh
+./launch_add_network_node.sh
 
 # join node 'join2'
 export KEY_NAME=join2
-export NODE_CONFIG="node_payload_mock_server_${KEY_NAME}.json"
+export NODE_CONFIG="node_payload_mock-server_${KEY_NAME}.json"
 export PUBLIC_SERVER_PORT=9020
 export ML_SERVER_PORT=9021
 export ADMIN_SERVER_PORT=9022
@@ -60,4 +68,4 @@ export RPC_PORT=8102
 export P2P_PORT=8202
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-./launch_network_node.sh
+./launch_add_network_node.sh

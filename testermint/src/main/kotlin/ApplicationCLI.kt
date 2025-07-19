@@ -75,8 +75,8 @@ data class ApplicationCLI(
         check: (status: NodeInfoResponse) -> Boolean,
         description: String,
         staleTimeout: Duration = Duration.ofSeconds(20),
-    ) {
-        wrapLog("waitForState", false) {
+    ): NodeInfoResponse {
+        return wrapLog("waitForState", false) {
             Logger.info("Waiting for state: {}", description)
             var timeout = Instant.now().plus(staleTimeout)
             var previousState: NodeInfoResponse? = null
@@ -84,29 +84,32 @@ data class ApplicationCLI(
                 val currentState = getStatus()
                 if (check(currentState)) {
                     Logger.info("State reached: $description")
-                    break
+                    return@wrapLog currentState
                 }
                 if (previousState != currentState) {
                     timeout = Instant.now().plus(staleTimeout)
                 }
                 if (Instant.now().isAfter(timeout)) {
-                    Logger.error("State is stale, was identical for {}", staleTimeout)
-                    error("State is stale, was identical for $staleTimeout")
+                    Logger.error("State is stale, was identical for {}. Wait failed for: {}", staleTimeout, description)
+                    error("State is stale, was identical for $staleTimeout. Wait failed for: $description")
                 }
                 previousState = currentState
-                Logger.debug("Current block is {}, waiting...", currentState.syncInfo.latestBlockHeight)
+                Logger.debug("Current block is {}, continuing to wait for: {}", currentState.syncInfo.latestBlockHeight, description)
                 Thread.sleep(1000)
             }
+            // IDE says unreachable (and it's because of the timeout error in the while loop above,
+            //   but if I remove this line then it complains about return being Unit)
+            error("Unreachable code reached in waitForState")
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = "") {
-        wrapLog("waitForMinimumBlock", false) {
+    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
+        return wrapLog("waitForMinimumBlock", false) {
             waitForState(
                 { it.syncInfo.latestBlockHeight >= minBlockHeight },
                 "$waitingFor:block height $minBlockHeight"
             )
-        }
+        }.syncInfo.latestBlockHeight
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
@@ -118,6 +121,10 @@ data class ApplicationCLI(
 
     fun getInferences(): InferencesWrapper = wrapLog("getInferences", false) {
         execAndParse(listOf("query", "inference", "list-inference"))
+    }
+
+    fun getInference(inferenceId: String): InferenceWrapper = wrapLog("getInference", false) {
+        execAndParse(listOf("query", "inference", "show-inference", inferenceId))
     }
 
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
@@ -134,14 +141,14 @@ data class ApplicationCLI(
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
 
+    fun getVersion(): String = wrapLog("getVersion", false) {
+        exec(listOf(config.execName, "version")).first()
+    }
+
     var accountKey: Validator? = null
     fun getAddress(): String = wrapLog("getAddress", false) {
         getAccountIfNeeded()
         accountKey!!.address
-    }
-
-    fun getVersion(): String = wrapLog("getVersion", false) {
-        exec(listOf(config.execName, "version")).first()
     }
 
     private fun getAccountIfNeeded() {
@@ -270,13 +277,15 @@ data class ApplicationCLI(
         } ?: error("Could not extract signature from response: $response")
     }
 
-    fun signPayload(payload: String, accountAddress: String? = null): String {
+    fun signPayload(payload: String, accountAddress: String? = null, timestamp: Long? = null, endpointAccount: String? =null): String {
         val parameters = listOfNotNull(
             config.execName,
             "signature",
             "create",
             // Do we need single quotes here?
             payload,
+            timestamp?.let { "--timestamp" }, timestamp?.toString(),
+            endpointAccount?.let { "--endpoint-account" }, endpointAccount,
             accountAddress?.let { "--account-address" },
             accountAddress,
         ) + config.keychainParams

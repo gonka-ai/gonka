@@ -2,13 +2,36 @@ package broker
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
+	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
+	"testing"
+	"time"
+
+	"github.com/productscience/inference/x/inference/types"
+
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slog"
-	"testing"
 )
 
+func NewTestBroker() *Broker {
+	participantInfo := participant.CosmosInfo{
+		Address: "cosmos1dummyaddress",
+		PubKey:  "dummyPubKey",
+	}
+	phaseTracker := chainphase.NewChainPhaseTracker()
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 0, PocStartBlockHeight: 0},
+		&types.EpochParams{},
+		true,
+	)
+
+	return NewBroker(nil, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory())
+}
+
 func TestSingleNode(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -17,7 +40,9 @@ func TestSingleNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -33,8 +58,39 @@ func TestSingleNode(t *testing.T) {
 	}
 }
 
+func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apiconfig.InferenceNodeConfig) {
+	nodeIsRegistered := make(chan *apiconfig.InferenceNodeConfig, 2)
+	queueMessage(t, broker, RegisterNode{node, nodeIsRegistered})
+
+	// Wait for the 1st command to be propagated,
+	// so our set status timestamp comes after the initial registration timestamp
+	_ = <-nodeIsRegistered
+
+	inferenceUpCommand := NewInferenceUpAllCommand()
+	queueMessage(t, broker, inferenceUpCommand)
+
+	// Wait for InferenceUpAllCommand to complete
+	<-inferenceUpCommand.Response
+
+	setStatusCommand := NewSetNodesActualStatusCommand(
+		[]StatusUpdate{
+			{
+				NodeId:     node.Id,
+				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+				NewStatus:  types.HardwareNodeStatus_INFERENCE,
+				Timestamp:  time.Now(),
+			},
+		},
+	)
+	queueMessage(t, broker, setStatusCommand)
+
+	<-setStatusCommand.Response
+
+	time.Sleep(10 * time.Millisecond)
+}
+
 func TestNodeRemoval(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -43,7 +99,9 @@ func TestNodeRemoval(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -65,7 +123,7 @@ func TestNodeRemoval(t *testing.T) {
 }
 
 func TestModelMismatch(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -74,7 +132,9 @@ func TestModelMismatch(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model2", "", false, availableNode})
 	if <-availableNode != nil {
@@ -83,7 +143,7 @@ func TestModelMismatch(t *testing.T) {
 }
 
 func TestHighConcurrency(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -92,7 +152,9 @@ func TestHighConcurrency(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 100,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	for i := 0; i < 100; i++ {
 		queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
@@ -103,7 +165,7 @@ func TestHighConcurrency(t *testing.T) {
 }
 
 func TestVersionFiltering(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	v1node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -122,8 +184,9 @@ func TestVersionFiltering(t *testing.T) {
 		MaxConcurrent: 1000,
 		Version:       "",
 	}
-	queueMessage(t, broker, RegisterNode{v1node, make(chan *apiconfig.InferenceNodeConfig, 2)})
-	queueMessage(t, broker, RegisterNode{novNode, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	registerNodeAndSetInferenceStatus(t, broker, v1node)
+	registerNodeAndSetInferenceStatus(t, broker, novNode)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "v1", false, availableNode})
 	node := <-availableNode
@@ -141,7 +204,7 @@ func TestVersionFiltering(t *testing.T) {
 }
 
 func TestMultipleNodes(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node1 := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -158,8 +221,9 @@ func TestMultipleNodes(t *testing.T) {
 		Id:            "node2",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node1, make(chan *apiconfig.InferenceNodeConfig, 2)})
-	queueMessage(t, broker, RegisterNode{node2, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	registerNodeAndSetInferenceStatus(t, broker, node1)
+	registerNodeAndSetInferenceStatus(t, broker, node2)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	firstNode := <-availableNode
@@ -189,7 +253,7 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 }
 
 func TestReleaseNode(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -198,7 +262,8 @@ func TestReleaseNode(t *testing.T) {
 		Id:            "node1",
 		MaxConcurrent: 1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -221,7 +286,7 @@ func TestReleaseNode(t *testing.T) {
 }
 
 func TestRoundTripSegment(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:             "localhost",
 		InferenceSegment: "/is",
@@ -232,7 +297,8 @@ func TestRoundTripSegment(t *testing.T) {
 		Id:               "node1",
 		MaxConcurrent:    1,
 	}
-	queueMessage(t, broker, RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 2)})
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
 	availableNode := make(chan *Node, 2)
 	queueMessage(t, broker, LockAvailableNode{"model1", "", false, availableNode})
 	runningNode := <-availableNode
@@ -249,7 +315,7 @@ func TestRoundTripSegment(t *testing.T) {
 }
 
 func TestCapacityCheck(t *testing.T) {
-	broker := NewBroker(nil)
+	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:          "localhost",
 		InferencePort: 8080,
@@ -261,4 +327,32 @@ func TestCapacityCheck(t *testing.T) {
 	if err := broker.QueueMessage(RegisterNode{node, make(chan *apiconfig.InferenceNodeConfig, 0)}); err == nil {
 		t.Fatalf("expected error, got nil")
 	}
+}
+
+func TestNodeShouldBeOperationalTest(t *testing.T) {
+	adminState := AdminState{
+		Enabled: true,
+		Epoch:   10,
+	}
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCGeneratePhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCGenerateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCValidatePhase))
+	require.False(t, ShouldBeOperational(adminState, 10, types.PoCValidateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 10, types.InferencePhase))
+
+	adminState = AdminState{
+		Enabled: false,
+		Epoch:   11,
+	}
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCGeneratePhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCGenerateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCValidatePhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.PoCValidateWindDownPhase))
+	require.True(t, ShouldBeOperational(adminState, 11, types.InferencePhase))
+
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCGeneratePhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCGenerateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidatePhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.PoCValidateWindDownPhase))
+	require.False(t, ShouldBeOperational(adminState, 12, types.InferencePhase))
 }

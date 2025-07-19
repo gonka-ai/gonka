@@ -28,6 +28,11 @@ func NewServer(
 	trainingExecutor *training.Executor,
 	blockQueue *BridgeQueue) *Server {
 	e := echo.New()
+	e.HTTPErrorHandler = middleware.TransparentErrorHandler
+
+	// Set the package-level configManagerRef
+	configManagerRef = configManager
+
 	s := &Server{
 		e:                e,
 		nodeBroker:       nodeBroker,
@@ -59,7 +64,6 @@ func NewServer(
 
 	g.GET("pricing", s.getPricing)
 	g.GET("models", s.getModels)
-	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	g.GET("poc-batches/:epoch", s.getPoCBatches)
 
 	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
@@ -70,6 +74,8 @@ func NewServer(
 	g.POST("bridge/block", s.postBlock)
 	g.GET("bridge/status", s.getBridgeStatus)
 
+	g.GET("epochs/:epoch", s.getEpochById)
+	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
 	return s
 }
 

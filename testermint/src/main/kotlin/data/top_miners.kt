@@ -10,7 +10,7 @@ data class TopMiner(
     val address: String,
     val lastQualifiedStarted: Long?,
     val qualifiedPeriods: Int?,
-    val qualifiedTime: Long?,
+    val qualifiedTime: Long?, // Seconds
     val lastUpdatedTime: Long,
     val firstQualifiedStarted: Long,
 )

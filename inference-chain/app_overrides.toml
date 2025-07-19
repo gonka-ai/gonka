@@ -1,0 +1,7 @@
+[api]
+
+# Enable defines if the API server should be enabled.
+enable = true
+
+# Address defines the API server to listen on.
+address = "tcp://0.0.0.0:1317"

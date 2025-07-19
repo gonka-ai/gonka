@@ -1,23 +1,10 @@
 package com.productscience
 
 import com.github.dockerjava.api.DockerClient
-import com.github.dockerjava.api.model.Container
-import com.github.dockerjava.api.model.ContainerPort
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.LogConfig
-import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
-import com.github.dockerjava.transport.DockerHttpClient
 import com.github.kittinunf.fuel.core.FuelError
-import com.productscience.data.AppState
-import com.productscience.data.GovernanceMessage
-import com.productscience.data.GovernanceProposal
-import com.productscience.data.InferenceParams
-import com.productscience.data.InferenceParticipant
-import com.productscience.data.OpenAIResponse
-import com.productscience.data.PubKey
-import com.productscience.data.Spec
-import com.productscience.data.TxResponse
+import com.productscience.data.*
 import org.tinylog.kotlin.Logger
 import java.io.File
 import java.time.Instant
@@ -158,7 +145,8 @@ data class LocalInferencePair(
     val mock: IInferenceMock?,
     val name: String,
     override val config: ApplicationConfig,
-    var mostRecentParams: InferenceParams? = null
+    var mostRecentParams: InferenceParams? = null,
+    var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
     fun addSelfAsParticipant(models: List<String>) {
         val status = node.getStatus()
@@ -176,20 +164,35 @@ data class LocalInferencePair(
         return this.mostRecentParams?.epochParams?.epochLength ?: this.getParams().epochParams.epochLength
     }
 
-    fun getParams(): InferenceParams {
+    fun refreshMostRecentState() {
+        this.mostRecentEpochData = this.api.getLatestEpoch()
         this.mostRecentParams = this.node.getInferenceParams().params
-        return this.mostRecentParams!!
     }
 
-    fun makeInferenceRequest(request: String, account: String? = null): OpenAIResponse {
-        val signature = node.signPayload(request, account)
+    fun getParams(): InferenceParams {
+        refreshMostRecentState()
+        return this.mostRecentParams ?: error("No inference params available")
+    }
+
+    fun getEpochData(): EpochResponse {
+        refreshMostRecentState()
+        return this.mostRecentEpochData ?: error("No epoch data available")
+    }
+
+    fun makeInferenceRequest(
+        request: String,
+        account: String? = null,
+        timestamp: Long = Instant.now().toEpochNanos(),
+        taAddress: String = node.getAddress(),
+    ): OpenAIResponse {
+        val signature = node.signPayload(request,account, timestamp = timestamp, endpointAccount = taAddress)
         val address = node.getAddress()
-        return api.makeInferenceRequest(request, address, signature)
+        return api.makeInferenceRequest(request, address, signature, timestamp)
     }
 
     /**
      * Makes a streaming inference request that can be interrupted.
-     * 
+     *
      * @param request The request body as a string. The request should include "stream": true.
      * @param account The account to use for signing the payload (optional)
      * @return A StreamConnection object that can be used to read from the stream and interrupt it
@@ -217,26 +220,62 @@ data class LocalInferencePair(
             request
         }
 
-        val signature = node.signPayload(requestWithStream, account)
         val address = node.getAddress()
-        return api.createInferenceStreamConnection(requestWithStream, address, signature)
+        val timestamp = Instant.now().toEpochNanos()
+        val signature = node.signPayload(requestWithStream, account, timestamp = timestamp, endpointAccount = address)
+        return api.createInferenceStreamConnection(requestWithStream, address, signature, timestamp)
     }
 
     fun getCurrentBlockHeight(): Long {
         return node.getStatus().syncInfo.latestBlockHeight
     }
 
-    fun changePoc(newPoc: Long) {
+    fun changePoc(newPoc: Long, setNewValidatorsOffset: Int = 2) {
         this.mock?.setPocResponse(newPoc)
         this.waitForStage(EpochStage.START_OF_POC)
         // CometBFT validators have a 1 block delay
-        this.waitForStage(EpochStage.START_OF_POC, 2)
+        this.waitForStage(EpochStage.SET_NEW_VALIDATORS, setNewValidatorsOffset)
     }
 
-    fun waitForStage(stage: EpochStage, offset: Int = 1) {
-        this.node.waitForMinimumBlock(
-            getNextStage(stage) + offset,
+    data class WaitForStageResult(
+        val stageBlock: Long,
+        val stageBlockWithOffset: Long,
+        val currentBlock: Long
+    )
+
+    fun waitForNextInferenceWindow(windowSizeInBlocks: Int = 5) {
+        val epochData = getEpochData()
+        val startOfNextPoc = epochData.getNextStage(EpochStage.START_OF_POC)
+        val currentPhase = epochData.phase
+        val currentBlockHeight = epochData.blockHeight
+        Logger.info {
+            "Checking if should wait for next SET_NEW_VALIDATORS to run inference. " +
+                    "startOfNextPoc=$startOfNextPoc. " +
+                    "currentBlockHeight=$currentBlockHeight. " +
+                    "currentPhase=$currentPhase"
+        }
+
+        if (getEpochData().phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+            logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
+            waitForStage(EpochStage.SET_NEW_VALIDATORS)
+        } else {
+            Logger.info("Skipping wait for SET_NEW_VALIDATORS, current phase is ${epochData.phase}")
+        }
+    }
+
+    fun waitForStage(stage: EpochStage, offset: Int = 1): WaitForStageResult {
+        val stageBlock = getNextStage(stage)
+        val stageBlockWithOffset = stageBlock + offset
+        val currentBlock = this.node.waitForMinimumBlock(
+            stageBlockWithOffset,
             "stage $stage" + if (offset > 0) "+$offset)" else ""
+        )
+
+        return WaitForStageResult(
+            stageBlock = stageBlock,
+            stageBlockWithOffset = stageBlockWithOffset,
+            currentBlock = currentBlock
         )
     }
 
@@ -251,21 +290,14 @@ data class LocalInferencePair(
             }
             this.node.waitForNextBlock()
             currentBlock = this.getCurrentBlockHeight()
+            mostRecentEpochData = this.api.getLatestEpoch()
         }
         error("Block $targetBlock reached without condition passing")
     }
 
     fun getNextStage(stage: EpochStage): Long {
-        if (this.mostRecentParams == null) {
-            this.getParams()
-        }
-        val epochParams = this.mostRecentParams?.epochParams!!
-        val currentHeight = this.getCurrentBlockHeight()
-        val blocksTillEpoch = epochParams.epochLength - (currentHeight % epochParams.epochLength)
-        val nextStage = currentHeight + blocksTillEpoch + epochParams.getStage(stage) + 1
-        return if (nextStage - epochParams.epochLength > currentHeight)
-            nextStage - epochParams.epochLength
-        else nextStage
+        val epochData = this.getEpochData()
+        return epochData.getNextStage(stage)
     }
 
     fun waitForFirstBlock() {
@@ -279,25 +311,44 @@ data class LocalInferencePair(
         }
     }
 
+    // FIXME: query this info from chain when epochs/0 endpoint is implemented?
     fun waitForFirstValidators() {
-        if (this.mostRecentParams == null) {
+        if (this.mostRecentEpochData == null) {
             this.getParams()
         }
-        val epochParams = this.mostRecentParams?.epochParams!!
-        if (epochParams.epochLength > 500) {
+
+        val epochData = this.mostRecentEpochData
+            ?: error("No epoch data available")
+
+        if (epochData.epochParams.epochLength > 500) {
             error("Epoch length is too long for testing")
         }
+
+        val epochParams = epochData.epochParams
         val epochFinished = epochParams.epochLength +
                 epochParams.getStage(EpochStage.SET_NEW_VALIDATORS) +
                 1 -
                 epochParams.epochShift
+
+        if (epochFinished <= epochData.blockHeight) {
+            return
+        }
+
         Logger.info("First PoC should be finished at block height $epochFinished")
         this.node.waitForMinimumBlock(epochFinished, "firstValidators")
     }
 
-    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+    fun submitMessage(message: TxMessage, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitMessage", true) {
+        submitTransaction(Transaction(TransactionBody(listOf(message), "", 0)), waitForProcessed)
+    }
+
+    fun submitTransaction(transaction: Transaction, waitForProcessed: Boolean = true): TxResponse = wrapLog("SubmitTransaction", true) {
+        submitTransaction(cosmosJson.toJson(transaction), waitForProcessed)
+    }
+
+
+    fun submitTransaction(json: String, waitForProcessed: Boolean = true): TxResponse {
         val start = Instant.now()
-        val json = this.node.getTransactionJson(args)
         val submittedTransaction = try {
             this.api.submitTransaction(json)
         } catch (e: FuelError) {
@@ -321,6 +372,10 @@ data class LocalInferencePair(
         } else {
             submittedTransaction
         }
+    }
+
+    fun submitTransaction(args: List<String>, waitForProcessed: Boolean = true): TxResponse {
+        return submitTransaction(this.node.getTransactionJson(args))
     }
 
     fun transferMoneyTo(destinationNode: ApplicationCLI, amount: Long): TxResponse = wrapLog("transferMoneyTo", true) {
@@ -484,4 +539,8 @@ data class ApplicationConfig(
 ) {
     val mountDir = "./$chainId/$pairName:/root/$stateDirName"
     val keychainParams = listOf("--keyring-backend", "test", "--keyring-dir=/root/$stateDirName")
+}
+
+fun Instant.toEpochNanos(): Long {
+    return this.epochSecond * 1_000_000_000 + this.nano.toLong()
 }

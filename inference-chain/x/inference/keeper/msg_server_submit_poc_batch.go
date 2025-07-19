@@ -2,8 +2,9 @@ package keeper
 
 import (
 	"context"
-	sdkerrors "cosmossdk.io/errors"
 	"fmt"
+
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -14,16 +15,36 @@ func (k msgServer) SubmitPocBatch(goCtx context.Context, msg *types.MsgSubmitPoc
 	currentBlockHeight := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 	epochParams := k.Keeper.GetParams(goCtx).EpochParams
+	upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
+	if !found {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] Failed to get upcoming epoch", types.PoC,
+			"participant", msg.Creator,
+			"currentBlockHeight", currentBlockHeight)
+		return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "Failed to get upcoming epoch")
+	}
+	epochContext := types.NewEpochContext(*upcomingEpoch, *epochParams)
 
-	if !epochParams.IsStartOfPoCStage(startBlockHeight) {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] start block height must be divisible by EpochLength", types.PoC, "EpochLength", epochParams.EpochLength, "msg.BlockHeight", startBlockHeight)
-		errMsg := fmt.Sprintf("[SubmitPocBatch] start block height must be divisible by %d. msg.BlockHeight = %d", epochParams.EpochLength, startBlockHeight)
+	if !epochContext.IsStartOfPocStage(startBlockHeight) {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] message start block height doesn't match the upcoming epoch group", types.PoC,
+			"participant", msg.Creator,
+			"msg.PocStageStartBlockHeight", startBlockHeight,
+			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight,
+			"currentBlockHeight", currentBlockHeight)
+		errMsg := fmt.Sprintf("[SubmitPocBatch] message start block height doesn't match the upcoming epoch group. "+
+			"participant = %s. msg.PocStageStartBlockHeight = %d. epochContext.PocStartBlockHeight = %d. currentBlockHeight = %d",
+			msg.Creator, startBlockHeight, epochContext.PocStartBlockHeight, currentBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight, errMsg)
 	}
 
-	if !epochParams.IsPoCExchangeWindow(startBlockHeight, currentBlockHeight) {
-		k.LogError(PocFailureTag+"PoC exchange window is closed.", types.PoC, "msg.BlockHeight", startBlockHeight, "currentBlockHeight", currentBlockHeight)
-		errMsg := fmt.Sprintf("msg.BlockHeight = %d, currentBlockHeight = %d", startBlockHeight, currentBlockHeight)
+	if !epochContext.IsPoCExchangeWindow(currentBlockHeight) {
+		k.LogError(PocFailureTag+"PoC exchange window is closed.", types.PoC,
+			"participant", msg.Creator,
+			"msg.PocStageStartBlockHeight", startBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"epochContext.PocStartBlockHeight", epochContext.PocStartBlockHeight)
+		errMsg := fmt.Sprintf("PoC exchange window is closed. "+
+			"participant = %s. msg.BlockHeight = %d, currentBlockHeight = %d, epochContext.PocStartBlockHeight = %d",
+			msg.Creator, startBlockHeight, currentBlockHeight, epochContext.PocStartBlockHeight)
 		return nil, sdkerrors.Wrap(types.ErrPocTooLate, errMsg)
 	}
 
