@@ -6,6 +6,7 @@ import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
 import com.productscience.validNode
+import com.productscience.withMockServerPorts
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
@@ -21,8 +22,8 @@ class SchedulingTests : TestermintTest() {
             ),
             nodesByKeyName = mapOf(
                 GENESIS_KEY_NAME to listOf(
-                    validNode.copy(id = "mock-1", host = "genesis-mock-server"),
-                    validNode.copy(id = "mock-2", host = "genesis-mock-server-2"),
+                    validNode.copy(id = "mock-1", host = "genesis-mock-server").withMockServerPorts(),
+                    validNode.copy(id = "mock-2", host = "genesis-mock-server-2").withMockServerPorts(),
                 )
             ),
         )

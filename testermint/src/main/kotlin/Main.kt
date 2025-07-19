@@ -298,9 +298,7 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodesToDefaultNode: Boole
         val nodes = it.config.nodesByKeyName[it.name] ?: listOf(
             validNode.copy(
                 host = "${it.name.trim('/')}-mock-server",
-                pocPort = 8080,
-                inferencePort = 8080
-            )
+            ).withMockServerPorts()
         )
         it.api.setNodesTo(nodes)
         it.waitForFirstValidators()
@@ -538,6 +536,10 @@ val validNode = InferenceNode(
     id = "wiremock2",
     maxConcurrent = 1000
 )
+
+fun InferenceNode.withMockServerPorts(): InferenceNode {
+    return copy(pocPort = 8080, inferencePort = 8080)
+}
 
 val defaultInferenceResponse = """
     {
