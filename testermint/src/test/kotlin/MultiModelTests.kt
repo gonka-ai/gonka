@@ -31,6 +31,8 @@ class MultiModelTests : TestermintTest() {
         newModelName: String = "Qwen/QwQ-32B",
         joinModels: Int = 2,
     ): Pair<String, List<LocalInferencePair>> {
+        genesis.waitForNextInferenceWindow()
+
         val secondModelPairs = cluster.joinPairs.take(joinModels) + genesis
 
         logSection("Setting nodes for new model")
