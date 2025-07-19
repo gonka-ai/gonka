@@ -68,7 +68,8 @@ func DefaultParams() Params {
 			TimestampAdvance:            30,
 		},
 		PocParams: &PocParams{
-			DefaultDifficulty: 5,
+			DefaultDifficulty:    5,
+			ValidationSampleSize: 200,
 		},
 		TokenomicsParams: &TokenomicsParams{
 			SubsidyReductionInterval: DecimalFromFloat(0.05),
