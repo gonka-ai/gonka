@@ -265,8 +265,8 @@ data class LocalInferencePair(
                     "currentPhase=$currentPhase"
         }
 
-        if (getEpochData().phase != EpochPhase.Inference ||
-            startOfNextPoc - currentBlockHeight > windowSizeInBlocks) {
+        if (epochData.phase != EpochPhase.Inference ||
+            startOfNextPoc - currentBlockHeight < windowSizeInBlocks) {
             logSection("Waiting for SET_NEW_VALIDATORS stage before running inference")
             waitForStage(EpochStage.SET_NEW_VALIDATORS)
         } else {
