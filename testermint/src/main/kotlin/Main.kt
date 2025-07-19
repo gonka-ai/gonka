@@ -296,6 +296,7 @@ fun initialize(pairs: List<LocalInferencePair>, resetMlNodesTo: Boolean = true):
     pairs.forEach {
         it.waitForFirstBlock()
         it.waitForFirstValidators()
+        it.waitForNextInferenceWindow(windowSizeInBlocks = 2)
         if (resetMlNodesTo) {
             val nodes = listOf(
                 validNode.copy(
